@@ -894,6 +894,27 @@ pub struct EdgeProbe {
     pub direction: [f64; 3],
 }
 
+/// How a thickness's walls meet across an edge of the solid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ThicknessJoin {
+    /// The walls run on until they meet: sharp corners.
+    #[default]
+    Intersection,
+    /// The walls round about the edge, the wall thickness its radius.
+    Arc,
+}
+
+impl ThicknessJoin {
+    pub const ALL: [ThicknessJoin; 2] = [ThicknessJoin::Intersection, ThicknessJoin::Arc];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ThicknessJoin::Intersection => "Intersection",
+            ThicknessJoin::Arc => "Arc",
+        }
+    }
+}
+
 /// Chamfer sizing, mirroring the three standard input styles.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ChamferSpec {
@@ -985,6 +1006,9 @@ pub enum SolidOp {
         value: f64,
         open_faces: Vec<[f64; 3]>,
         inward: bool,
+        /// How the walls meet where the solid's faces meet.
+        #[serde(default)]
+        join: ThicknessJoin,
     },
     /// Re-apply earlier steps' tool solids (or the whole current solid when
     /// `originals` is empty) under each transform, fusing additive tools and

@@ -492,6 +492,7 @@ impl PartDesignWorkbench {
                         value: 1.0,
                         faces: vec![pick],
                         inward: true,
+                        join: kernel_api::ThicknessJoin::Intersection,
                     },
                     "Thickness",
                 )

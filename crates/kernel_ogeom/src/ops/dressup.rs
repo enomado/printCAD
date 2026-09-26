@@ -5,7 +5,7 @@
 //! edge at once, resolved on the solid as it stands, so blends and bevels
 //! that meet at a vertex close their corner between them.
 
-use kernel_api::{ChamferSpec, EdgeSelection};
+use kernel_api::{ChamferSpec, EdgeSelection, ThicknessJoin};
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{Chamfer, chamfer_edges_with, fillet_edges};
 use ogeom::geom::Curve3d as _;
@@ -454,7 +454,15 @@ pub fn thickness(
     value: f64,
     open_face_points: &[[f64; 3]],
     inward: bool,
+    join: ThicknessJoin,
 ) -> Result<Shape, String> {
+    if join == ThicknessJoin::Arc {
+        return Err(
+            "the kernel cannot round a thickness's walls where they meet yet; \
+             use the intersection join"
+                .into(),
+        );
+    }
     let mut removed = Vec::with_capacity(open_face_points.len());
     for p in open_face_points {
         removed.push(nearest_of(model, solid, ShapeType::Face, point3(*p))?);

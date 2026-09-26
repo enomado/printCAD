@@ -882,6 +882,9 @@ pub enum PartFeature {
         faces: Vec<FacePick>,
         #[serde(default = "default_true")]
         inward: bool,
+        /// How the walls meet where the solid's faces meet.
+        #[serde(default)]
+        join: kernel_api::ThicknessJoin,
     },
     Mirrored {
         originals: Vec<FeatureId>,

@@ -2551,6 +2551,62 @@ fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
     assert!(close(max[1], 60.0), "{max:?}");
 }
 
+/// The block hollowed to walls of 1, open at the top, its walls joined as
+/// `join` says; `inward` keeps the block's outside, else the walls grow
+/// around it.
+fn thickened_block(inward: bool, join: kernel_api::ThicknessJoin) -> Result<f64, String> {
+    let (mut doc, body) = block();
+    doc.add_feature_in_body(
+        PartFeature::Thickness {
+            value: 1.0,
+            faces: vec![wb_part::FacePick {
+                point: [10.0, 10.0, 10.0],
+                normal: [0.0, 0.0, 1.0],
+            }],
+            inward,
+            join,
+        },
+        "Thickness".into(),
+        Some(body),
+    )
+    .unwrap();
+    built_volume(&doc, body)
+}
+
+/// The intersection join: walls that run on to sharp corners, inward
+/// (the block less an 18 × 18 × 9 cavity) and outward (a 22 × 22 × 11
+/// box less the block). Inward on a convex block, the arc join meets the
+/// intersection's walls as they are.
+#[test]
+fn a_thickness_joins_its_walls_by_intersection() {
+    use kernel_api::ThicknessJoin::Intersection;
+    let inward = thickened_block(true, Intersection).unwrap();
+    assert!((inward - 1084.0).abs() < 1084.0 * 1e-4, "inward {inward}");
+    let outward = thickened_block(false, Intersection).unwrap();
+    assert!(
+        (outward - 1324.0).abs() < 1324.0 * 1e-4,
+        "outward {outward}"
+    );
+}
+
+/// The arc join: outward, the walls round about every edge of the block
+/// below its open top, radius 1: the block grown by a ball of radius 1,
+/// cut flush at the top, less the block itself.
+#[test]
+#[ignore = "kernel: make_thick_solid has no arc join (ogeom-rs#75)"]
+fn a_thickness_joins_its_walls_by_intersection_or_arc() {
+    use kernel_api::ThicknessJoin::Arc;
+    let pi = std::f64::consts::PI;
+    let rounded = 1200.0 + 30.0 * pi + 2.0 / 3.0 * pi;
+    let outward = thickened_block(false, Arc).unwrap();
+    assert!(
+        (outward - rounded).abs() < rounded * 1e-4,
+        "outward {outward}"
+    );
+    let inward = thickened_block(true, Arc).unwrap();
+    assert!((inward - 1084.0).abs() < 1084.0 * 1e-4, "inward {inward}");
+}
+
 /// The block with its vertical edge at x = y = 20 rounded to radius 3,
 /// and a dress-up of the top edges on top of it.
 fn block_with_rounded_corner(dress_up: PartFeature) -> Result<f64, String> {

@@ -787,6 +787,7 @@ fn thickness_hollows_the_box() {
                     value: 1.5,
                     open_faces: vec![[10.0, 10.0, 10.0]],
                     inward: true,
+                    join: Default::default(),
                 },
             ],
             &detail,

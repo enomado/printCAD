@@ -223,9 +223,10 @@ pub fn execute_previewing(
                 value,
                 open_faces,
                 inward,
+                join,
             } => {
                 let solid = base.ok_or_else(|| err("thickness needs an existing solid".into()))?;
-                ops::dressup::thickness(&mut model, &solid, *value, open_faces, *inward)
+                ops::dressup::thickness(&mut model, &solid, *value, open_faces, *inward, *join)
                     .map_err(&err)?
             }
             SolidOp::Transform {

@@ -1977,10 +1977,28 @@ pub fn feature_editor(
             value,
             faces,
             inward,
+            join,
         } => {
             changed |= mm_drag(ui, fx, value, "Thickness:");
             changed |= face_list_editor(ui, ctx, faces, "Faces to open:");
             changed |= check_row(ui, inward, "Inward").changed();
+            ui.horizontal(|ui| {
+                label_cell(ui, "Join");
+                egui::ComboBox::from_id_salt(("thickness_join", feature_id))
+                    .selected_text(join.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in kernel_api::ThicknessJoin::ALL {
+                            if ui
+                                .selectable_label(*join == candidate, candidate.label())
+                                .clicked()
+                                && *join != candidate
+                            {
+                                *join = candidate;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
         }
         PartFeature::Mirrored {
             originals,

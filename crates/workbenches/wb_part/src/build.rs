@@ -563,6 +563,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 value,
                 faces,
                 inward,
+                join,
             } => {
                 if faces.is_empty() {
                     return Err(fail("select at least one face to open".into()));
@@ -571,6 +572,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     value: *value as f64,
                     open_faces: face_points(faces),
                     inward: *inward,
+                    join: *join,
                 });
             }
             PartFeature::Mirrored {
