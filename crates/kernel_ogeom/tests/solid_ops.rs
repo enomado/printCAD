@@ -2505,3 +2505,87 @@ fn a_pattern_repeats_a_face_swept_off_the_solid() {
     // The plate, and three bosses 6 × 6 × 7.
     assert_volume(&ops, 3000.0 + 3.0 * 36.0 * 7.0, "three whole bosses");
 }
+
+/// A thread groove cuts into a blind bore made by the cylinder primitive as
+/// it does into the same bore extruded.
+#[test]
+#[ignore = "kernel: a helical groove of 2 or more turns fails to cut into a blind bore made by make_cylinder, 'edge 3 ends where edge 4 does not begin' (ogeom-rs#74)"]
+fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
+    use kernel_api::{Placement, PrimitiveKind};
+    let pitch = 1.0;
+    let (inner, major, crest, root, start) = (2.4, 3.0, pitch / 16.0, 0.4, -pitch);
+    let corners = [
+        [inner, start - root],
+        [major, start - crest],
+        [major, start + crest],
+        [inner, start + root],
+    ];
+    let groove = SolidOp::Sweep {
+        profile: Profile {
+            plane: ProfilePlane {
+                origin: [10.0, 10.0, 10.0],
+                x_axis: [1.0, 0.0, 0.0],
+                y_axis: [0.0, 0.0, -1.0],
+                normal: [0.0, 1.0, 0.0],
+            },
+            wires: vec![ProfileWire {
+                segments: (0..4)
+                    .map(|i| ProfileSegment::Line {
+                        start: corners[i],
+                        end: corners[(i + 1) % 4],
+                    })
+                    .collect(),
+            }],
+        },
+        kind: SweepKind::Helix {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            pitch,
+            height: 2.0 * pitch,
+            left_handed: false,
+            cone_angle_deg: 0.0,
+            reversed: false,
+        },
+        op: BooleanOp::Cut,
+    };
+    let block = SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 20.0,
+            width: 20.0,
+            height: 10.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    };
+    let primitive_bore = SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 2.5,
+            height: 8.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            origin: [10.0, 10.0, 2.0],
+            ..Placement::default()
+        },
+        op: BooleanOp::Cut,
+    };
+    let extruded_bore = SolidOp::Sweep {
+        profile: Profile {
+            plane: plane_at_z(2.0),
+            wires: vec![circle_wire(10.0, 10.0, 2.5)],
+        },
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::Blind { distance: 8.0 },
+            second_side: None,
+            symmetric: false,
+            reversed: false,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op: BooleanOp::Cut,
+    };
+    let want = volume_of(&[block.clone(), extruded_bore, groove.clone()])
+        .expect("the extruded bore threads");
+    let got = volume_of(&[block, primitive_bore, groove]).expect("the primitive's bore threads");
+    assert!((got - want).abs() < want * 1e-4, "{got} against {want}");
+}
