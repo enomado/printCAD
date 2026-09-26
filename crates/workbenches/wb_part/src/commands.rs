@@ -12,7 +12,7 @@ use core_document::{
 };
 use serde_json::{Map, Value, json};
 
-use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
+use core_document::{AttachmentOffset, DatumFeature, DatumShape};
 
 use crate::PartDesignWorkbench;
 use crate::feature::PartFeature;
@@ -124,19 +124,53 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .param("body", ParamKind::Id, "The body it belongs to")
         .optional(
+            "mode",
+            ParamKind::String,
+            "What it attaches to: base_plane (the default), face, three_points, \
+             normal_to_edge, along_edge, two_points, plane_intersection, curve_centre \
+             or inertia; references are in the body's own frame and follow its solid",
+        )
+        .optional(
             "plane",
             ParamKind::String,
-            "The base plane it sits on: XY (the default), XZ or YZ",
+            "base_plane: the base plane it sits on, XY (the default), XZ or YZ",
         )
         .optional(
             "face_point",
             ParamKind::List,
-            "Or a flat face it sits on: a point of the face, {x, y, z}",
+            "face: a point of the face, {x, y, z}; without a mode, a flat face kept as given",
         )
         .optional(
             "face_normal",
             ParamKind::List,
             "With face_point: the face's outward normal, {x, y, z}",
+        )
+        .optional(
+            "edge_point",
+            ParamKind::List,
+            "normal_to_edge, along_edge, curve_centre: a point of the edge, {x, y, z}",
+        )
+        .optional(
+            "edge_direction",
+            ParamKind::List,
+            "With edge_point: the way the edge runs there, {x, y, z}",
+        )
+        .optional(
+            "spot",
+            ParamKind::String,
+            "normal_to_edge: where on the edge, picked (the default), start, end, middle \
+             or centre",
+        )
+        .optional(
+            "points",
+            ParamKind::List,
+            "three_points, two_points: each {x, y, z}, or {face_point, face_normal}, or \
+             {edge_point, edge_direction, spot}",
+        )
+        .optional(
+            "planes",
+            ParamKind::List,
+            "plane_intersection: two of XY, XZ, YZ, a datum's id, or {face_point, face_normal}",
         )
         .optional(
             "offset",
@@ -369,19 +403,7 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             ));
         }
     };
-    let attachment = if a.has("face_point") {
-        DatumAttachment::FlatFace {
-            point: vector3(a.0.get("face_point"), "face_point")?,
-            normal: vector3(a.0.get("face_normal"), "face_normal")?,
-        }
-    } else {
-        DatumAttachment::BasePlane(match a.opt_string("plane")?.unwrap_or("XY") {
-            p if p.eq_ignore_ascii_case("XY") => BasePlane::XY,
-            p if p.eq_ignore_ascii_case("XZ") => BasePlane::XZ,
-            p if p.eq_ignore_ascii_case("YZ") => BasePlane::YZ,
-            _ => return Err(CommandError::bad("plane", "must be XY, XZ or YZ")),
-        })
-    };
+    let attachment = crate::datum_refs::attachment_from_args(a, ctx, body)?;
     let offset = AttachmentOffset {
         translation: match a.0.get("offset") {
             Some(v) if !v.is_null() => vector3(Some(v), "offset")?,
@@ -394,11 +416,12 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .opt_string("name")?
         .map(str::to_string)
         .unwrap_or_else(|| PartDesignWorkbench::next_feature_name(ctx, shape.label()));
-    let datum = DatumFeature {
+    let mut datum = DatumFeature {
         shape,
         attachment,
         offset,
     };
+    crate::datum_refs::settle(ctx, body, &mut datum).map_err(CommandError::failed)?;
     let id = ctx
         .document
         .add_feature_in_body(datum, name, Some(body))
@@ -500,18 +523,8 @@ pub(crate) fn record_task(
             if let Some(size) = size {
                 args["size"] = json!(size);
             }
-            match datum.attachment {
-                DatumAttachment::BasePlane(plane) => {
-                    args["plane"] = json!(match plane {
-                        BasePlane::XY => "XY",
-                        BasePlane::XZ => "XZ",
-                        BasePlane::YZ => "YZ",
-                    });
-                }
-                DatumAttachment::FlatFace { point, normal } => {
-                    args["face_point"] = json!(point);
-                    args["face_normal"] = json!(normal);
-                }
+            for (name, value) in crate::datum_refs::attachment_args(&datum.attachment) {
+                args[name] = value;
             }
             ctx.record("part.datum", crate::commands::object(args), id);
         }

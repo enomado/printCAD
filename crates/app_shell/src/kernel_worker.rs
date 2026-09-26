@@ -40,6 +40,8 @@ pub enum KernelRequest {
         detail: TessellationSettings,
         /// The feature being edited, whose preview the result carries.
         preview: Option<Uuid>,
+        /// What features standing on the solid ask of it part way through.
+        probes: Vec<core_document::PlanProbe>,
     },
     /// Measure a body's snapshot: volume, area, centre of mass.
     Measure {
@@ -83,6 +85,8 @@ pub enum KernelResponse {
         body_id: Uuid,
         result: SolidBuildResult,
         elapsed: Duration,
+        /// The probes the build was asked, answered in `result.probes`.
+        probes: Vec<core_document::PlanProbe>,
     },
     SolidFailed {
         body_id: Uuid,
@@ -223,6 +227,7 @@ impl KernelWorker {
         op_features: Vec<Uuid>,
         detail: TessellationSettings,
         preview: Option<Uuid>,
+        probes: Vec<core_document::PlanProbe>,
     ) {
         if self
             .tx
@@ -232,6 +237,7 @@ impl KernelWorker {
                 op_features,
                 detail,
                 preview,
+                probes,
             })
             .is_ok()
         {
@@ -440,6 +446,7 @@ fn worker_loop(
                 op_features,
                 detail,
                 preview,
+                probes,
             } => {
                 let started = Instant::now();
                 // The edited feature's ops, first to last.
@@ -448,11 +455,13 @@ fn worker_loop(
                     let last = op_features.iter().rposition(|f| *f == feature)?;
                     Some(first..last + 1)
                 });
-                match kernel.execute_solid_chain_previewing(&ops, &detail, range) {
+                let asked: Vec<kernel_api::ChainProbe> = probes.iter().map(|p| p.probe).collect();
+                match kernel.execute_solid_chain_probing(&ops, &detail, range, &asked) {
                     Ok(result) => KernelResponse::SolidBuilt {
                         body_id,
                         result,
                         elapsed: started.elapsed(),
+                        probes,
                     },
                     Err(err) => KernelResponse::SolidFailed {
                         body_id,

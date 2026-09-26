@@ -261,7 +261,16 @@ impl DocumentService {
                     .cloned()
                     .or_else(|| document.get_feature_data(id).cloned())
             };
-            if owner.derive(node, &mut values, &values_of) {
+            let mut moved = owner.derive(node, &mut values, &values_of);
+            // A datum takes what the last build found of what it stands on.
+            if node.workbench_id.as_str() == crate::datum::DATUM_KIND {
+                moved |= crate::datum::derive(
+                    &mut values,
+                    document.probed_references(node.id),
+                    &values_of,
+                );
+            }
+            if moved {
                 evaluation.data.insert(node.id, values);
             }
         }

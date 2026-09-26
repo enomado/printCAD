@@ -246,14 +246,17 @@ impl PartDesignWorkbench {
                 TaskKind::Part => PartFeature::from_json(&task.snapshot)
                     .map(|f| f.dependencies())
                     .unwrap_or_default(),
-                TaskKind::Datum => Vec::new(),
+                TaskKind::Datum => core_document::DatumFeature::from_json(&task.snapshot)
+                    .map(|d| d.dependencies())
+                    .unwrap_or_default(),
             };
             if ctx
                 .document
                 .update_feature_data(task.feature, task.snapshot)
                 .is_ok()
             {
-                if !deps.is_empty() {
+                let now = ctx.document.feature_tree().dependencies(task.feature);
+                if !deps.is_empty() || (task.kind == TaskKind::Datum && now != deps) {
                     ctx.document.set_feature_dependencies(task.feature, deps);
                 }
                 // The formulas and the name as they were: a formula typed
@@ -505,6 +508,7 @@ impl PartDesignWorkbench {
             // A sketch drawn on this datum follows it (`Workbench::derive`),
             // and what stands on the sketch rebuilds.
             let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
+            crate::datum_refs::sync_dependencies(ctx, datum_id, &datum);
         }
         ui.add_space(SPACE_1);
         Card::new().padding(SPACE_2).show(ui, |ui| {

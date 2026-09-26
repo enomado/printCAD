@@ -80,6 +80,13 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
                 document.mark_feature_stale(feature);
             }
         }
+        // A datum whose references changed asks them of the solid again.
+        let asked_anew = following_datums(document, *body)
+            .into_iter()
+            .any(|(datum, asks)| document.built_against(datum) != Some(asks));
+        if asked_anew && let Some(first) = part_feature_ids(document, *body).first() {
+            document.mark_feature_stale(*first);
+        }
     }
     let pending = pending_body_rebuilds(document);
     let ready: Vec<BodyId> = pending
@@ -107,10 +114,81 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
                 let seen = tool_inputs(document, body, tool);
                 document.note_built_against(feature, seen);
             }
-            RebuildJob {
-                body,
-                plan: body_build_ops(document, body),
+            for (datum, asks) in following_datums(document, body) {
+                document.note_built_against(datum, asks);
             }
+            let plan = body_build_ops(document, body).map(|mut plan| {
+                plan.probes = datum_probes(document, body, &plan);
+                plan
+            });
+            RebuildJob { body, plan }
+        })
+        .collect()
+}
+
+/// The datums of `body` that stand on its solid, each with what it asks
+/// of the solid summed up. Read from the datum as it was made: what a
+/// build found is the answer, never the question.
+fn following_datums(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
+    use std::hash::{Hash, Hasher};
+    datums_asking(document, body)
+        .into_iter()
+        .map(|(id, _, probes)| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            serde_json::to_string(&probes)
+                .unwrap_or_default()
+                .hash(&mut hasher);
+            (id, hasher.finish())
+        })
+        .collect()
+}
+
+/// The datums of `body` with references to find again on its solid: id,
+/// place in the history and the probes.
+fn datums_asking(
+    document: &Document,
+    body: BodyId,
+) -> Vec<(FeatureId, u64, Vec<kernel_api::ShapeProbe>)> {
+    let mut datums: Vec<(FeatureId, u64, Vec<kernel_api::ShapeProbe>)> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| {
+            n.workbench_id.as_str() == core_document::DATUM_KIND
+                && n.body == Some(body)
+                && !n.suppressed
+        })
+        .filter_map(|(id, n)| {
+            let datum = core_document::DatumFeature::from_json(&n.data).ok()?;
+            let probes = datum.probes();
+            (!probes.is_empty()).then_some((*id, n.seq, probes))
+        })
+        .collect();
+    datums.sort_by_key(|(id, seq, _)| (*seq, *id));
+    datums
+}
+
+/// What the datums of `body` ask of its solid, each of the solid the
+/// features before it make.
+pub fn datum_probes(
+    document: &Document,
+    body: BodyId,
+    plan: &BuildPlan,
+) -> Vec<core_document::PlanProbe> {
+    let seq_of = |id: &FeatureId| document.get_feature_meta(*id).map(|n| n.seq);
+    datums_asking(document, body)
+        .into_iter()
+        .flat_map(|(feature, seq, probes)| {
+            let after_op = plan
+                .op_features
+                .iter()
+                .take_while(|f| seq_of(f).is_some_and(|s| s < seq))
+                .count();
+            probes
+                .into_iter()
+                .map(move |probe| core_document::PlanProbe {
+                    feature,
+                    probe: kernel_api::ChainProbe { after_op, probe },
+                })
         })
         .collect()
 }
@@ -262,6 +340,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
     let mut plan = BuildPlan {
         ops: Vec::with_capacity(features.len()),
         op_features: Vec::with_capacity(features.len()),
+        probes: Vec::new(),
     };
     // Chain indices of each feature's ops, for pattern `originals` lookups.
     let mut feature_ops: std::collections::HashMap<FeatureId, Vec<usize>> =

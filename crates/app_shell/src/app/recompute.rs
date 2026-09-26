@@ -36,6 +36,7 @@ impl PrintCadApp {
                         plan.op_features.iter().map(|id| id.0).collect(),
                         TessellationSettings::default(),
                         preview,
+                        plan.probes,
                     );
                 }
                 Err(err) => {

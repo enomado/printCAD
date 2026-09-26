@@ -1278,7 +1278,7 @@ pub fn datum_editor(
     feature_id: FeatureId,
     datum: &mut core_document::DatumFeature,
 ) -> bool {
-    use core_document::{BasePlane, DatumAttachment, DatumShape};
+    use core_document::DatumShape;
     let mut changed = false;
 
     match &mut datum.shape {
@@ -1288,55 +1288,7 @@ pub fn datum_editor(
         DatumShape::Point => {}
     }
 
-    ui.horizontal(|ui| {
-        label_cell(ui, "Attached to");
-        egui::ComboBox::from_id_salt(("datum_attach", feature_id))
-            .selected_text(datum.attachment.label())
-            .show_ui(ui, |ui| {
-                for plane in BasePlane::ALL {
-                    let candidate = DatumAttachment::BasePlane(plane);
-                    if ui
-                        .selectable_label(datum.attachment == candidate, plane.label())
-                        .clicked()
-                        && datum.attachment != candidate
-                    {
-                        datum.attachment = candidate;
-                        changed = true;
-                    }
-                }
-                let is_face = matches!(datum.attachment, DatumAttachment::FlatFace { .. });
-                let can_pick = ctx.selected_face.is_some();
-                if ui
-                    .add_enabled(
-                        can_pick || is_face,
-                        egui::Button::selectable(is_face, "Picked face"),
-                    )
-                    .on_hover_text("Click a face in the viewport first")
-                    .clicked()
-                    && let Some(face) = picked_face(ctx)
-                {
-                    datum.attachment = DatumAttachment::FlatFace {
-                        point: face.point,
-                        normal: face.normal,
-                    };
-                    changed = true;
-                }
-            });
-    });
-    if matches!(datum.attachment, DatumAttachment::FlatFace { .. })
-        && ctx.selected_face.is_some()
-        && ui
-            .button("Re-pick from selected face")
-            .on_hover_text("Move the attachment to the currently selected face")
-            .clicked()
-        && let Some(face) = picked_face(ctx)
-    {
-        datum.attachment = DatumAttachment::FlatFace {
-            point: face.point,
-            normal: face.normal,
-        };
-        changed = true;
-    }
+    changed |= crate::datum_panel::attachment_editor(ui, ctx, feature_id, datum);
 
     // One row each: side by side they are wider than the panel.
     let [x, y, n] = &mut datum.offset.translation;

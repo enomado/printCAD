@@ -319,6 +319,9 @@ impl Headless {
         // A plan that fails keeps its body's features clean, so the loop
         // ends; the bound is a guard, not the expected way out.
         for _ in 0..32 {
+            // What stands on a solid just built follows it before the next
+            // round is planned.
+            self.registry.evaluate(&mut self.document);
             let jobs = self.registry.rebuild_jobs(&mut self.document);
             if jobs.is_empty() {
                 break;
@@ -333,14 +336,23 @@ impl Headless {
                         }
                     }
                     Ok(plan) => {
-                        match kernel
-                            .execute_solid_chain(&plan.ops, &TessellationSettings::default())
-                        {
-                            Ok(result) => crate::app::recompute::store_built_solid(
-                                &mut self.document,
-                                body,
-                                result,
-                            ),
+                        let asked: Vec<kernel_api::ChainProbe> =
+                            plan.probes.iter().map(|p| p.probe).collect();
+                        match kernel.execute_solid_chain_probing(
+                            &plan.ops,
+                            &TessellationSettings::default(),
+                            None,
+                            &asked,
+                        ) {
+                            Ok(result) => {
+                                self.document
+                                    .store_probe_answers(&plan.probes, &result.probes);
+                                crate::app::recompute::store_built_solid(
+                                    &mut self.document,
+                                    body,
+                                    result,
+                                );
+                            }
                             Err(err) => {
                                 if let Some(feature) = plan.op_features.get(err.op_index) {
                                     self.document

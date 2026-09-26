@@ -722,9 +722,11 @@ impl Workbench for WasmWorkbench {
                             .map(|f| crate::host::feature_id(f))
                             .collect();
                         match features {
-                            Ok(op_features) if op_features.len() == ops.len() => {
-                                Ok(BuildPlan { ops, op_features })
-                            }
+                            Ok(op_features) if op_features.len() == ops.len() => Ok(BuildPlan {
+                                ops,
+                                op_features,
+                                probes: Vec::new(),
+                            }),
                             Ok(_) => Err(BuildError {
                                 feature: None,
                                 message: "the plan names a feature for each op, and it does not"
@@ -736,10 +738,7 @@ impl Workbench for WasmWorkbench {
                             }),
                         }
                     }
-                    bench_api::Plan::Empty => Ok(BuildPlan {
-                        ops: Vec::new(),
-                        op_features: Vec::new(),
-                    }),
+                    bench_api::Plan::Empty => Ok(BuildPlan::default()),
                     bench_api::Plan::Error { feature, message } => Err(BuildError {
                         feature: feature.and_then(|f| crate::host::feature_id(&f).ok()),
                         message,

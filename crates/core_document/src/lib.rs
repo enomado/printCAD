@@ -39,7 +39,8 @@ pub use command::{
 };
 pub use configurations::{CONFIGURATIONS_KIND, Configuration, Configurations};
 pub use datum::{
-    AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame, DatumShape,
+    AnchorCircle, AttachmentOffset, BasePlane, DATUM_KIND, DatumAttachment, DatumFeature,
+    DatumFrame, DatumShape, EdgeAnchor, EdgeSpot, FaceAnchor, PlaneAnchor, PointAnchor,
     datums_of_body,
 };
 pub use evaluate::{Evaluation, Parameter, SlotValue};
@@ -50,7 +51,7 @@ pub use feature::{
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
-pub use rebuild::{BuildError, BuildPlan, RebuildJob};
+pub use rebuild::{BuildError, BuildPlan, PlanProbe, ProbedReferences, RebuildJob};
 pub use runtime::{
     CameraOrientRequest, EdgeCircle, EdgeRef, FaceRef, HookOutcome, HostRequest, InputResult,
     KeyCode, LogEntry, LogLevel, MouseButton, SketchAttachRequest, WorkbenchInputEvent,
@@ -174,6 +175,10 @@ pub struct Document {
     /// up. Derived on each replica, never an op.
     #[serde(skip)]
     built_against: HashMap<FeatureId, u64>,
+    /// What the last build found of each feature's references on its
+    /// body's solid. Derived on each replica, never an op.
+    #[serde(skip)]
+    probed: HashMap<FeatureId, rebuild::ProbedReferences>,
 }
 
 /// Why a feature cannot move a step in its body's history.
@@ -362,6 +367,7 @@ impl Document {
             evaluated: Evaluated::default(),
             next_geometry_revision: 0,
             built_against: HashMap::new(),
+            probed: HashMap::new(),
         }
     }
 
@@ -1605,6 +1611,46 @@ impl Document {
     /// so a later change to it can be told. Derived state: no op.
     pub fn note_built_against(&mut self, feature: FeatureId, inputs: u64) {
         self.built_against.insert(feature, inputs);
+    }
+
+    /// What the last build found of `feature`'s references on its body's
+    /// solid.
+    pub fn probed_references(&self, feature: FeatureId) -> Option<&rebuild::ProbedReferences> {
+        self.probed.get(&feature)
+    }
+
+    /// Keep what a build found of `feature`'s references. Derived state:
+    /// no op, and the document is not marked edited; when it differs from
+    /// what was kept, the formulas and what follows from them are worked
+    /// out again.
+    pub fn set_probed_references(
+        &mut self,
+        feature: FeatureId,
+        references: rebuild::ProbedReferences,
+    ) {
+        if self.probed.get(&feature) != Some(&references) {
+            self.probed.insert(feature, references);
+            self.mutation_seq = self.mutation_seq.wrapping_add(1);
+        }
+    }
+
+    /// Keep what a build found of its features' references (`answers` to
+    /// `asked`, in order). A feature whose reference was not found carries
+    /// the reason as its error, and keeps its references as they were.
+    pub fn store_probe_answers(
+        &mut self,
+        asked: &[rebuild::PlanProbe],
+        answers: &[Result<kernel_api::ProbeAnswer, String>],
+    ) {
+        for (feature, references) in rebuild::sort_answers(asked, answers) {
+            if let Some(Err(e)) = references.answers.iter().find(|a| a.is_err()) {
+                self.set_feature_error(
+                    feature,
+                    Some(format!("what it stands on is not found: {e}")),
+                );
+            }
+            self.set_probed_references(feature, references);
+        }
     }
 
     /// Mark `feature` for rebuilding because something it is built from

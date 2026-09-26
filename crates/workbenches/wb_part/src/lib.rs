@@ -7,6 +7,9 @@ mod build;
 mod centre;
 mod commands;
 #[cfg(feature = "egui")]
+mod datum_panel;
+mod datum_refs;
+#[cfg(feature = "egui")]
 mod editors;
 mod feature;
 mod generators;
@@ -606,8 +609,10 @@ impl PartDesignWorkbench {
         Ok(feature)
     }
 
-    /// Create a datum feature anchored to the selected face (or the XY base
-    /// plane) and select it for editing.
+    /// Create a datum feature anchored to what is picked (on a face; along
+    /// an edge for a line, at a circle's centre for a point, square to the
+    /// edge otherwise; the XY base plane with nothing picked) and select it
+    /// for editing.
     fn insert_datum(&mut self, ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResult {
         use core_document::{AttachmentOffset, DatumAttachment, DatumFeature, DatumShape};
         let Some(body) = Self::target_body(ctx) else {
@@ -620,18 +625,33 @@ impl PartDesignWorkbench {
             "part.coordinate_system" => DatumShape::CoordinateSystem { size: 20.0 },
             _ => DatumShape::Point,
         };
-        let attachment = match ctx.selected_face_in(body) {
-            Some(face) => DatumAttachment::FlatFace {
-                point: face.point,
-                normal: face.normal,
+        let on_body = ctx.selected_body_id == Some(body.0);
+        let edge = ctx
+            .selected_edges_in(body)
+            .first()
+            .map(|edge| datum_refs::edge_anchor(edge, edge.body == body.0));
+        let attachment = match (ctx.selected_face_in(body), edge) {
+            (Some(face), _) => DatumAttachment::Face {
+                face: datum_refs::face_anchor(&face, on_body),
             },
-            None => DatumAttachment::BasePlane(core_document::BasePlane::XY),
+            (None, Some(edge)) => match shape {
+                DatumShape::Line { .. } => DatumAttachment::AlongEdge { edge },
+                DatumShape::Point if edge.circle.is_some() => DatumAttachment::CurveCentre { edge },
+                _ => DatumAttachment::NormalToEdge {
+                    edge,
+                    spot: core_document::EdgeSpot::Picked,
+                },
+            },
+            (None, None) => DatumAttachment::BasePlane(core_document::BasePlane::XY),
         };
-        let datum = DatumFeature {
+        let mut datum = DatumFeature {
             shape,
             attachment,
             offset: AttachmentOffset::default(),
         };
+        if let Err(problem) = datum_refs::settle(ctx, body, &mut datum) {
+            ctx.log_warn(format!("The datum stays where it was picked: {problem}"));
+        }
         let name = Self::next_feature_name(ctx, shape.label());
         match ctx
             .document

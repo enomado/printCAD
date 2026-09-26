@@ -144,12 +144,16 @@ impl PrintCadApp {
                     body_id,
                     result,
                     elapsed,
+                    probes,
                 } => {
                     let bid = BodyId(body_id);
                     if !self.session.document.bodies().iter().any(|b| b.id == bid) {
                         // Body deleted (e.g. undo) while the rebuild ran.
                         return;
                     }
+                    self.session
+                        .document
+                        .store_probe_answers(&probes, &result.probes);
                     let mut result = result;
                     match result.preview.take() {
                         Some(preview) if self.session.preview_feature.is_some() => {

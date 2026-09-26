@@ -143,7 +143,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
 - `core_document`: Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context, snapshot undo
   (`undo.rs`), workbench registry (`service.rs`), core datums (`datum.rs`:
-  plane/line/point/coordinate system + attachment + offset, shared across workbenches).
+  plane/line/point/coordinate system + attachment + offset, shared across workbenches;
+  an attachment on its own body's solid (a face, edge or point picked, a
+  circle's centre, the centre of mass and axes of inertia) keeps its picks
+  as `ShapeProbe`s, which Part Design's plan asks of the solid where the
+  datum stands in the history (`BuildPlan::probes`, answered by
+  `execute_solid_chain_probing`); the answers are derived state
+  (`Document::store_probe_answers`) that `datum::derive` folds into the
+  datum's values, so it and what is built on it follow the solid).
 - `doc_server`: the document server: `printcad-serverd` binary +
   `DaemonClient`/`DirectFiles` implementations of the `DocumentServer` trait;
   length-prefixed JSON frames with the container bytes beside them, never
