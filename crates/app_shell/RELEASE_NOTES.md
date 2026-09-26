@@ -34,6 +34,11 @@ version first.
 - Dragging with Trim trims every curve the pointer crosses.
 - Arc length, the gap between two curves, radius or diameter by kind, the angle two curves make where they meet, and refraction; an option to take away the older constraints a new one makes redundant.
 
+- Show internal geometry adds an ellipse's axes and foci, a conic's axis and focus, or a spline's control polygon, tied to the curve.
+- Intersection references: the curves where picked faces cross the sketch plane, kept up to date.
+- Section view, kept per sketch, cuts away everything in front of the sketch plane while editing.
+- Constraint symbols park on a second layer, and the constraint list filters by kind, name, reference, selection and relation.
+- Remove axis alignment turns horizontal and vertical constraints into parallel and perpendicular ones so a group turns as a whole.
 ### Part Design
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, additive and subtractive, and booleans between bodies.
 - Holes to standard sizes, fillets and chamfers on picked edges, draft, thickness, and linear, polar and mirrored patterns.
@@ -45,6 +50,10 @@ version first.
 - Revolution and Groove stop to the first, to the last or up to a face, and turn about a sketch line, a datum line or a picked edge.
 - Holes to ISO metric coarse and fine, unified inch, Whitworth and pipe thread standards, with class and hand; spotfaces, counterdrills and screw seats; angled drill points and tapered walls. See the Hole guide.
 - Generators make an involute gear, a chain sprocket or a stepped shaft from their numbers, as a sketch that rebuilds when a number changes.
+- Datums attach tangent to a face, through three points, square to or along an edge, through two points, where two planes meet, at a circle's centre, and at a body's centre of mass and inertia axes; one picked on its body's solid follows it.
+- Borrow takes another body's sketch, faces or edges into a body, live or frozen: a hole through two bodies, one master sketch for several, a pad up to another body's face.
+- Patterns run along a picked edge, a datum line or a sketch's axis, with uneven spacing or a step angle; fillets and chamfers follow tangent edges.
+- Pipes take an orientation (standard, Frenet, a guide path, a binormal), a corner mode and extra sections; helices grow per turn, and a subtractive helix can keep what is inside it.
 
 ### Assembly
 - Bodies can be moved and turned, and keep their own geometry as it was made.
