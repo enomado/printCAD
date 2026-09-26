@@ -480,13 +480,18 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 let hole_ops = hole_ops(document, &feature).map_err(&fail)?;
                 plan.ops.extend(hole_ops);
             }
-            PartFeature::Fillet { radius, edges } => {
+            PartFeature::Fillet {
+                radius,
+                edges,
+                follow_tangent,
+            } => {
                 if *radius <= 0.0 {
                     return Err(fail("fillet radius must be positive".into()));
                 }
                 plan.ops.push(SolidOp::Fillet {
                     radius: *radius as f64,
                     edges: edge_selection(edges),
+                    follow_tangent: *follow_tangent,
                 });
             }
             PartFeature::Chamfer {
@@ -496,6 +501,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 angle_deg,
                 flip,
                 edges,
+                follow_tangent,
             } => {
                 if *size <= 0.0 {
                     return Err(fail("chamfer size must be positive".into()));
@@ -523,6 +529,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     spec,
                     flip: *flip,
                     edges: edge_selection(edges),
+                    follow_tangent: *follow_tangent,
                 });
             }
             PartFeature::Draft {
@@ -2375,7 +2382,8 @@ mod tests {
         assert!(
             !PartFeature::Fillet {
                 radius: 1.0,
-                edges: crate::feature::EdgeSel::All
+                edges: crate::feature::EdgeSel::All,
+                follow_tangent: false,
             }
             .can_refine()
         );

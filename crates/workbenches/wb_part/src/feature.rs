@@ -848,6 +848,10 @@ pub enum PartFeature {
         radius: f32,
         #[serde(default)]
         edges: EdgeSel,
+        /// Every edge meeting a selected one tangentially is taken too, on
+        /// along the chain.
+        #[serde(default)]
+        follow_tangent: bool,
     },
     Chamfer {
         size: f32,
@@ -861,6 +865,10 @@ pub enum PartFeature {
         flip: bool,
         #[serde(default)]
         edges: EdgeSel,
+        /// Every edge meeting a selected one tangentially is taken too, on
+        /// along the chain.
+        #[serde(default)]
+        follow_tangent: bool,
     },
     Draft {
         angle_deg: f32,
@@ -1444,6 +1452,26 @@ mod tests {
             spacings: Vec::new(),
         };
         assert_eq!(pattern.dependencies(), vec![a]);
+    }
+
+    #[test]
+    fn an_old_fillet_or_chamfer_takes_its_edges_alone() {
+        let fillet = serde_json::json!({ "Fillet": { "radius": 1.0 } });
+        assert!(matches!(
+            PartFeature::from_json(&fillet).unwrap(),
+            PartFeature::Fillet {
+                follow_tangent: false,
+                ..
+            }
+        ));
+        let chamfer = serde_json::json!({ "Chamfer": { "size": 1.0 } });
+        assert!(matches!(
+            PartFeature::from_json(&chamfer).unwrap(),
+            PartFeature::Chamfer {
+                follow_tangent: false,
+                ..
+            }
+        ));
     }
 
     #[test]

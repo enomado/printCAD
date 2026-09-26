@@ -917,9 +917,7 @@ pub enum BoolKind {
 pub enum SolidOp {
     /// Start the chain from a snapshot of another solid, in the native
     /// format `SolidBuildResult::brep_blob` carries. Only ever the first op.
-    Shape {
-        brep: Vec<u8>,
-    },
+    Shape { brep: Vec<u8> },
     Sweep {
         profile: Profile,
         kind: SweepKind,
@@ -953,14 +951,22 @@ pub enum SolidOp {
         placement: Placement,
         op: BooleanOp,
     },
+    /// Round the selected edges; with `follow_tangent`, every edge meeting
+    /// one of them tangentially joins the selection, and so on along the
+    /// chain.
     Fillet {
         radius: f64,
         edges: EdgeSelection,
+        #[serde(default)]
+        follow_tangent: bool,
     },
+    /// Bevel the selected edges, taking tangent chains as a fillet does.
     Chamfer {
         spec: ChamferSpec,
         flip: bool,
         edges: EdgeSelection,
+        #[serde(default)]
+        follow_tangent: bool,
     },
     /// Tilt the selected faces by `angle_deg` about their intersection with
     /// the neutral plane.

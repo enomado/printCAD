@@ -626,6 +626,7 @@ fn fillet_and_chamfer_modify_all_edges() {
                 SolidOp::Fillet {
                     radius: 2.0,
                     edges: EdgeSelection::All,
+                    follow_tangent: false,
                 },
             ],
             &detail,
@@ -646,6 +647,7 @@ fn fillet_and_chamfer_modify_all_edges() {
                     spec: ChamferSpec::EqualDistance { distance: 1.5 },
                     flip: false,
                     edges: EdgeSelection::All,
+                    follow_tangent: false,
                 },
             ],
             &detail,
@@ -672,6 +674,7 @@ fn an_edge_pick_far_from_every_edge_fails() {
                 SolidOp::Fillet {
                     radius: 2.0,
                     edges: EdgeSelection::Near(vec![point]),
+                    follow_tangent: false,
                 },
             ],
             &detail,
@@ -706,6 +709,7 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
                 SolidOp::Fillet {
                     radius: 2.0,
                     edges: EdgeSelection::Picked(vec![EdgeProbe { point, direction }]),
+                    follow_tangent: false,
                 },
             ],
             &detail,
@@ -745,6 +749,7 @@ fn fillet_of_faces_selection_uses_nearest_face() {
                 SolidOp::Fillet {
                     radius: 2.0,
                     edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
+                    follow_tangent: false,
                 },
             ],
             &detail,
@@ -1086,6 +1091,7 @@ fn chain_error_reports_failing_op_index() {
                 SolidOp::Fillet {
                     radius: 500.0, // impossibly large for a 10 mm box
                     edges: EdgeSelection::All,
+                    follow_tangent: false,
                 },
             ],
             &detail,
@@ -1205,6 +1211,7 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
                 SolidOp::Fillet {
                     radius: 2.0,
                     edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
+                    follow_tangent: false,
                 },
             ],
             &TessellationSettings::default(),
@@ -1235,6 +1242,7 @@ fn chamfers_of_one_face_meet_mitred_at_its_corners() {
                     spec: ChamferSpec::EqualDistance { distance: 1.0 },
                     flip: false,
                     edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
+                    follow_tangent: false,
                 },
             ],
             &TessellationSettings::default(),
@@ -1275,6 +1283,7 @@ fn fillets_of_three_edges_round_their_corner() {
                         [20.0, 10.0, 10.0],
                         [20.0, 20.0, 5.0],
                     ]),
+                    follow_tangent: false,
                 },
             ],
             &fine_detail(),
@@ -2093,6 +2102,7 @@ fn a_chamfer_wider_than_its_face_is_refused() {
                 spec: ChamferSpec::EqualDistance { distance: 12.0 },
                 flip: false,
                 edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
+                follow_tangent: false,
             },
         ],
         &TessellationSettings::default(),
@@ -2228,6 +2238,7 @@ fn a_fillet_wider_than_its_face_is_refused() {
             SolidOp::Fillet {
                 radius: 12.0,
                 edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
+                follow_tangent: false,
             },
         ],
         &TessellationSettings::default(),

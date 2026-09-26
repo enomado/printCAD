@@ -507,6 +507,16 @@ fn edge_sel_editor(
     changed
 }
 
+/// The switch that makes a dress-up take the edges tangent to its own.
+fn tangent_row(ui: &mut Ui, follow_tangent: &mut bool) -> bool {
+    check_row(ui, follow_tangent, "Follow tangent edges")
+        .on_hover_text(
+            "Take every edge that runs on smoothly from a selected one, \
+             such as the round of a filleted corner and the side past it",
+        )
+        .changed()
+}
+
 /// The picked edges, each removable, and a button that adds whatever is
 /// picked in the viewport.
 fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<EdgePick>) -> bool {
@@ -1896,9 +1906,14 @@ pub fn feature_editor(
         PartFeature::Hole { .. } => {
             changed |= hole::hole_editor(ui, ctx, fx, body, feature_id, feature);
         }
-        PartFeature::Fillet { radius, edges } => {
+        PartFeature::Fillet {
+            radius,
+            edges,
+            follow_tangent,
+        } => {
             changed |= mm_drag(ui, fx, radius, "Radius:");
             changed |= edge_sel_editor(ui, ctx, edges, ("fillet_edges", feature_id));
+            changed |= tangent_row(ui, follow_tangent);
         }
         PartFeature::Chamfer {
             size,
@@ -1907,6 +1922,7 @@ pub fn feature_editor(
             angle_deg,
             flip,
             edges,
+            follow_tangent,
         } => {
             ui.horizontal(|ui| {
                 label_cell(ui, "Type");
@@ -1938,6 +1954,7 @@ pub fn feature_editor(
                 }
             }
             changed |= edge_sel_editor(ui, ctx, edges, ("chamfer_edges", feature_id));
+            changed |= tangent_row(ui, follow_tangent);
         }
         PartFeature::Draft {
             angle_deg,

@@ -444,7 +444,14 @@ impl PartDesignWorkbench {
             "part.fillet" => {
                 need_material(has_solid)?;
                 let edges = Self::selected_edges(ctx, body);
-                (PartFeature::Fillet { radius: 1.0, edges }, "Fillet")
+                (
+                    PartFeature::Fillet {
+                        radius: 1.0,
+                        edges,
+                        follow_tangent: true,
+                    },
+                    "Fillet",
+                )
             }
             "part.chamfer" => {
                 need_material(has_solid)?;
@@ -457,6 +464,7 @@ impl PartDesignWorkbench {
                         angle_deg: 45.0,
                         flip: false,
                         edges,
+                        follow_tangent: true,
                     },
                     "Chamfer",
                 )

@@ -319,6 +319,7 @@ fn fillet_feature_rounds_the_pad_through_the_full_stack() {
         PartFeature::Fillet {
             radius: 2.0,
             edges: wb_part::EdgeSel::All,
+            follow_tangent: false,
         },
         "Fillet".into(),
         Some(body),
@@ -705,6 +706,7 @@ fn bore_rim_fillets() {
                 point: [26.0, 15.0, 12.0],
                 direction: [0.0, 1.0, 0.0],
             }]),
+            follow_tangent: false,
         },
         "Fillet".into(),
         Some(body),
@@ -2547,4 +2549,87 @@ fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
     let (_, min, max) = built_solid(&doc, body);
     assert!(close(min[0], -1.0) && close(min[1], -1.0), "{min:?}");
     assert!(close(max[1], 60.0), "{max:?}");
+}
+
+/// The block with its vertical edge at x = y = 20 rounded to radius 3,
+/// and a dress-up of the top edges on top of it.
+fn block_with_rounded_corner(dress_up: PartFeature) -> Result<f64, String> {
+    let (mut doc, body) = block();
+    doc.add_feature_in_body(
+        PartFeature::Fillet {
+            radius: 3.0,
+            edges: wb_part::EdgeSel::Edges(vec![wb_part::EdgePick {
+                point: [20.0, 20.0, 5.0],
+                direction: [0.0, 0.0, 1.0],
+            }]),
+            follow_tangent: false,
+        },
+        "Corner".into(),
+        Some(body),
+    )
+    .unwrap();
+    doc.add_feature_in_body(dress_up, "Top".into(), Some(body))
+        .unwrap();
+    built_volume(&doc, body)
+}
+
+/// The top edges the rounded corner joins: the side at x = 20, the round,
+/// and the side at y = 20.
+fn top_chain() -> Vec<wb_part::EdgePick> {
+    let d = 3.0 * std::f32::consts::FRAC_1_SQRT_2;
+    vec![
+        wb_part::EdgePick {
+            point: [20.0, 8.0, 10.0],
+            direction: [0.0, 1.0, 0.0],
+        },
+        wb_part::EdgePick {
+            point: [17.0 + d, 17.0 + d, 10.0],
+            direction: [-1.0, 1.0, 0.0],
+        },
+        wb_part::EdgePick {
+            point: [8.0, 20.0, 10.0],
+            direction: [1.0, 0.0, 0.0],
+        },
+    ]
+}
+
+/// A fillet or a chamfer on one top edge beside the rounded corner takes
+/// the whole tangent chain: the round and the side past it, as picking all
+/// three does; the chain stops at the block's sharp corners.
+#[test]
+fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
+    let fillet = |edges: Vec<wb_part::EdgePick>, follow_tangent| PartFeature::Fillet {
+        radius: 1.0,
+        edges: wb_part::EdgeSel::Edges(edges),
+        follow_tangent,
+    };
+    let chain = top_chain();
+    let one = vec![chain[0]];
+    let all = block_with_rounded_corner(fillet(chain.clone(), false)).unwrap();
+    let followed = block_with_rounded_corner(fillet(one.clone(), true)).unwrap();
+    assert!(
+        (all - followed).abs() < all * 1e-6,
+        "the chain followed {followed}, picked edge by edge {all}"
+    );
+    let rounded_corner = 4000.0 - 9.0 * (1.0 - std::f64::consts::FRAC_PI_4) * 10.0;
+    // Three edges' worth of material off: a round of radius 1 takes
+    // (1 - pi/4) mm² of section along some 31 mm of edge.
+    let taken = rounded_corner - followed;
+    assert!(taken > 0.2146 * 25.0 && taken < 0.2146 * 40.0, "{taken}");
+
+    let chamfer = |edges: Vec<wb_part::EdgePick>, follow_tangent| PartFeature::Chamfer {
+        size: 1.0,
+        mode: wb_part::ChamferMode::EqualDistance,
+        size2: 1.0,
+        angle_deg: 45.0,
+        flip: false,
+        edges: wb_part::EdgeSel::Edges(edges),
+        follow_tangent,
+    };
+    let all = block_with_rounded_corner(chamfer(chain, false)).unwrap();
+    let followed = block_with_rounded_corner(chamfer(one, true)).unwrap();
+    assert!(
+        (all - followed).abs() < all * 1e-6,
+        "the chain followed {followed}, picked edge by edge {all}"
+    );
 }
