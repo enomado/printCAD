@@ -351,11 +351,14 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
             depth: 3.0,
             through_all: true,
             cut: wb_part::HoleCut::None,
-            metric_index: None,
+            thread: None,
             threaded: false,
             modeled_thread: false,
             thread_depth: 0.0,
             fit: wb_part::HoleFit::Normal,
+            drill_point: wb_part::DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
             reversed: false,
         },
         "Hole".into(),
@@ -900,10 +903,6 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
             Some(body),
         )
         .unwrap();
-    let m6 = wb_part::METRIC_SIZES
-        .iter()
-        .position(|(name, ..)| *name == "M6")
-        .unwrap();
     let hole = |modeled_thread: bool| PartFeature::Hole {
         refine: false,
         sketch: holes_id,
@@ -911,11 +910,17 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         depth: 8.0,
         through_all: false,
         cut: wb_part::HoleCut::None,
-        metric_index: Some(m6),
+        thread: Some(wb_part::ThreadSpec::new(
+            wb_part::ThreadStandard::IsoMetricCoarse,
+            "M6",
+        )),
         threaded: true,
         modeled_thread,
         thread_depth: 6.0,
         fit: wb_part::HoleFit::Normal,
+        drill_point: wb_part::DrillPoint::Flat,
+        point_in_depth: false,
+        taper_deg: 0.0,
         reversed: false,
     };
     let hole_id = doc
@@ -1546,5 +1551,393 @@ fn arcs_of_parabola_and_hyperbola_closed_by_a_line_pad_to_their_areas() {
     assert!(
         (volume - expected).abs() < 1e-3 * expected,
         "volume {volume} vs {expected}"
+    );
+}
+
+/// A `size`×`size`×`height` block with one hole position at the middle of
+/// its top face, and the hole `hole` makes from that sketch: the block's
+/// volume and properties once drilled.
+fn drilled_block(
+    size: f32,
+    height: f32,
+    hole: impl FnOnce(FeatureId) -> PartFeature,
+) -> Result<kernel_api::PhysicalProperties, String> {
+    let (result, mut kernel) = drilled_block_solid(size, height, hole)?;
+    kernel
+        .physical_properties(&result.brep_blob)
+        .map_err(|e| e.to_string())
+}
+
+/// As [`drilled_block`], the built solid itself.
+fn drilled_block_solid(
+    size: f32,
+    height: f32,
+    hole: impl FnOnce(FeatureId) -> PartFeature,
+) -> Result<(kernel_api::SolidBuildResult, OgeomKernel), String> {
+    let (mut doc, body, rect_id) = setup(size, size);
+    doc.add_feature_in_body(
+        pad_feature(rect_id, height, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let top_face = wb_sketch::sketch::SketchPlane::from_face(
+        [size * 0.5, size * 0.5, height],
+        [0.0, 0.0, 1.0],
+    );
+    let mut holes = Sketch::new("holes");
+    holes.plane = top_face;
+    holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
+        size * 0.5,
+        size * 0.5,
+    ))));
+    let holes_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(holes, top_face),
+            "holes".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(hole(holes_id), "Hole".into(), Some(body))
+        .unwrap();
+    let plan = wb_part::body_build_ops(&doc, body).map_err(|e| e.message)?;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&plan.ops, &TessellationSettings::default())
+        .map_err(|e| e.to_string())?;
+    Ok((result, kernel))
+}
+
+/// A plain blind hole, `diameter` across and `depth` deep, for a test to
+/// change.
+fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> PartFeature {
+    PartFeature::Hole {
+        refine: false,
+        sketch,
+        diameter,
+        depth,
+        through_all: false,
+        cut: wb_part::HoleCut::None,
+        thread: None,
+        threaded: false,
+        modeled_thread: false,
+        thread_depth: 0.0,
+        fit: wb_part::HoleFit::Normal,
+        drill_point: wb_part::DrillPoint::Flat,
+        point_in_depth: false,
+        taper_deg: 0.0,
+        reversed: false,
+    }
+}
+
+fn with_hole(mut feature: PartFeature, edit: impl FnOnce(&mut PartFeature)) -> PartFeature {
+    edit(&mut feature);
+    feature
+}
+
+fn volume(properties: &kernel_api::PhysicalProperties) -> f64 {
+    properties.volume_mm3.expect("a closed solid")
+}
+
+use std::f64::consts::PI;
+
+/// A 118° drill point below the depth adds its cone under the wall; within
+/// the depth the wall stops short so the tip lands on the depth.
+#[test]
+fn an_angled_drill_point_cones_the_bottom_of_a_blind_hole() {
+    let block = 20.0 * 20.0 * 10.0;
+    let (r, depth) = (3.0f64, 7.0f64);
+    let cone_height = r / 59f64.to_radians().tan();
+    let cone = PI * r * r * cone_height / 3.0;
+    for in_depth in [false, true] {
+        let drilled = drilled_block(20.0, 10.0, |sketch| {
+            with_hole(plain_hole(sketch, 6.0, 7.0), |f| {
+                if let PartFeature::Hole {
+                    drill_point,
+                    point_in_depth,
+                    ..
+                } = f
+                {
+                    *drill_point = wb_part::DrillPoint::Angled { angle_deg: 118.0 };
+                    *point_in_depth = in_depth;
+                }
+            })
+        })
+        .unwrap_or_else(|e| panic!("builds: {e}"));
+        let wall = if in_depth { depth - cone_height } else { depth };
+        let want = block - PI * r * r * wall - cone;
+        assert!(
+            (volume(&drilled) - want).abs() < 0.05,
+            "point in depth {in_depth}: {} against {want}",
+            volume(&drilled)
+        );
+    }
+}
+
+/// A counterdrill: a wide bore to its depth, then a 90° cone narrowing to
+/// the hole.
+#[test]
+fn a_counterdrill_bores_then_cones_down_to_the_hole() {
+    let drilled = drilled_block(20.0, 10.0, |sketch| {
+        with_hole(plain_hole(sketch, 4.0, 8.0), |f| {
+            if let PartFeature::Hole { cut, .. } = f {
+                *cut = wb_part::HoleCut::Counterdrill {
+                    diameter: 8.0,
+                    depth: 3.0,
+                    angle_deg: 90.0,
+                };
+            }
+        })
+    })
+    .unwrap_or_else(|e| panic!("builds: {e}"));
+    // Radius 4 to 3 deep, a cone from 4 to 2 over the next 2, radius 2
+    // to 8 deep.
+    let removed = PI * 16.0 * 3.0 + PI * 2.0 / 3.0 * (16.0 + 8.0 + 4.0) + PI * 4.0 * 3.0;
+    let want = 20.0 * 20.0 * 10.0 - removed;
+    assert!(
+        (volume(&drilled) - want).abs() < 0.05,
+        "{} against {want}",
+        volume(&drilled)
+    );
+}
+
+/// A spotface faces a shallow seat around the hole.
+#[test]
+fn a_spotface_faces_a_shallow_seat() {
+    let drilled = drilled_block(20.0, 10.0, |sketch| {
+        with_hole(plain_hole(sketch, 4.0, 8.0), |f| {
+            if let PartFeature::Hole { cut, .. } = f {
+                *cut = wb_part::HoleCut::Spotface {
+                    diameter: 10.0,
+                    depth: 0.5,
+                };
+            }
+        })
+    })
+    .unwrap_or_else(|e| panic!("builds: {e}"));
+    let want = 20.0 * 20.0 * 10.0 - PI * 25.0 * 0.5 - PI * 4.0 * 7.5;
+    assert!(
+        (volume(&drilled) - want).abs() < 0.05,
+        "{} against {want}",
+        volume(&drilled)
+    );
+}
+
+/// A tapered hole narrows toward its bottom: a frustum.
+#[test]
+fn a_tapered_hole_narrows_toward_its_bottom() {
+    let drilled = drilled_block(20.0, 10.0, |sketch| {
+        with_hole(plain_hole(sketch, 6.0, 8.0), |f| {
+            if let PartFeature::Hole { taper_deg, .. } = f {
+                *taper_deg = 5.0;
+            }
+        })
+    })
+    .unwrap_or_else(|e| panic!("builds: {e}"));
+    let (r1, h) = (3.0f64, 8.0f64);
+    let r2 = r1 - h * 5f64.to_radians().tan();
+    let want = 20.0 * 20.0 * 10.0 - PI * h / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);
+    assert!(
+        (volume(&drilled) - want).abs() < 0.05,
+        "{} against {want}",
+        volume(&drilled)
+    );
+}
+
+/// A tapped 1/4 NPT hole is drilled at the thread's minor diameter where
+/// it opens and narrows 1:16 on the diameter toward its bottom.
+#[test]
+fn an_npt_hole_tapers_one_in_sixteen() {
+    let npt = wb_part::ThreadStandard::Npt.size("1/4").unwrap();
+    let drilled = drilled_block(30.0, 15.0, |sketch| {
+        with_hole(plain_hole(sketch, 1.0, 10.0), |f| {
+            if let PartFeature::Hole {
+                thread, threaded, ..
+            } = f
+            {
+                *thread = Some(wb_part::ThreadSpec::new(
+                    wb_part::ThreadStandard::Npt,
+                    "1/4",
+                ));
+                *threaded = true;
+            }
+        })
+    })
+    .unwrap_or_else(|e| panic!("builds: {e}"));
+    let r1 = npt.minor * 0.5;
+    let r2 = r1 - 10.0 / 32.0;
+    let want = 30.0 * 30.0 * 15.0 - PI * 10.0 / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);
+    assert!(
+        (volume(&drilled) - want).abs() < 0.05,
+        "{} against {want}",
+        volume(&drilled)
+    );
+}
+
+/// A modeled NPT thread follows the taper: its groove cuts into the
+/// tapered wall and no further out than the major diameter at the face.
+#[test]
+fn a_modeled_npt_thread_cuts_along_the_taper() {
+    let npt = wb_part::ThreadStandard::Npt.size("1/4").unwrap();
+    let hole = |modeled: bool| {
+        move |sketch| {
+            with_hole(plain_hole(sketch, 1.0, 10.0), |f| {
+                if let PartFeature::Hole {
+                    thread,
+                    threaded,
+                    modeled_thread,
+                    thread_depth,
+                    ..
+                } = f
+                {
+                    *thread = Some(wb_part::ThreadSpec::new(
+                        wb_part::ThreadStandard::Npt,
+                        "1/4",
+                    ));
+                    *threaded = true;
+                    *modeled_thread = modeled;
+                    *thread_depth = 6.0;
+                }
+            })
+        }
+    };
+    let tapped = volume(&drilled_block(30.0, 15.0, hole(false)).unwrap());
+    let threaded =
+        volume(&drilled_block(30.0, 15.0, hole(true)).unwrap_or_else(|e| panic!("builds: {e}")));
+    let outer = PI * (npt.major * 0.5).powi(2) * 7.0;
+    assert!(
+        threaded < tapped - 5.0 && threaded > tapped - outer,
+        "the groove takes some of the wall, not all of it: {threaded} (tapped {tapped})"
+    );
+}
+
+/// A left-hand modeled thread is the mirror of the right-hand one. A
+/// quarter pitch of thread is the tail of a groove that enters the
+/// material over its last turn, most of it past the turn's start, where
+/// the section plane sits (+X). A right-hand thread turns by the
+/// right-hand rule about the way it runs in (-Z), from +X toward -Y, so
+/// its groove's wall lies on the -Y side of the axis; a left-hand one's on
+/// the +Y side.
+#[test]
+fn a_left_hand_thread_turns_the_other_way() {
+    let hole = |left_handed: bool| {
+        move |sketch| {
+            with_hole(plain_hole(sketch, 5.0, 8.0), |f| {
+                if let PartFeature::Hole {
+                    thread,
+                    threaded,
+                    modeled_thread,
+                    thread_depth,
+                    ..
+                } = f
+                {
+                    let mut spec =
+                        wb_part::ThreadSpec::new(wb_part::ThreadStandard::IsoMetricCoarse, "M6");
+                    spec.left_handed = left_handed;
+                    *thread = Some(spec);
+                    *threaded = true;
+                    *modeled_thread = true;
+                    *thread_depth = 0.25;
+                }
+            })
+        }
+    };
+    // The mean offset from the axis of the mesh's points in the groove:
+    // out past the drilled wall (radius 2.5) and below the face.
+    let groove = |left_handed: bool| {
+        let (result, _) = drilled_block_solid(20.0, 10.0, hole(left_handed))
+            .unwrap_or_else(|e| panic!("builds: {e}"));
+        let points: Vec<[f32; 3]> = result
+            .mesh
+            .positions
+            .iter()
+            .copied()
+            .filter(|p| {
+                let r = ((p[0] - 10.0).powi(2) + (p[1] - 10.0).powi(2)).sqrt();
+                r > 2.6 && r < 3.5 && p[2] < 9.99
+            })
+            .collect();
+        assert!(!points.is_empty(), "the groove is cut");
+        let n = points.len() as f32;
+        let mean = |k: usize| points.iter().map(|p| p[k] - 10.0).sum::<f32>() / n;
+        [mean(0), mean(1)]
+    };
+    let (right, left) = (groove(false), groove(true));
+    assert!(right[1] < -0.3, "right-hand runs toward -Y: {right:?}");
+    assert!(left[1] > 0.3, "left-hand runs toward +Y: {left:?}");
+    assert!(
+        (right[0] - left[0]).abs() < 0.05 && (right[1] + left[1]).abs() < 0.05,
+        "mirror images across the XZ plane: {right:?} {left:?}"
+    );
+}
+
+/// A document written when a hole named its ISO metric size by
+/// `metric_index` still loads, as that size, and builds the same drill.
+#[test]
+fn a_metric_index_hole_loads_as_its_iso_metric_size() {
+    let (_, _, sketch) = setup(1.0, 1.0);
+    let old = serde_json::json!({
+        "Hole": {
+            "sketch": sketch.0.to_string(),
+            "diameter": 99.0,
+            "depth": 4.0,
+            "through_all": false,
+            "cut": "None",
+            "metric_index": 5,
+            "threaded": true,
+            "fit": "Normal",
+            "reversed": false
+        }
+    });
+    let feature: PartFeature = serde_json::from_value(old).unwrap();
+    let PartFeature::Hole { thread, .. } = &feature else {
+        panic!("a hole");
+    };
+    assert_eq!(
+        thread.as_ref().map(|t| (t.standard, t.size.as_str())),
+        Some((wb_part::ThreadStandard::IsoMetricCoarse, "M6"))
+    );
+    assert!((wb_part::hole_diameter(&feature) - 5.0).abs() < 1e-6);
+    let drilled = drilled_block(20.0, 10.0, |sketch| {
+        let mut json = serde_json::to_value(&feature).unwrap();
+        json["Hole"]["sketch"] = serde_json::json!(sketch.0.to_string());
+        serde_json::from_value(json).unwrap()
+    })
+    .unwrap_or_else(|e| panic!("builds: {e}"));
+    let want = 20.0 * 20.0 * 10.0 - PI * 2.5 * 2.5 * 4.0;
+    assert!(
+        (volume(&drilled) - want).abs() < 0.01,
+        "{}",
+        volume(&drilled)
+    );
+}
+
+/// An ISO 4762 seat on an M6 hole is the DIN 974-1 counterbore, 11 mm
+/// across and 6.4 deep.
+#[test]
+fn a_socket_head_seat_counterbores_to_the_table() {
+    let drilled = drilled_block(20.0, 10.0, |sketch| {
+        with_hole(plain_hole(sketch, 1.0, 9.0), |f| {
+            if let PartFeature::Hole {
+                thread, cut, fit, ..
+            } = f
+            {
+                *thread = Some(wb_part::ThreadSpec::new(
+                    wb_part::ThreadStandard::IsoMetricCoarse,
+                    "M6",
+                ));
+                *fit = wb_part::HoleFit::Normal;
+                *cut = wb_part::HoleCut::Seat {
+                    seat: wb_part::ScrewSeat::SocketHead,
+                };
+            }
+        })
+    })
+    .unwrap_or_else(|e| panic!("builds: {e}"));
+    let want = 20.0 * 20.0 * 10.0 - PI * 5.5 * 5.5 * 6.4 - PI * 3.3 * 3.3 * (9.0 - 6.4);
+    assert!(
+        (volume(&drilled) - want).abs() < 0.05,
+        "{} against {want}",
+        volume(&drilled)
     );
 }

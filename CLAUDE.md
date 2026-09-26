@@ -837,7 +837,16 @@ on the start page (`Screen::Start`); the recent list lives in
   target face's whole surface, pushed out by the offset along an offset
   surface, so flat and curved targets alike stop exactly on the face.
 - Helix with height 0 (flat spiral) is rejected; use a small pitch instead.
-- Hole threads: a threaded standard hole drills its tap diameter
-  (ISO 273 clearances otherwise); "Modeled thread" also cuts the 60°
-  metric groove along a helix out to the major diameter (`thread_cut` in
-  `wb_part/src/build.rs`).
+- Hole threads: `wb_part/src/hole_tables.rs` holds the thread standards
+  (ISO metric coarse and fine, UNC/UNF/UNEF, BSW/BSF, BSP G and Rc, NPT),
+  their classes, the ISO 4762/10642 seats and the user's `hole_cuts.json`
+  profiles (read once at start, copied into a hole when picked, so geometry
+  never depends on the machine). A hole's `thread` is a `ThreadSpec`
+  (standard, designation, class, hand); `metric_index` in old files
+  deserializes into it. A threaded standard hole drills its tap diameter
+  (a taper thread its minor diameter at the face, narrowing 1:16),
+  clearances otherwise; "Modeled thread" also cuts the standard's groove
+  (60° or 55°) along a helix out to the major diameter, along a cone for a
+  taper (`thread_cut` in `wb_part/src/build.rs`). Drill points and
+  counterdrill cones are kernel cone primitives cut at each centre.
+  `docs/HOLES.md` is the user guide.

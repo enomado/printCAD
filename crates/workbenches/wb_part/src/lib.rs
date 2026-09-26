@@ -9,6 +9,8 @@ mod commands;
 #[cfg(feature = "egui")]
 mod editors;
 mod feature;
+mod generators;
+mod hole_tables;
 mod params;
 #[cfg(feature = "egui")]
 mod task;
@@ -19,9 +21,13 @@ pub use build::{
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
-    METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
-    primitive_icon, primitive_preset,
+    ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
+    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, ThreadSpec, TransformStep, primitive_icon,
+    primitive_preset,
+};
+pub use hole_tables::{
+    CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
+    user_cut_profiles,
 };
 
 use core_document::{
@@ -374,11 +380,14 @@ impl PartDesignWorkbench {
                         depth: 10.0,
                         through_all: false,
                         cut: HoleCut::None,
-                        metric_index: None,
+                        thread: None,
                         threaded: false,
                         modeled_thread: false,
                         thread_depth: 0.0,
                         fit: HoleFit::Normal,
+                        drill_point: DrillPoint::Flat,
+                        point_in_depth: false,
+                        taper_deg: 0.0,
                         reversed: false,
                     },
                     "Hole",
@@ -755,6 +764,8 @@ impl Workbench for PartDesignWorkbench {
 
     fn configure(&self, context: &mut WorkbenchContext) {
         commands::register(context);
+        // The hole cuts the user keeps, read once as the bench starts.
+        hole_tables::user_cut_profiles();
         let action = |id: &str, label: &str, icon: &'static str, category: &str| {
             ToolDescriptor::new_action(id, label, Some(category)).icon(icon)
         };
@@ -813,6 +824,9 @@ impl Workbench for PartDesignWorkbench {
             ),
         );
         register(context, action("part.clone", "Clone", "clone", "datum"));
+        // Profiles made from numbers.
+        register(context, generators::tool());
+        generators::register(context);
         // Additive.
         register(context, action("part.pad", "Pad", "pad", "additive"));
         register(
@@ -956,6 +970,9 @@ impl Workbench for PartDesignWorkbench {
         args: &core_document::CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> core_document::CommandResult {
+        if generators::is_command(id) {
+            return generators::command(id, args, ctx);
+        }
         commands::run(self, id, args, ctx)
     }
 
@@ -1066,6 +1083,7 @@ impl Workbench for PartDesignWorkbench {
                 }
                 InputResult::consumed()
             }
+            Some("part.generator") => generators::insert(ctx, active_tool.unwrap_or_default()),
             Some("part.new_sketch") => {
                 let Some(body) = Self::target_body(ctx) else {
                     ctx.log_warn("Select a body (or one of its features) first");
@@ -1185,7 +1203,8 @@ impl Workbench for PartDesignWorkbench {
             | "part.datum_plane"
             | "part.datum_line"
             | "part.datum_point"
-            | "part.coordinate_system" => has_body,
+            | "part.coordinate_system"
+            | "part.generator" => has_body,
             "part.clone" => has_body && !has_solid,
             "part.scaled" => has_solid,
             "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,

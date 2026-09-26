@@ -23,7 +23,7 @@ const table = join(root, "crates", "ui_kit", "src", "icon_table.rs");
 // carries a neutral name. Exactly one `file-*` icon is expected.
 const DOCUMENT_ICON = "file-document";
 const SKIP = new Set([
-  "migrate", "sprocket", "involute-gear", "shape-binder", "sub-shape-binder",
+  "migrate", "shape-binder", "sub-shape-binder",
   "constraint-refraction", "switch-virtual-space", "tree-spreadsheet",
   "workbench-spreadsheet",
   // The source draws this one with a text glyph, which needs a font the

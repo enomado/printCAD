@@ -5205,6 +5205,8 @@ dependencies = [
  "kernel_api",
  "serde",
  "serde_json",
+ "settings",
+ "tracing",
  "ui_kit",
  "uuid",
  "wb_sketch",

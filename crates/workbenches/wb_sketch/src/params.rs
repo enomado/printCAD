@@ -33,6 +33,10 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
     let Ok(feature) = SketchFeature::from_json(&node.data) else {
         return Vec::new();
     };
+    // A generated sketch is its numbers; it has no dimensions of its own.
+    if feature.generator.is_some() {
+        return crate::generator::parameters(&feature);
+    }
     let mut out = Vec::new();
     for (i, c) in feature.sketch.constraints.iter().enumerate() {
         if !c.driving || dimension_value(&c.kind).is_none() {
@@ -61,11 +65,19 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
     out
 }
 
-/// Solve the sketch for the values its formulas gave it.
+/// Solve the sketch for the values its formulas gave it; a generated
+/// sketch makes its curves again from its numbers instead.
 pub fn settle(values: &mut Value) {
     let Ok(mut feature) = SketchFeature::from_json(values) else {
         return;
     };
+    if feature.generator.is_some() {
+        // Numbers that make no profile leave it empty; what is built from
+        // it says so.
+        let _ = crate::generator::regenerate(&mut feature);
+        *values = feature.to_json();
+        return;
+    }
     crate::solver::solve(&mut feature.sketch);
     *values = feature.to_json();
 }

@@ -670,6 +670,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `items` (list): Element ids
 - `on` (boolean, optional): true (the default) or false
 
+`pc.sketch.generator`: Change the numbers a generated sketch (a gear, a sprocket, a shaft) is made from, or detach it into a plain sketch.
+
+- `sketch` (id): The generated sketch
+- `detach` (boolean, optional): Keep the curves as they are and forget the numbers: a plain sketch to edit by hand
+- Other arguments: The numbers to change, such as teeth = 24 or module = 1.5; a shaft takes sections = {{length = 20, diameter = 10, chamfer = 0.5, fillet = 0}, ...}
+- Returns what the numbers come to: its diameters, or its length
+
 ### part
 
 `pc.part.pad`: Pad a sketch.
@@ -922,6 +929,36 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `to_normal` (list): That face's outward normal, {x, y, z}
 - `tolerance` (number, optional): How closely it follows the sections' centres, mm (0.02 when left out)
 - Returns {length, points, deviation, straight}: its length in mm, points along it in the body's frame, the largest distance measured from a section's centre to it, and whether it is one straight segment
+
+`pc.part.gear`: Make an involute spur gear's profile: a sketch to pad.
+
+- `body` (id, optional): The body it goes in; the selected one, else a new one
+- `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
+- `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- `name` (string, optional): Its name in the tree
+- Other arguments: module, teeth, pressure_angle_deg, profile_shift, clearance, backlash, root_fillet (in modules), bore
+- Returns the sketch's id
+
+`pc.part.sprocket`: Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad.
+
+- `body` (id, optional): The body it goes in; the selected one, else a new one
+- `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
+- `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- `name` (string, optional): Its name in the tree
+- Other arguments: pitch, roller (the roller's diameter), teeth, bore
+- Returns the sketch's id
+
+`pc.part.shaft`: Make a stepped shaft's half section: a sketch to revolve about its vertical axis.
+
+- `body` (id, optional): The body it goes in; the selected one, else a new one
+- `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
+- `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- `name` (string, optional): Its name in the tree
+- Other arguments: sections = {{length, diameter, chamfer, fillet}, ...} and start_chamfer
+- Returns the sketch's id
 
 ### asm
 

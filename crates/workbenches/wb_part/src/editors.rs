@@ -16,9 +16,11 @@ use ui_kit::widgets::{
 
 use crate::build::part_features_of_body;
 use crate::feature::{
-    ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
-    METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
+    ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, MirrorPlane, PartFeature,
+    PatternAxis, RevolveAxis, TransformStep,
 };
+
+mod hole;
 
 /// The label column of a parameter row.
 pub(crate) fn label_cell(ui: &mut Ui, label: &str) {
@@ -61,6 +63,12 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Sink Ø", "countersink_diameter"),
     ("Sink angle", "countersink_angle"),
     ("Thread depth", "thread_depth"),
+    ("Point angle", "point_angle"),
+    ("Spot Ø", "spotface_diameter"),
+    ("Spot depth", "spotface_depth"),
+    ("Counterdrill Ø", "counterdrill_diameter"),
+    ("Counterdrill depth", "counterdrill_depth"),
+    ("Counterdrill angle", "counterdrill_angle"),
     ("Turns", "turns"),
     ("Factor", "factor"),
     ("Radius", "radius"),
@@ -1365,175 +1373,8 @@ pub fn feature_editor(
             changed |= placement_editor(ui, fx, placement);
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
-        PartFeature::Hole {
-            refine: _,
-            sketch,
-            diameter,
-            depth,
-            through_all,
-            cut,
-            metric_index,
-            threaded,
-            modeled_thread,
-            thread_depth,
-            fit,
-            reversed,
-        } => {
-            if let Some(new) = sketch_combo(
-                ui,
-                ctx,
-                body,
-                ("hole_sketch", feature_id),
-                Some(*sketch),
-                "Positions:",
-            ) {
-                *sketch = new;
-                changed = true;
-            }
-            ui.horizontal(|ui| {
-                label_cell(ui, "Size");
-                let current = metric_index
-                    .and_then(|i| METRIC_SIZES.get(i).map(|(name, ..)| *name))
-                    .unwrap_or("Custom");
-                egui::ComboBox::from_id_salt(("hole_size", feature_id))
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(metric_index.is_none(), "Custom")
-                            .clicked()
-                            && metric_index.is_some()
-                        {
-                            *metric_index = None;
-                            changed = true;
-                        }
-                        for (i, (name, ..)) in METRIC_SIZES.iter().enumerate() {
-                            if ui
-                                .selectable_label(*metric_index == Some(i), *name)
-                                .clicked()
-                                && *metric_index != Some(i)
-                            {
-                                *metric_index = Some(i);
-                                changed = true;
-                            }
-                        }
-                    });
-            });
-            if metric_index.is_some() {
-                changed |= check_row(ui, threaded, "Threaded (tap drill)")
-                    .on_hover_text("Use the tap-drill diameter for later thread cutting")
-                    .changed();
-                if *threaded {
-                    if check_row(ui, modeled_thread, "Modeled thread")
-                        .on_hover_text("Cut the thread itself into the wall, to print it")
-                        .changed()
-                    {
-                        if *modeled_thread && *thread_depth <= 0.0 {
-                            *thread_depth = if *through_all { 10.0 } else { *depth };
-                        }
-                        changed = true;
-                    }
-                    if *modeled_thread {
-                        changed |= mm_drag(ui, fx, thread_depth, "Thread depth:");
-                    }
-                }
-                if !*threaded {
-                    ui.horizontal(|ui| {
-                        label_cell(ui, "Fit");
-                        egui::ComboBox::from_id_salt(("hole_fit", feature_id))
-                            .selected_text(fit.label())
-                            .show_ui(ui, |ui| {
-                                for candidate in HoleFit::ALL {
-                                    if ui
-                                        .selectable_label(*fit == candidate, candidate.label())
-                                        .clicked()
-                                        && *fit != candidate
-                                    {
-                                        *fit = candidate;
-                                        changed = true;
-                                    }
-                                }
-                            });
-                    });
-                }
-                mono_label(
-                    ui,
-                    format!(
-                        "Drill Ø {:.2} mm",
-                        crate::build::hole_diameter(&PartFeature::Hole {
-                            refine: false,
-                            sketch: *sketch,
-                            diameter: *diameter,
-                            depth: *depth,
-                            through_all: *through_all,
-                            cut: *cut,
-                            metric_index: *metric_index,
-                            threaded: *threaded,
-                            modeled_thread: *modeled_thread,
-                            thread_depth: *thread_depth,
-                            fit: *fit,
-                            reversed: *reversed,
-                        })
-                    ),
-                    FONT_SM,
-                    TEXT2,
-                );
-            } else {
-                changed |= mm_drag(ui, fx, diameter, "Diameter:");
-            }
-            changed |= check_row(ui, through_all, "Through all").changed();
-            if !*through_all {
-                changed |= mm_drag(ui, fx, depth, "Depth:");
-            }
-            ui.horizontal(|ui| {
-                label_cell(ui, "Hole cut");
-                egui::ComboBox::from_id_salt(("hole_cut", feature_id))
-                    .selected_text(cut.label())
-                    .show_ui(ui, |ui| {
-                        // Sized from the diameter the hole is drilled at,
-                        // a standard size's as much as a custom one.
-                        let drilled = match metric_index.and_then(|i| METRIC_SIZES.get(i)) {
-                            Some((_, _, tap, clearance)) if *threaded => *tap,
-                            Some((_, _, _, clearance)) => clearance[*fit as usize],
-                            None => *diameter,
-                        };
-                        let options = [
-                            HoleCut::None,
-                            HoleCut::Counterbore {
-                                diameter: drilled * 2.0,
-                                depth: 2.0,
-                            },
-                            HoleCut::Countersink {
-                                diameter: drilled * 2.0,
-                                angle_deg: 90.0,
-                            },
-                        ];
-                        for candidate in options {
-                            let is_current =
-                                std::mem::discriminant(cut) == std::mem::discriminant(&candidate);
-                            if ui.selectable_label(is_current, candidate.label()).clicked()
-                                && !is_current
-                            {
-                                *cut = candidate;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
-            match cut {
-                HoleCut::None => {}
-                HoleCut::Counterbore { diameter, depth } => {
-                    changed |= mm_drag(ui, fx, diameter, "Bore Ø:");
-                    changed |= mm_drag(ui, fx, depth, "Bore depth:");
-                }
-                HoleCut::Countersink {
-                    diameter,
-                    angle_deg,
-                } => {
-                    changed |= mm_drag(ui, fx, diameter, "Sink Ø:");
-                    changed |= deg_drag(ui, fx, angle_deg, "Sink angle:", 10.0..=170.0);
-                }
-            }
-            changed |= check_row(ui, reversed, "Reversed").changed();
+        PartFeature::Hole { .. } => {
+            changed |= hole::hole_editor(ui, ctx, fx, body, feature_id, feature);
         }
         PartFeature::Fillet { radius, edges } => {
             changed |= mm_drag(ui, fx, radius, "Radius:");

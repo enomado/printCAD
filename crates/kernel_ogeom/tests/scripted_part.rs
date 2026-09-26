@@ -154,3 +154,84 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
         .unwrap();
     assert_eq!(d["offset"]["translation"][2], serde_json::json!(20.0));
 }
+
+/// A script drills a tapped UNC hole with a pointed bottom and a
+/// counterdrill, naming the thread, the point and the cut as fields.
+#[test]
+fn a_script_drills_a_standard_hole() {
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .unwrap();
+    let mut host = Benches {
+        registry,
+        document: Document::new("scripted"),
+    };
+    let mut engine = ScriptEngine::new();
+    let out = engine.run_script(
+        r#"
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 30}
+        pc.part.pad{sketch = s, length = 12}
+        "#,
+        "plate.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let body = host.document.bodies()[0].id;
+    let out = engine.run_script(
+        &format!(
+            r#"
+            local at = pc.sketch.new{{body = "{}", plane = "XY", offset = 12}}
+            pc.sketch.circle{{sketch = at, x = 15, y = 15, radius = 2}}
+            pc.part.hole{{
+              sketch = at,
+              depth = 8,
+              thread = {{standard = "Unc", size = "1/4-20", class = "3B"}},
+              threaded = true,
+              drill_point = {{Angled = {{angle_deg = 118}}}},
+              cut = {{Counterdrill = {{diameter = 9, depth = 2, angle_deg = 90}}}},
+            }}
+            "#,
+            body.0
+        ),
+        "hole.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let hole = host
+        .document
+        .feature_tree()
+        .all_nodes()
+        .find_map(|(id, node)| {
+            let data = &node.data;
+            data.get("Hole").map(|_| (*id, data.clone()))
+        })
+        .expect("a hole");
+    let feature: wb_part::PartFeature = serde_json::from_value(hole.1).unwrap();
+    let wb_part::PartFeature::Hole { thread, .. } = &feature else {
+        panic!("a hole");
+    };
+    let thread = thread.as_ref().expect("a thread");
+    assert_eq!(thread.designation(), "1/4-20 UNC-3B");
+    // The tap drill of 1/4-20, #7.
+    assert!((wb_part::hole_diameter(&feature) - 5.1054).abs() < 1e-4);
+
+    let ops = wb_part::body_build_ops(&host.document, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap_or_else(|e| panic!("builds: {e}"));
+    let volume = kernel
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    assert!(
+        volume < 30.0 * 30.0 * 12.0 - std::f64::consts::PI * 4.5 * 4.5 * 2.0,
+        "{volume}"
+    );
+}

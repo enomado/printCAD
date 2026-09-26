@@ -64,6 +64,11 @@ impl SketchWorkbench {
                 label: format!("Edit {}", feature.sketch.name),
             };
         }
+        // A generated sketch is edited by its numbers.
+        if let (Some(id), true) = (self.active_sketch_id, feature.generator.is_some()) {
+            crate::generator::panel::show(ui, ctx, id);
+            return TaskOutcome::Open;
+        }
         let plane = feature.plane;
         let sketch = feature.sketch;
 
