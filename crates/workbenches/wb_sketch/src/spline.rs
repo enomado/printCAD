@@ -316,7 +316,7 @@ pub fn fit_chain(
         at += d;
         params.push(at / total);
     }
-    for count in (DEGREE + 1)..=max_points.min(m).max(DEGREE + 1) {
+    let fit = |count: usize| -> Option<(Vec<f64>, Vec<[f64; 2]>)> {
         let knots = clamped_uniform_knots(DEGREE, count);
         let basis = Basis::new(DEGREE as u32, count, &knots, false)?;
         let control = least_squares(&basis, points, &params, count)?;
@@ -328,11 +328,34 @@ pub fn fit_chain(
                 (c[0] - q[0]).hypot(c[1] - q[1])
             })
             .fold(0.0, f64::max);
-        if worst <= tolerance {
-            return Some((knots, control));
+        (worst <= tolerance).then_some((knots, control))
+    };
+    // More control points follow the chain more closely: grow until one
+    // count is close enough, then find the fewest between the last that
+    // was not and it.
+    // Several samples to each control point, so the fit follows the chain
+    // between its samples too rather than threading them.
+    let cap = max_points.min(m / 3).max(DEGREE + 1);
+    let mut below = DEGREE;
+    let mut count = DEGREE + 1;
+    let mut best = loop {
+        if let Some(found) = fit(count) {
+            break (count, found);
+        }
+        if count >= cap {
+            return None;
+        }
+        below = count;
+        count = (count * 3 / 2 + 1).min(cap);
+    };
+    while best.0 - below > 1 {
+        let middle = (below + best.0) / 2;
+        match fit(middle) {
+            Some(found) => best = (middle, found),
+            None => below = middle,
         }
     }
-    None
+    Some(best.1)
 }
 
 /// The control points of `basis` nearest `points` at `params` in the least

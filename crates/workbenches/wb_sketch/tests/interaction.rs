@@ -3308,3 +3308,31 @@ fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
     );
     assert!(near(&sketch, &spline, 5.0, 6.0), "keeps the others");
 }
+
+#[test]
+fn join_lights_up_for_two_curves_and_leaves_a_kink_alone() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(1.0, 1.0, "sketch.line");
+    h.click(9.0, 1.0, "sketch.line");
+    h.click(15.0, 3.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.click(5.0, 1.0, "sketch.select");
+    h.release(5.0, 1.0, "sketch.select");
+    assert!(!h.tool_enabled("sketch.join"), "one curve joins nothing");
+    h.click(12.0, 2.0, "sketch.select");
+    h.release(12.0, 2.0, "sketch.select");
+    assert!(h.tool_enabled("sketch.join"));
+    // Two lines meeting at a kink: no smooth spline keeps within the
+    // tolerance there, and the curves are left as they are.
+    h.key(KeyCode::A, Some("sketch.join"));
+    let sketch = h.sketch();
+    let splines = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::BSpline(_)))
+        .count();
+    assert_eq!((h.counts().1, splines), (2, 0));
+    assert!(h.point_at(1.0, 1.0) && h.point_at(15.0, 3.0));
+}

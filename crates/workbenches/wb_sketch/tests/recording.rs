@@ -488,3 +488,41 @@ fn a_spline_through_points_replays_too() {
     let done = summary(&sketch);
     assert_replays(&s.recorded, before, id, &done);
 }
+
+#[test]
+fn joining_a_polyline_leaves_one_spline_and_replays() {
+    let (mut s, id, before) = session_on_a_sketch();
+    s.click(1.0, 1.0, "sketch.polyline");
+    s.click(11.0, 1.0, "sketch.polyline");
+    s.event(
+        WorkbenchInputEvent::Action {
+            id: "sketch.polyline_arc".into(),
+        },
+        Some("sketch.polyline"),
+    );
+    s.click(16.0, 6.0, "sketch.polyline");
+    s.event(
+        WorkbenchInputEvent::Action {
+            id: "sketch.polyline_arc".into(),
+        },
+        Some("sketch.polyline"),
+    );
+    s.click(16.0, 16.0, "sketch.polyline");
+    s.key(KeyCode::Escape, Some("sketch.polyline"));
+    s.key(KeyCode::Escape, Some("sketch.select"));
+    let arc_middle = (
+        11.0 + 5.0 * std::f32::consts::FRAC_1_SQRT_2,
+        6.0 - 5.0 * std::f32::consts::FRAC_1_SQRT_2,
+    );
+    for (x, y) in [(6.0, 1.0), arc_middle, (16.0, 11.0)] {
+        s.click(x, y, "sketch.select");
+    }
+    s.key(KeyCode::A, Some("sketch.join"));
+    s.key(KeyCode::A, None);
+
+    let sketch = s.sketch(id);
+    let done = summary(&sketch);
+    assert_eq!(done.1, ["bspline"], "{done:?}");
+    assert!(s.recorded.iter().any(|r| r.id == "sketch.join"));
+    assert_replays(&s.recorded, before, id, &done);
+}

@@ -2730,3 +2730,91 @@ fn a_spline_stored_before_degrees_is_a_cubic() {
     let back = serde_json::to_value(&spline).unwrap();
     assert!(back.get("degree").is_none() && back.get("knots").is_none());
 }
+
+/// A line, a tangent quarter arc and a line after it: one smooth chain.
+fn smooth_chain(sketch: &mut Sketch) -> (Uuid, Uuid, [Uuid; 3]) {
+    let a = pt(sketch, 0.0, 0.0);
+    let b = pt(sketch, 10.0, 0.0);
+    let c = pt(sketch, 10.0, 5.0);
+    let d = pt(sketch, 15.0, 5.0);
+    let e = pt(sketch, 15.0, 15.0);
+    let first = line_between(sketch, a, b);
+    let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, b, d, 5.0)));
+    let last = line_between(sketch, d, e);
+    (a, e, [first, arc, last])
+}
+
+#[test]
+fn joining_a_chain_makes_one_spline_on_its_ends_that_follows_it() {
+    let mut sketch = Sketch::new("t");
+    let (a, e, curves) = smooth_chain(&mut sketch);
+    // Something meets the chain's end: it keeps meeting it.
+    let f = pt(&mut sketch, 0.0, 15.0);
+    line_between(&mut sketch, e, f);
+    line_between(&mut sketch, f, a);
+    let before = sketch.clone();
+    let selected: HashSet<Uuid> = curves.into_iter().collect();
+    let fx = join(&mut sketch, &selected, 0.01);
+    assert!(fx.changed, "{:?}", fx.log);
+    assert_eq!(arcs(&sketch), 0);
+    assert_eq!(lines(&sketch), 2, "only the two that closed the shape");
+    let spline = spline_of(&sketch);
+    assert_eq!(spline.control_points[0], a);
+    assert_eq!(*spline.control_points.last().unwrap(), e);
+    assert!(sketch.get_geometry(curves[1]).is_none());
+    // The joint points and the arc's centre went with the curves.
+    assert_eq!(
+        points(&sketch),
+        3 + spline.control_points.len() - 2,
+        "a, e, f and the inner control points"
+    );
+    // It follows the old chain: every sample of it lies near the spline.
+    let curve = spline.points(&sketch, 4000).unwrap();
+    for g in &before.geometry {
+        if !selected.contains(&g.id()) {
+            continue;
+        }
+        let samples: Vec<Vec2D> = match g {
+            GeometryElement::Line(l) => {
+                let (p, q) = (
+                    before.point_position(l.start).unwrap(),
+                    before.point_position(l.end).unwrap(),
+                );
+                (0..=20)
+                    .map(|i| Vec2D::from_glam(p.to_glam().lerp(q.to_glam(), i as f32 / 20.0)))
+                    .collect()
+            }
+            _ => (0..=20)
+                .map(|i| {
+                    let t = std::f32::consts::FRAC_PI_2 * i as f32 / 20.0;
+                    Vec2D::new(10.0 + 5.0 * t.sin(), 5.0 - 5.0 * t.cos())
+                })
+                .collect(),
+        };
+        for s in samples {
+            let nearest = curve
+                .iter()
+                .map(|p| (*p - s).to_glam().length())
+                .fold(f32::MAX, f32::min);
+            assert!(nearest < 0.02, "{s:?} is {nearest} from the spline");
+        }
+    }
+    let wires = crate::profile::extract_wires(&sketch).expect("still closed");
+    assert_eq!(wires[0].segments.len(), 3);
+}
+
+#[test]
+fn join_refuses_branches_gaps_and_circles() {
+    let mut sketch = Sketch::new("t");
+    let (_, _, curves) = smooth_chain(&mut sketch);
+    // A gap: the first and last lines alone do not meet.
+    let apart: HashSet<Uuid> = [curves[0], curves[2]].into_iter().collect();
+    let fx = join(&mut sketch, &apart, 0.01);
+    assert!(!fx.changed && fx.log.is_some());
+    // A circle never joins.
+    let c = pt(&mut sketch, 30.0, 30.0);
+    let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
+    let with_circle: HashSet<Uuid> = [curves[0], curves[1], circle].into_iter().collect();
+    assert!(!join(&mut sketch, &with_circle, 0.01).changed);
+    assert_eq!(arcs(&sketch), 1, "nothing was touched");
+}

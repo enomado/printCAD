@@ -10,6 +10,7 @@
 //! (translate/rotate/scale/mirror over the current selection).
 
 mod draw;
+mod join;
 mod modify;
 mod transform;
 
@@ -21,6 +22,7 @@ pub use draw::{
     arc_slot_shape, bspline_preview, frame_inner_corners, polygon_vertices, rect_center3_corners,
     rect3_corners, slot_corners,
 };
+pub use join::{JOIN_TOLERANCE, join};
 pub use modify::{next_stroke_crossing, trim_preview};
 pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
 

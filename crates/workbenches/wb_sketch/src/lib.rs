@@ -2194,6 +2194,11 @@ impl Workbench for SketchWorkbench {
             .icon("rectangular-array")
             .row(1),
         );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.join", "Join curves", Some("geometry.modify"))
+                .icon("bspline-degree")
+                .row(1),
+        );
         for (id, label, icon) in [
             (
                 "sketch.delete_all_geometry",
@@ -2471,6 +2476,7 @@ impl Workbench for SketchWorkbench {
                 }
                 "sketch.attach" => return self.attach_to_face(ctx),
                 "sketch.array" => return self.array_selection(ctx),
+                "sketch.join" => return self.join_selection(ctx),
                 "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
                 "sketch.carbon_copy" => {
                     return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
@@ -2730,6 +2736,9 @@ impl Workbench for SketchWorkbench {
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.array" => editing && !self.selected.is_empty(),
+            "sketch.join" => {
+                editing && self.selection_shape.all.len() - self.selection_shape.points.len() >= 2
+            }
             "sketch.toggle_driving" | "sketch.toggle_active" => {
                 editing && !self.selected_constraints.is_empty()
             }
@@ -3772,6 +3781,54 @@ impl SketchWorkbench {
         } else {
             ctx.log_warn("Select geometry and give the array at least two rows or columns");
         }
+        InputResult::consumed()
+    }
+
+    /// Merge the selected curves into one spline, recorded as `sketch.join`.
+    fn join_selection(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let before = (
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect(),
+            feature.sketch.constraints.iter().map(|c| c.id).collect(),
+        );
+        let effect = tools::join(&mut feature.sketch, &self.selected, tools::JOIN_TOLERANCE);
+        if !effect.changed {
+            if let Some(why) = effect.log {
+                ctx.log_warn(why);
+            }
+            return InputResult::consumed();
+        }
+        if let Some(log) = effect.log {
+            ctx.log_info(log);
+        }
+        if let Some(id) = self.active_sketch_id {
+            let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+            items.sort();
+            ctx.record(
+                "sketch.join",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "items": ids_json(&items),
+                })),
+                commands::made_since(&feature.sketch, &before),
+            );
+        }
+        let alive: HashSet<Uuid> = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(GeometryElement::id)
+            .collect();
+        self.selected.retain(|id| alive.contains(id));
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
         InputResult::consumed()
     }
 

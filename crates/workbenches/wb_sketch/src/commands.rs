@@ -236,6 +236,23 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.join",
+            "Merge curves that meet end to end into one B-spline following them",
+        ))
+        .param(
+            "items",
+            ParamKind::List,
+            "The lines, arcs, arcs of ellipses and open splines to merge",
+        )
+        .optional(
+            "tolerance",
+            ParamKind::Number,
+            "How far the spline may stray from the curves, mm (0.01)",
+        )
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.set_constraint",
             "Make constraints driving or reference, active or not",
         ))
@@ -550,6 +567,25 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             if !effect.changed {
                 return Err(CommandError::failed(
                     "an array needs elements and at least two rows or columns",
+                ));
+            }
+            made_since(sketch, &before)
+        }
+        "sketch.join" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            let tolerance = a
+                .opt_number("tolerance")?
+                .map_or(crate::tools::JOIN_TOLERANCE, |t| t as f32);
+            if tolerance <= 0.0 {
+                return Err(CommandError::bad("tolerance", "must be more than 0"));
+            }
+            let before = ids_of(sketch);
+            let effect = crate::tools::join(sketch, &items, tolerance);
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    effect.log.unwrap_or_else(|| "nothing to join".to_string()),
                 ));
             }
             made_since(sketch, &before)

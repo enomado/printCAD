@@ -599,6 +599,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `dy` (number): The step between rows, mm
 - Returns {elements}: what it made
 
+`pc.sketch.join`: Merge curves that meet end to end into one B-spline following them.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The lines, arcs, arcs of ellipses and open splines to merge
+- `tolerance` (number, optional): How far the spline may stray from the curves, mm (0.01)
+- Returns {elements}: what it made
+
 `pc.sketch.set_constraint`: Make constraints driving or reference, active or not.
 
 - `sketch` (id): The sketch to draw in
