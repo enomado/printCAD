@@ -927,6 +927,22 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the datum's id
 
+`pc.part.borrow`: Borrow another body's sketch, or faces and edges of its solid.
+
+- `body` (id): The body that borrows
+- `sketch` (id, optional): A sketch of another body: its profile, for this body's features
+- `from` (id, optional): Or the body whose solid lends faces and edges
+- `faces` (list, optional): With from: faces it lends, each {point, normal} in that body's own frame
+- `edges` (list, optional): With from: edges it lends, each {point, direction} in that body's own frame
+- `frozen` (boolean, optional): Keep the geometry as it is now rather than follow the source
+- `name` (string, optional): Its name in the tree
+- Returns the borrow's id
+
+`pc.part.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
+
+- `feature` (id): The borrow
+- `frozen` (boolean, optional): true (the default) takes the source as it is now; false follows it again
+
 `pc.part.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
 
 - `body` (id): The body whose solid it runs through

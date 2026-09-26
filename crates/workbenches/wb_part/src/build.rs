@@ -16,8 +16,8 @@ use wb_sketch::profile;
 use wb_sketch::sketch::{GeometryElement, Sketch};
 
 use crate::feature::{
-    DrillPoint, ExtrudeMode, FacePick, HelixMode, HoleCut, PartFeature, PatternAxis, RevolveAxis,
-    RevolveMode, ThreadSpec, TransformStep,
+    BorrowSource, DrillPoint, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode, HoleCut,
+    PartFeature, PatternAxis, RevolveAxis, RevolveMode, ThreadSpec, TransformStep,
 };
 
 /// This body's part features in creation order (the build history).
@@ -69,9 +69,12 @@ pub fn part_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
 /// either way the same job must not come back next frame.
 ///
 /// A Boolean follows its tool body: when the tool's solid is rebuilt, or
-/// either body moves, the Boolean is built again. A body waits while a
-/// tool body it takes is itself still to be planned, so it is built
-/// against the tool's new solid rather than its old one.
+/// either body moves, the Boolean is built again. A live borrow follows
+/// its source the same way (the sketch as it is now, the solid as it is
+/// built now, where the bodies sit), and what stands on it rebuilds with
+/// it. A body waits while a body whose solid it is built against is itself
+/// still to be planned, so it is built against that body's new solid
+/// rather than its old one.
 pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
     let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
     for body in &bodies {
@@ -87,15 +90,20 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
         if asked_anew && let Some(first) = part_feature_ids(document, *body).first() {
             document.mark_feature_stale(*first);
         }
+        for (feature, inputs) in borrow_inputs(document, *body) {
+            if document.built_against(feature) != Some(inputs) {
+                document.mark_feature_stale(feature);
+            }
+        }
     }
     let pending = pending_body_rebuilds(document);
     let ready: Vec<BodyId> = pending
         .iter()
         .copied()
         .filter(|body| {
-            !boolean_tools(document, *body)
+            !followed_bodies(document, *body)
                 .iter()
-                .any(|(_, tool)| pending.contains(tool) && !tools_reach(document, *tool, *body))
+                .any(|other| pending.contains(other) && !bodies_reach(document, *other, *body))
         })
         .collect();
     ready
@@ -116,6 +124,9 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
             }
             for (datum, asks) in following_datums(document, body) {
                 document.note_built_against(datum, asks);
+            }
+            for (feature, seen) in borrow_inputs(document, body) {
+                document.note_built_against(feature, seen);
             }
             let plan = body_build_ops(document, body).map(|mut plan| {
                 plan.probes = datum_probes(document, body, &plan);
@@ -204,6 +215,54 @@ fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> 
             _ => None,
         })
         .collect()
+}
+
+/// Each live borrow of `body` with what it follows now. A borrow of a
+/// body built from this one in turn follows nothing: the two would rebuild
+/// each other forever, and what stands on it says so instead.
+fn borrow_inputs(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
+    crate::borrow::borrows_of_body(document, body)
+        .into_iter()
+        .filter(|(_, borrow)| borrow.frozen.is_none())
+        .filter(|(_, borrow)| match &borrow.source {
+            BorrowSource::Solid { body: source, .. } => !bodies_reach(document, *source, body),
+            BorrowSource::Sketch(_) => true,
+        })
+        .map(|(id, borrow)| (id, crate::borrow::inputs(document, body, &borrow.source)))
+        .collect()
+}
+
+/// The bodies whose solids `body` is built against: the tool bodies of its
+/// Booleans and the sources of the faces and edges it borrows live.
+fn followed_bodies(document: &Document, body: BodyId) -> Vec<BodyId> {
+    let mut followed: Vec<BodyId> = boolean_tools(document, body)
+        .into_iter()
+        .map(|(_, tool)| tool)
+        .collect();
+    for (_, borrow) in crate::borrow::borrows_of_body(document, body) {
+        if let (None, BorrowSource::Solid { body: source, .. }) = (&borrow.frozen, &borrow.source) {
+            followed.push(*source);
+        }
+    }
+    followed
+}
+
+/// Whether `to` is among the bodies `from` is built against, or theirs,
+/// and so on: a body that reaches itself this way can never be built.
+pub(crate) fn bodies_reach(document: &Document, from: BodyId, to: BodyId) -> bool {
+    let mut stack = vec![from];
+    let mut seen: Vec<BodyId> = Vec::new();
+    while let Some(body) = stack.pop() {
+        if body == to {
+            return true;
+        }
+        if seen.contains(&body) {
+            continue;
+        }
+        seen.push(body);
+        stack.extend(followed_bodies(document, body));
+    }
+    false
 }
 
 /// Whether `to` is among the tool bodies `from` takes, or theirs, and so
@@ -736,6 +795,8 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     });
                 }
             }
+            // Lent geometry builds nothing; the features that take it do.
+            PartFeature::Borrow { .. } => {}
             PartFeature::Clone { source } => {
                 if !plan.ops.is_empty() {
                     return Err(fail("a clone can only be a body's first feature".into()));
@@ -832,7 +893,11 @@ struct Side<'a> {
 }
 
 /// Where one side of an extrusion ends, in `mode`.
-fn side_termination(mode: ExtrudeMode, side: &Side) -> Result<ExtrudeTermination, String> {
+fn side_termination(
+    document: &Document,
+    mode: ExtrudeMode,
+    side: &Side,
+) -> Result<ExtrudeTermination, String> {
     match mode {
         ExtrudeMode::Dimension | ExtrudeMode::TwoLengths => {
             if side.length <= 0.0 {
@@ -853,6 +918,15 @@ fn side_termination(mode: ExtrudeMode, side: &Side) -> Result<ExtrudeTermination
             Ok(ExtrudeTermination::UpToFace {
                 point,
                 normal,
+                offset: side.offset as f64,
+            })
+        }
+        ExtrudeMode::UpToBorrowed(borrowed) => {
+            let face = crate::borrow::kernel_face(document, &borrowed)?;
+            Ok(ExtrudeTermination::UpToFaceOf {
+                shape: face.shape,
+                transform: face.transform.map(Box::new),
+                point: face.point,
                 offset: side.offset as f64,
             })
         }
@@ -972,9 +1046,9 @@ fn extrude_op(
         _ => return Err("not a pad or a pocket".into()),
     };
     let (first_mode, second_mode) = mode.sides(mode2);
-    let termination = side_termination(first_mode, &first)?;
+    let termination = side_termination(document, first_mode, &first)?;
     let second_side = second_mode
-        .map(|mode| side_termination(mode, &second))
+        .map(|mode| side_termination(document, mode, &second))
         .transpose()?;
 
     let normal = match (profile_face, sketch) {
@@ -982,7 +1056,12 @@ fn extrude_op(
         (None, Some(sketch)) => profile::plane_of(&load_sketch(document, sketch)?.plane).normal,
         (None, None) => return Err("pick a sketch or a flat face for the profile".into()),
     };
-    let custom = direction.vector();
+    let custom = match &direction {
+        ExtrudeDirection::Borrowed(r) => {
+            Some(crate::borrow::edge(document, r)?.direction.map(f64::from))
+        }
+        other => other.vector(),
+    };
     if let Some(d) = custom {
         let d = normalize(d).map_err(|_| "the extrusion direction is zero".to_string())?;
         let n = normalize(normal).map_err(|_| "the profile has no normal".to_string())?;
@@ -1071,6 +1150,14 @@ pub(crate) fn axis_in_sketch(
                 frame.origin.map(f64::from),
                 frame.x_axis.map(f64::from),
                 "datum line",
+            )?
+        }
+        RevolveAxis::Borrowed(r) => {
+            let edge = crate::borrow::edge(document, r)?;
+            onto_plane(
+                edge.point.map(f64::from),
+                edge.direction.map(f64::from),
+                "borrowed edge",
             )?
         }
         RevolveAxis::SketchLine(id) => {
@@ -1581,6 +1668,10 @@ fn thread_cut(
 }
 
 fn load_sketch(document: &Document, sketch_id: FeatureId) -> Result<SketchFeature, String> {
+    // A sketch another body lends, where this body sees it.
+    if let Some(borrowed) = crate::borrow::sketch(document, sketch_id) {
+        return borrowed;
+    }
     // As its formulas leave it, solved.
     let data = document
         .feature_values(sketch_id)
@@ -2025,12 +2116,17 @@ fn multi_transforms(document: &Document, steps: &[TransformStep]) -> Result<Vec<
     Ok(accumulated.into_iter().skip(1).collect())
 }
 
-/// Sketches available in a body (id + display name), for re-attachment.
+/// Sketches available in a body (id + display name), for re-attachment:
+/// its own and those other bodies lend it.
 pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, String)> {
     let mut sketches: Vec<(u64, FeatureId, String)> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.body == Some(body))
+        .filter(|(id, n)| {
+            n.body == Some(body)
+                && (n.workbench_id.as_str() == "wb.sketch"
+                    || crate::borrow::lends_sketch(document, **id))
+        })
         .map(|(id, n)| (n.seq, *id, n.name.clone()))
         .collect();
     sketches.sort_by_key(|(seq, id, _)| (*seq, *id));
@@ -2132,6 +2228,18 @@ pub fn swap_consumed_sketch(
 /// Human description of the plane a feature's sketch sits on.
 pub fn sketch_plane_description(document: &Document, sketch: FeatureId) -> String {
     use wb_sketch::sketch::SketchPlane;
+    if let Some(borrowed) = crate::borrow::sketch(document, sketch) {
+        return match borrowed {
+            Ok(feature) => {
+                let p = feature.plane;
+                format!(
+                    "Borrowed @ ({:.1}, {:.1}, {:.1})  n=({:.2}, {:.2}, {:.2})",
+                    p.origin[0], p.origin[1], p.origin[2], p.normal[0], p.normal[1], p.normal[2]
+                )
+            }
+            Err(e) => e,
+        };
+    }
     let Some(data) = document.get_feature_data(sketch) else {
         return "missing sketch".to_string();
     };

@@ -330,6 +330,19 @@ pub struct PassiveGeometry {
     pub mesh: kernel_api::TriMesh,
     /// Changes whenever `mesh` would.
     pub revision: u64,
+    /// The colour it draws in while not selected or hovered.
+    pub tint: PassiveTint,
+}
+
+/// Which colour of the sketch palette a feature's 3D presence draws in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PassiveTint {
+    /// The feature's own geometry.
+    #[default]
+    Plain,
+    /// Geometry that stands for something outside its body, drawn in the
+    /// palette's external colour.
+    External,
 }
 
 /// The cursor and the view it sits in, for picking.

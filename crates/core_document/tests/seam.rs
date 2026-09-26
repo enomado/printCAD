@@ -78,6 +78,7 @@ impl Workbench for FakeBench {
                 ..Default::default()
             },
             revision: 1,
+            tint: Default::default(),
         })
     }
     fn pick_feature(

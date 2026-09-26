@@ -128,6 +128,23 @@ impl KernelQueries for OgeomQueries {
         })
     }
 
+    fn face_of(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<u8>> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        let at = Point::new(near[0], near[1], near[2]);
+        let face = crate::ops::sweep::face_at(&mut model, &root, at)
+            .map_err(other)?
+            .ok_or_else(|| {
+                other(format!(
+                    "no face of the solid lies at ({:.1}, {:.1}, {:.1})",
+                    at.x, at.y, at.z
+                ))
+            })?;
+        let copy = ogeom::algo::copied(&mut model, &face)
+            .map_err(|e| other(format!("copying the face failed: {e}")))?
+            .shape;
+        tess::write_blob(&model, &copy)
+    }
+
     fn read_dxf(&self, text: &str) -> KernelResult<kernel_api::Drawing2d> {
         crate::dxf::read_dxf(text)
     }

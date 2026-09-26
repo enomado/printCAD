@@ -1973,6 +1973,7 @@ impl Workbench for SketchWorkbench {
         Some(core_document::PassiveGeometry {
             mesh: render::sketch_to_lines(&feature.sketch, &feature.plane),
             revision: core_document::data_revision(data),
+            tint: core_document::PassiveTint::Plain,
         })
     }
 
