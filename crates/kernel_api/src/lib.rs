@@ -731,6 +731,16 @@ pub enum ExtrudeTermination {
     /// ends at the first of them it meets, moved `offset` further along the
     /// sweep (a negative offset stops short).
     UpToShape { faces: Vec<FaceProbe>, offset: f64 },
+    /// Stop on a face of another shape: the face of `shape` (a native-format
+    /// snapshot, moved by `transform`, a rigid row-major 4×4 matrix, into
+    /// the body's frame) nearest `point`, exactly on its surface whatever
+    /// its shape, pushed `offset` out along its outward normal.
+    UpToFaceOf {
+        shape: Vec<u8>,
+        transform: Option<Box<[[f64; 4]; 4]>>,
+        point: [f64; 3],
+        offset: f64,
+    },
 }
 
 /// Where a revolution stops turning.
@@ -1259,6 +1269,15 @@ pub trait KernelQueries: Send + Sync {
         near: [f64; 3],
         plane: &ProfilePlane,
     ) -> KernelResult<ProjectedEdge>;
+
+    /// The face of `brep` nearest `near` (in the shape's own frame), as a
+    /// native-format snapshot of its own: what a face taken from a solid
+    /// keeps once the solid moves on.
+    fn face_of(&self, _brep: &[u8], _near: [f64; 3]) -> KernelResult<Vec<u8>> {
+        Err(KernelError::Unsupported(
+            "taking a face out of a solid".into(),
+        ))
+    }
 
     /// The curves of a DXF drawing, given as its text.
     fn read_dxf(&self, _text: &str) -> KernelResult<Drawing2d> {

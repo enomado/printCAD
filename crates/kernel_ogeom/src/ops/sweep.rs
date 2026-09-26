@@ -2,8 +2,9 @@
 //! face of the solid.
 //!
 //! Terminations: blind prisms, through-all lengths derived from the base
-//! bounding box, and stops on a plane or on a face of the base (picked, or
-//! the first or last a ray from the profile meets), each a long prism
+//! bounding box, and stops on a plane, on a face of the base (picked, or
+//! the first or last a ray from the profile meets) or on a face of another
+//! shape (a face borrowed from another body), each a long prism
 //! trimmed by the half-space of the target's surface: a plane's, or a
 //! curved face's whole surface, so a prism stops exactly on a cylinder, a
 //! sphere or a spline. A stop on several faces takes from a long prism what
@@ -284,6 +285,26 @@ fn extrude_one_side(
             })?;
             up_to_shape(model, built, base, dir, faces, *offset, taper_deg)
         }
+        ExtrudeTermination::UpToFaceOf {
+            shape,
+            transform,
+            point,
+            offset,
+        } => {
+            let mut other = crate::chain::absorb_shape(model, shape)?;
+            if let Some(matrix) = transform {
+                other = super::pattern::moved(model, &other, matrix)?;
+            }
+            let at = point3(*point);
+            let face = face_at(model, &other, at)?.ok_or_else(|| {
+                format!(
+                    "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), where the \
+                     target face was picked",
+                    at.x, at.y, at.z
+                )
+            })?;
+            up_to_face(model, built, &other, dir, &face, *offset, taper_deg)
+        }
     }
 }
 
@@ -413,7 +434,11 @@ fn up_to_plane(
 const FACE_REACH_MM: f64 = 0.5;
 
 /// The face of `base` nearest `point`, when one comes within reach of it.
-fn face_at(model: &mut Model, base: &Shape, point: Point) -> Result<Option<Shape>, String> {
+pub(crate) fn face_at(
+    model: &mut Model,
+    base: &Shape,
+    point: Point,
+) -> Result<Option<Shape>, String> {
     let face = super::dressup::nearest_of(model, base, ShapeType::Face, point)?;
     let probe = model.add_vertex(ogeom::topo::VertexData::new(point));
     let near = ogeom::algo::distance_between_shapes(
