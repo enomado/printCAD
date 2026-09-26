@@ -21,7 +21,7 @@ pub use draw::{
     arc_slot_shape, frame_inner_corners, polygon_vertices, rect_center3_corners, rect3_corners,
     slot_corners,
 };
-pub use modify::trim_preview;
+pub use modify::{next_stroke_crossing, trim_preview};
 pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
 
 use crate::sketch::{ConstraintKind, GeometryElement, Point, Sketch, Vec2D};

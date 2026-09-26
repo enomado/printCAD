@@ -240,6 +240,9 @@ pub struct SketchWorkbench {
     dragging: Option<DragState>,
     /// Box selection in progress (select mode).
     box_select: Option<BoxSelect>,
+    /// While the trim tool's button is held: where the pointer was last,
+    /// the start of the path whose crossings trim next.
+    trim_stroke: Option<Vec2D>,
     /// Viewport position of a right press the camera is free to pan with.
     right_press: Option<(f32, f32)>,
     /// In-progress drawing-tool state.
@@ -365,6 +368,9 @@ const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
     ("sketch.mirror", "Symmetry", "symmetry-geometry"),
 ];
 
+/// The most curves one pointer move of a trim stroke trims.
+const MAX_STROKE_TRIMS: usize = 64;
+
 /// The polyline's switch between a straight and a tangent-arc segment.
 const POLYLINE_ARC_ACTION: &str = "sketch.polyline_arc";
 
@@ -489,7 +495,7 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.arc_slot" => ("Arc slot", "Click the arc center"),
         "sketch.fillet" => ("Fillet", "Click a corner point"),
         "sketch.chamfer" => ("Chamfer", "Click a corner point"),
-        "sketch.trim" => ("Trim", "Click the span to remove"),
+        "sketch.trim" => ("Trim", "Click the span to remove, or drag across spans"),
         "sketch.external" => (
             "External geometry",
             "Click edges of a solid to bring them in; Ctrl picks more",
@@ -663,6 +669,7 @@ impl SketchWorkbench {
         self.cursor = None;
         self.dragging = None;
         self.box_select = None;
+        self.trim_stroke = None;
         self.right_press = None;
         self.last_diagnosis = None;
         self.pending_focus = None;
@@ -959,8 +966,13 @@ impl SketchWorkbench {
         let Some(sketch_id) = self.active_sketch_id else {
             return;
         };
+        // A trim stroke's clicks are one call, as a shape's are.
         let fresh = match &self.draw_record {
-            Some(r) => r.tool != tool || r.sketch != sketch_id || self.tool_state.is_idle(),
+            Some(r) => {
+                r.tool != tool
+                    || r.sketch != sketch_id
+                    || (self.tool_state.is_idle() && self.trim_stroke.is_none())
+            }
             None => true,
         };
         if fresh {
@@ -1072,6 +1084,19 @@ impl SketchWorkbench {
         self.box_select = None;
 
         match tool {
+            // A press trims what it lands on and starts a stroke: dragging
+            // on trims whatever the pointer crosses.
+            Some("sketch.trim") => {
+                self.trim_stroke = None;
+                self.flush_draw_record(ctx);
+                let result = if tools::trim_preview(&feature.sketch, cursor, tol).is_some() {
+                    self.apply_tool_click(ctx, "sketch.trim", cursor, false)
+                } else {
+                    InputResult::consumed()
+                };
+                self.trim_stroke = Some(cursor);
+                result
+            }
             Some(t) if t != "sketch.select" => self.apply_tool_click(ctx, t, cursor, false),
             _ => {
                 // Select mode. Constraint glyphs sit on top of geometry, so
@@ -1241,6 +1266,29 @@ impl SketchWorkbench {
             self.store_sketch(ctx, feature);
             return InputResult::consumed();
         }
+        // A trim stroke: every curve the pointer crossed since the last
+        // move is trimmed where it was crossed, first crossed first.
+        if let Some(mut from) = self.trim_stroke
+            && tool == Some("sketch.trim")
+        {
+            let Some(to) = self.cursor else {
+                return InputResult::consumed();
+            };
+            // Each trim can leave new pieces in the way; the bound only
+            // guards against a curve that never stops being crossed.
+            for _ in 0..MAX_STROKE_TRIMS {
+                let Some(sketch) = self.get_active_sketch(ctx) else {
+                    break;
+                };
+                let Some(at) = tools::next_stroke_crossing(&sketch.sketch, from, to) else {
+                    break;
+                };
+                self.apply_tool_click(ctx, "sketch.trim", at, false);
+                from = at;
+            }
+            self.trim_stroke = Some(to);
+            return InputResult::consumed();
+        }
         // Box selection in progress: track the moving corner. Consumed so
         // the camera doesn't move underneath the box.
         if let Some(bs) = self.box_select.as_mut() {
@@ -1262,6 +1310,9 @@ impl SketchWorkbench {
     }
 
     fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if self.trim_stroke.take().is_some() {
+            return InputResult::consumed();
+        }
         if let Some(ld) = &self.label_drag {
             // The label lands: one write for the whole drag.
             let landed = ld.current.is_some();

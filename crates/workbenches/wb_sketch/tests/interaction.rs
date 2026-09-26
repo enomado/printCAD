@@ -3220,3 +3220,43 @@ fn rectangle_variants_draw_turned_rectangles_and_frames() {
     // The turned rectangle's first edge runs where it was clicked.
     assert!(h.point_at(1.0, 1.0) && h.point_at(9.0, 7.0));
 }
+
+#[test]
+fn dragging_the_trim_tool_trims_every_span_it_crosses() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // A horizontal wall and three posts through it.
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(20.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    for x in [5.0, 10.0, 15.0] {
+        h.click(x, -5.0, "sketch.line");
+        h.click(x, 5.0, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+    }
+    // Pressed on empty space, dragged across the posts above the wall.
+    h.click(2.0, 3.0, "sketch.trim");
+    h.mouse_move(8.0, 3.0, "sketch.trim");
+    h.mouse_move(18.0, 3.0, "sketch.trim");
+    h.release(18.0, 3.0, "sketch.trim");
+    let sketch = h.sketch();
+    let tops: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => {
+                let a = sketch.point_position(l.start)?;
+                let b = sketch.point_position(l.end)?;
+                ((a.x - b.x).abs() < 1e-4).then_some(a.y.max(b.y))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tops.len(), 3, "each post keeps its lower part");
+    assert!(tops.iter().all(|y| y.abs() < 1e-3), "{tops:?}");
+    // Moving with the button up trims nothing.
+    let lines = h.counts().1;
+    h.mouse_move(2.0, -3.0, "sketch.trim");
+    h.mouse_move(18.0, -3.0, "sketch.trim");
+    assert_eq!(h.counts().1, lines);
+}

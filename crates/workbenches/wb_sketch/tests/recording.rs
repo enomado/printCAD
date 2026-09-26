@@ -444,3 +444,24 @@ fn turned_rectangles_and_a_frame_replay_too() {
     );
     assert_replays(&s.recorded, before, id, &done);
 }
+
+#[test]
+fn a_trim_stroke_replays_as_one_call() {
+    let (mut s, id, before) = session_on_a_sketch();
+    s.click(0.0, 0.0, "sketch.line");
+    s.click(20.0, 0.0, "sketch.line");
+    s.key(KeyCode::Escape, Some("sketch.line"));
+    for x in [5.0, 10.0, 15.0] {
+        s.click(x, -5.0, "sketch.line");
+        s.click(x, 5.0, "sketch.line");
+        s.key(KeyCode::Escape, Some("sketch.line"));
+    }
+    s.press(2.0, 3.0, "sketch.trim");
+    s.move_to(18.0, 3.0, "sketch.trim");
+    s.release(18.0, 3.0, "sketch.trim");
+    s.key(KeyCode::A, None);
+    let done = summary(&s.sketch(id));
+    let draws = s.recorded.iter().filter(|r| r.id == "sketch.draw").count();
+    assert_eq!(draws, 5, "four lines and one stroke: {:#?}", s.recorded);
+    assert_replays(&s.recorded, before, id, &done);
+}

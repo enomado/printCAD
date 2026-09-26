@@ -2523,3 +2523,25 @@ fn a_frame_too_thin_for_its_wall_says_so() {
     assert!(!fx.changed && fx.log.is_some());
     assert!(sketch.geometry.is_empty());
 }
+
+#[test]
+fn a_trim_stroke_finds_what_it_crosses_first() {
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, 1.0, -5.0);
+    let b = pt(&mut sketch, 1.0, 5.0);
+    line_between(&mut sketch, a, b);
+    let c = pt(&mut sketch, 4.0, 4.0);
+    sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 1.0)));
+    let from = Vec2D::new(-1.0, 4.0);
+    let to = Vec2D::new(9.0, 4.0);
+    let first = next_stroke_crossing(&sketch, from, to).expect("the line");
+    assert!((first.x - 1.0).abs() < 1e-4 && (first.y - 4.0).abs() < 1e-4);
+    // From there on, the circle's near side, then its far side.
+    let second = next_stroke_crossing(&sketch, first, to).expect("the circle");
+    assert!((second.x - 3.0).abs() < 1e-4, "{second:?}");
+    let third = next_stroke_crossing(&sketch, second, to).expect("the circle again");
+    assert!((third.x - 5.0).abs() < 1e-4, "{third:?}");
+    assert!(next_stroke_crossing(&sketch, third, to).is_none());
+    // A path that stops short crosses nothing.
+    assert!(next_stroke_crossing(&sketch, from, Vec2D::new(0.5, 4.0)).is_none());
+}

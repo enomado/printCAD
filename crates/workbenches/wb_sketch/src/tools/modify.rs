@@ -391,6 +391,42 @@ fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<TrimPlan> {
     }
 }
 
+/// The first place, going from `from` to `to`, where the pointer's path
+/// crosses a curve the trim tool cuts (a line, arc or circle), not counting
+/// `from` itself: where a trim stroke trims next. External geometry is the
+/// solid's, and is never crossed.
+pub fn next_stroke_crossing(sketch: &Sketch, from: Vec2D, to: Vec2D) -> Option<Vec2D> {
+    let (a, b) = (from.to_glam(), to.to_glam());
+    let path = b - a;
+    let len_sq = path.length_squared();
+    if len_sq < 1e-12 {
+        return None;
+    }
+    let stroke = Prim::Seg { a, b };
+    let external = sketch.external_ids();
+    // A crossing this close to the start is the one just trimmed.
+    let skip = 1e-4 / len_sq.sqrt();
+    sketch
+        .geometry
+        .iter()
+        .filter(|g| {
+            matches!(
+                g,
+                GeometryElement::Line(_) | GeometryElement::Arc(_) | GeometryElement::Circle(_)
+            ) && !external.contains(&g.id())
+        })
+        .filter_map(|g| prim_of(sketch, g))
+        .flat_map(|prim| {
+            raw_hits(&stroke, &prim)
+                .into_iter()
+                .filter(move |p| geom2d::on_segment(a, b, *p) && within(&prim, *p))
+        })
+        .map(|p| ((p - a).dot(path) / len_sq, p))
+        .filter(|(t, _)| *t > skip)
+        .min_by(|x, y| x.0.total_cmp(&y.0))
+        .map(|(_, p)| Vec2D::from_glam(p))
+}
+
 /// Highlight polyline for the span a trim click at `cursor` would remove
 /// (overlay hover preview). `None` when nothing is trimmable there.
 pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<Vec<Vec2D>> {
