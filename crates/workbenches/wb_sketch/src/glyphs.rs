@@ -28,6 +28,8 @@ const DEFAULT_LABEL_OFFSET_PX: f32 = 14.0;
 /// Extension lines overshoot the dimension line by this much.
 const EXTENSION_OVERSHOOT_PX: f32 = 5.0;
 const ANGLE_ARC_SEGMENTS: usize = 24;
+/// How far a refraction's normal reaches either side of its point, in px.
+const NORMAL_REACH_PX: f32 = 30.0;
 
 /// What a glyph draws.
 #[derive(Debug, Clone, PartialEq)]
@@ -187,6 +189,14 @@ fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
             element_anchor(sketch, line1)?,
             element_anchor(sketch, line2)?,
         )),
+        ConstraintKind::ArcLength { arc, .. } => element_anchor(sketch, arc),
+        ConstraintKind::Gap { item1, item2, .. } => {
+            let gap = crate::measure::gap(sketch, item1, item2)?;
+            Some(Vec2D::from_glam((gap.a + gap.b) * 0.5))
+        }
+        ConstraintKind::AngleAtPoint { point, .. } | ConstraintKind::Refraction { point, .. } => {
+            sketch.point_position(point)
+        }
         _ => None,
     }
 }
@@ -204,7 +214,11 @@ fn dim_text(sketch: &Sketch, constraint: &sketch::Constraint) -> String {
     let text = match constraint.kind {
         ConstraintKind::Radius { .. } => format!("R {val}"),
         ConstraintKind::Diameter { .. } => format!("Ø {val}"),
-        ConstraintKind::Angle { .. } | ConstraintKind::AngleToAxis { .. } => format!("{val}°"),
+        ConstraintKind::Angle { .. }
+        | ConstraintKind::AngleToAxis { .. }
+        | ConstraintKind::AngleAtPoint { .. } => format!("{val}°"),
+        ConstraintKind::ArcLength { .. } => format!("◠ {val}"),
+        ConstraintKind::Refraction { .. } => format!("n {val}"),
         _ => val,
     };
     if constraint.driving {
@@ -452,6 +466,115 @@ fn dimension_lines(
     }
 }
 
+/// Lines of the dimensions that reach past points and lines, or `None`
+/// for the other kinds: an arc's length runs along a concentric arc
+/// through the label with witness lines out from the arc's ends; a gap is
+/// the segment between the nearest points; an angle at a point sweeps
+/// between the two tangents there; a refraction draws the interface's
+/// normal through its point. `label_at` is the label in sketch units,
+/// `label` in pixels.
+fn curve_dimension_lines(
+    sketch: &Sketch,
+    proj: &SketchProjector,
+    kind: &ConstraintKind,
+    label_at: Vec2D,
+    label: [f32; 2],
+) -> Option<Vec<([f32; 2], [f32; 2])>> {
+    let px = |p: glam::Vec2| proj.to_px(Vec2D::from_glam(p));
+    let polyline = |pts: Option<Vec<[f32; 2]>>| {
+        pts.map(|pts| pts.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let units_per_px = proj.units_per_px();
+    // A leader from `from` to the label once the label is dragged away.
+    let leader = |from: [f32; 2]| {
+        let d = sub(label, from);
+        (dot(d, d).sqrt() > LEADER_MIN_PX).then_some((from, label))
+    };
+    Some(match *kind {
+        ConstraintKind::ArcLength { arc, .. } => {
+            let Some(GeometryElement::Arc(a)) = sketch.get_geometry(arc) else {
+                return Some(Vec::new());
+            };
+            let pos = |id: Uuid| sketch.point_position(id).map(Vec2D::to_glam);
+            let (Some(c), Some(s), Some(e)) = (pos(a.center), pos(a.start), pos(a.end)) else {
+                return Some(Vec::new());
+            };
+            let (start, sweep) = arc_angles(s - c, e - c);
+            let at = |angle: f32, r: f32| px(c + glam::Vec2::from_angle(angle) * r);
+            let r = (label_at.to_glam() - c).length().max(units_per_px);
+            let mut lines = polyline(
+                (0..=ANGLE_ARC_SEGMENTS)
+                    .map(|i| at(start + sweep * i as f32 / ANGLE_ARC_SEGMENTS as f32, r))
+                    .collect(),
+            );
+            let overshoot = EXTENSION_OVERSHOOT_PX * units_per_px * (r - a.radius).signum();
+            for end in [start, start + sweep] {
+                if let (Some(from), Some(to)) = (at(end, a.radius), at(end, r + overshoot)) {
+                    lines.push((from, to));
+                }
+            }
+            lines
+        }
+        ConstraintKind::Gap { item1, item2, .. } => {
+            let Some(g) = crate::measure::gap(sketch, item1, item2) else {
+                return Some(Vec::new());
+            };
+            let (Some(pa), Some(pb)) = (px(g.a), px(g.b)) else {
+                return Some(Vec::new());
+            };
+            let mut lines = vec![(pa, pb)];
+            lines.extend(leader(scale(add(pa, pb), 0.5)));
+            lines
+        }
+        ConstraintKind::AngleAtPoint {
+            curve1,
+            curve2,
+            point,
+            ..
+        } => {
+            let Some(at) = sketch.point_position(point).map(Vec2D::to_glam) else {
+                return Some(Vec::new());
+            };
+            // Each tangent pointing the way its curve goes on from the
+            // point: a line toward its farther end.
+            let heading = |curve: Uuid| {
+                let t = crate::measure::tangent(sketch, curve, at)?;
+                Some(match crate::measure::ray_ends(sketch, curve, at) {
+                    Some((_, far)) if (far - at).dot(t) < 0.0 => -t,
+                    _ => t,
+                })
+            };
+            let (Some(t1), Some(t2), Some(v)) = (heading(curve1), heading(curve2), px(at)) else {
+                return Some(Vec::new());
+            };
+            let step = 10.0 * units_per_px;
+            let (Some(p1), Some(p2)) = (px(at + t1 * step), px(at + t2 * step)) else {
+                return Some(Vec::new());
+            };
+            polyline(Some(angle_arc_points(v, sub(p1, v), sub(p2, v), label)))
+        }
+        ConstraintKind::Refraction {
+            interface, point, ..
+        } => {
+            let Some(at) = sketch.point_position(point).map(Vec2D::to_glam) else {
+                return Some(Vec::new());
+            };
+            let Some(t) = crate::measure::tangent(sketch, interface, at) else {
+                return Some(Vec::new());
+            };
+            let reach = t.perp() * (NORMAL_REACH_PX * units_per_px);
+            let (Some(a), Some(b), Some(v)) = (px(at - reach), px(at + reach), px(at)) else {
+                return Some(Vec::new());
+            };
+            let mut lines = vec![(a, b)];
+            lines.extend(leader(v));
+            lines
+        }
+        _ => return None,
+    })
+}
+
 /// Build every glyph for the sketch's constraints, in viewport pixels.
 /// `bound` are the dimensions a formula sets: drawn in the formula colour,
 /// their value marked `ƒ`.
@@ -497,7 +620,8 @@ pub fn build(
             else {
                 continue;
             };
-            let lines = dimension_lines(sketch, proj, &c.kind, pos, anchor_px);
+            let lines = curve_dimension_lines(sketch, proj, &c.kind, anchor + offset, pos)
+                .unwrap_or_else(|| dimension_lines(sketch, proj, &c.kind, pos, anchor_px));
             out.push(Glyph {
                 constraint: c.id,
                 dimensional: true,

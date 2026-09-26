@@ -552,9 +552,9 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.sketch.constrain`: Constrain elements, as the constraint's toolbar button does for a selection.
 
 - `sketch` (id): The sketch to draw in
-- `kind` (string): coincident, point_on_object, midpoint, horizontal, vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, distance_x, distance_y, radius, diameter, angle, angle_x or angle_y
+- `kind` (string): coincident, point_on_object, midpoint, horizontal, vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, angle, angle_x, angle_y, angle_at_point or refraction
 - `items` (list): Element ids, or "origin", "x_axis" and "y_axis"
-- `value` (number, optional): A dimension's value (mm, or degrees for an angle); the measured one when left out
+- `value` (number, optional): A dimension's value (mm, degrees for an angle, the ratio of indices for a refraction); the measured one when left out
 - Returns the new constraints' ids
 
 `pc.sketch.set_value`: Change a dimension's value.

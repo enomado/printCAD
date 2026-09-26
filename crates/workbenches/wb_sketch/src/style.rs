@@ -16,7 +16,11 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::EqualLength { .. } | ConstraintKind::EqualRadius { .. } => {
             "constraint-equal"
         }
-        ConstraintKind::Length { .. } | ConstraintKind::Distance { .. } => "constraint-distance",
+        ConstraintKind::Length { .. }
+        | ConstraintKind::Distance { .. }
+        | ConstraintKind::Gap { .. } => "constraint-distance",
+        ConstraintKind::ArcLength { .. } => "constraint-arc-length",
+        ConstraintKind::Refraction { .. } => "constraint-refraction",
         ConstraintKind::Radius { .. } => "constraint-radius",
         ConstraintKind::Diameter { .. } => "constraint-diameter",
         ConstraintKind::PointOnLine { .. }
@@ -28,7 +32,9 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Block { .. } => "constraint-block",
         ConstraintKind::DistanceX { .. } => "constraint-distance-x",
         ConstraintKind::DistanceY { .. } => "constraint-distance-y",
-        ConstraintKind::Angle { .. } | ConstraintKind::AngleToAxis { .. } => "constraint-angle",
+        ConstraintKind::Angle { .. }
+        | ConstraintKind::AngleToAxis { .. }
+        | ConstraintKind::AngleAtPoint { .. } => "constraint-angle",
         ConstraintKind::Tangent { .. } => "constraint-tangent",
         ConstraintKind::Symmetric { .. } | ConstraintKind::SymmetricAboutPoint { .. } => {
             "constraint-symmetric"

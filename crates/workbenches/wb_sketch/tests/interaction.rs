@@ -3194,3 +3194,311 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
         xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min);
     assert!((width - 20.0).abs() < 1e-3, "{width}");
 }
+
+/// The dimensions and relations that reach past points and lines, made
+/// from the toolbar the way a user makes them.
+mod curve_constraints {
+    use super::*;
+    use wb_sketch::sketch::ConstraintKind;
+
+    /// Press and release at a sketch point in select mode.
+    fn pick(h: &mut Harness, x: f32, y: f32) {
+        h.click(x, y, "sketch.select");
+        h.release(x, y, "sketch.select");
+    }
+
+    /// Draw an arc about `(cx, cy)` from `radius` right of it, a quarter
+    /// turn counter-clockwise.
+    fn quarter_arc(h: &mut Harness, cx: f32, cy: f32, radius: f32) {
+        h.click(cx, cy, "sketch.arc");
+        h.click(cx + radius, cy, "sketch.arc");
+        h.click(cx, cy + radius * 1.5, "sketch.arc");
+    }
+
+    fn arc_length_of(sketch: &Sketch) -> f32 {
+        let arc = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Arc(a) => Some(a.clone()),
+                _ => None,
+            })
+            .expect("an arc");
+        let c = sketch.point_position(arc.center).unwrap().to_glam();
+        let s = sketch.point_position(arc.start).unwrap().to_glam() - c;
+        let e = sketch.point_position(arc.end).unwrap().to_glam() - c;
+        let mut sweep = e.y.atan2(e.x) - s.y.atan2(s.x);
+        while sweep <= 0.0 {
+            sweep += std::f32::consts::TAU;
+        }
+        arc.radius * sweep
+    }
+
+    /// Open the dimension editor on the label whose text starts `prefix`,
+    /// type `text` and commit it.
+    fn edit_dimension(h: &mut Harness, prefix: &str, text: &str) {
+        let labels = h.labels();
+        let label = labels
+            .iter()
+            .find(|l| l.background && l.text.starts_with(prefix))
+            .unwrap_or_else(|| {
+                panic!(
+                    "a label starting {prefix:?} in {:?}",
+                    labels.iter().map(|l| &l.text).collect::<Vec<_>>()
+                )
+            });
+        let pos = (label.pos[0], label.pos[1]);
+        h.press_px(pos);
+        h.release_px(pos);
+        h.press_px(pos);
+        h.wb.pending_dim_edit_mut()
+            .expect("a double click opens the editor")
+            .text = text.to_string();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(h.vp);
+        ctx.active_document_object = h.active_object;
+        h.wb.commit_dim_edit(&mut ctx);
+    }
+
+    #[test]
+    fn an_arc_takes_a_length_along_it_that_a_formula_can_set() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        quarter_arc(&mut h, 10.0, 0.0, 4.0);
+        pick(
+            &mut h,
+            10.0 + 4.0 * std::f32::consts::FRAC_1_SQRT_2,
+            4.0 * std::f32::consts::FRAC_1_SQRT_2,
+        );
+        assert!(h.tool_enabled("sketch.constrain.arc_length"));
+        h.key(KeyCode::A, Some("sketch.constrain.arc_length"));
+        let sketch = h.sketch();
+        let quarter = 4.0 * std::f32::consts::FRAC_PI_2;
+        assert!(
+            sketch.constraints.iter().any(|c| matches!(
+                c.kind,
+                ConstraintKind::ArcLength { length, .. } if (length - quarter).abs() < 0.05
+            )),
+            "{:?}",
+            sketch.constraints
+        );
+
+        // Along the arc, and edited like any dimension, by a formula too.
+        edit_dimension(&mut h, "◠", "2 * 4");
+        let sketch = h.sketch();
+        assert!(
+            (arc_length_of(&sketch) - 8.0).abs() < 1e-2,
+            "the arc re-solved to its new length: {}",
+            arc_length_of(&sketch)
+        );
+        let id = h.active_object.unwrap();
+        let node = h.doc.get_feature_meta(id).unwrap().clone();
+        let params = h.wb.parameters(&node);
+        assert!(
+            params.iter().any(|p| p.label == "Arc length"
+                && p.dim == core_document::expr::Dim::LENGTH
+                && node
+                    .data
+                    .pointer(&p.pointer)
+                    .and_then(serde_json::Value::as_f64)
+                    .is_some_and(|v| (v - 8.0).abs() < 1e-4)),
+            "a formula can set the arc length: {params:?}"
+        );
+    }
+
+    #[test]
+    fn the_dimension_tool_sets_the_gap_between_two_circles() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(0.0, 0.0, "sketch.circle");
+        h.click(3.0, 0.0, "sketch.circle");
+        h.click(12.0, 0.0, "sketch.circle");
+        h.click(14.0, 0.0, "sketch.circle");
+        pick(&mut h, 0.0, 3.0);
+        pick(&mut h, 12.0, 2.0);
+        assert!(h.tool_enabled("sketch.constrain.dimension"));
+        h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+        let sketch = h.sketch();
+        let gap = sketch
+            .constraints
+            .iter()
+            .find_map(|c| match c.kind {
+                ConstraintKind::Gap { distance, .. } => Some(distance),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a gap: {:?}", sketch.constraints));
+        assert!((gap - 7.0).abs() < 0.05, "{gap}");
+        assert!(
+            h.labels().iter().any(|l| l.background && l.text == "7"),
+            "the gap is labelled"
+        );
+    }
+
+    #[test]
+    fn radius_or_diameter_dimensions_the_first_and_equals_the_rest() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(0.0, 0.0, "sketch.circle");
+        h.click(3.0, 0.0, "sketch.circle");
+        quarter_arc(&mut h, 12.0, 0.0, 5.0);
+        pick(&mut h, 0.0, 3.0);
+        pick(
+            &mut h,
+            12.0 + 5.0 * std::f32::consts::FRAC_1_SQRT_2,
+            5.0 * std::f32::consts::FRAC_1_SQRT_2,
+        );
+        h.key(KeyCode::A, Some("sketch.constrain.radius:radius_diameter"));
+        let sketch = h.sketch();
+        assert!(
+            sketch.constraints.iter().any(|c| matches!(
+                c.kind,
+                ConstraintKind::Diameter { diameter, .. } if (diameter - 6.0).abs() < 0.05
+            )),
+            "the circle, drawn first, takes a diameter: {:?}",
+            sketch.constraints
+        );
+        assert!(
+            sketch
+                .constraints
+                .iter()
+                .any(|c| matches!(c.kind, ConstraintKind::EqualRadius { .. }))
+        );
+        let radii: Vec<f32> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Circle(c) => Some(c.radius),
+                GeometryElement::Arc(a) => Some(a.radius),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            (radii[0] - 3.0).abs() < 0.05 && (radii[1] - 3.0).abs() < 0.05,
+            "the arc came to the circle's size: {radii:?}"
+        );
+    }
+
+    #[test]
+    fn the_angle_tool_measures_where_a_line_leaves_an_arc() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        quarter_arc(&mut h, 0.0, 0.0, 5.0);
+        // A line on from the arc's start, snapped onto it.
+        h.click(5.0, 0.0, "sketch.line");
+        h.click(9.0, 3.0, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        pick(&mut h, 5.0, 0.0);
+        pick(&mut h, 7.0, 1.5);
+        pick(
+            &mut h,
+            5.0 * std::f32::consts::FRAC_1_SQRT_2,
+            5.0 * std::f32::consts::FRAC_1_SQRT_2,
+        );
+        assert!(h.tool_enabled("sketch.constrain.angle"));
+        h.key(KeyCode::A, Some("sketch.constrain.angle"));
+        let sketch = h.sketch();
+        let angle = sketch
+            .constraints
+            .iter()
+            .find_map(|c| match c.kind {
+                ConstraintKind::AngleAtPoint { angle_rad, .. } => Some(angle_rad.to_degrees()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("an angle at the point: {:?}", sketch.constraints));
+        // The arc leaves its start straight up; the line at 3-4-5.
+        let expected = (90.0 - 3f32.atan2(4.0).to_degrees()).abs();
+        assert!(
+            (angle.abs() - expected).abs() < 0.5,
+            "{angle} against {expected}"
+        );
+        edit_dimension(&mut h, &format!("{}", angle.round() as i32), "30");
+        let sketch = h.sketch();
+        assert!(
+            sketch.constraints.iter().any(|c| matches!(
+                c.kind,
+                ConstraintKind::AngleAtPoint { angle_rad, .. }
+                    if (angle_rad.to_degrees() - 30.0).abs() < 1e-3
+            )),
+            "the edited angle is stored"
+        );
+    }
+
+    #[test]
+    fn a_refraction_bends_a_ray_at_an_interface_to_a_ratio_of_indices() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(-10.0, 2.0, "sketch.line");
+        h.click(10.0, 2.0, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        // The ray in, met on the interface, and the ray out from there.
+        h.click(-4.0, 6.0, "sketch.line");
+        h.click(0.0, 2.0, "sketch.line");
+        h.click(3.0, -2.0, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        pick(&mut h, 0.0, 2.0);
+        pick(&mut h, -2.0, 4.0);
+        pick(&mut h, 1.5, 0.0);
+        pick(&mut h, 7.0, 2.0);
+        assert!(h.tool_enabled("sketch.constrain.refraction"));
+        h.key(KeyCode::A, Some("sketch.constrain.refraction"));
+        let sketch = h.sketch();
+        let ratio = sketch
+            .constraints
+            .iter()
+            .find_map(|c| match c.kind {
+                ConstraintKind::Refraction { ratio, .. } => Some(ratio),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a refraction: {:?}", sketch.constraints));
+        let expected = 45f32.to_radians().sin() / 0.6;
+        assert!(
+            (ratio - expected).abs() < 0.02,
+            "{ratio} against {expected}"
+        );
+
+        // Its ratio is a plain number, a formula's as much as a typed one.
+        edit_dimension(&mut h, "n ", "1.2 + 0.3");
+        let sketch = h.sketch();
+        let (ray1, ray2, interface, point) = sketch
+            .constraints
+            .iter()
+            .find_map(|c| match c.kind {
+                ConstraintKind::Refraction {
+                    ray1,
+                    ray2,
+                    interface,
+                    point,
+                    ratio,
+                } => {
+                    assert!((ratio - 1.5).abs() < 1e-5, "{ratio}");
+                    Some((ray1, ray2, interface, point))
+                }
+                _ => None,
+            })
+            .unwrap();
+        let at = sketch.point_position(point).unwrap().to_glam();
+        let dir = |line: uuid::Uuid| match sketch.get_geometry(line) {
+            Some(GeometryElement::Line(l)) => {
+                let s = sketch.point_position(l.start).unwrap().to_glam();
+                let e = sketch.point_position(l.end).unwrap().to_glam();
+                if (s - at).length() < (e - at).length() {
+                    (e - s).normalize()
+                } else {
+                    (s - e).normalize()
+                }
+            }
+            _ => panic!("a line"),
+        };
+        let t = dir(interface);
+        let sin_in = (-dir(ray1)).dot(t);
+        let sin_out = dir(ray2).dot(t);
+        assert!(
+            (sin_in / sin_out - 1.5).abs() < 1e-3,
+            "the rays bend to the new ratio: {}",
+            sin_in / sin_out
+        );
+    }
+}

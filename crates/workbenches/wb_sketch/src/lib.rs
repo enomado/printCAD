@@ -9,6 +9,7 @@ mod external;
 mod feature;
 mod geom2d;
 mod glyphs;
+mod measure;
 mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
@@ -1655,11 +1656,7 @@ impl SketchWorkbench {
             return;
         };
         let text = text.trim();
-        let dim = if sketch::is_angular(&c.kind) {
-            core_document::expr::Dim::ANGLE
-        } else {
-            core_document::expr::Dim::LENGTH
-        };
+        let dim = params::formula_dim(&c.kind);
         let key = constraint.to_string();
         let evaluated = ctx.document.evaluate_formula(text, Some(dim));
         if !core_document::expr::is_constant(text) {
@@ -2202,17 +2199,43 @@ impl Workbench for SketchWorkbench {
             ("distance_x", "Horizontal distance", "constraint-distance-x"),
             ("distance_y", "Vertical distance", "constraint-distance-y"),
             ("distance", "Distance", "constraint-distance"),
+            ("arc_length", "Arc length", "constraint-arc-length"),
             ("radius", "Radius", "constraint-radius"),
             ("diameter", "Diameter", "constraint-diameter"),
             ("angle", "Angle", "constraint-angle"),
+            ("refraction", "Refraction", "constraint-refraction"),
         ] {
             let mut tool = constraint(id, label, icon, "constraints.dimensional");
-            if id == "angle" {
-                tool = tool.variants(vec![
-                    ToolVariant::new("angle", "Between two lines", "constraint-angle"),
-                    ToolVariant::new("angle_x", "To the X axis", "constraint-angle"),
-                    ToolVariant::new("angle_y", "To the Y axis", "constraint-angle"),
-                ]);
+            match id {
+                "distance" => {
+                    tool = tool.variants(vec![
+                        ToolVariant::new("distance", "Distance", "constraint-distance"),
+                        ToolVariant::new("gap", "Gap between curves", "constraint-distance"),
+                    ]);
+                }
+                "radius" => {
+                    tool = tool.variants(vec![
+                        ToolVariant::new("radius", "Radius", "constraint-radius"),
+                        ToolVariant::new(
+                            "radius_diameter",
+                            "Radius or diameter by kind",
+                            "constraint-diameter",
+                        ),
+                    ]);
+                }
+                "angle" => {
+                    tool = tool.variants(vec![
+                        ToolVariant::new("angle", "Between two lines", "constraint-angle"),
+                        ToolVariant::new("angle_x", "To the X axis", "constraint-angle"),
+                        ToolVariant::new("angle_y", "To the Y axis", "constraint-angle"),
+                        ToolVariant::new(
+                            "angle_at_point",
+                            "Where two curves meet",
+                            "constraint-angle",
+                        ),
+                    ]);
+                }
+                _ => {}
             }
             context.register_tool(tool);
         }
@@ -3147,7 +3170,7 @@ impl SketchWorkbench {
             match dimension_for(&shape) {
                 Some(tool) => tool,
                 None => {
-                    ctx.log_warn("Select a line, two points, a circle or two lines to dimension");
+                    ctx.log_warn("Select a line, circles, or two items to dimension");
                     self.selection_shape = shape;
                     return InputResult::consumed();
                 }
@@ -4148,12 +4171,9 @@ impl SketchWorkbench {
 
 /// Tools that create geometry from clicks, for which object snapping can
 /// be switched off.
-/// The dimensional constraint tool a selection takes, if any: a radius
-/// for one circle or arc, an angle for two lines, a distance otherwise.
+/// The dimensional constraint tool a selection takes, if any.
 pub(crate) fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'static str> {
-    ["radius", "angle", "distance", "distance_x", "distance_y"]
-        .into_iter()
-        .find(|tool| constrain::fits(tool, shape))
+    constrain::dimension_for(shape)
 }
 
 /// The tools that move, turn, scale or mirror the selection.
@@ -4486,9 +4506,12 @@ mod dimension_tool {
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
         let shape =
             |ids: &[Uuid]| constrain::SelectionShape::of(&sketch, &ids.iter().copied().collect());
-        assert_eq!(dimension_for(&shape(&[circle])), Some("radius"));
+        assert_eq!(dimension_for(&shape(&[circle])), Some("radius_diameter"));
         assert_eq!(dimension_for(&shape(&[line, other])), Some("angle"));
+        assert_eq!(dimension_for(&shape(&[a, line, other])), Some("angle"));
         assert_eq!(dimension_for(&shape(&[a, b])), Some("distance"));
+        assert_eq!(dimension_for(&shape(&[line, circle])), Some("distance"));
+        assert_eq!(dimension_for(&shape(&[b, circle])), Some("distance"));
         assert_eq!(dimension_for(&shape(&[])), None);
     }
 

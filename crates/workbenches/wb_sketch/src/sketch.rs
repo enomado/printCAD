@@ -355,6 +355,21 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
             center,
         } => vec![*point1, *point2, *center],
         ConstraintKind::Midpoint { point, line } => vec![*point, *line],
+        ConstraintKind::ArcLength { arc, .. } => vec![*arc],
+        ConstraintKind::Gap { item1, item2, .. } => vec![*item1, *item2],
+        ConstraintKind::AngleAtPoint {
+            curve1,
+            curve2,
+            point,
+            ..
+        } => vec![*curve1, *curve2, *point],
+        ConstraintKind::Refraction {
+            ray1,
+            ray2,
+            interface,
+            point,
+            ..
+        } => vec![*ray1, *ray2, *interface, *point],
     }
 }
 
@@ -392,6 +407,10 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::Symmetric { .. } => "Symmetric".to_string(),
         ConstraintKind::SymmetricAboutPoint { .. } => "Symmetric (point)".to_string(),
         ConstraintKind::Midpoint { .. } => "Midpoint".to_string(),
+        ConstraintKind::ArcLength { .. } => "Arc length".to_string(),
+        ConstraintKind::Gap { .. } => "Gap".to_string(),
+        ConstraintKind::AngleAtPoint { .. } => "Angle at point".to_string(),
+        ConstraintKind::Refraction { .. } => "Refraction".to_string(),
     }
 }
 
@@ -450,6 +469,23 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
             };
             Some((d.y.atan2(d.x) - base).to_degrees())
         }
+        ConstraintKind::ArcLength { arc, .. } => crate::measure::arc_length(sketch, arc),
+        ConstraintKind::Gap { item1, item2, .. } => {
+            crate::measure::gap(sketch, item1, item2).map(|g| g.distance)
+        }
+        ConstraintKind::AngleAtPoint {
+            curve1,
+            curve2,
+            point,
+            ..
+        } => crate::measure::angle_at_point(sketch, curve1, curve2, point).map(f32::to_degrees),
+        ConstraintKind::Refraction {
+            ray1,
+            ray2,
+            interface,
+            point,
+            ..
+        } => crate::measure::refraction_ratio(sketch, ray1, ray2, interface, point),
         _ => None,
     }
 }
@@ -465,9 +501,12 @@ pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
         ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } => {
             Some(value)
         }
-        ConstraintKind::Angle { angle_rad, .. } | ConstraintKind::AngleToAxis { angle_rad, .. } => {
-            Some(angle_rad.to_degrees())
-        }
+        ConstraintKind::Angle { angle_rad, .. }
+        | ConstraintKind::AngleToAxis { angle_rad, .. }
+        | ConstraintKind::AngleAtPoint { angle_rad, .. } => Some(angle_rad.to_degrees()),
+        ConstraintKind::ArcLength { length, .. } => Some(length),
+        ConstraintKind::Gap { distance, .. } => Some(distance),
+        ConstraintKind::Refraction { ratio, .. } => Some(ratio),
         _ => None,
     }
 }
@@ -484,9 +523,12 @@ pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
         ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } => {
             *value = v
         }
-        ConstraintKind::Angle { angle_rad, .. } | ConstraintKind::AngleToAxis { angle_rad, .. } => {
-            *angle_rad = v.to_radians()
-        }
+        ConstraintKind::Angle { angle_rad, .. }
+        | ConstraintKind::AngleToAxis { angle_rad, .. }
+        | ConstraintKind::AngleAtPoint { angle_rad, .. } => *angle_rad = v.to_radians(),
+        ConstraintKind::ArcLength { length, .. } => *length = v,
+        ConstraintKind::Gap { distance, .. } => *distance = v,
+        ConstraintKind::Refraction { ratio, .. } => *ratio = v,
         _ => {}
     }
     kind
@@ -494,10 +536,29 @@ pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
 
 /// Whether a dimensional kind is angular (displayed in degrees).
 pub fn is_angular(kind: &ConstraintKind) -> bool {
-    matches!(
-        kind,
-        ConstraintKind::Angle { .. } | ConstraintKind::AngleToAxis { .. }
-    )
+    dimension_unit(kind) == DimensionUnit::Angle
+}
+
+/// What a dimension's value measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DimensionUnit {
+    /// A length, in mm.
+    Length,
+    /// An angle, shown in degrees.
+    Angle,
+    /// A plain number (a refraction's ratio of indices).
+    Ratio,
+}
+
+/// The unit of a dimensional kind's value (`Length` for the rest).
+pub fn dimension_unit(kind: &ConstraintKind) -> DimensionUnit {
+    match kind {
+        ConstraintKind::Angle { .. }
+        | ConstraintKind::AngleToAxis { .. }
+        | ConstraintKind::AngleAtPoint { .. } => DimensionUnit::Angle,
+        ConstraintKind::Refraction { .. } => DimensionUnit::Ratio,
+        _ => DimensionUnit::Length,
+    }
 }
 
 /// Reference plane for a sketch (2D coordinate system in 3D space).
@@ -995,6 +1056,38 @@ pub enum ConstraintKind {
     },
     /// Point sits at the midpoint of a line's endpoints.
     Midpoint { point: Uuid, line: Uuid },
+    /// Length along an arc, from its start to its end.
+    ArcLength { arc: Uuid, length: f32 },
+    /// The shortest distance between two items that are not both points:
+    /// a point, line, circle or arc (an arc as its whole circle) against a
+    /// circle or arc, or a point against a line. Two circles one inside the
+    /// other measure the gap between them inside.
+    Gap {
+        item1: Uuid,
+        item2: Uuid,
+        distance: f32,
+    },
+    /// The angle two curves make where they meet: from the first curve's
+    /// tangent at `point` to the second's (a line's direction runs start to
+    /// end, a circle's or arc's counter-clockwise). `point` is expected to
+    /// lie on both; the tool that makes it adds what keeps it there.
+    AngleAtPoint {
+        curve1: Uuid,
+        curve2: Uuid,
+        point: Uuid,
+        angle_rad: f32,
+    },
+    /// Refraction at an interface: `ray1` arrives at `point` on the
+    /// `interface` curve and `ray2` leaves it, at angles to the interface's
+    /// normal whose sines are in `ratio` (sin in / sin out, the index of
+    /// refraction of the second medium over the first's).
+    Refraction {
+        ray1: Uuid,
+        ray2: Uuid,
+        interface: Uuid,
+        point: Uuid,
+        ratio: f32,
+    },
 }
 
 impl ConstraintKind {
@@ -1011,6 +1104,10 @@ impl ConstraintKind {
                 | ConstraintKind::DistanceY { .. }
                 | ConstraintKind::Angle { .. }
                 | ConstraintKind::AngleToAxis { .. }
+                | ConstraintKind::ArcLength { .. }
+                | ConstraintKind::Gap { .. }
+                | ConstraintKind::AngleAtPoint { .. }
+                | ConstraintKind::Refraction { .. }
         )
     }
 }
@@ -1163,6 +1260,43 @@ mod constraint_record_tests {
         assert_eq!(back.id, c.id);
         assert!(!back.driving && !back.active);
         assert_eq!(back.name.as_deref(), Some("width"));
+    }
+
+    #[test]
+    fn curve_dimensions_round_trip_with_their_values() {
+        let id = Uuid::new_v4;
+        for kind in [
+            ConstraintKind::ArcLength {
+                arc: id(),
+                length: 7.5,
+            },
+            ConstraintKind::Gap {
+                item1: id(),
+                item2: id(),
+                distance: 2.0,
+            },
+            ConstraintKind::AngleAtPoint {
+                curve1: id(),
+                curve2: id(),
+                point: id(),
+                angle_rad: 0.5,
+            },
+            ConstraintKind::Refraction {
+                ray1: id(),
+                ray2: id(),
+                interface: id(),
+                point: id(),
+                ratio: 1.5,
+            },
+        ] {
+            assert!(kind.is_dimensional());
+            let back: Constraint = serde_json::from_value(
+                serde_json::to_value(Constraint::new(kind.clone())).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(dimension_value(&back.kind), dimension_value(&kind));
+            assert_eq!(constraint_refs(&back.kind), constraint_refs(&kind));
+        }
     }
 
     #[test]

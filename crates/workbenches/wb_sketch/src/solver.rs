@@ -99,12 +99,19 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
         let jac = jacobian(&sys, &x);
         let (jtj, jtr) = normal_equations(&jac, &r);
 
+        // Each variable is damped by its own curvature plus the average
+        // one: with its own alone, a variable the constraints barely feel
+        // (a point sliding almost square to the only row that moves it)
+        // costs nearly nothing to move, and the step flings it far off.
+        let mean_diag =
+            jtj.iter().enumerate().map(|(i, row)| row[i]).sum::<f64>() / jtj.len().max(1) as f64;
         let mut improved = false;
         for _ in 0..MAX_INNER_RETRIES {
-            // Damped normal equations: (JᵀJ + λ·diag(JᵀJ)) dx = -Jᵀr.
+            // Damped normal equations: (JᵀJ + λ·D) dx = -Jᵀr, with D the
+            // diagonal of JᵀJ raised by its mean.
             let mut a = jtj.clone();
             for (i, row) in a.iter_mut().enumerate() {
-                row[i] += lambda * jtj[i][i].max(DAMPING_FLOOR);
+                row[i] += lambda * (jtj[i][i] + mean_diag).max(DAMPING_FLOOR);
             }
             let rhs: Vec<f64> = jtr.iter().map(|v| -v).collect();
             let mut step = match solve_linear(a, rhs) {
@@ -354,6 +361,92 @@ enum ResidualSpec {
     },
     /// p - (s + e)/2 (2 residuals).
     Midpoint { p: usize, s: usize, e: usize },
+    /// r · sweep - length, the sweep counter-clockwise from the start
+    /// point's angle about the center to the end point's.
+    ArcLength {
+        c: usize,
+        s: usize,
+        e: usize,
+        r: usize,
+        len: f64,
+    },
+    /// |perpendicular distance(p, infinite line)| - d.
+    GapPointLine {
+        p: usize,
+        s: usize,
+        e: usize,
+        d: f64,
+    },
+    /// |p - c| - r - d, or r - |p - c| - d for a point inside the circle
+    /// (the side is picked once per solve, like tangency's branch).
+    GapPointCircle {
+        p: usize,
+        c: usize,
+        r: usize,
+        inside: bool,
+        d: f64,
+    },
+    /// |perpendicular distance(center, infinite line)| - r - d.
+    GapLineCircle {
+        s: usize,
+        e: usize,
+        c: usize,
+        r: usize,
+        d: f64,
+    },
+    /// |c1 - c2| - (r1 + r2) - d apart, or |r1 - r2| - |c1 - c2| - d for
+    /// one circle inside the other (picked once per solve).
+    GapCircles {
+        c1: usize,
+        r1: usize,
+        c2: usize,
+        r2: usize,
+        nested: bool,
+        d: f64,
+    },
+    /// wrap(angle from curve 1's tangent at p to curve 2's - angle).
+    AngleAtPoint {
+        t1: Tangent,
+        t2: Tangent,
+        p: usize,
+        angle: f64,
+    },
+    /// sin in - ratio · sin out: each ray's unit direction (toward p for
+    /// the first, away from it for the second) along the interface's unit
+    /// tangent at p. `near` is the end of a ray at p, picked once per solve.
+    Refraction {
+        near1: usize,
+        far1: usize,
+        near2: usize,
+        far2: usize,
+        interface: Tangent,
+        p: usize,
+        ratio: f64,
+    },
+}
+
+/// Where a curve's tangent at a point comes from: a line's two ends, or a
+/// circle's center (the tangent is square to the radius through the point,
+/// counter-clockwise).
+#[derive(Debug, Clone, Copy)]
+enum Tangent {
+    Line { s: usize, e: usize },
+    Circle { c: usize },
+}
+
+impl Tangent {
+    /// The (unnormalized) tangent at the point with x-variable `p`.
+    fn at(self, v: &[f64], p: usize) -> (f64, f64) {
+        match self {
+            Tangent::Line { s, e } => (v[e] - v[s], v[e + 1] - v[s + 1]),
+            Tangent::Circle { c } => (-(v[p + 1] - v[c + 1]), v[p] - v[c]),
+        }
+    }
+}
+
+fn unit(d: (f64, f64)) -> (f64, f64) {
+    let len = (d.0 * d.0 + d.1 * d.1).sqrt().max(MIN_LEN);
+    (d.0 / len, d.1 / len)
 }
 
 impl ResidualSpec {
@@ -487,6 +580,67 @@ impl ResidualSpec {
             ResidualSpec::Midpoint { p, s, e } => {
                 out.push(v[p] - (v[s] + v[e]) * 0.5);
                 out.push(v[p + 1] - (v[s + 1] + v[e + 1]) * 0.5);
+            }
+            ResidualSpec::ArcLength { c, s, e, r, len } => {
+                let a0 = (v[s + 1] - v[c + 1]).atan2(v[s] - v[c]);
+                let a1 = (v[e + 1] - v[c + 1]).atan2(v[e] - v[c]);
+                let mut sweep = (a1 - a0) % std::f64::consts::TAU;
+                if sweep <= 0.0 {
+                    sweep += std::f64::consts::TAU;
+                }
+                out.push(v[r] * sweep - len);
+            }
+            ResidualSpec::GapPointLine { p, s, e, d } => {
+                out.push(point_line_distance(v, p, s, e).abs() - d);
+            }
+            ResidualSpec::GapPointCircle { p, c, r, inside, d } => {
+                let from_center = segment_length(v, c, p);
+                out.push(if inside {
+                    v[r] - from_center - d
+                } else {
+                    from_center - v[r] - d
+                });
+            }
+            ResidualSpec::GapLineCircle { s, e, c, r, d } => {
+                out.push(point_line_distance(v, c, s, e).abs() - v[r] - d);
+            }
+            ResidualSpec::GapCircles {
+                c1,
+                r1,
+                c2,
+                r2,
+                nested,
+                d,
+            } => {
+                let between = segment_length(v, c1, c2);
+                out.push(if nested {
+                    (v[r1] - v[r2]).abs() - between - d
+                } else {
+                    between - v[r1] - v[r2] - d
+                });
+            }
+            ResidualSpec::AngleAtPoint { t1, t2, p, angle } => {
+                let d1 = t1.at(v, p);
+                let d2 = t2.at(v, p);
+                let cross = d1.0 * d2.1 - d1.1 * d2.0;
+                let dot = d1.0 * d2.0 + d1.1 * d2.1;
+                out.push(wrap_angle(cross.atan2(dot) - angle));
+            }
+            ResidualSpec::Refraction {
+                near1,
+                far1,
+                near2,
+                far2,
+                interface,
+                p,
+                ratio,
+            } => {
+                let t = unit(interface.at(v, p));
+                let d1 = unit((v[near1] - v[far1], v[near1 + 1] - v[far1 + 1]));
+                let d2 = unit((v[far2] - v[near2], v[far2 + 1] - v[near2 + 1]));
+                let sin_in = d1.0 * t.0 + d1.1 * t.1;
+                let sin_out = d2.0 * t.0 + d2.1 * t.1;
+                out.push(sin_in - ratio * sin_out);
             }
         }
     }
@@ -654,6 +808,33 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         _ => None,
     };
     let radius_var = |id: Uuid| circle_vars(id).map(|(_, r)| r);
+    // Any item a gap, angle or refraction reaches: a point, a line or a
+    // circle (an arc counting as its circle).
+    let item_vars = |id: Uuid| {
+        if let Some(p) = point_var(id) {
+            Some(ItemVars::Point(p))
+        } else if let Some((s, e)) = line_vars(id) {
+            Some(ItemVars::Line(s, e))
+        } else {
+            circle_vars(id).map(|(c, r)| ItemVars::Circle(c, r))
+        }
+    };
+    let tangent_of = |id: Uuid| match item_vars(id)? {
+        ItemVars::Line(s, e) => Some(Tangent::Line { s, e }),
+        ItemVars::Circle(c, _) => Some(Tangent::Circle { c }),
+        ItemVars::Point(_) => None,
+    };
+    // A ray's (near, far) ends: the one nearer `p` at solve start first.
+    let ray_ends = |id: Uuid, p: usize| {
+        let (s, e) = line_vars(id)?;
+        Some(
+            if segment_length(&vars, s, p) <= segment_length(&vars, e, p) {
+                (s, e)
+            } else {
+                (e, s)
+            },
+        )
+    };
 
     let mut specs = Vec::new();
     for constraint in &sketch.constraints {
@@ -903,6 +1084,109 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                     specs.push(ResidualSpec::Midpoint { p, s, e });
                 }
             }
+            ConstraintKind::ArcLength { arc, length } => {
+                if let Some(GeometryElement::Arc(a)) = sketch.get_geometry(arc)
+                    && let (Some(c), Some(s), Some(e), Some(r)) = (
+                        point_var(a.center),
+                        point_var(a.start),
+                        point_var(a.end),
+                        radius_vars.get(&arc).copied(),
+                    )
+                {
+                    specs.push(ResidualSpec::ArcLength {
+                        c,
+                        s,
+                        e,
+                        r,
+                        len: f64::from(length),
+                    });
+                }
+            }
+            ConstraintKind::Gap {
+                item1,
+                item2,
+                distance,
+            } => {
+                let d = f64::from(distance);
+                let spec = match (item_vars(item1), item_vars(item2)) {
+                    (Some(ItemVars::Point(p)), Some(ItemVars::Line(s, e)))
+                    | (Some(ItemVars::Line(s, e)), Some(ItemVars::Point(p))) => {
+                        Some(ResidualSpec::GapPointLine { p, s, e, d })
+                    }
+                    (Some(ItemVars::Point(p)), Some(ItemVars::Circle(c, r)))
+                    | (Some(ItemVars::Circle(c, r)), Some(ItemVars::Point(p))) => {
+                        Some(ResidualSpec::GapPointCircle {
+                            p,
+                            c,
+                            r,
+                            inside: crate::measure::point_inside(
+                                segment_length(&vars, c, p),
+                                vars[r],
+                            ),
+                            d,
+                        })
+                    }
+                    (Some(ItemVars::Line(s, e)), Some(ItemVars::Circle(c, r)))
+                    | (Some(ItemVars::Circle(c, r)), Some(ItemVars::Line(s, e))) => {
+                        Some(ResidualSpec::GapLineCircle { s, e, c, r, d })
+                    }
+                    (Some(ItemVars::Circle(c1, r1)), Some(ItemVars::Circle(c2, r2))) => {
+                        Some(ResidualSpec::GapCircles {
+                            c1,
+                            r1,
+                            c2,
+                            r2,
+                            nested: crate::measure::circles_nest(
+                                segment_length(&vars, c1, c2),
+                                vars[r1],
+                                vars[r2],
+                            ),
+                            d,
+                        })
+                    }
+                    _ => None,
+                };
+                specs.extend(spec);
+            }
+            ConstraintKind::AngleAtPoint {
+                curve1,
+                curve2,
+                point,
+                angle_rad,
+            } => {
+                if let (Some(t1), Some(t2), Some(p)) =
+                    (tangent_of(curve1), tangent_of(curve2), point_var(point))
+                {
+                    specs.push(ResidualSpec::AngleAtPoint {
+                        t1,
+                        t2,
+                        p,
+                        angle: f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::Refraction {
+                ray1,
+                ray2,
+                interface,
+                point,
+                ratio,
+            } => {
+                if let Some(p) = point_var(point)
+                    && let (Some((near1, far1)), Some((near2, far2)), Some(interface)) =
+                        (ray_ends(ray1, p), ray_ends(ray2, p), tangent_of(interface))
+                {
+                    specs.push(ResidualSpec::Refraction {
+                        near1,
+                        far1,
+                        near2,
+                        far2,
+                        interface,
+                        p,
+                        ratio: f64::from(ratio),
+                    });
+                }
+            }
         }
     }
 
@@ -940,6 +1224,15 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         specs,
         residual_len,
     }
+}
+
+/// An item's variables: a point's x, a line's two ends, a circle's center
+/// and radius.
+#[derive(Debug, Clone, Copy)]
+enum ItemVars {
+    Point(usize),
+    Line(usize, usize),
+    Circle(usize, usize),
 }
 
 /// Resolve an optional point reference: absent is fine (measure from the
@@ -2260,5 +2553,217 @@ mod freedom {
         sketch.add_constraint(ConstraintKind::Length { line, length: 10.0 });
         sketch.add_constraint(ConstraintKind::Horizontal { element: line });
         assert!(free_points(&sketch).is_empty(), "nothing moves any more");
+    }
+}
+
+#[cfg(test)]
+mod curve_constraints {
+    use super::*;
+    use crate::measure;
+    use crate::sketch::{Arc, Circle, Line, Point};
+
+    fn point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+        sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+    }
+
+    fn line(sketch: &mut Sketch, a: Uuid, b: Uuid) -> Uuid {
+        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)))
+    }
+
+    fn circle(sketch: &mut Sketch, x: f32, y: f32, r: f32) -> (Uuid, Uuid) {
+        let c = point(sketch, x, y);
+        (
+            c,
+            sketch.add_geometry(GeometryElement::Circle(Circle::new(c, r))),
+        )
+    }
+
+    fn fix(sketch: &mut Sketch, p: Uuid) {
+        let position = sketch.point_position(p).unwrap();
+        sketch.add_constraint(ConstraintKind::FixedPoint { point: p, position });
+    }
+
+    fn converged(sketch: &mut Sketch) {
+        let outcome = solve(sketch);
+        assert!(
+            matches!(outcome, SolveOutcome::Converged { .. }),
+            "{outcome:?}"
+        );
+    }
+
+    fn near(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 1e-3,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn an_arc_length_sweeps_the_end_round() {
+        let mut sketch = Sketch::new("t");
+        let c = point(&mut sketch, 0.0, 0.0);
+        let s = point(&mut sketch, 5.0, 0.0);
+        let e = point(&mut sketch, 0.0, 5.0);
+        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
+        fix(&mut sketch, c);
+        fix(&mut sketch, s);
+        let three_eighths = 5.0 * std::f32::consts::PI * 0.75;
+        sketch.add_constraint(ConstraintKind::ArcLength {
+            arc,
+            length: three_eighths,
+        });
+        converged(&mut sketch);
+        near(measure::arc_length(&sketch, arc).unwrap(), three_eighths);
+        let end = sketch.point_position(e).unwrap();
+        near(end.x, -5.0 / 2f32.sqrt());
+        near(end.y, 5.0 / 2f32.sqrt());
+    }
+
+    #[test]
+    fn a_gap_holds_two_circles_apart_and_one_inside_another() {
+        let mut sketch = Sketch::new("t");
+        let (c1, a) = circle(&mut sketch, 0.0, 0.0, 2.0);
+        let (_, b) = circle(&mut sketch, 9.0, 1.0, 3.0);
+        fix(&mut sketch, c1);
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: a,
+            radius: 2.0,
+        });
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: b,
+            radius: 3.0,
+        });
+        sketch.add_constraint(ConstraintKind::Gap {
+            item1: a,
+            item2: b,
+            distance: 1.5,
+        });
+        converged(&mut sketch);
+        near(measure::gap(&sketch, a, b).unwrap().distance, 1.5);
+
+        let mut sketch = Sketch::new("nested");
+        let (c1, big) = circle(&mut sketch, 0.0, 0.0, 10.0);
+        let (c2, small) = circle(&mut sketch, 1.0, 1.0, 2.0);
+        fix(&mut sketch, c1);
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: big,
+            radius: 10.0,
+        });
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: small,
+            radius: 2.0,
+        });
+        sketch.add_constraint(ConstraintKind::Gap {
+            item1: small,
+            item2: big,
+            distance: 1.0,
+        });
+        converged(&mut sketch);
+        near(measure::gap(&sketch, small, big).unwrap().distance, 1.0);
+        near(sketch.point_position(c2).unwrap().to_glam().length(), 7.0);
+    }
+
+    #[test]
+    fn a_gap_keeps_a_circle_off_a_line_and_points_off_both() {
+        let mut sketch = Sketch::new("t");
+        let s = point(&mut sketch, -10.0, 0.0);
+        let e = point(&mut sketch, 10.0, 0.0);
+        let ground = line(&mut sketch, s, e);
+        fix(&mut sketch, s);
+        fix(&mut sketch, e);
+        let (_, wheel) = circle(&mut sketch, 1.0, 6.0, 2.0);
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: wheel,
+            radius: 2.0,
+        });
+        sketch.add_constraint(ConstraintKind::Gap {
+            item1: ground,
+            item2: wheel,
+            distance: 0.5,
+        });
+        let p = point(&mut sketch, 3.0, -4.0);
+        sketch.add_constraint(ConstraintKind::Gap {
+            item1: p,
+            item2: ground,
+            distance: 2.0,
+        });
+        let q = point(&mut sketch, 1.0, 12.0);
+        sketch.add_constraint(ConstraintKind::Gap {
+            item1: wheel,
+            item2: q,
+            distance: 3.0,
+        });
+        converged(&mut sketch);
+        near(measure::gap(&sketch, ground, wheel).unwrap().distance, 0.5);
+        near(sketch.point_position(p).unwrap().y, -2.0);
+        near(measure::gap(&sketch, q, wheel).unwrap().distance, 3.0);
+    }
+
+    #[test]
+    fn an_angle_at_a_point_turns_a_line_against_an_arc() {
+        let mut sketch = Sketch::new("t");
+        let c = point(&mut sketch, 0.0, 0.0);
+        let s = point(&mut sketch, 5.0, 0.0);
+        let e = point(&mut sketch, 0.0, 5.0);
+        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
+        sketch.add_constraint(ConstraintKind::Block { element: arc });
+        let far = point(&mut sketch, 9.0, 1.0);
+        let spoke = line(&mut sketch, s, far);
+        sketch.add_constraint(ConstraintKind::Length {
+            line: spoke,
+            length: 4.0,
+        });
+        let angle = 60f32.to_radians();
+        sketch.add_constraint(ConstraintKind::AngleAtPoint {
+            curve1: spoke,
+            curve2: arc,
+            point: s,
+            angle_rad: angle,
+        });
+        converged(&mut sketch);
+        near(
+            measure::angle_at_point(&sketch, spoke, arc, s).unwrap(),
+            angle,
+        );
+        // The arc's tangent at its start points straight up; the spoke
+        // runs 60° clockwise of it.
+        let d = (sketch.point_position(far).unwrap() - sketch.point_position(s).unwrap()).to_glam();
+        near(d.y.atan2(d.x), 30f32.to_radians());
+    }
+
+    #[test]
+    fn a_refraction_bends_the_ray_leaving_the_interface() {
+        let mut sketch = Sketch::new("t");
+        let l = point(&mut sketch, -10.0, 0.0);
+        let r = point(&mut sketch, 10.0, 0.0);
+        let interface = line(&mut sketch, l, r);
+        sketch.add_constraint(ConstraintKind::Block { element: interface });
+        let source = point(&mut sketch, -4.0, 4.0);
+        let hit = point(&mut sketch, 0.0, 0.0);
+        let exit = point(&mut sketch, 3.0, -5.0);
+        let ray1 = line(&mut sketch, source, hit);
+        let ray2 = line(&mut sketch, hit, exit);
+        fix(&mut sketch, source);
+        fix(&mut sketch, hit);
+        sketch.add_constraint(ConstraintKind::Length {
+            line: ray2,
+            length: 5.0,
+        });
+        sketch.add_constraint(ConstraintKind::Refraction {
+            ray1,
+            ray2,
+            interface,
+            point: hit,
+            ratio: 1.5,
+        });
+        converged(&mut sketch);
+        near(
+            measure::refraction_ratio(&sketch, ray1, ray2, interface, hit).unwrap(),
+            1.5,
+        );
+        // sin 45° / sin θ = 1.5, and the ray carries on below.
+        let out = sketch.point_position(exit).unwrap().to_glam();
+        near(out.x / out.length(), 45f32.to_radians().sin() / 1.5);
+        assert!(out.y < 0.0, "refracted, not reflected: {out:?}");
     }
 }
