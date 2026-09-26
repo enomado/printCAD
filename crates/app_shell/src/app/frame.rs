@@ -905,7 +905,12 @@ impl PrintCadApp {
                 } else if is_hovered {
                     HOVER_PAINT
                 } else {
-                    [0.85, 0.85, 0.85]
+                    match geometry.tint {
+                        core_document::PassiveTint::Plain => [0.85, 0.85, 0.85],
+                        core_document::PassiveTint::External => {
+                            core_document::SketchPalette::default().external
+                        }
+                    }
                 };
                 // The tint participates in the cache revision so hover /
                 // selection transitions actually re-upload the color.
