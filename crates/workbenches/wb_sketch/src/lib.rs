@@ -11,6 +11,7 @@ mod feature;
 pub mod generator;
 mod geom2d;
 mod glyphs;
+pub mod internal;
 mod measure;
 mod overlay;
 mod ovp;
@@ -303,6 +304,9 @@ pub struct SketchWorkbench {
     /// The selection sorted by kind, refreshed each frame for tool
     /// enablement.
     selection_shape: constrain::SelectionShape,
+    /// The selection names a curve that takes internal geometry, refreshed
+    /// each frame for tool enablement.
+    internal_target: bool,
     /// The copy tool is armed: transforms leave the originals in place.
     copy_mode: bool,
     /// Constraint whose name is being edited inline in the task panel.
@@ -395,6 +399,7 @@ const TOOL_KEYS: &[(&str, &str)] = &[
     ("sketch.trim", "T"),
     ("sketch.external", "X"),
     ("sketch.construction", "N"),
+    ("sketch.internal_geometry", "I"),
     ("sketch.constrain.coincident", "Shift+C"),
     ("sketch.constrain.point_on_object", "Shift+O"),
     ("sketch.constrain.vertical", "Shift+V"),
@@ -1477,6 +1482,84 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// The `sketch.internal_geometry` action: the selected curves' internal
+    /// geometry shown when a piece of it is missing, else hidden, through
+    /// the command's code.
+    fn toggle_internal_geometry(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(mut feature), Some(sketch_id)) =
+            (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return InputResult::ignored();
+        };
+        let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+        items.sort();
+        if internal::curves_of(&feature.sketch, &items).is_empty() {
+            ctx.log_warn("Select an ellipse, a parabola, a hyperbola or a B-spline");
+            return InputResult::consumed();
+        }
+        let (shown, changed) = internal::toggle(&mut feature.sketch, &items, None);
+        ctx.record(
+            "sketch.internal_geometry",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": ids_json(&items),
+                "show": shown,
+            })),
+            serde_json::json!({
+                "shown": shown,
+                "elements": changed.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+            }),
+        );
+        if !shown {
+            self.selected.retain(|id| !changed.contains(id));
+        }
+        ctx.log_info(match (shown, changed.len()) {
+            (true, n) => format!("Showed internal geometry: {n} element(s)"),
+            (false, 0) => "Internal geometry kept: all of it is constrained".to_string(),
+            (false, n) => format!("Hid internal geometry: {n} element(s)"),
+        });
+        if !changed.is_empty() {
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+        }
+        InputResult::consumed()
+    }
+
+    /// The `sketch.remove_axis_alignment` action: the selected lines'
+    /// horizontal and vertical constraints turned into parallel and
+    /// perpendicular ones among them, through the command's code.
+    fn remove_axis_alignment(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(mut feature), Some(sketch_id)) =
+            (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return InputResult::ignored();
+        };
+        let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+        items.sort();
+        let set: HashSet<Uuid> = items.iter().copied().collect();
+        let changed = tools::remove_axis_alignment(&mut feature.sketch, &set);
+        if changed == 0 {
+            ctx.log_warn("None of the selected lines is held horizontal or vertical");
+            return InputResult::consumed();
+        }
+        ctx.record(
+            "sketch.remove_axis_alignment",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": ids_json(&items),
+            })),
+            serde_json::json!(changed),
+        );
+        self.selected_constraints
+            .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
+        ctx.log_info(format!(
+            "Removed axis alignment: {changed} constraint(s) now relative"
+        ));
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        InputResult::consumed()
+    }
+
     /// Right-click / Enter: ends a line chain, completes an in-progress
     /// B-spline; anything else stays with the camera (right-drag pans).
     fn handle_finish_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -2174,6 +2257,15 @@ impl Workbench for SketchWorkbench {
                     .icon("construction-mode")
                     .row(1),
                 ));
+                context.register_tool(keyed(
+                    ToolDescriptor::new_action(
+                        "sketch.internal_geometry",
+                        "Show/hide internal geometry",
+                        Some("geometry.construction"),
+                    )
+                    .icon("show-hide-internal-geometry")
+                    .row(1),
+                ));
                 continue;
             }
             if *id == "sketch.point" {
@@ -2310,6 +2402,15 @@ impl Workbench for SketchWorkbench {
             }
             context.register_tool(tool);
         }
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.remove_axis_alignment",
+                "Remove axis alignment",
+                Some("constraints.geometric"),
+            )
+            .icon("toggle-axis-cross")
+            .row(2),
+        );
         for (id, label, icon) in [
             (
                 "sketch.toggle_driving",
@@ -2478,6 +2579,8 @@ impl Workbench for SketchWorkbench {
             }
             match base {
                 "sketch.construction" => return self.toggle_construction_selected(ctx),
+                "sketch.internal_geometry" => return self.toggle_internal_geometry(ctx),
+                "sketch.remove_axis_alignment" => return self.remove_axis_alignment(ctx),
                 "sketch.snap" => {
                     self.snap_off = !self.snap_off;
                     return InputResult::consumed();
@@ -2745,6 +2848,8 @@ impl Workbench for SketchWorkbench {
                     self.last_solve = None;
                     self.last_diagnosis = None;
                 }
+                let selected: Vec<Uuid> = self.selected.iter().copied().collect();
+                self.internal_target = !internal::curves_of(&feature.sketch, &selected).is_empty();
                 constrain::SelectionShape::of(&feature.sketch, &self.selected)
             }
             None => constrain::SelectionShape::default(),
@@ -2773,6 +2878,8 @@ impl Workbench for SketchWorkbench {
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.array" => editing && !self.selected.is_empty(),
+            "sketch.internal_geometry" => editing && self.internal_target,
+            "sketch.remove_axis_alignment" => editing && !self.selection_shape.lines.is_empty(),
             "sketch.join" => {
                 editing && self.selection_shape.all.len() - self.selection_shape.points.len() >= 2
             }

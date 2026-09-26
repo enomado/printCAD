@@ -358,15 +358,12 @@ enum ResidualSpec {
     /// angle (axis constraints; the axis offset is folded into `target`).
     AngleToTarget { s: usize, e: usize, target: f64 },
     /// Approximate point-on-ellipse: the normalized ellipse equation scaled
-    /// by the minor radius, ≈ signed distance near the boundary. The
-    /// ellipse's shape (major vector, ratio) is fixed; only the point and
-    /// center move.
+    /// by the minor radius, ≈ signed distance near the boundary. The point
+    /// and center move, and the shape too when it is in the system.
     PointOnEllipse {
         p: usize,
         c: usize,
-        major_x: f64,
-        major_y: f64,
-        ratio: f64,
+        shape: CurveShape,
     },
     /// Implicit arc consistency: |endpoint - center| - r.
     ArcEndpoint { p: usize, c: usize, r: usize },
@@ -460,16 +457,74 @@ enum ResidualSpec {
         ratio: f64,
     },
     /// A parabola's or hyperbola's end point on its curve: the curve's
-    /// equation over its gradient, ≈ signed distance. The shape (axis,
-    /// minor) is fixed; the point and the curve's centre move.
+    /// equation over its gradient, ≈ signed distance. The point and the
+    /// curve's centre move, and the shape too when it is in the system.
     OnConic {
         p: usize,
         c: usize,
-        axis_x: f64,
-        axis_y: f64,
-        minor: f64,
+        shape: CurveShape,
         hyperbola: bool,
     },
+    /// p - (c + the offset `at` names in the curve's frame) (2 residuals):
+    /// a piece of internal geometry where its curve puts it.
+    Internal {
+        p: usize,
+        c: usize,
+        shape: CurveShape,
+        at: Offset,
+    },
+}
+
+/// An ellipse's or conic's shape: the vector along its axis (an ellipse's
+/// center to major vertex, a conic's axis) and its minor radius (a
+/// hyperbola's semi-minor axis; a parabola has none). Held where it is,
+/// or three variables of the system from `Var`'s index on, when internal
+/// geometry can move it.
+#[derive(Debug, Clone, Copy)]
+enum CurveShape {
+    Fixed { x: f64, y: f64, minor: f64 },
+    Var(usize),
+}
+
+impl CurveShape {
+    /// `(axis x, axis y, minor)`.
+    fn get(self, v: &[f64]) -> (f64, f64, f64) {
+        match self {
+            CurveShape::Fixed { x, y, minor } => (x, y, minor),
+            CurveShape::Var(k) => (v[k], v[k + 1], v[k + 2]),
+        }
+    }
+}
+
+/// Where a piece of internal geometry sits from its curve's centre, along
+/// the axis `u` and across it `w` (`u` turned a quarter counter-clockwise),
+/// with `a` the axis length and `b` the minor radius.
+#[derive(Debug, Clone, Copy)]
+enum Offset {
+    /// `sign · a` along: an ellipse's major vertices, a conic's axis end.
+    Major(f64),
+    /// `sign · b` across (`b` no more than `a` for an ellipse).
+    Minor { sign: f64, ellipse: bool },
+    /// `sign · √(a² − b²)` along: an ellipse's foci.
+    EllipseFocus(f64),
+    /// `√(a² + b²)` along: a hyperbola's focus.
+    HyperbolaFocus,
+}
+
+impl Offset {
+    fn of(self, (x, y, minor): (f64, f64, f64)) -> (f64, f64) {
+        let a = x.hypot(y).max(MIN_LEN);
+        let (u, w) = ((x / a, y / a), (-y / a, x / a));
+        let (along, across) = match self {
+            Offset::Major(sign) => (sign * a, 0.0),
+            Offset::Minor { sign, ellipse } => {
+                (0.0, sign * if ellipse { minor.min(a) } else { minor })
+            }
+            Offset::EllipseFocus(sign) => (sign * (a * a - minor * minor).max(0.0).sqrt(), 0.0),
+            Offset::HyperbolaFocus => (a.hypot(minor), 0.0),
+        };
+        (u.0 * along + w.0 * across, u.1 * along + w.1 * across)
+    }
 }
 
 /// Where a curve's tangent at a point comes from: a line's two ends, or a
@@ -502,7 +557,8 @@ impl ResidualSpec {
             ResidualSpec::FixedPoint { .. }
             | ResidualSpec::Coincident { .. }
             | ResidualSpec::Symmetric { .. }
-            | ResidualSpec::Midpoint { .. } => 2,
+            | ResidualSpec::Midpoint { .. }
+            | ResidualSpec::Internal { .. } => 2,
             _ => 1,
         }
     }
@@ -577,15 +633,10 @@ impl ResidualSpec {
                 let dx = v[e] - v[s];
                 out.push(wrap_angle(dy.atan2(dx) - target));
             }
-            ResidualSpec::PointOnEllipse {
-                p,
-                c,
-                major_x,
-                major_y,
-                ratio,
-            } => {
+            ResidualSpec::PointOnEllipse { p, c, shape } => {
+                let (major_x, major_y, minor) = shape.get(v);
                 let a = (major_x * major_x + major_y * major_y).sqrt().max(MIN_LEN);
-                let b = (a * ratio).max(MIN_LEN);
+                let b = minor.min(a).max(MIN_LEN);
                 // Rotate the point into the ellipse frame.
                 let (cos_t, sin_t) = (major_x / a, major_y / a);
                 let dx = v[p] - v[c];
@@ -692,11 +743,10 @@ impl ResidualSpec {
             ResidualSpec::OnConic {
                 p,
                 c,
-                axis_x,
-                axis_y,
-                minor,
+                shape,
                 hyperbola,
             } => {
+                let (axis_x, axis_y, minor) = shape.get(v);
                 let a = axis_x.hypot(axis_y).max(MIN_LEN);
                 let (ux, uy) = (axis_x / a, axis_y / a);
                 let (dx, dy) = (v[p] - v[c], v[p + 1] - v[c + 1]);
@@ -711,6 +761,11 @@ impl ResidualSpec {
                     (x - y * y / (4.0 * a)) / (1.0 + (y / (2.0 * a)).powi(2)).sqrt()
                 };
                 out.push(distance);
+            }
+            ResidualSpec::Internal { p, c, shape, at } => {
+                let (dx, dy) = at.of(shape.get(v));
+                out.push(v[p] - (v[c] + dx));
+                out.push(v[p + 1] - (v[c + 1] + dy));
             }
         }
     }
@@ -761,6 +816,9 @@ struct System {
     point_vars: HashMap<Uuid, usize>,
     /// Circle/arc id -> index of its radius variable.
     radius_vars: HashMap<Uuid, usize>,
+    /// Ellipse or conic id -> index of its three shape variables (see
+    /// `CurveShape`), for the curves whose internal geometry is shown.
+    shape_vars: HashMap<Uuid, usize>,
     /// Resolved residuals (user constraints plus implicit arc consistency).
     specs: Vec<ResidualSpec>,
     /// Total residual dimension.
@@ -813,6 +871,39 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
     } else {
         (None, None, None)
     };
+    // An ellipse or conic showing internal geometry has its shape in the
+    // system, so the geometry can size and turn it.
+    let shaped: std::collections::HashSet<Uuid> = sketch
+        .constraints
+        .iter()
+        .filter(|c| c.is_solved() && exclude != Some(c.id))
+        .filter_map(|c| match c.kind {
+            ConstraintKind::InternalAlignment { curve, .. } => Some(curve),
+            _ => None,
+        })
+        .collect();
+    let mut shape_vars = HashMap::new();
+    for element in &sketch.geometry {
+        match element {
+            GeometryElement::Ellipse(e) if shaped.contains(&e.id) => {
+                shape_vars.insert(e.id, vars.len());
+                vars.push(f64::from(e.major.x));
+                vars.push(f64::from(e.major.y));
+                vars.push(f64::from(e.major.to_glam().length() * e.ratio));
+            }
+            GeometryElement::Conic(c) if shaped.contains(&c.id) => {
+                shape_vars.insert(c.id, vars.len());
+                vars.push(f64::from(c.axis.x));
+                vars.push(f64::from(c.axis.y));
+                vars.push(f64::from(c.minor));
+                // A parabola has no minor axis: its slot holds still.
+                if c.kind == crate::sketch::ConicKind::Parabola {
+                    pinned.push(vars.len() - 1);
+                }
+            }
+            _ => {}
+        }
+    }
     for element in &sketch.geometry {
         match element {
             GeometryElement::Point(p) => {
@@ -844,6 +935,9 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         }
         if let Some(&r) = radius_vars.get(&id) {
             pinned.push(r);
+        }
+        if let Some(&k) = shape_vars.get(&id) {
+            pinned.extend([k, k + 1, k + 2]);
         }
     }
     for id in held {
@@ -1093,12 +1187,12 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                     specs.push(ResidualSpec::PointOnEllipse {
                         p,
                         c,
-                        major_x: f64::from(el.major.x),
-                        major_y: f64::from(el.major.y),
-                        ratio: f64::from(el.ratio),
+                        shape: curve_shape(sketch, &shape_vars, ellipse),
                     });
                 }
             }
+            // Resolved together below, once each point is known.
+            ConstraintKind::InternalAlignment { .. } => {}
             ConstraintKind::Tangent {
                 line_or_circle1,
                 item2,
@@ -1292,7 +1386,8 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         }
     }
 
-    specs.extend(conic_end_residuals(sketch, &point_var));
+    specs.extend(conic_end_residuals(sketch, &point_var, &shape_vars));
+    specs.extend(internal_residuals(sketch, exclude, &point_var, &shape_vars));
 
     let residual_len = specs.iter().map(ResidualSpec::dim).sum();
     let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
@@ -1301,6 +1396,7 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         free,
         point_vars,
         radius_vars,
+        shape_vars,
         specs,
         residual_len,
     }
@@ -1321,6 +1417,7 @@ enum ItemVars {
 fn conic_end_residuals(
     sketch: &Sketch,
     point_var: &impl Fn(Uuid) -> Option<usize>,
+    shape_vars: &HashMap<Uuid, usize>,
 ) -> Vec<ResidualSpec> {
     let mut specs = Vec::new();
     for element in &sketch.geometry {
@@ -1335,11 +1432,120 @@ fn conic_end_residuals(
                 specs.push(ResidualSpec::OnConic {
                     p,
                     c,
-                    axis_x: f64::from(conic.axis.x),
-                    axis_y: f64::from(conic.axis.y),
-                    minor: f64::from(conic.minor),
+                    shape: curve_shape(sketch, shape_vars, conic.id),
                     hyperbola: conic.kind == crate::sketch::ConicKind::Hyperbola,
                 });
+            }
+        }
+    }
+    specs
+}
+
+/// An ellipse's or conic's shape as the system has it: its variables when
+/// it has them, else where it is.
+fn curve_shape(sketch: &Sketch, shape_vars: &HashMap<Uuid, usize>, id: Uuid) -> CurveShape {
+    if let Some(&k) = shape_vars.get(&id) {
+        return CurveShape::Var(k);
+    }
+    match sketch.get_geometry(id) {
+        Some(GeometryElement::Ellipse(e)) => CurveShape::Fixed {
+            x: f64::from(e.major.x),
+            y: f64::from(e.major.y),
+            minor: f64::from(e.major.to_glam().length() * e.ratio),
+        },
+        Some(GeometryElement::Conic(c)) => CurveShape::Fixed {
+            x: f64::from(c.axis.x),
+            y: f64::from(c.axis.y),
+            minor: f64::from(c.minor),
+        },
+        _ => CurveShape::Fixed {
+            x: 1.0,
+            y: 0.0,
+            minor: 0.0,
+        },
+    }
+}
+
+/// Each piece of internal geometry held where its curve puts it: every
+/// point of it that is not the curve's own, once, however many pieces
+/// share it (a parabola's axis ends at its focus). A control polygon is
+/// drawn through the spline's own points and needs none.
+fn internal_residuals(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    point_var: &impl Fn(Uuid) -> Option<usize>,
+    shape_vars: &HashMap<Uuid, usize>,
+) -> Vec<ResidualSpec> {
+    use crate::sketch::{ConicKind, InternalRole};
+    let mut specs = Vec::new();
+    let mut placed: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    for constraint in &sketch.constraints {
+        let ConstraintKind::InternalAlignment {
+            element,
+            curve,
+            role,
+        } = constraint.kind
+        else {
+            continue;
+        };
+        if !constraint.is_solved() || exclude == Some(constraint.id) {
+            continue;
+        }
+        let Some(geometry) = sketch.get_geometry(curve) else {
+            continue;
+        };
+        let (center, ellipse, hyperbola) = match geometry {
+            GeometryElement::Ellipse(e) => (e.center, true, false),
+            GeometryElement::Conic(c) => (c.center, false, c.kind == ConicKind::Hyperbola),
+            _ => continue,
+        };
+        let Some(c) = point_var(center) else {
+            continue;
+        };
+        let own = Sketch::curve_point_ids(geometry);
+        let shape = curve_shape(sketch, shape_vars, curve);
+        // The points of the element and where each goes.
+        let targets: Vec<(Uuid, Offset)> = match (role, sketch.get_geometry(element)) {
+            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p))) => {
+                let sign = if role == InternalRole::Focus1 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let at = if ellipse {
+                    Offset::EllipseFocus(sign)
+                } else if hyperbola {
+                    Offset::HyperbolaFocus
+                } else {
+                    Offset::Major(1.0)
+                };
+                vec![(p.id, at)]
+            }
+            (InternalRole::MajorAxis, Some(GeometryElement::Line(l))) => {
+                let mut ends = vec![(l.end, Offset::Major(1.0))];
+                if ellipse {
+                    ends.push((l.start, Offset::Major(-1.0)));
+                }
+                ends
+            }
+            (InternalRole::MinorAxis, Some(GeometryElement::Line(l))) => vec![
+                (
+                    l.start,
+                    Offset::Minor {
+                        sign: -1.0,
+                        ellipse,
+                    },
+                ),
+                (l.end, Offset::Minor { sign: 1.0, ellipse }),
+            ],
+            _ => Vec::new(),
+        };
+        for (point, at) in targets {
+            if own.contains(&point) || !placed.insert(point) {
+                continue;
+            }
+            if let Some(p) = point_var(point) {
+                specs.push(ResidualSpec::Internal { p, c, shape, at });
             }
         }
     }
@@ -1550,10 +1756,28 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
                     a.radius = x[i] as f32;
                 }
             }
-            GeometryElement::Line(_)
-            | GeometryElement::Ellipse(_)
-            | GeometryElement::BSpline(_)
-            | GeometryElement::Conic(_) => {}
+            // A minor radius past the major one would make the major axis
+            // the minor: the ratio stays at most 1, a circle.
+            GeometryElement::Ellipse(e) => {
+                if let Some(&k) = sys.shape_vars.get(&e.id) {
+                    let major = Vec2D::new(x[k] as f32, x[k + 1] as f32);
+                    let a = major.to_glam().length();
+                    if a > 1e-9 {
+                        e.major = major;
+                        e.ratio = ((x[k + 2] as f32) / a).clamp(1e-6, 1.0);
+                    }
+                }
+            }
+            GeometryElement::Conic(c) => {
+                if let Some(&k) = sys.shape_vars.get(&c.id) {
+                    let axis = Vec2D::new(x[k] as f32, x[k + 1] as f32);
+                    if axis.to_glam().length() > 1e-9 {
+                        c.axis = axis;
+                        c.minor = (x[k + 2] as f32).abs();
+                    }
+                }
+            }
+            GeometryElement::Line(_) | GeometryElement::BSpline(_) => {}
         }
     }
 }

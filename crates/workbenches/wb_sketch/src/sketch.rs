@@ -210,6 +210,14 @@ impl Sketch {
                 doomed.insert(geom.id());
             }
         }
+        // A curve's internal geometry goes with it.
+        for c in &self.constraints {
+            if let ConstraintKind::InternalAlignment { element, curve, .. } = c.kind
+                && doomed.contains(&curve)
+            {
+                doomed.insert(element);
+            }
+        }
 
         // Points that only the doomed curves held on to go with them;
         // points a surviving curve still references stay.
@@ -371,6 +379,7 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
             point,
             ..
         } => vec![*ray1, *ray2, *interface, *point],
+        ConstraintKind::InternalAlignment { element, curve, .. } => vec![*element, *curve],
     }
 }
 
@@ -412,6 +421,9 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::Gap { .. } => "Gap".to_string(),
         ConstraintKind::AngleAtPoint { .. } => "Angle at point".to_string(),
         ConstraintKind::Refraction { .. } => "Refraction".to_string(),
+        ConstraintKind::InternalAlignment { role, .. } => {
+            format!("Internal alignment ({})", role.label())
+        }
     }
 }
 
@@ -1199,6 +1211,51 @@ pub enum ConstraintKind {
         point: Uuid,
         ratio: f32,
     },
+    /// `element` is a piece of `curve`'s internal geometry, held where
+    /// `role` puts it: an axis or a focus of an ellipse or conic, a side of
+    /// a spline's control polygon.
+    InternalAlignment {
+        element: Uuid,
+        curve: Uuid,
+        role: InternalRole,
+    },
+}
+
+/// What a piece of internal geometry stands for on its curve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InternalRole {
+    /// A line along the axis: an ellipse's from one vertex of the major
+    /// axis to the other; a conic's from its centre along its axis, to the
+    /// focus of a parabola, to the vertex of a hyperbola's branch.
+    MajorAxis,
+    /// A line across: an ellipse's minor axis, vertex to vertex; a
+    /// hyperbola's, through its centre, twice its semi-minor axis long.
+    MinorAxis,
+    /// A point at a focus: an ellipse's on the major vertex's side, a
+    /// parabola's, a hyperbola's branch's.
+    Focus1,
+    /// A point at an ellipse's other focus.
+    Focus2,
+    /// A line along the control polygon, from control point `n` to the
+    /// next (to the first, round a periodic spline's end).
+    ControlEdge(u32),
+}
+
+impl InternalRole {
+    pub fn label(self) -> String {
+        match self {
+            InternalRole::MajorAxis => "major axis".to_string(),
+            InternalRole::MinorAxis => "minor axis".to_string(),
+            InternalRole::Focus1 => "focus".to_string(),
+            InternalRole::Focus2 => "second focus".to_string(),
+            InternalRole::ControlEdge(n) => format!("control polygon {}", n + 1),
+        }
+    }
+
+    /// Whether the role is a line (else a point).
+    pub fn is_line(self) -> bool {
+        !matches!(self, InternalRole::Focus1 | InternalRole::Focus2)
+    }
 }
 
 impl ConstraintKind {

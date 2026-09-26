@@ -671,6 +671,19 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `items` (list): Element ids
 - `on` (boolean, optional): true (the default) or false
 
+`pc.sketch.internal_geometry`: Show or hide curves' internal geometry: an ellipse's axes and foci, a parabola's or hyperbola's axis and focus, a B-spline's control polygon, as construction held to its curve.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The curves, or pieces of their internal geometry
+- `show` (boolean, optional): true makes what is missing, false takes away the pieces nothing else holds; left out, it shows when a piece is missing and hides otherwise
+- Returns {shown, elements}: whether it showed, and what it made or took away
+
+`pc.sketch.remove_axis_alignment`: Turn the horizontal and vertical constraints of lines into parallel and perpendicular ones among them, so the group keeps its shape and turns as a whole.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The lines
+- Returns how many constraints changed
+
 `pc.sketch.generator`: Change the numbers a generated sketch (a gear, a sprocket, a shaft) is made from, or detach it into a plain sketch.
 
 - `sketch` (id): The generated sketch

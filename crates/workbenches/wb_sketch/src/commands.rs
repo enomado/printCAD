@@ -367,6 +367,35 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("items", ParamKind::List, "Element ids")
         .optional("on", ParamKind::Bool, "true (the default) or false"),
     );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.internal_geometry",
+            "Show or hide curves' internal geometry: an ellipse's axes and foci, a parabola's \
+             or hyperbola's axis and focus, a B-spline's control polygon, as construction held \
+             to its curve",
+        ))
+        .param(
+            "items",
+            ParamKind::List,
+            "The curves, or pieces of their internal geometry",
+        )
+        .optional(
+            "show",
+            ParamKind::Bool,
+            "true makes what is missing, false takes away the pieces nothing else holds; \
+             left out, it shows when a piece is missing and hides otherwise",
+        )
+        .returns("{shown, elements}: whether it showed, and what it made or took away"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.remove_axis_alignment",
+            "Turn the horizontal and vertical constraints of lines into parallel and \
+             perpendicular ones among them, so the group keeps its shape and turns as a whole",
+        ))
+        .param("items", ParamKind::List, "The lines")
+        .returns("how many constraints changed"),
+    );
 }
 
 /// The arguments that say where a new sketch goes.
@@ -633,6 +662,24 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
             crate::solver::solve_holding(sketch, &held);
             Value::Null
+        }
+        "sketch.internal_geometry" => {
+            let items = ids(args.get("items"), "items", sketch)?;
+            if crate::internal::curves_of(sketch, &items).is_empty() {
+                return Err(CommandError::bad(
+                    "items",
+                    "names no ellipse, parabola, hyperbola or B-spline",
+                ));
+            }
+            let (shown, changed) = crate::internal::toggle(sketch, &items, a.opt_bool("show")?);
+            let changed: Vec<String> = changed.iter().map(Uuid::to_string).collect();
+            json!({"shown": shown, "elements": changed})
+        }
+        "sketch.remove_axis_alignment" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            json!(crate::tools::remove_axis_alignment(sketch, &items))
         }
         "sketch.construction" => {
             let on = a.opt_bool("on")?.unwrap_or(true);

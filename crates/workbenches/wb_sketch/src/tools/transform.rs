@@ -170,7 +170,7 @@ pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: 
         .normalize_or_zero();
     let keeps_axes = x_image.y.abs() < 1e-4;
     let swaps_axes = x_image.x.abs() < 1e-4;
-    let mut reference: Option<(Uuid, bool)> = None;
+    let mut unaligner = Unaligner::default();
     let mut dropped: Vec<Uuid> = Vec::new();
     let snapshot = sketch.clone();
     for constraint in &mut sketch.constraints {
@@ -196,27 +196,9 @@ pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: 
                     };
                     continue;
                 }
-                // The first such line keeps the turn free; the rest hold to
-                // it as they held to the axes.
-                match reference {
-                    None => {
-                        reference = Some((element, horizontal));
-                        // Its own axis constraint has no counterpart.
-                        dropped.push(constraint.id);
-                    }
-                    Some((line, line_horizontal)) => {
-                        constraint.kind = if horizontal == line_horizontal {
-                            ConstraintKind::Parallel {
-                                line1: element,
-                                line2: line,
-                            }
-                        } else {
-                            ConstraintKind::Perpendicular {
-                                line1: element,
-                                line2: line,
-                            }
-                        };
-                    }
+                match unaligner.relate(element, horizontal) {
+                    Some(kind) => constraint.kind = kind,
+                    None => dropped.push(constraint.id),
                 }
             }
             // A pin to the origin or an axis the move took the point off
@@ -250,6 +232,69 @@ pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: 
         }
     }
     sketch.constraints.retain(|c| !dropped.contains(&c.id));
+}
+
+/// Horizontal and vertical constraints made relative to one another: the
+/// first line met keeps the turn free (its own constraint goes, having no
+/// counterpart), and each other holds to it as it held to the axes,
+/// parallel or perpendicular.
+#[derive(Debug, Default)]
+pub(crate) struct Unaligner {
+    reference: Option<(Uuid, bool)>,
+}
+
+impl Unaligner {
+    /// What a horizontal (or vertical) constraint on `element` becomes;
+    /// `None` when it goes.
+    pub(crate) fn relate(&mut self, element: Uuid, horizontal: bool) -> Option<ConstraintKind> {
+        let Some((line, line_horizontal)) = self.reference else {
+            self.reference = Some((element, horizontal));
+            return None;
+        };
+        Some(if horizontal == line_horizontal {
+            ConstraintKind::Parallel {
+                line1: element,
+                line2: line,
+            }
+        } else {
+            ConstraintKind::Perpendicular {
+                line1: element,
+                line2: line,
+            }
+        })
+    }
+}
+
+/// Turn the horizontal and vertical constraints on the lines among
+/// `elements` into parallel and perpendicular ones among themselves, so
+/// the group keeps its shape and is free to turn as a whole. How many
+/// constraints changed or went.
+pub fn remove_axis_alignment(sketch: &mut Sketch, elements: &HashSet<Uuid>) -> usize {
+    let lines: HashSet<Uuid> = elements
+        .iter()
+        .copied()
+        .filter(|id| matches!(sketch.get_geometry(*id), Some(GeometryElement::Line(_))))
+        .collect();
+    let mut unaligner = Unaligner::default();
+    let mut dropped: Vec<Uuid> = Vec::new();
+    let mut changed = 0;
+    for constraint in &mut sketch.constraints {
+        let (element, horizontal) = match constraint.kind {
+            ConstraintKind::Horizontal { element } => (element, true),
+            ConstraintKind::Vertical { element } => (element, false),
+            _ => continue,
+        };
+        if !lines.contains(&element) {
+            continue;
+        }
+        changed += 1;
+        match unaligner.relate(element, horizontal) {
+            Some(kind) => constraint.kind = kind,
+            None => dropped.push(constraint.id),
+        }
+    }
+    sketch.constraints.retain(|c| !dropped.contains(&c.id));
+    changed
 }
 
 /// Add a transformed deep copy of the selection: fresh point ids, sharing

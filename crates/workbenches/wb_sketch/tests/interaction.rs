@@ -3755,3 +3755,81 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
         }
     }
 }
+
+#[test]
+fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
+    use wb_sketch::sketch::{ConstraintKind, InternalRole};
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.ellipse");
+    h.click(10.0, 0.0, "sketch.ellipse");
+    h.click(5.0, 4.0, "sketch.ellipse");
+    assert!(!h.tool_enabled("sketch.internal_geometry"));
+    // The top of the ellipse selects it.
+    h.click(0.0, 4.0, "sketch.select");
+    h.release(0.0, 4.0, "sketch.select");
+    assert!(h.tool_enabled("sketch.internal_geometry"));
+    h.key(KeyCode::A, Some("sketch.internal_geometry"));
+    let sketch = h.sketch();
+    let internal: Vec<(uuid::Uuid, InternalRole)> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::InternalAlignment { element, role, .. } => Some((element, role)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(internal.len(), 4, "two axes and two foci");
+    // a = 10, b = 4: the foci sit √84 from the centre.
+    let f = 84f32.sqrt();
+    assert!(h.point_at(f, 0.0) && h.point_at(-f, 0.0));
+    assert!(h.point_at(10.0, 0.0) && h.point_at(0.0, -4.0));
+    // No glyph clutters the curve for them.
+    assert!(
+        !h.marks()
+            .iter()
+            .any(|m| is_icon(m, "show-hide-internal-geometry"))
+    );
+
+    // Dragging the major axis's end stretches the ellipse.
+    h.click(10.0, 0.0, "sketch.select");
+    h.mouse_move(12.0, 0.0, "sketch.select");
+    h.release(12.0, 0.0, "sketch.select");
+    let sketch = h.sketch();
+    let ellipse = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Ellipse(e) => Some(e.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let a = ellipse.major.to_glam().length();
+    assert!(a > 10.5, "the major radius grew to {a}");
+    let f = (a * a - (a * ellipse.ratio).powi(2)).sqrt();
+    let centre = sketch.point_position(ellipse.center).unwrap();
+    let u = ellipse.major.to_glam() / a;
+    let focus = centre.to_glam() + u * f;
+    assert!(h.point_at(focus.x, focus.y), "the focus followed");
+
+    // Selecting the ellipse alone, the action hides it all again.
+    h.click(30.0, 30.0, "sketch.select");
+    h.release(30.0, 30.0, "sketch.select");
+    let t = std::f32::consts::FRAC_PI_4;
+    let on = centre.to_glam() + u * a * t.cos() + u.perp() * a * ellipse.ratio * t.sin();
+    h.click(on.x, on.y, "sketch.select");
+    h.release(on.x, on.y, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.internal_geometry"));
+    let sketch = h.sketch();
+    assert!(
+        !sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::InternalAlignment { .. }))
+    );
+    assert_eq!(
+        sketch.geometry.len(),
+        2,
+        "the ellipse and its centre are left"
+    );
+}
