@@ -543,3 +543,38 @@ fn conic_arcs_replay_too() {
     assert_eq!(done.1, ["conic", "conic", "conic"], "{done:?}");
     assert_replays(&s.recorded, before, id, &done);
 }
+
+#[test]
+fn editing_aids_replay_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    s.click(0.0, 0.0, "sketch.ellipse");
+    s.click(10.0, 0.0, "sketch.ellipse");
+    s.click(5.0, 4.0, "sketch.ellipse");
+    s.click(0.0, 4.0, "sketch.select");
+    s.key(KeyCode::A, Some("sketch.internal_geometry"));
+    s.key(KeyCode::Escape, Some("sketch.select"));
+    // A rectangle let go of the axes.
+    s.click(20.0, 1.0, "sketch.rect");
+    s.click(30.0, 6.0, "sketch.rect");
+    s.press(19.0, -1.0, "sketch.select");
+    s.move_to(31.0, 7.0, "sketch.select");
+    s.release(31.0, 7.0, "sketch.select");
+    s.key(KeyCode::A, Some("sketch.remove_axis_alignment"));
+    s.key(KeyCode::Escape, Some("sketch.select"));
+    s.key(KeyCode::A, Some("sketch.section_view"));
+    let done = summary(&s.sketch(id));
+    let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "sketch.draw",
+            "sketch.internal_geometry",
+            "sketch.draw",
+            "sketch.remove_axis_alignment",
+            "sketch.section_view"
+        ],
+        "{:#?}",
+        s.recorded
+    );
+    assert_replays(&s.recorded, before, id, &done);
+}

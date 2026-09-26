@@ -24,7 +24,9 @@ pub use draw::{
 };
 pub use join::{JOIN_TOLERANCE, join};
 pub use modify::{next_stroke_crossing, trim_preview};
-pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
+pub use transform::{
+    Similarity, array, copy_constraints, copy_from, copy_mapped, remove_axis_alignment,
+};
 
 use crate::sketch::{ConicKind, ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::{self, SnapTarget};

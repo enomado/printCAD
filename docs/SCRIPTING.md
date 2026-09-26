@@ -607,12 +607,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `tolerance` (number, optional): How far the spline may stray from the curves, mm (0.01)
 - Returns {elements}: what it made
 
-`pc.sketch.set_constraint`: Make constraints driving or reference, active or not.
+`pc.sketch.set_constraint`: Make constraints driving or reference, active or not, parked or not.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): The constraints
 - `driving` (boolean, optional): false: a reference dimension that only measures
 - `active` (boolean, optional): false: kept but not solved
+- `parked` (boolean, optional): true: its symbol moves to the parked layer, drawn only while that layer shows; it still solves
 
 `pc.sketch.mirror_sketch`: A new sketch on the same plane: this one's geometry mirrored across its Y axis.
 
@@ -644,6 +645,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `edges` (list): Each {body, point, direction}: a point on the edge and its direction, in the body's own frame
 - Returns {elements}: what it made
 
+`pc.sketch.intersection`: Add where faces of solids cross the sketch plane, as fixed references.
+
+- `sketch` (id): The sketch to draw in
+- `faces` (list): Each {body, point, normal}: a point on the face and its normal there, in the body's own frame
+- Returns {elements}: what it made
+
 `pc.sketch.constraints`: List the sketch's constraints.
 
 - `sketch` (id): The sketch to draw in
@@ -670,6 +677,24 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id): The sketch to draw in
 - `items` (list): Element ids
 - `on` (boolean, optional): true (the default) or false
+
+`pc.sketch.internal_geometry`: Show or hide curves' internal geometry: an ellipse's axes and foci, a parabola's or hyperbola's axis and focus, a B-spline's control polygon, as construction held to its curve.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The curves, or pieces of their internal geometry
+- `show` (boolean, optional): true makes what is missing, false takes away the pieces nothing else holds; left out, it shows when a piece is missing and hides otherwise
+- Returns {shown, elements}: whether it showed, and what it made or took away
+
+`pc.sketch.section_view`: Cut away everything on the viewer's side of the sketch plane while it is edited.
+
+- `sketch` (id): The sketch to draw in
+- `on` (boolean, optional): true (the default) or false
+
+`pc.sketch.remove_axis_alignment`: Turn the horizontal and vertical constraints of lines into parallel and perpendicular ones among them, so the group keeps its shape and turns as a whole.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The lines
+- Returns how many constraints changed
 
 `pc.sketch.generator`: Change the numbers a generated sketch (a gear, a sprocket, a shaft) is made from, or detach it into a plain sketch.
 

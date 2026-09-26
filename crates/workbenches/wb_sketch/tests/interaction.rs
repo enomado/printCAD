@@ -3755,3 +3755,210 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
         }
     }
 }
+
+#[test]
+fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
+    use wb_sketch::sketch::{ConstraintKind, InternalRole};
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.ellipse");
+    h.click(10.0, 0.0, "sketch.ellipse");
+    h.click(5.0, 4.0, "sketch.ellipse");
+    assert!(!h.tool_enabled("sketch.internal_geometry"));
+    // The top of the ellipse selects it.
+    h.click(0.0, 4.0, "sketch.select");
+    h.release(0.0, 4.0, "sketch.select");
+    assert!(h.tool_enabled("sketch.internal_geometry"));
+    h.key(KeyCode::A, Some("sketch.internal_geometry"));
+    let sketch = h.sketch();
+    let internal: Vec<(uuid::Uuid, InternalRole)> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::InternalAlignment { element, role, .. } => Some((element, role)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(internal.len(), 4, "two axes and two foci");
+    // a = 10, b = 4: the foci sit √84 from the centre.
+    let f = 84f32.sqrt();
+    assert!(h.point_at(f, 0.0) && h.point_at(-f, 0.0));
+    assert!(h.point_at(10.0, 0.0) && h.point_at(0.0, -4.0));
+    // No glyph clutters the curve for them.
+    assert!(
+        !h.marks()
+            .iter()
+            .any(|m| is_icon(m, "show-hide-internal-geometry"))
+    );
+
+    // Dragging the major axis's end stretches the ellipse.
+    h.click(10.0, 0.0, "sketch.select");
+    h.mouse_move(12.0, 0.0, "sketch.select");
+    h.release(12.0, 0.0, "sketch.select");
+    let sketch = h.sketch();
+    let ellipse = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Ellipse(e) => Some(e.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let a = ellipse.major.to_glam().length();
+    assert!(a > 10.5, "the major radius grew to {a}");
+    let f = (a * a - (a * ellipse.ratio).powi(2)).sqrt();
+    let centre = sketch.point_position(ellipse.center).unwrap();
+    let u = ellipse.major.to_glam() / a;
+    let focus = centre.to_glam() + u * f;
+    assert!(h.point_at(focus.x, focus.y), "the focus followed");
+
+    // Selecting the ellipse alone, the action hides it all again.
+    h.click(30.0, 30.0, "sketch.select");
+    h.release(30.0, 30.0, "sketch.select");
+    let t = std::f32::consts::FRAC_PI_4;
+    let on = centre.to_glam() + u * a * t.cos() + u.perp() * a * ellipse.ratio * t.sin();
+    h.click(on.x, on.y, "sketch.select");
+    h.release(on.x, on.y, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.internal_geometry"));
+    let sketch = h.sketch();
+    assert!(
+        !sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::InternalAlignment { .. }))
+    );
+    assert_eq!(
+        sketch.geometry.len(),
+        2,
+        "the ellipse and its centre are left"
+    );
+}
+
+#[test]
+fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(2.0, 3.0, "sketch.line");
+    h.click(12.0, 5.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(7.0, 4.0, "sketch.select");
+    h.release(7.0, 4.0, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.constrain.horizontal"));
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    let glyph = h
+        .marks()
+        .into_iter()
+        .find(|m| is_icon(m, "constraint-horizontal"))
+        .expect("the horizontal glyph shows");
+    h.press_px((glyph.pos[0], glyph.pos[1]));
+    h.release_px((glyph.pos[0], glyph.pos[1]));
+    assert!(h.tool_enabled("sketch.park_constraints"));
+    h.key(KeyCode::A, Some("sketch.park_constraints"));
+    assert!(h.sketch().constraints.iter().all(|c| c.parked));
+    assert!(
+        !h.marks()
+            .iter()
+            .any(|m| is_icon(m, "constraint-horizontal")),
+        "parked, the glyph is off the normal layer"
+    );
+    // Still solved: a dragged end keeps the line level.
+    h.click(12.0, 4.0, "sketch.select");
+    h.mouse_move(12.0, 9.0, "sketch.select");
+    h.release(12.0, 9.0, "sketch.select");
+    let sketch = h.sketch();
+    let ys: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.y),
+            _ => None,
+        })
+        .collect();
+    assert!((ys[0] - ys[1]).abs() < 1e-3, "{ys:?}");
+    // The parked layer shows it, and only it.
+    h.key(KeyCode::A, Some("sketch.parked_layer"));
+    assert!(
+        h.marks()
+            .iter()
+            .any(|m| is_icon(m, "constraint-horizontal"))
+    );
+}
+
+#[test]
+fn the_constraint_list_filters_by_kind_and_by_the_selection() {
+    use wb_sketch::ConstraintFilter;
+    use wb_sketch::sketch::ConstraintKind;
+    let mut h = Harness::new();
+    h.create_sketch();
+    // A rectangle: four axis constraints. A free line beside it, sized.
+    h.click(2.0, 2.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.rect");
+    h.click(20.0, 2.0, "sketch.line");
+    h.click(24.0, 9.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(22.0, 5.5, "sketch.select");
+    h.release(22.0, 5.5, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+    let sketch = h.sketch();
+    let length = sketch
+        .constraints
+        .iter()
+        .find(|c| matches!(c.kind, ConstraintKind::Length { .. }))
+        .map(|c| c.id)
+        .expect("the line is sized");
+    let listed = |h: &mut Harness, filter: ConstraintFilter| {
+        *h.wb.constraint_filter_mut() = filter;
+        h.wb.listed_constraints(&h.sketch())
+    };
+    assert_eq!(listed(&mut h, ConstraintFilter::All).len(), 5);
+    assert_eq!(listed(&mut h, ConstraintFilter::Dimensional), [length]);
+    assert_eq!(listed(&mut h, ConstraintFilter::Geometric).len(), 4);
+    assert!(listed(&mut h, ConstraintFilter::Reference).is_empty());
+    // The line is still selected: only its own constraint relates to it.
+    assert_eq!(listed(&mut h, ConstraintFilter::Related), [length]);
+    // The rectangle's bottom edge: its own axis constraint, not its
+    // neighbours'.
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.click(7.0, 2.0, "sketch.select");
+    h.release(7.0, 2.0, "sketch.select");
+    let related = listed(&mut h, ConstraintFilter::Related);
+    let sketch = h.sketch();
+    assert_eq!(related.len(), 1);
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| c.id == related[0] && matches!(c.kind, ConstraintKind::Horizontal { .. }))
+    );
+    // Selected picks out the selected constraints alone.
+    assert!(listed(&mut h, ConstraintFilter::Selected).is_empty());
+}
+
+#[test]
+fn section_view_cuts_the_scene_at_the_sketch_plane_and_stays_with_the_sketch() {
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    let clip = |h: &mut Harness| {
+        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(h.vp);
+        ctx.active_document_object = h.active_object;
+        h.wb.clip_plane(&ctx)
+    };
+    assert_eq!(clip(&mut h), None);
+    assert!(!h.wb.tool_toggled("sketch.section_view"));
+    h.doc.clear_feature_dirty(id);
+    h.key(KeyCode::A, Some("sketch.section_view"));
+    assert!(h.wb.tool_toggled("sketch.section_view"));
+    // The camera looks down from +Z: what is above the XY plane goes.
+    let [a, b, c, d] = clip(&mut h).expect("the sketch cuts the scene");
+    let keeps = |z: f32| a * 2.0 + b * 3.0 + c * z + d >= 0.0;
+    assert!(keeps(-4.0) && keeps(0.0) && !keeps(4.0));
+    let stored = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    assert!(stored.section_view, "kept with the sketch");
+    assert!(
+        !h.doc.dirty_features().contains(&id),
+        "nothing built from it changes"
+    );
+    h.key(KeyCode::A, Some("sketch.section_view"));
+    assert_eq!(clip(&mut h), None);
+}

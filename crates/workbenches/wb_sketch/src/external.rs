@@ -1,12 +1,13 @@
-//! External geometry: a solid's edges projected into the sketch.
+//! External geometry: a solid's edges projected into the sketch, and the
+//! curves where its faces cross the sketch plane (intersection references).
 //!
-//! The kernel projects an edge onto the sketch plane as the exact curve it
-//! is there (a line, a circle or arc, an ellipse or arc of one, a point);
-//! a curve with no closed form comes as points along it and is kept as a
-//! chain of lines. Each element remembers its edge (`ExternalSource`), so
-//! the sketch projects it again when it is edited and the solid has
-//! changed: in place where the shape is the same kind, keeping the
-//! constraints that refer to it, and afresh where it is not.
+//! The kernel gives each as the exact curve it is on the sketch plane (a
+//! line, a circle or arc, an ellipse or arc of one, a point); a curve with
+//! no closed form comes as points along it and is kept as a chain of
+//! lines. Each element remembers its edge or face (`ExternalSource`), so the
+//! sketch brings it up to the solid again when it is edited and the solid
+//! has changed: in place where the shapes are the same kinds, keeping the
+//! constraints that refer to them, and afresh where they are not.
 
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
@@ -97,7 +98,15 @@ pub fn add(sketch: &mut Sketch, projected: &ProjectedEdge, source: ExternalSourc
     count
 }
 
-/// Move the points of `group` (one edge's elements, in the order they
+/// How many sketch elements `add` makes of a projected curve.
+fn element_count(projected: &ProjectedEdge) -> usize {
+    match projected {
+        ProjectedEdge::Polyline(points) => points.len().saturating_sub(1),
+        _ => 1,
+    }
+}
+
+/// Move the points of `group` (one curve's elements, in the order they
 /// were made) to `projected`, when it is the same kind of shape. Returns
 /// whether it was.
 fn update(sketch: &mut Sketch, group: &[Uuid], projected: &ProjectedEdge) -> bool {
@@ -197,6 +206,7 @@ pub fn groups(sketch: &Sketch) -> Vec<(ExternalSource, Vec<Uuid>)> {
         for c in s.point.iter().chain(&s.direction) {
             k.extend(c.to_bits().to_le_bytes());
         }
+        k.push(u8::from(s.section));
         k
     };
     let mut by_source: BTreeMap<Vec<u8>, (ExternalSource, Vec<Uuid>)> = BTreeMap::new();
@@ -212,18 +222,30 @@ pub fn groups(sketch: &Sketch) -> Vec<(ExternalSource, Vec<Uuid>)> {
     by_source.into_values().collect()
 }
 
-/// Bring one edge's elements up to `projected`: moved in place where the
-/// shape is the same kind, else made again (constraints on the old ones go
-/// with them).
+/// Bring one source's elements up to `projected`, the curves its edge or
+/// face comes to now: moved in place where they are the same kinds of
+/// shape as before, else made again (constraints on the old ones go with
+/// them).
 pub fn refresh_group(
     sketch: &mut Sketch,
     source: ExternalSource,
     group: &[Uuid],
-    projected: &ProjectedEdge,
+    projected: &[ProjectedEdge],
 ) {
-    if !update(sketch, group, projected) {
+    let counts: Vec<usize> = projected.iter().map(element_count).collect();
+    let in_place = counts.iter().sum::<usize>() == group.len() && {
+        let mut at = 0;
+        projected.iter().zip(&counts).all(|(curve, n)| {
+            let fits = update(sketch, &group[at..at + n], curve);
+            at += n;
+            fits
+        })
+    };
+    if !in_place {
         sketch.remove_geometry_cascade(group);
-        add(sketch, projected, source);
+        for curve in projected {
+            add(sketch, curve, source);
+        }
     }
 }
 
@@ -236,6 +258,7 @@ mod tests {
             body: Uuid::nil(),
             point: [1.0, 2.0, 3.0],
             direction: [0.0, 0.0, 1.0],
+            section: false,
         }
     }
 
@@ -298,10 +321,10 @@ mod tests {
             &mut sketch,
             src,
             &group,
-            &ProjectedEdge::Line {
+            &[ProjectedEdge::Line {
                 start: [0.0, 1.0],
                 end: [8.0, 1.0],
-            },
+            }],
         );
         assert!(sketch.get_geometry(line_id).is_some(), "moved in place");
         let GeometryElement::Line(line) = sketch.get_geometry(line_id).unwrap() else {
@@ -313,16 +336,88 @@ mod tests {
             &mut sketch,
             src,
             &group,
-            &ProjectedEdge::Circle {
+            &[ProjectedEdge::Circle {
                 centre: [0.0, 0.0],
                 radius: 1.0,
                 range: (0.0, TAU),
-            },
+            }],
         );
         assert!(sketch.get_geometry(line_id).is_none());
         assert_eq!(groups(&sketch).len(), 1);
         assert!(matches!(
             sketch.get_geometry(groups(&sketch)[0].1[0]),
+            Some(GeometryElement::Circle(_))
+        ));
+    }
+
+    #[test]
+    fn a_face_cut_in_two_lines_refreshes_both_and_remakes_them_when_they_change() {
+        let face = ExternalSource {
+            section: true,
+            ..source()
+        };
+        let mut sketch = Sketch::new("t");
+        let cut = [
+            ProjectedEdge::Line {
+                start: [-5.0, 0.0],
+                end: [-5.0, 12.0],
+            },
+            ProjectedEdge::Line {
+                start: [5.0, 0.0],
+                end: [5.0, 12.0],
+            },
+        ];
+        for curve in &cut {
+            add(&mut sketch, curve, face);
+        }
+        // An edge from the same point is a source of its own.
+        add(
+            &mut sketch,
+            &ProjectedEdge::Point([1.0, 1.0]),
+            ExternalSource {
+                section: false,
+                ..face
+            },
+        );
+        let all = groups(&sketch);
+        assert_eq!(all.len(), 2);
+        let (src, group) = all.into_iter().find(|(s, _)| s.section).unwrap();
+        assert_eq!(group.len(), 2);
+        // Taller now: both move in place.
+        let taller = [
+            ProjectedEdge::Line {
+                start: [-5.0, 0.0],
+                end: [-5.0, 20.0],
+            },
+            ProjectedEdge::Line {
+                start: [5.0, 0.0],
+                end: [5.0, 20.0],
+            },
+        ];
+        refresh_group(&mut sketch, src, &group, &taller);
+        assert!(group.iter().all(|id| sketch.get_geometry(*id).is_some()));
+        let GeometryElement::Line(l) = sketch.get_geometry(group[1]).unwrap() else {
+            panic!()
+        };
+        assert_eq!(sketch.point_position(l.end), Some(Vec2D::new(5.0, 20.0)));
+        // Cut across instead: one circle takes the two lines' place.
+        refresh_group(
+            &mut sketch,
+            src,
+            &group,
+            &[ProjectedEdge::Circle {
+                centre: [0.0, 0.0],
+                radius: 5.0,
+                range: (0.0, TAU),
+            }],
+        );
+        assert!(group.iter().all(|id| sketch.get_geometry(*id).is_none()));
+        let (_, now) = groups(&sketch)
+            .into_iter()
+            .find(|(s, _)| s.section)
+            .unwrap();
+        assert!(matches!(
+            sketch.get_geometry(now[0]),
             Some(GeometryElement::Circle(_))
         ));
     }

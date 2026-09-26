@@ -255,6 +255,9 @@ to the new one as `ctx.attach_request`.
   status bar.
 - `get_overlay_meshes` and `get_screen_space_overlays`, `_marks` and
   `_labels` draw over the scene while the workbench is active.
+- `clip_plane` cuts the scene at a plane of any direction while it returns
+  one (the sketcher's section view), in drawing and picking alike, standing
+  in for the view toolbar's clipping plane.
 - `ui_settings` draws the workbench's page in Preferences.
 
 ## Checklist

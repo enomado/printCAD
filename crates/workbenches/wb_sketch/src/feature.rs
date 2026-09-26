@@ -20,6 +20,10 @@ pub struct SketchFeature {
     /// sketch (a gear, a sprocket, a shaft); its curves follow them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generator: Option<crate::generator::Generator>,
+    /// While the sketch is edited, everything on the viewer's side of its
+    /// plane is cut away.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub section_view: bool,
 }
 
 /// A sketch's place on a datum: a datum plane, or one of a coordinate
@@ -75,6 +79,7 @@ impl SketchFeature {
             plane,
             support: None,
             generator: None,
+            section_view: false,
         }
     }
 
@@ -84,6 +89,7 @@ impl SketchFeature {
             plane: SketchPlane::default(),
             support: None,
             generator: None,
+            section_view: false,
         }
     }
 }

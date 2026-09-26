@@ -39,6 +39,7 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Symmetric { .. } | ConstraintKind::SymmetricAboutPoint { .. } => {
             "constraint-symmetric"
         }
+        ConstraintKind::InternalAlignment { .. } => "show-hide-internal-geometry",
     }
 }
 

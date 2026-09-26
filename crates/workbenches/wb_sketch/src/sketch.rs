@@ -67,20 +67,26 @@ pub struct Sketch {
     /// before this field existed keep loading.
     #[serde(default)]
     pub construction: std::collections::HashSet<Uuid>,
-    /// Geometry projected from a solid's edges, by element id, each with the
-    /// edge it came from. It is fixed (the solver never moves it), left out
-    /// of profiles, and projected again when the sketch is edited.
+    /// Geometry projected from a solid's edges, or cut from its faces by the
+    /// sketch plane, by element id, each with the edge or face it came
+    /// from. It is fixed (the solver never moves it), left out of profiles,
+    /// and brought up to the solid again when the sketch is edited.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub external: std::collections::HashMap<Uuid, ExternalSource>,
 }
 
-/// The solid edge an external element was projected from: its body, and a
-/// point on it with its direction there, in that body's own frame.
+/// Where an external element came from, in its body's own frame: a solid
+/// edge it was projected from (a point on it and its direction there), or
+/// a face the sketch plane cut it from (a point on it and its normal
+/// there).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ExternalSource {
     pub body: Uuid,
     pub point: [f32; 3],
     pub direction: [f32; 3],
+    /// A face cut by the sketch plane, not an edge projected onto it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub section: bool,
 }
 
 impl Sketch {
@@ -208,6 +214,14 @@ impl Sketch {
                 .any(|pid| doomed.contains(pid))
             {
                 doomed.insert(geom.id());
+            }
+        }
+        // A curve's internal geometry goes with it.
+        for c in &self.constraints {
+            if let ConstraintKind::InternalAlignment { element, curve, .. } = c.kind
+                && doomed.contains(&curve)
+            {
+                doomed.insert(element);
             }
         }
 
@@ -371,6 +385,7 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
             point,
             ..
         } => vec![*ray1, *ray2, *interface, *point],
+        ConstraintKind::InternalAlignment { element, curve, .. } => vec![*element, *curve],
     }
 }
 
@@ -412,6 +427,9 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::Gap { .. } => "Gap".to_string(),
         ConstraintKind::AngleAtPoint { .. } => "Angle at point".to_string(),
         ConstraintKind::Refraction { .. } => "Refraction".to_string(),
+        ConstraintKind::InternalAlignment { role, .. } => {
+            format!("Internal alignment ({})", role.label())
+        }
     }
 }
 
@@ -1005,6 +1023,10 @@ pub struct Constraint {
     /// constraints; set by dragging the label).
     #[serde(default)]
     pub label_offset: Option<Vec2D>,
+    /// Its glyph is on the parked layer, drawn only while that layer is
+    /// shown; it solves all the same.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parked: bool,
 }
 
 impl Constraint {
@@ -1016,6 +1038,7 @@ impl Constraint {
             active: true,
             name: None,
             label_offset: None,
+            parked: false,
         }
     }
 
@@ -1059,6 +1082,8 @@ impl<'de> Deserialize<'de> for Constraint {
                 name: Option<String>,
                 #[serde(default)]
                 label_offset: Option<Vec2D>,
+                #[serde(default)]
+                parked: bool,
             },
             Legacy(ConstraintKind),
         }
@@ -1071,6 +1096,7 @@ impl<'de> Deserialize<'de> for Constraint {
                 active,
                 name,
                 label_offset,
+                parked,
             } => Constraint {
                 id,
                 kind,
@@ -1078,6 +1104,7 @@ impl<'de> Deserialize<'de> for Constraint {
                 active,
                 name,
                 label_offset,
+                parked,
             },
             Repr::Legacy(kind) => Constraint::new(kind),
         })
@@ -1199,6 +1226,51 @@ pub enum ConstraintKind {
         point: Uuid,
         ratio: f32,
     },
+    /// `element` is a piece of `curve`'s internal geometry, held where
+    /// `role` puts it: an axis or a focus of an ellipse or conic, a side of
+    /// a spline's control polygon.
+    InternalAlignment {
+        element: Uuid,
+        curve: Uuid,
+        role: InternalRole,
+    },
+}
+
+/// What a piece of internal geometry stands for on its curve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InternalRole {
+    /// A line along the axis: an ellipse's from one vertex of the major
+    /// axis to the other; a conic's from its centre along its axis, to the
+    /// focus of a parabola, to the vertex of a hyperbola's branch.
+    MajorAxis,
+    /// A line across: an ellipse's minor axis, vertex to vertex; a
+    /// hyperbola's, through its centre, twice its semi-minor axis long.
+    MinorAxis,
+    /// A point at a focus: an ellipse's on the major vertex's side, a
+    /// parabola's, a hyperbola's branch's.
+    Focus1,
+    /// A point at an ellipse's other focus.
+    Focus2,
+    /// A line along the control polygon, from control point `n` to the
+    /// next (to the first, round a periodic spline's end).
+    ControlEdge(u32),
+}
+
+impl InternalRole {
+    pub fn label(self) -> String {
+        match self {
+            InternalRole::MajorAxis => "major axis".to_string(),
+            InternalRole::MinorAxis => "minor axis".to_string(),
+            InternalRole::Focus1 => "focus".to_string(),
+            InternalRole::Focus2 => "second focus".to_string(),
+            InternalRole::ControlEdge(n) => format!("control polygon {}", n + 1),
+        }
+    }
+
+    /// Whether the role is a line (else a point).
+    pub fn is_line(self) -> bool {
+        !matches!(self, InternalRole::Focus1 | InternalRole::Focus2)
+    }
 }
 
 impl ConstraintKind {
@@ -1356,6 +1428,19 @@ mod constraint_record_tests {
         let back: Constraint = serde_json::from_value(json).unwrap();
         let off = back.label_offset.unwrap();
         assert!((off.x + 3.5).abs() < 1e-6 && (off.y - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_parked_constraint_round_trips_and_an_unparked_one_says_nothing() {
+        let mut c = Constraint::new(ConstraintKind::Horizontal {
+            element: Uuid::new_v4(),
+        });
+        let json = serde_json::to_value(&c).unwrap();
+        assert!(json.get("parked").is_none());
+        c.parked = true;
+        let back: Constraint = serde_json::from_value(serde_json::to_value(&c).unwrap()).unwrap();
+        assert!(back.parked);
+        assert!(back.is_solved(), "a parked constraint still solves");
     }
 
     #[test]

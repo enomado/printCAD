@@ -321,7 +321,11 @@ through `ctx.kernel` (`kernel_api::KernelQueries`, the host hands benches
 and stores the result as geometry marked in `Sketch::external` with its
 `ExternalSource`: pinned in the solver, left out of profiles and passive
 drawing, drawn in the external colour, never dragged, and projected again
-once per editing session (in place when the curve is the same kind). File › Export
+once per editing session (in place when the curve is the same kind). Its
+intersection variant takes picked faces instead and adds the curves where
+each crosses the sketch plane (`KernelQueries::section_face`, the face's
+solid sectioned by the plane's half space and the edges on the face kept;
+`ExternalSource::section`), refreshed the same way. File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own; the start page's
@@ -337,7 +341,9 @@ cards show it. What's new reads `crates/app_shell/RELEASE_NOTES.md`, and
 a test fails when the running version has no entry there. The Edit menu's Cut/Copy/Paste go to the
 active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
 geometry clipboard); the view toolbar's clipping plane (`camera/section.rs`, per tab, a
-plane square to X, Y or Z) reaches the renderer as
+plane square to X, Y or Z), or while the active bench returns one the
+plane of any direction `Workbench::clip_plane` gives (the sketcher's
+per-sketch section view), reaches the renderer as
 `FrameSubmission.clip_plane`: every scene shader and the pick pass write
 a clip distance, the cut's back faces draw as a flat darker section, and
 CPU edge picking skips what it hides; the toolbar's Measure arms a two-click distance

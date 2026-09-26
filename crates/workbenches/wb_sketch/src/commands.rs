@@ -261,7 +261,7 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.set_constraint",
-            "Make constraints driving or reference, active or not",
+            "Make constraints driving or reference, active or not, parked or not",
         ))
         .param("items", ParamKind::List, "The constraints")
         .optional(
@@ -269,7 +269,13 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Bool,
             "false: a reference dimension that only measures",
         )
-        .optional("active", ParamKind::Bool, "false: kept but not solved"),
+        .optional("active", ParamKind::Bool, "false: kept but not solved")
+        .optional(
+            "parked",
+            ParamKind::Bool,
+            "true: its symbol moves to the parked layer, drawn only while that layer shows; \
+             it still solves",
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -322,6 +328,19 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.intersection",
+            "Add where faces of solids cross the sketch plane, as fixed references",
+        ))
+        .param(
+            "faces",
+            ParamKind::List,
+            "Each {body, point, normal}: a point on the face and its normal there, \
+             in the body's own frame",
+        )
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.constraints",
             "List the sketch's constraints",
         ))
@@ -366,6 +385,42 @@ pub fn register(context: &mut WorkbenchContext) {
         ))
         .param("items", ParamKind::List, "Element ids")
         .optional("on", ParamKind::Bool, "true (the default) or false"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.internal_geometry",
+            "Show or hide curves' internal geometry: an ellipse's axes and foci, a parabola's \
+             or hyperbola's axis and focus, a B-spline's control polygon, as construction held \
+             to its curve",
+        ))
+        .param(
+            "items",
+            ParamKind::List,
+            "The curves, or pieces of their internal geometry",
+        )
+        .optional(
+            "show",
+            ParamKind::Bool,
+            "true makes what is missing, false takes away the pieces nothing else holds; \
+             left out, it shows when a piece is missing and hides otherwise",
+        )
+        .returns("{shown, elements}: whether it showed, and what it made or took away"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.section_view",
+            "Cut away everything on the viewer's side of the sketch plane while it is edited",
+        ))
+        .optional("on", ParamKind::Bool, "true (the default) or false"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.remove_axis_alignment",
+            "Turn the horizontal and vertical constraints of lines into parallel and \
+             perpendicular ones among them, so the group keeps its shape and turns as a whole",
+        ))
+        .param("items", ParamKind::List, "The lines")
+        .returns("how many constraints changed"),
     );
 }
 
@@ -440,10 +495,30 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             }
             return save(ctx, sketch_id, feature, Value::Null);
         }
+        // A view setting: nothing built from the sketch changes.
+        "sketch.section_view" => {
+            feature.section_view = a.opt_bool("on")?.unwrap_or(true);
+            ctx.document
+                .update_feature_data(sketch_id, feature.to_json())
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            return Ok(Value::Null);
+        }
         "sketch.carbon_copy" => {
             let from = FeatureId(a.id("from")?);
             let before = ids_of(&feature.sketch);
             carbon_copy(ctx.document, sketch_id, &mut feature.sketch, from)
+                .map_err(CommandError::failed)?;
+            let made = made_since(&feature.sketch, &before);
+            return save(ctx, sketch_id, feature, made);
+        }
+        "sketch.intersection" => {
+            let faces = section_sources(args.get("faces"))?;
+            let before = ids_of(&feature.sketch);
+            let placed = crate::placed_plane(
+                &feature.plane,
+                &crate::sketch_placement(ctx.document, sketch_id),
+            );
+            add_external(ctx, &placed, &mut feature.sketch, &faces)
                 .map_err(CommandError::failed)?;
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
@@ -604,8 +679,12 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "sketch.set_constraint" => {
             let items = ids(args.get("items"), "items", sketch)?;
-            let (driving, active) = (a.opt_bool("driving")?, a.opt_bool("active")?);
-            set_constraints(sketch, &items, driving, active);
+            let flags = ConstraintFlags {
+                driving: a.opt_bool("driving")?,
+                active: a.opt_bool("active")?,
+                parked: a.opt_bool("parked")?,
+            };
+            set_constraints(sketch, &items, flags);
             Value::Null
         }
         "sketch.paste" => {
@@ -633,6 +712,24 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
             crate::solver::solve_holding(sketch, &held);
             Value::Null
+        }
+        "sketch.internal_geometry" => {
+            let items = ids(args.get("items"), "items", sketch)?;
+            if crate::internal::curves_of(sketch, &items).is_empty() {
+                return Err(CommandError::bad(
+                    "items",
+                    "names no ellipse, parabola, hyperbola or B-spline",
+                ));
+            }
+            let (shown, changed) = crate::internal::toggle(sketch, &items, a.opt_bool("show")?);
+            let changed: Vec<String> = changed.iter().map(Uuid::to_string).collect();
+            json!({"shown": shown, "elements": changed})
+        }
+        "sketch.remove_axis_alignment" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            json!(crate::tools::remove_axis_alignment(sketch, &items))
         }
         "sketch.construction" => {
             let on = a.opt_bool("on")?.unwrap_or(true);
@@ -987,7 +1084,7 @@ fn save(
     Ok(answer)
 }
 
-fn ids_of(
+pub(crate) fn ids_of(
     sketch: &Sketch,
 ) -> (
     std::collections::HashSet<Uuid>,
@@ -1040,22 +1137,28 @@ fn feature_ids(value: Option<&Value>, name: &str) -> Result<Vec<FeatureId>, Comm
 }
 
 /// Set the driving and active flags of `items`, where given.
-pub(crate) fn set_constraints(
-    sketch: &mut Sketch,
-    items: &[Uuid],
-    driving: Option<bool>,
-    active: Option<bool>,
-) {
+pub(crate) fn set_constraints(sketch: &mut Sketch, items: &[Uuid], flags: ConstraintFlags) {
     for c in &mut sketch.constraints {
         if items.contains(&c.id) {
-            if let Some(driving) = driving {
+            if let Some(driving) = flags.driving {
                 c.driving = driving;
             }
-            if let Some(active) = active {
+            if let Some(active) = flags.active {
                 c.active = active;
+            }
+            if let Some(parked) = flags.parked {
+                c.parked = parked;
             }
         }
     }
+}
+
+/// The flags `sketch.set_constraint` sets; `None` leaves one as it is.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ConstraintFlags {
+    pub driving: Option<bool>,
+    pub active: Option<bool>,
+    pub parked: Option<bool>,
 }
 
 /// Add `clip`'s geometry to `sketch`, moved by `by`.
@@ -1178,13 +1281,42 @@ fn external_sources(
                 body,
                 point: v("point")?,
                 direction: v("direction")?,
+                section: false,
             })
         })
         .collect()
 }
 
-/// Project `edges` onto `plane` (the sketch's, where its body sits) and add
-/// what they come to as external geometry. How many elements came.
+/// Faces named as `{body, point, normal}`, in each body's own frame.
+fn section_sources(
+    value: Option<&Value>,
+) -> Result<Vec<crate::sketch::ExternalSource>, CommandError> {
+    let bad = || CommandError::bad("faces", "must be a list of {body, point, normal}");
+    let list = value.and_then(Value::as_array).ok_or_else(bad)?;
+    list.iter()
+        .map(|face| {
+            let body = face
+                .get("body")
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .ok_or_else(bad)?;
+            let v = |name: &str| -> Result<[f32; 3], CommandError> {
+                let v = vector3(face.get(name), "faces")?;
+                Ok(v.map(|c| c as f32))
+            };
+            Ok(crate::sketch::ExternalSource {
+                body,
+                point: v("point")?,
+                direction: v("normal")?,
+                section: true,
+            })
+        })
+        .collect()
+}
+
+/// Bring `edges` (edges to project, faces to cut) onto `plane` (the
+/// sketch's, where its body sits) and add what they come to as external
+/// geometry. How many elements came.
 pub(crate) fn add_external(
     ctx: &WorkbenchRuntimeContext,
     plane: &SketchPlane,
@@ -1195,7 +1327,11 @@ pub(crate) fn add_external(
     let mut last_error = None;
     for source in edges {
         match crate::project_source(ctx, plane, source) {
-            Ok(projected) => added += crate::external::add(sketch, &projected, *source),
+            Ok(curves) => {
+                for curve in &curves {
+                    added += crate::external::add(sketch, curve, *source);
+                }
+            }
             Err(why) => last_error = Some(why),
         }
     }

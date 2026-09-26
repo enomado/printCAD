@@ -575,6 +575,7 @@ impl PrintCadApp {
             status: status_items,
             task,
             editing_feature,
+            clip_plane: _,
         } = viewport_data;
         let planar_view_lock = self.sketch_editing_active();
         let hover_card = self.hover_card();
@@ -1061,6 +1062,7 @@ impl PrintCadApp {
             status: wb.status_items(ctx),
             task: wb.task(ctx),
             editing_feature: wb.editing_feature(),
+            clip_plane: wb.clip_plane(ctx),
         }) {
             Some((data, outcome)) => {
                 self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Lifecycle);
@@ -1336,7 +1338,10 @@ impl PrintCadApp {
 
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.draw_edges = draw_style == settings::DrawStyle::ShadedEdges;
-        self.frame_submission.clip_plane = self.session.section.map(|plane| plane.equation());
+        // A bench's cut stands in for the toolbar's while it asks for one.
+        self.frame_submission.clip_plane = data
+            .clip_plane
+            .or_else(|| self.session.section.map(|plane| plane.equation()));
         self.frame_submission.view_proj = self.session.camera.view_projection();
         self.frame_submission.camera_pos = self.session.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
@@ -1356,6 +1361,8 @@ pub(crate) struct ViewportData {
     pub status: Option<core_document::StatusItems>,
     pub task: Option<core_document::TaskInfo>,
     pub editing_feature: Option<core_document::FeatureId>,
+    /// The plane the active bench cuts the scene at, if it does.
+    pub clip_plane: Option<[f32; 4]>,
 }
 
 impl PrintCadApp {

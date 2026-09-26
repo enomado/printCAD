@@ -78,54 +78,35 @@ impl KernelQueries for OgeomQueries {
             Point::new(near[0], near[1], near[2]),
         )
         .map_err(other)?;
-        let direction = |v: [f64; 3]| Direction::new(Vector::new(v[0], v[1], v[2]), tol);
-        let frame = Frame::from_axes(
-            Point::new(plane.origin[0], plane.origin[1], plane.origin[2]),
-            direction(plane.x_axis).map_err(other)?,
-            direction(plane.y_axis).map_err(other)?,
-            direction(plane.normal).map_err(other)?,
-            tol,
+        let plane = plane_of(plane)?;
+        let projected = project_edge_onto_plane(&model, &edge, &plane, tol).map_err(other)?;
+        in_plane(projected)
+    }
+
+    fn section_face(
+        &self,
+        brep: &[u8],
+        near: [f64; 3],
+        plane: &ProfilePlane,
+    ) -> KernelResult<Vec<ProjectedEdge>> {
+        let tol = tess::tolerances();
+        let (mut model, root) = tess::read_blob(brep)?;
+        let face = nearest_of(
+            &mut model,
+            &root,
+            ShapeType::Face,
+            Point::new(near[0], near[1], near[2]),
         )
         .map_err(other)?;
-        let projected =
-            project_edge_onto_plane(&model, &edge, &Plane::new(frame), tol).map_err(other)?;
-        Ok(match projected {
-            ProjectedCurve::Point(p) => ProjectedEdge::Point([p.x, p.y]),
-            ProjectedCurve::Line { start, end } => ProjectedEdge::Line {
-                start: [start.x, start.y],
-                end: [end.x, end.y],
-            },
-            ProjectedCurve::Circle {
-                centre,
-                radius,
-                range,
-            } => ProjectedEdge::Circle {
-                centre: [centre.x, centre.y],
-                radius,
-                range,
-            },
-            ProjectedCurve::Ellipse {
-                centre,
-                major,
-                ratio,
-                range,
-            } => ProjectedEdge::Ellipse {
-                centre: [centre.x, centre.y],
-                major: [major.x, major.y],
-                ratio,
-                range,
-            },
-            ProjectedCurve::BSpline { curve, .. } => {
-                let (a, b) = curve.domain();
-                let points = (0..=POLYLINE_POINTS)
-                    .map(|i| {
-                        let t = a + (b - a) * i as f64 / POLYLINE_POINTS as f64;
-                        curve.point_at(t, tol).map(|p| [p.x, p.y]).map_err(other)
-                    })
-                    .collect::<KernelResult<Vec<_>>>()?;
-                ProjectedEdge::Polyline(points)
-            }
-        })
+        let plane = plane_of(plane)?;
+        face_section(&mut model, &root, &face, &plane)?
+            .iter()
+            .map(|edge| {
+                // A section edge lies in the plane: projecting it onto the
+                // plane names the curve it is there.
+                in_plane(project_edge_onto_plane(&model, edge, &plane, tol).map_err(other)?)
+            })
+            .collect()
     }
 
     fn face_of(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<u8>> {
@@ -232,6 +213,161 @@ impl KernelQueries for OgeomQueries {
         let (mut model, root) = tess::read_blob(brep)?;
         crate::probe::answer(&mut model, &root, probe).map_err(other)
     }
+}
+
+/// A profile plane as the kernel's.
+fn plane_of(plane: &ProfilePlane) -> KernelResult<Plane> {
+    let tol = tess::tolerances();
+    let direction = |v: [f64; 3]| Direction::new(Vector::new(v[0], v[1], v[2]), tol);
+    let frame = Frame::from_axes(
+        Point::new(plane.origin[0], plane.origin[1], plane.origin[2]),
+        direction(plane.x_axis).map_err(other)?,
+        direction(plane.y_axis).map_err(other)?,
+        direction(plane.normal).map_err(other)?,
+        tol,
+    )
+    .map_err(other)?;
+    Ok(Plane::new(frame))
+}
+
+/// How far off the face a section edge may run and still be its, in mm.
+const ON_FACE_MM: f64 = 1e-4;
+
+/// The edges where `face` crosses `plane`: its solid sectioned by the half
+/// space the plane bounds, and of the section the edges that run on the
+/// face.
+fn face_section(
+    model: &mut Model,
+    root: &Shape,
+    face: &Shape,
+    plane: &Plane,
+) -> KernelResult<Vec<Shape>> {
+    let tol = tess::tolerances();
+    let solid = crate::ops::solids_of(model, root)
+        .into_iter()
+        .find(|solid| {
+            explore_unique(model, solid, ShapeType::Face)
+                .is_ok_and(|faces| faces.iter().any(|f| f.is_same(face)))
+        })
+        .ok_or_else(|| other("the face is on no solid"))?;
+    // A plane clear of the face's box crosses none of it.
+    let frame = plane.frame();
+    let (origin, normal) = (frame.origin(), frame.z().vector());
+    let sides: Vec<f64> = ogeom::algo::shape_bounds(model, face, tol)
+        .map_err(other)?
+        .corners()
+        .into_iter()
+        .map(|corner| normal.dot(corner - origin))
+        .collect();
+    let reach = tol.confusion();
+    if sides.iter().all(|d| *d > reach) || sides.iter().all(|d| *d < -reach) {
+        return Ok(Vec::new());
+    }
+    let surface = ogeom::geom::PlaneSurface::over(*plane, (-1.0e6, 1.0e6), (-1.0e6, 1.0e6))
+        .map_err(|e| other(format!("the section plane: {e}")))?;
+    let cutter =
+        ogeom::algo::make_natural_face(model, ogeom::geom::SurfaceGeometry::Plane(surface))
+            .map_err(|e| other(format!("the section plane: {e}")))?
+            .shape;
+    let below = origin - normal;
+    let half = ogeom::algo::make_half_space(model, &cutter, below, tol)
+        .map_err(|e| other(format!("the section plane: {e}")))?
+        .shape;
+    let section = ogeom::boolean::section(model, &solid, &half, tol)
+        .map_err(|e| other(format!("the solid could not be cut by the plane: {e}")))?
+        .shape;
+    let edges = explore_unique(model, &section, ShapeType::Edge).map_err(other)?;
+    let mut on_face = Vec::new();
+    for edge in edges {
+        // Along the edge, away from its ends, where an edge of the next
+        // face would meet this one.
+        let mut runs_on = true;
+        for p in edge_samples(model, &edge, &[0.25, 0.5, 0.75])? {
+            let vertex = model.add_vertex(ogeom::topo::VertexData::new(p));
+            let gap = distance_between_shapes(
+                model,
+                &vertex,
+                face,
+                ogeom::intersect::ExtremaOptions::default(),
+                tol,
+            )
+            .map_err(other)?
+            .distance;
+            runs_on &= gap <= ON_FACE_MM;
+        }
+        if runs_on {
+            on_face.push(edge);
+        }
+    }
+    Ok(on_face)
+}
+
+/// Points of `edge` at fractions of its parameter range, in the model's
+/// frame.
+fn edge_samples(model: &Model, edge: &Shape, fractions: &[f64]) -> KernelResult<Vec<Point>> {
+    let tol = tess::tolerances();
+    let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
+        return Err(other("not an edge"));
+    };
+    let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
+        return Err(other("an edge has no curve"));
+    };
+    let geometry = model
+        .geometry()
+        .curve(*curve)
+        .ok_or_else(|| other("an edge's curve is missing"))?;
+    let placement = edge.transform(model.datums()).map_err(other)?;
+    fractions
+        .iter()
+        .map(|f| {
+            let t = range.0 + (range.1 - range.0) * f;
+            let p = geometry.point_at(t, tol).map_err(other)?;
+            Ok(placement.apply(p))
+        })
+        .collect()
+}
+
+/// A curve projected onto a plane, in the plane's own coordinates: the
+/// exact curve it is there, or points along one with no closed form.
+fn in_plane(projected: ProjectedCurve) -> KernelResult<ProjectedEdge> {
+    let tol = tess::tolerances();
+    Ok(match projected {
+        ProjectedCurve::Point(p) => ProjectedEdge::Point([p.x, p.y]),
+        ProjectedCurve::Line { start, end } => ProjectedEdge::Line {
+            start: [start.x, start.y],
+            end: [end.x, end.y],
+        },
+        ProjectedCurve::Circle {
+            centre,
+            radius,
+            range,
+        } => ProjectedEdge::Circle {
+            centre: [centre.x, centre.y],
+            radius,
+            range,
+        },
+        ProjectedCurve::Ellipse {
+            centre,
+            major,
+            ratio,
+            range,
+        } => ProjectedEdge::Ellipse {
+            centre: [centre.x, centre.y],
+            major: [major.x, major.y],
+            ratio,
+            range,
+        },
+        ProjectedCurve::BSpline { curve, .. } => {
+            let (a, b) = curve.domain();
+            let points = (0..=POLYLINE_POINTS)
+                .map(|i| {
+                    let t = a + (b - a) * i as f64 / POLYLINE_POINTS as f64;
+                    curve.point_at(t, tol).map(|p| [p.x, p.y]).map_err(other)
+                })
+                .collect::<KernelResult<Vec<_>>>()?;
+            ProjectedEdge::Polyline(points)
+        }
+    })
 }
 
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {

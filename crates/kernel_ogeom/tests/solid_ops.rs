@@ -1456,6 +1456,175 @@ fn an_edge_projects_onto_a_plane_as_an_exact_curve() {
     assert!(matches!(seam, ProjectedEdge::Point(_)), "{seam:?}");
 }
 
+/// A half space bounded by a plane, the material on `inside`'s side.
+fn half_space_at(
+    model: &mut ogeom::topo::Model,
+    origin: ogeom::math::Point,
+    normal: ogeom::math::Direction,
+    inside: ogeom::math::Point,
+) -> ogeom::topo::Shape {
+    let tol = ogeom::core::Tolerances::millimetres();
+    let plane = ogeom::math::Plane::through(origin, normal);
+    let surface = ogeom::geom::PlaneSurface::over(plane, (-1.0e6, 1.0e6), (-1.0e6, 1.0e6)).unwrap();
+    let face = ogeom::algo::make_natural_face(model, ogeom::geom::SurfaceGeometry::Plane(surface))
+        .unwrap()
+        .shape;
+    ogeom::algo::make_half_space(model, &face, inside, tol)
+        .unwrap()
+        .shape
+}
+
+/// A plane well clear of a box sections nothing from it.
+#[test]
+#[ignore = "kernel: section with a half space whose plane misses the solid returns the edges its stand-in box's far face cuts (ogeom-rs#83)"]
+fn a_half_space_clear_of_a_solid_sections_nothing() {
+    use ogeom::math::{Direction, Frame, Point};
+    use ogeom::topo::{Model, ShapeType, explore_unique};
+    let tol = ogeom::core::Tolerances::millimetres();
+    let mut model = Model::new();
+    let cube = ogeom::algo::make_box(&mut model, Frame::WORLD, (10.0, 10.0, 10.0), tol)
+        .unwrap()
+        .shape;
+    let half = half_space_at(
+        &mut model,
+        Point::new(0.0, 0.0, 40.0),
+        Direction::Z,
+        Point::new(0.0, 0.0, 39.0),
+    );
+    let section = ogeom::boolean::section(&mut model, &cube, &half, tol)
+        .unwrap()
+        .shape;
+    let edges = explore_unique(&model, &section, ShapeType::Edge).unwrap();
+    assert!(edges.is_empty(), "{} edges", edges.len());
+}
+
+/// A face on its own is sectioned by a half space into the curves the
+/// plane crosses it along, as its solid is.
+#[test]
+#[ignore = "kernel: section refuses a face or shell argument, only solids are taken (ogeom-rs#84)"]
+fn a_face_on_its_own_is_sectioned_by_a_half_space() {
+    use ogeom::math::{Direction, Frame, Point};
+    use ogeom::topo::{Model, ShapeType, explore_unique};
+    let tol = ogeom::core::Tolerances::millimetres();
+    let mut model = Model::new();
+    let cube = ogeom::algo::make_box(&mut model, Frame::WORLD, (10.0, 10.0, 10.0), tol)
+        .unwrap()
+        .shape;
+    let side = explore_unique(&model, &cube, ShapeType::Face)
+        .unwrap()
+        .into_iter()
+        .find(|face| {
+            ogeom::algo::shape_bounds(&model, face, tol)
+                .unwrap()
+                .high()
+                .is_some_and(|p| p.x.abs() < 1e-3)
+        })
+        .expect("the side at x = 0");
+    let half = half_space_at(
+        &mut model,
+        Point::new(0.0, 0.0, 4.0),
+        Direction::Z,
+        Point::new(0.0, 0.0, 3.0),
+    );
+    let section = ogeom::boolean::section(&mut model, &side, &half, tol)
+        .expect("a face is sectioned")
+        .shape;
+    let edges = explore_unique(&model, &section, ShapeType::Edge).unwrap();
+    assert_eq!(edges.len(), 1, "the line across the side at z = 4");
+}
+
+/// A plane cuts a face into the curves it crosses it along, in the plane's
+/// own coordinates: a box's side into a line, a cylinder's side into its
+/// circle across, or into two lines along it; a face the plane misses
+/// comes to nothing.
+#[test]
+fn a_face_cut_by_a_plane_gives_the_curves_where_they_cross() {
+    use kernel_api::{KernelQueries, ProjectedEdge};
+    let mut kernel = new_kernel();
+    let build = |kernel: &mut OgeomKernel, kind: PrimitiveKind| {
+        let ops = [SolidOp::Primitive {
+            kind,
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        }];
+        kernel
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .expect("the primitive builds")
+    };
+    let cube = build(
+        &mut kernel,
+        PrimitiveKind::Box {
+            length: 10.0,
+            width: 10.0,
+            height: 10.0,
+        },
+    );
+    let side = kernel_ogeom::QUERIES
+        .section_face(&cube.brep_blob, [0.0, 5.0, 5.0], &plane_at_z(4.0))
+        .expect("the side is cut");
+    let [ProjectedEdge::Line { start, end }] = side.as_slice() else {
+        panic!("{side:?}");
+    };
+    let mut ys = [start[1], end[1]];
+    ys.sort_by(f64::total_cmp);
+    assert!(start[0].abs() < 1e-7 && end[0].abs() < 1e-7);
+    assert!(
+        ys[0].abs() < 1e-7 && (ys[1] - 10.0).abs() < 1e-7,
+        "{side:?}"
+    );
+    let missed = kernel_ogeom::QUERIES
+        .section_face(&cube.brep_blob, [0.0, 5.0, 5.0], &plane_at_z(40.0))
+        .expect("a plane that misses cuts nothing");
+    assert!(missed.is_empty(), "{missed:?}");
+
+    let rod = build(
+        &mut kernel,
+        PrimitiveKind::Cylinder {
+            radius: 5.0,
+            height: 12.0,
+            angle_deg: 360.0,
+        },
+    );
+    let across = kernel_ogeom::QUERIES
+        .section_face(&rod.brep_blob, [5.0, 0.0, 6.0], &plane_at_z(6.0))
+        .expect("the side is cut across");
+    let circle = across.iter().find_map(|e| match e {
+        ProjectedEdge::Circle { centre, radius, .. } => Some((*centre, *radius)),
+        _ => None,
+    });
+    let arcs: f64 = across
+        .iter()
+        .map(|e| match e {
+            ProjectedEdge::Circle { range, .. } => range.1 - range.0,
+            _ => 0.0,
+        })
+        .sum();
+    assert!(
+        (arcs - std::f64::consts::TAU).abs() < 1e-6,
+        "a whole turn: {across:?}"
+    );
+    let (centre, radius) = circle.unwrap();
+    assert!(centre[0].abs() < 1e-7 && centre[1].abs() < 1e-7 && (radius - 5.0).abs() < 1e-7);
+    // Through its axis, the side is cut along two lines.
+    let upright = ProfilePlane {
+        origin: [0.0, 0.0, 0.0],
+        x_axis: [1.0, 0.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [0.0, -1.0, 0.0],
+    };
+    let along = kernel_ogeom::QUERIES
+        .section_face(&rod.brep_blob, [5.0, 0.0, 6.0], &upright)
+        .expect("the side is cut along");
+    assert_eq!(along.len(), 2, "{along:?}");
+    for edge in &along {
+        let ProjectedEdge::Line { start, end } = edge else {
+            panic!("{along:?}");
+        };
+        assert!((start[0].abs() - 5.0).abs() < 1e-7 && (start[0] - end[0]).abs() < 1e-7);
+        assert!(((start[1] - end[1]).abs() - 12.0).abs() < 1e-7);
+    }
+}
+
 /// Two boxes where they overlap share a solid of the overlap's volume, in
 /// the first box's frame; flush or apart, they share none.
 #[test]

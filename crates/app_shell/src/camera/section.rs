@@ -1,7 +1,9 @@
 //! The view toolbar's clipping plane: a plane square to one document axis
 //! that hides the part of the scene on one side of it, in every render pass
 //! and in picking alike. It is view state, kept per tab beside the camera,
-//! never part of the document.
+//! never part of the document. A bench may cut the scene at a plane of any
+//! direction instead (`Workbench::clip_plane`); both reach the renderer as
+//! the same equation, which [`keeps`] reads.
 
 use glam::Vec3;
 
@@ -104,12 +106,12 @@ impl SectionPlane {
         let n = self.axis.unit() * sign;
         [n.x, n.y, n.z, -sign * self.offset]
     }
+}
 
-    /// Whether the point is on the side the plane keeps.
-    pub fn keeps(&self, p: Vec3) -> bool {
-        let [a, b, c, d] = self.equation();
-        a * p.x + b * p.y + c * p.z + d >= 0.0
-    }
+/// Whether the clipping equation `[a, b, c, d]` keeps the point: the
+/// renderer draws what has `a·x + b·y + c·z + d >= 0`.
+pub(crate) fn keeps([a, b, c, d]: [f32; 4], p: Vec3) -> bool {
+    a * p.x + b * p.y + c * p.z + d >= 0.0
 }
 
 #[cfg(test)]
@@ -126,20 +128,20 @@ mod tests {
         let plane = SectionPlane::facing(Vec3::new(0.1, 0.2, -1.0), SCENE);
         assert_eq!(plane.axis, SectionAxis::Z);
         assert!((plane.offset - 7.0).abs() < 1e-5);
-        assert!(plane.keeps(Vec3::new(0.0, 0.0, 3.0)));
-        assert!(!plane.keeps(Vec3::new(0.0, 0.0, 11.0)));
+        assert!(keeps(plane.equation(), Vec3::new(0.0, 0.0, 3.0)));
+        assert!(!keeps(plane.equation(), Vec3::new(0.0, 0.0, 11.0)));
         let plane = SectionPlane::facing(Vec3::new(1.0, 0.1, 0.0), SCENE);
         assert_eq!(plane.axis, SectionAxis::X);
-        assert!(plane.keeps(Vec3::new(30.0, 0.0, 0.0)));
-        assert!(!plane.keeps(Vec3::new(10.0, 0.0, 0.0)));
+        assert!(keeps(plane.equation(), Vec3::new(30.0, 0.0, 0.0)));
+        assert!(!keeps(plane.equation(), Vec3::new(10.0, 0.0, 0.0)));
     }
 
     #[test]
     fn flipping_keeps_the_other_side() {
         let mut plane = SectionPlane::facing(Vec3::NEG_Z, SCENE);
         plane.flipped = !plane.flipped;
-        assert!(plane.keeps(Vec3::new(0.0, 0.0, 11.0)));
-        assert!(!plane.keeps(Vec3::new(0.0, 0.0, 3.0)));
+        assert!(keeps(plane.equation(), Vec3::new(0.0, 0.0, 11.0)));
+        assert!(!keeps(plane.equation(), Vec3::new(0.0, 0.0, 3.0)));
     }
 
     #[test]

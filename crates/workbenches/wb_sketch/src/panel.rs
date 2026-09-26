@@ -15,7 +15,7 @@ use ui_kit::{mono, sans};
 use crate::sketch::{self, Constraint, Sketch, SketchPlane};
 use crate::solver;
 use crate::style::{constraint_icon, element_icon, element_kind, element_name};
-use crate::{ElementFilter, SketchWorkbench, overlay};
+use crate::{ConstraintFilter, ElementFilter, SketchWorkbench, overlay};
 
 impl SketchWorkbench {
     /// The panel's Solve now: the solver runs whatever the auto-update
@@ -541,9 +541,16 @@ impl SketchWorkbench {
             ui_kit::icon::draw(ui, "search", 11.0, TEXT3);
             ui.add(
                 egui::TextEdit::singleline(&mut self.constraint_filter)
-                    .desired_width(120.0)
+                    .desired_width(90.0)
                     .hint_text(RichText::new("Filter").color(TEXT3))
                     .font(sans(FONT_XS)),
+            );
+            select_field(
+                ui,
+                "sketch_constraint_filter",
+                &mut self.constraint_kind_filter,
+                &ConstraintFilter::ALL,
+                130.0,
             );
         });
         if sketch.constraints.is_empty() {
@@ -555,7 +562,8 @@ impl SketchWorkbench {
             return;
         }
         let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
-        let filter = self.constraint_filter.trim().to_lowercase();
+        let listed: std::collections::HashSet<Uuid> =
+            self.listed_constraints(sketch).into_iter().collect();
         let mut delete: Option<usize> = None;
         let mut edited: Option<(usize, Constraint)> = None;
         let mut typed: Option<(Uuid, String)> = None;
@@ -565,16 +573,15 @@ impl SketchWorkbench {
         };
         let mut clicked: Option<(Uuid, bool)> = None;
         for (idx, constraint) in sketch.constraints.iter().enumerate() {
-            let label = constraint.name.clone().unwrap_or_else(|| {
-                format!(
-                    "Constraint{} · {}",
-                    idx + 1,
-                    sketch::constraint_label(&constraint.kind)
-                )
-            });
-            if !filter.is_empty() && !label.to_lowercase().contains(&filter) {
+            if !listed.contains(&constraint.id) {
                 continue;
             }
+            let label = crate::constraint_row_label(idx, constraint);
+            let label = if constraint.parked {
+                format!("{label} (parked)")
+            } else {
+                label
+            };
             let selected = self.selected_constraints.contains(&constraint.id);
             let icon_color = if diagnosis.conflicting.contains(&constraint.id) {
                 DANGER
@@ -670,6 +677,17 @@ impl SketchWorkbench {
                 }
                 if ui.button("Rename").clicked() {
                     self.renaming_constraint = Some(constraint.id);
+                    ui.close();
+                }
+                let park_label = if constraint.parked { "Unpark" } else { "Park" };
+                if ui
+                    .button(park_label)
+                    .on_hover_text("Parked symbols draw only while the parked layer shows")
+                    .clicked()
+                {
+                    let mut c = constraint.clone();
+                    c.parked = !c.parked;
+                    edited = Some((idx, c));
                     ui.close();
                 }
                 ui.separator();

@@ -11,6 +11,7 @@ mod feature;
 pub mod generator;
 mod geom2d;
 mod glyphs;
+pub mod internal;
 mod measure;
 mod overlay;
 mod ovp;
@@ -65,6 +66,83 @@ impl ElementFilter {
             ElementFilter::All => true,
             ElementFilter::Normal => !sketch.is_construction(id),
             ElementFilter::Construction => sketch.is_construction(id),
+        }
+    }
+}
+
+/// How the constraint list names the constraint at `idx`: its own name, or
+/// its place and kind.
+pub(crate) fn constraint_row_label(idx: usize, c: &Constraint) -> String {
+    c.name.clone().unwrap_or_else(|| {
+        format!(
+            "Constraint{} · {}",
+            idx + 1,
+            sketch::constraint_label(&c.kind)
+        )
+    })
+}
+
+/// Constraint-list filter: which constraints the panel lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConstraintFilter {
+    #[default]
+    All,
+    /// Relations with no value: coincident, parallel, tangent and the like.
+    Geometric,
+    /// Those with a value, driving or not.
+    Dimensional,
+    /// Those the user named.
+    Named,
+    /// Dimensions that measure without driving.
+    Reference,
+    /// The selected constraints.
+    Selected,
+    /// Those on the selected geometry, a curve's own points included.
+    Related,
+    /// Those on the parked layer.
+    Parked,
+}
+
+impl ConstraintFilter {
+    pub const ALL: [(ConstraintFilter, &'static str); 8] = [
+        (ConstraintFilter::All, "All"),
+        (ConstraintFilter::Geometric, "Geometric"),
+        (ConstraintFilter::Dimensional, "Dimensional"),
+        (ConstraintFilter::Named, "Named"),
+        (ConstraintFilter::Reference, "Reference"),
+        (ConstraintFilter::Selected, "Selected"),
+        (ConstraintFilter::Related, "Related to selection"),
+        (ConstraintFilter::Parked, "Parked"),
+    ];
+
+    /// Whether `c` is listed, with `selected` the selected geometry and
+    /// `selected_constraints` the selected constraints.
+    pub(crate) fn accepts(
+        self,
+        sketch: &Sketch,
+        c: &Constraint,
+        selected: &HashSet<Uuid>,
+        selected_constraints: &HashSet<Uuid>,
+    ) -> bool {
+        match self {
+            ConstraintFilter::All => true,
+            ConstraintFilter::Geometric => !c.kind.is_dimensional(),
+            ConstraintFilter::Dimensional => c.kind.is_dimensional(),
+            ConstraintFilter::Named => c.name.as_deref().is_some_and(|n| !n.trim().is_empty()),
+            ConstraintFilter::Reference => c.kind.is_dimensional() && !c.driving,
+            ConstraintFilter::Selected => selected_constraints.contains(&c.id),
+            ConstraintFilter::Related => {
+                let mut reach: HashSet<Uuid> = selected.clone();
+                for id in selected {
+                    if let Some(element) = sketch.get_geometry(*id) {
+                        reach.extend(Sketch::curve_point_ids(element));
+                    }
+                }
+                sketch::constraint_refs(&c.kind)
+                    .iter()
+                    .any(|id| reach.contains(id))
+            }
+            ConstraintFilter::Parked => c.parked,
         }
     }
 }
@@ -227,6 +305,9 @@ pub struct SketchWorkbench {
     /// user set them, for the hints that name a key.
     action_keys: HashMap<String, String>,
     sketch_picker: Option<SketchPicker>,
+    /// The external geometry tool takes picked faces and adds where they
+    /// cross the sketch plane (its intersection variant), not picked edges.
+    external_intersection: bool,
     /// The picked edges the external geometry tool has taken, so a pick is
     /// taken once.
     external_seen: HashSet<(Uuid, [u32; 3])>,
@@ -303,17 +384,35 @@ pub struct SketchWorkbench {
     /// The selection sorted by kind, refreshed each frame for tool
     /// enablement.
     selection_shape: constrain::SelectionShape,
+    /// The selection names a curve that takes internal geometry, refreshed
+    /// each frame for tool enablement.
+    internal_target: bool,
     /// The copy tool is armed: transforms leave the originals in place.
     copy_mode: bool,
     /// Constraint whose name is being edited inline in the task panel.
     renaming_constraint: Option<Uuid>,
     /// Substring filter over the constraint list.
     constraint_filter: String,
+    /// Which kind of constraint the list shows.
+    constraint_kind_filter: ConstraintFilter,
+    /// The glyphs drawn are the parked constraints', not the others'.
+    parked_layer: bool,
+    /// The edited sketch cuts the scene at its plane, refreshed each frame
+    /// for the toolbar.
+    section_view: bool,
     /// The shape being drawn, until it is recorded.
     draw_record: Option<DrawRecord>,
     /// The last wall thickness check, drawn until the sketch changes, the
     /// session ends, Escape or another tool.
     wall_check: Option<walls::WallCheck>,
+}
+
+/// A flag each constraint carries, as the toolbar flips it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConstraintFlag {
+    Driving,
+    Active,
+    Parked,
 }
 
 /// The solver's verdict on the edited sketch, as the panel, HUD and status
@@ -395,6 +494,7 @@ const TOOL_KEYS: &[(&str, &str)] = &[
     ("sketch.trim", "T"),
     ("sketch.external", "X"),
     ("sketch.construction", "N"),
+    ("sketch.internal_geometry", "I"),
     ("sketch.constrain.coincident", "Shift+C"),
     ("sketch.constrain.point_on_object", "Shift+O"),
     ("sketch.constrain.vertical", "Shift+V"),
@@ -1133,13 +1233,7 @@ impl SketchWorkbench {
             return None;
         }
         let proj = SketchProjector::new(ctx, feature.plane);
-        let glyphs = glyphs::build(
-            &feature.sketch,
-            &proj,
-            &self.selected_constraints,
-            &self.bound_dimensions(ctx),
-            &ctx.sketch_palette,
-        );
+        let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
         glyphs::hit_test(&glyphs, [viewport_pos.0, viewport_pos.1]).map(|g| GlyphHit {
             constraint: g.constraint,
             dimensional: g.dimensional,
@@ -1477,6 +1571,111 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// The `sketch.internal_geometry` action: the selected curves' internal
+    /// geometry shown when a piece of it is missing, else hidden, through
+    /// the command's code.
+    fn toggle_internal_geometry(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(mut feature), Some(sketch_id)) =
+            (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return InputResult::ignored();
+        };
+        let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+        items.sort();
+        if internal::curves_of(&feature.sketch, &items).is_empty() {
+            ctx.log_warn("Select an ellipse, a parabola, a hyperbola or a B-spline");
+            return InputResult::consumed();
+        }
+        let (shown, changed) = internal::toggle(&mut feature.sketch, &items, None);
+        ctx.record(
+            "sketch.internal_geometry",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": ids_json(&items),
+                "show": shown,
+            })),
+            serde_json::json!({
+                "shown": shown,
+                "elements": changed.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+            }),
+        );
+        if !shown {
+            self.selected.retain(|id| !changed.contains(id));
+        }
+        ctx.log_info(match (shown, changed.len()) {
+            (true, n) => format!("Showed internal geometry: {n} element(s)"),
+            (false, 0) => "Internal geometry kept: all of it is constrained".to_string(),
+            (false, n) => format!("Hid internal geometry: {n} element(s)"),
+        });
+        if !changed.is_empty() {
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+        }
+        InputResult::consumed()
+    }
+
+    /// The `sketch.section_view` action: the edited sketch's section view
+    /// switched, through the command's code.
+    fn toggle_section_view(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(mut feature), Some(sketch_id)) =
+            (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return InputResult::ignored();
+        };
+        feature.section_view = !feature.section_view;
+        self.section_view = feature.section_view;
+        ctx.record(
+            "sketch.section_view",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "on": feature.section_view,
+            })),
+            serde_json::Value::Null,
+        );
+        ctx.log_info(if feature.section_view {
+            "Section view: the scene is cut at the sketch plane"
+        } else {
+            "Section view off"
+        });
+        self.store_sketch_data(ctx, feature);
+        InputResult::consumed()
+    }
+
+    /// The `sketch.remove_axis_alignment` action: the selected lines'
+    /// horizontal and vertical constraints turned into parallel and
+    /// perpendicular ones among them, through the command's code.
+    fn remove_axis_alignment(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(mut feature), Some(sketch_id)) =
+            (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return InputResult::ignored();
+        };
+        let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+        items.sort();
+        let set: HashSet<Uuid> = items.iter().copied().collect();
+        let changed = tools::remove_axis_alignment(&mut feature.sketch, &set);
+        if changed == 0 {
+            ctx.log_warn("None of the selected lines is held horizontal or vertical");
+            return InputResult::consumed();
+        }
+        ctx.record(
+            "sketch.remove_axis_alignment",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": ids_json(&items),
+            })),
+            serde_json::json!(changed),
+        );
+        self.selected_constraints
+            .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
+        ctx.log_info(format!(
+            "Removed axis alignment: {changed} constraint(s) now relative"
+        ));
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        InputResult::consumed()
+    }
+
     /// Right-click / Enter: ends a line chain, completes an in-progress
     /// B-spline; anything else stays with the camera (right-drag pans).
     fn handle_finish_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -1530,6 +1729,33 @@ impl SketchWorkbench {
         }
         // Never consumed: the camera still has a pan to finish.
         InputResult::ignored()
+    }
+
+    /// The constraint list's kind filter (the panel's dropdown; also set by
+    /// integration tests).
+    pub fn constraint_filter_mut(&mut self) -> &mut ConstraintFilter {
+        &mut self.constraint_kind_filter
+    }
+
+    /// The constraints the panel's list shows, in sketch order, as its text
+    /// and kind filters and the selection leave it.
+    pub fn listed_constraints(&self, sketch: &Sketch) -> Vec<Uuid> {
+        let text = self.constraint_filter.trim().to_lowercase();
+        sketch
+            .constraints
+            .iter()
+            .enumerate()
+            .filter(|(idx, c)| {
+                (text.is_empty() || constraint_row_label(*idx, c).to_lowercase().contains(&text))
+                    && self.constraint_kind_filter.accepts(
+                        sketch,
+                        c,
+                        &self.selected,
+                        &self.selected_constraints,
+                    )
+            })
+            .map(|(_, c)| c.id)
+            .collect()
     }
 
     /// Panel-editable tool parameters (also used by integration tests to
@@ -1786,6 +2012,26 @@ impl SketchWorkbench {
                     "value": value,
                     "driving": constraint.driving,
                 })),
+                serde_json::Value::Null,
+            );
+        }
+        // Its active and parked flags, as `sketch.set_constraint` sets them.
+        if (constraint.active != slot.active || constraint.parked != slot.parked)
+            && let Some(sketch_id) = self.active_sketch_id
+        {
+            let mut args = serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": ids_json(&[constraint.id]),
+            });
+            if constraint.active != slot.active {
+                args["active"] = serde_json::json!(constraint.active);
+            }
+            if constraint.parked != slot.parked {
+                args["parked"] = serde_json::json!(constraint.parked);
+            }
+            ctx.record(
+                "sketch.set_constraint",
+                commands::args(args),
                 serde_json::Value::Null,
             );
         }
@@ -2155,6 +2401,14 @@ impl Workbench for SketchWorkbench {
                         Some("geometry.external"),
                     )
                     .icon("external-geometry")
+                    .variants(vec![
+                        ToolVariant::new("edges", "Projected edges", "external-geometry"),
+                        ToolVariant::new(
+                            "intersection",
+                            "Intersection with faces",
+                            "clipping-plane",
+                        ),
+                    ])
                     .row(1),
                 ));
                 context.register_tool(
@@ -2173,6 +2427,15 @@ impl Workbench for SketchWorkbench {
                         Some("geometry.construction"),
                     )
                     .icon("construction-mode")
+                    .row(1),
+                ));
+                context.register_tool(keyed(
+                    ToolDescriptor::new_action(
+                        "sketch.internal_geometry",
+                        "Show/hide internal geometry",
+                        Some("geometry.construction"),
+                    )
+                    .icon("show-hide-internal-geometry")
                     .row(1),
                 ));
                 continue;
@@ -2311,6 +2574,15 @@ impl Workbench for SketchWorkbench {
             }
             context.register_tool(tool);
         }
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.remove_axis_alignment",
+                "Remove axis alignment",
+                Some("constraints.geometric"),
+            )
+            .icon("toggle-axis-cross")
+            .row(2),
+        );
         for (id, label, icon) in [
             (
                 "sketch.toggle_driving",
@@ -2318,6 +2590,11 @@ impl Workbench for SketchWorkbench {
                 "toggle-driving",
             ),
             ("sketch.toggle_active", "Toggle active", "toggle-active"),
+            (
+                "sketch.park_constraints",
+                "Park / unpark constraints",
+                "pin",
+            ),
         ] {
             context.register_tool(
                 ToolDescriptor::new_action(id, label, Some("constraints.toggle"))
@@ -2373,6 +2650,24 @@ impl Workbench for SketchWorkbench {
                 Some("constraints.view"),
             )
             .icon("show-hide-constraints")
+            .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.section_view",
+                "Section view",
+                Some("constraints.view"),
+            )
+            .icon("clipping-plane")
+            .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.parked_layer",
+                "Show parked constraints",
+                Some("constraints.view"),
+            )
+            .icon("eye")
             .row(2),
         );
         context.register_tool(
@@ -2479,6 +2774,8 @@ impl Workbench for SketchWorkbench {
             }
             match base {
                 "sketch.construction" => return self.toggle_construction_selected(ctx),
+                "sketch.internal_geometry" => return self.toggle_internal_geometry(ctx),
+                "sketch.remove_axis_alignment" => return self.remove_axis_alignment(ctx),
                 "sketch.snap" => {
                     self.snap_off = !self.snap_off;
                     return InputResult::consumed();
@@ -2517,8 +2814,28 @@ impl Workbench for SketchWorkbench {
                     return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
                 }
                 "sketch.merge" => return self.open_sketch_picker(SketchPickerMode::Merge),
-                "sketch.toggle_driving" => return self.toggle_constraint_flag(ctx, true),
-                "sketch.toggle_active" => return self.toggle_constraint_flag(ctx, false),
+                "sketch.toggle_driving" => {
+                    return self.toggle_constraint_flag(ctx, ConstraintFlag::Driving);
+                }
+                "sketch.toggle_active" => {
+                    return self.toggle_constraint_flag(ctx, ConstraintFlag::Active);
+                }
+                "sketch.park_constraints" => {
+                    let result = self.toggle_constraint_flag(ctx, ConstraintFlag::Parked);
+                    // What moved to the other layer is out of sight.
+                    self.selected_constraints.clear();
+                    return result;
+                }
+                "sketch.section_view" => return self.toggle_section_view(ctx),
+                "sketch.parked_layer" => {
+                    self.parked_layer = !self.parked_layer;
+                    ctx.log_info(if self.parked_layer {
+                        "Showing the parked constraints"
+                    } else {
+                        "Showing the constraints in place"
+                    });
+                    return InputResult::consumed();
+                }
                 "sketch.select_conflicting" => return self.select_offenders(ctx, true),
                 "sketch.select_redundant" => return self.select_offenders(ctx, false),
                 "sketch.delete_all_geometry" => return self.delete_all(ctx, true),
@@ -2560,6 +2877,11 @@ impl Workbench for SketchWorkbench {
         // edge under it; the frame hook projects what was picked.
         if base == Some("sketch.external") {
             self.last_tool = Some("sketch.external".to_string());
+            let intersection = active_tool.and_then(tool_variant) == Some("intersection");
+            if intersection != self.external_intersection {
+                self.external_intersection = intersection;
+                self.external_seen.clear();
+            }
             return match event {
                 WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
                 _ => InputResult::ignored(),
@@ -2726,7 +3048,11 @@ impl Workbench for SketchWorkbench {
             self.refresh_external(ctx);
         }
         if self.last_tool.as_deref() == Some("sketch.external") {
-            self.take_external_picks(ctx);
+            if self.external_intersection {
+                self.take_intersection_picks(ctx);
+            } else {
+                self.take_external_picks(ctx);
+            }
         }
         self.drop_stale_wall_check(ctx);
         let seq = ctx.document.mutation_seq();
@@ -2746,6 +3072,9 @@ impl Workbench for SketchWorkbench {
                     self.last_solve = None;
                     self.last_diagnosis = None;
                 }
+                self.section_view = feature.section_view;
+                let selected: Vec<Uuid> = self.selected.iter().copied().collect();
+                self.internal_target = !internal::curves_of(&feature.sketch, &selected).is_empty();
                 constrain::SelectionShape::of(&feature.sketch, &self.selected)
             }
             None => constrain::SelectionShape::default(),
@@ -2774,10 +3103,12 @@ impl Workbench for SketchWorkbench {
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.array" => editing && !self.selected.is_empty(),
+            "sketch.internal_geometry" => editing && self.internal_target,
+            "sketch.remove_axis_alignment" => editing && !self.selection_shape.lines.is_empty(),
             "sketch.join" => {
                 editing && self.selection_shape.all.len() - self.selection_shape.points.len() >= 2
             }
-            "sketch.toggle_driving" | "sketch.toggle_active" => {
+            "sketch.toggle_driving" | "sketch.toggle_active" | "sketch.park_constraints" => {
                 editing && !self.selected_constraints.is_empty()
             }
             "sketch.select_conflicting" => {
@@ -2805,6 +3136,8 @@ impl Workbench for SketchWorkbench {
             "sketch.show_constraints" => self.options.constraints_hidden,
             "sketch.grid" => self.options.grid_on,
             "sketch.rendering_order" => self.options.construction_on_top,
+            "sketch.parked_layer" => self.parked_layer,
+            "sketch.section_view" => self.section_view,
             "sketch.carbon_copy" | "sketch.merge" => self.sketch_picker.as_ref().is_some_and(|p| {
                 (p.mode == SketchPickerMode::Merge) == (tool_id == "sketch.merge")
             }),
@@ -2846,6 +3179,10 @@ impl Workbench for SketchWorkbench {
         let tool = self.last_tool.as_deref().unwrap_or("sketch.select");
         let (name, prompt) = match self.tool_state.hint() {
             Some((name, prompt)) => (name, prompt),
+            None if tool == "sketch.external" && self.external_intersection => (
+                "Intersection",
+                "Click faces of a solid to add where they cross the sketch plane",
+            ),
             None => idle_hint(tool),
         };
         let mut keys: Vec<(String, &'static str)> = Vec::new();
@@ -2919,10 +3256,25 @@ impl Workbench for SketchWorkbench {
                 format!("Zoom {zoom:.1}×"),
             ]
             .into_iter()
+            .chain(
+                self.parked_layer
+                    .then(|| "Constraints: parked layer".to_string()),
+            )
             .chain(self.shown_wall_check().map(walls::WallCheck::summary))
             .collect(),
             ovp,
         })
+    }
+
+    /// A sketch edited in section view cuts the scene at its plane, keeping
+    /// the side away from the viewer, and a hair beyond the plane so a face
+    /// the sketch lies on stays.
+    fn clip_plane(&self, ctx: &WorkbenchRuntimeContext) -> Option<[f32; 4]> {
+        let feature = self.get_active_sketch(ctx)?;
+        if !feature.section_view {
+            return None;
+        }
+        Some(section_equation(&feature.plane, ctx.camera_position))
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
@@ -2979,13 +3331,7 @@ impl Workbench for SketchWorkbench {
             out.extend(walls::overlays(check, &proj, &pal));
         }
         if !self.options.constraints_hidden {
-            let glyphs = glyphs::build(
-                &feature.sketch,
-                &proj,
-                &self.selected_constraints,
-                &self.bound_dimensions(ctx),
-                &pal,
-            );
+            let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
             out.extend(glyphs::dimension_overlays(&glyphs));
         }
         out
@@ -3007,15 +3353,9 @@ impl Workbench for SketchWorkbench {
         }
         if !self.options.constraints_hidden {
             out.extend(
-                glyphs::build(
-                    &feature.sketch,
-                    &proj,
-                    &self.selected_constraints,
-                    &self.bound_dimensions(ctx),
-                    &pal,
-                )
-                .iter()
-                .filter_map(glyphs::Glyph::mark),
+                self.glyphs(ctx, &feature.sketch, &proj)
+                    .iter()
+                    .filter_map(glyphs::Glyph::mark),
             );
         }
         out
@@ -3034,16 +3374,10 @@ impl Workbench for SketchWorkbench {
         let mut labels: Vec<ScreenSpaceLabel> = if self.options.constraints_hidden {
             Vec::new()
         } else {
-            glyphs::build(
-                &feature.sketch,
-                &proj,
-                &self.selected_constraints,
-                &self.bound_dimensions(ctx),
-                &pal,
-            )
-            .iter()
-            .filter_map(glyphs::Glyph::label)
-            .collect()
+            self.glyphs(ctx, &feature.sketch, &proj)
+                .iter()
+                .filter_map(glyphs::Glyph::label)
+                .collect()
         };
         // What the cursor would snap to, by name.
         labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
@@ -3055,6 +3389,23 @@ impl Workbench for SketchWorkbench {
 }
 
 impl SketchWorkbench {
+    /// The constraint glyphs of the layer shown, in viewport pixels.
+    fn glyphs(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+        proj: &SketchProjector,
+    ) -> Vec<glyphs::Glyph> {
+        glyphs::build(
+            sketch,
+            proj,
+            &self.selected_constraints,
+            &self.bound_dimensions(ctx),
+            &ctx.sketch_palette,
+            self.parked_layer,
+        )
+    }
+
     /// The geometry, previews and markers of one frame.
     fn build_overlays(
         &self,
@@ -3331,13 +3682,12 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
-    /// Apply `edit` to every selected constraint and re-solve.
-    /// Flip the selected constraints' driving flag (`driving`) or active
-    /// flag, each for itself, through `sketch.set_constraint`'s code.
+    /// Flip one flag of the selected constraints, each for itself, through
+    /// `sketch.set_constraint`'s code.
     fn toggle_constraint_flag(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        driving: bool,
+        which: ConstraintFlag,
     ) -> InputResult {
         let (Some(mut feature), Some(id)) = (self.get_active_sketch(ctx), self.active_sketch_id)
         else {
@@ -3347,7 +3697,11 @@ impl SketchWorkbench {
         let mut to: [Vec<Uuid>; 2] = [Vec::new(), Vec::new()];
         for c in &feature.sketch.constraints {
             if self.selected_constraints.contains(&c.id) {
-                let now = if driving { c.driving } else { c.active };
+                let now = match which {
+                    ConstraintFlag::Driving => c.driving,
+                    ConstraintFlag::Active => c.active,
+                    ConstraintFlag::Parked => c.parked,
+                };
                 to[usize::from(!now)].push(c.id);
             }
         }
@@ -3359,17 +3713,27 @@ impl SketchWorkbench {
                 continue;
             }
             items.sort();
-            let (d, a) = if driving {
-                (Some(flag), None)
-            } else {
-                (None, Some(flag))
+            let mut flags = commands::ConstraintFlags::default();
+            let name = match which {
+                ConstraintFlag::Driving => {
+                    flags.driving = Some(flag);
+                    "driving"
+                }
+                ConstraintFlag::Active => {
+                    flags.active = Some(flag);
+                    "active"
+                }
+                ConstraintFlag::Parked => {
+                    flags.parked = Some(flag);
+                    "parked"
+                }
             };
-            commands::set_constraints(&mut feature.sketch, &items, d, a);
+            commands::set_constraints(&mut feature.sketch, &items, flags);
             let mut args = serde_json::json!({
                 "sketch": id.0.to_string(),
                 "items": ids_json(&items),
             });
-            args[if driving { "driving" } else { "active" }] = serde_json::json!(flag);
+            args[name] = serde_json::json!(flag);
             ctx.record(
                 "sketch.set_constraint",
                 commands::args(args),
@@ -3915,6 +4279,7 @@ impl SketchWorkbench {
                     body: edge.body,
                     point: local.point,
                     direction: local.direction,
+                    section: false,
                 }
             })
             .collect();
@@ -3967,9 +4332,63 @@ impl SketchWorkbench {
         }
     }
 
+    /// Add where every face picked since the intersection tool was armed
+    /// crosses the edited sketch's plane.
+    fn take_intersection_picks(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let (Some(face), Some(body)) = (ctx.selected_face, ctx.selected_body_id) else {
+            return;
+        };
+        if !self
+            .external_seen
+            .insert((body, face.point.map(f32::to_bits)))
+        {
+            return;
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let local = face.moved(&ctx.document.body_placement(BodyId(body)).inverse());
+        let source = sketch::ExternalSource {
+            body,
+            point: local.point,
+            direction: local.normal,
+            section: true,
+        };
+        let before = commands::ids_of(&feature.sketch);
+        let added =
+            match commands::add_external(ctx, &feature.plane, &mut feature.sketch, &[source]) {
+                Ok(added) => added,
+                Err(why) => {
+                    ctx.log_warn(format!("No intersection with that face: {why}"));
+                    return;
+                }
+            };
+        if let Some(id) = self.active_sketch_id {
+            ctx.record(
+                "sketch.intersection",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "faces": [{
+                        "body": body.to_string(),
+                        "point": source.point,
+                        "normal": source.direction,
+                    }],
+                })),
+                commands::made_since(&feature.sketch, &before),
+            );
+        }
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        ctx.log_info(match added {
+            1 => "Added 1 intersection element".to_string(),
+            n => format!("Added {n} intersection elements"),
+        });
+    }
+
     /// Bring the edited sketch's external geometry up to the solids it came
-    /// from: each edge projected again, moved in place where it is the same
-    /// kind of curve. An edge that no longer exists is left as it was.
+    /// from: each edge projected again and each face cut again, moved in
+    /// place where the curves are the same kinds. An edge or face that no
+    /// longer exists is left as it was.
     fn refresh_external(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return;
@@ -3990,7 +4409,7 @@ impl SketchWorkbench {
         }
         if lost > 0 {
             ctx.log_warn(format!(
-                "{lost} external element(s) kept where they were: their edges could not be projected"
+                "{lost} external element(s) kept where they were: their edges or faces could not be reached"
             ));
         }
         // Nothing moved: no edit to record.
@@ -4449,13 +4868,33 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
     }
 }
 
-/// The edge `source` names, projected onto the sketch plane `plane` (as
-/// the scene has it), in the sketch's own coordinates.
+/// How far past the sketch plane a section view keeps, in mm: a face the
+/// sketch lies on stays whole.
+const SECTION_MARGIN_MM: f32 = 1e-3;
+
+/// The renderer's clipping equation for a section view at `plane`: it
+/// keeps what lies on the far side from `eye`, and the plane itself.
+pub(crate) fn section_equation(plane: &SketchPlane, eye: [f32; 3]) -> [f32; 4] {
+    let n = glam::Vec3::from_array(plane.normal).normalize_or_zero();
+    let o = glam::Vec3::from_array(plane.origin);
+    // The side the viewer is on is the side cut away.
+    let toward_eye = if n.dot(glam::Vec3::from_array(eye) - o) >= 0.0 {
+        n
+    } else {
+        -n
+    };
+    let keep = -toward_eye;
+    [keep.x, keep.y, keep.z, -keep.dot(o) + SECTION_MARGIN_MM]
+}
+
+/// What `source` comes to on the sketch plane `plane` (as the scene has
+/// it), in the sketch's own coordinates: its edge projected onto the plane,
+/// or the curves where its face crosses it.
 pub(crate) fn project_source(
     ctx: &WorkbenchRuntimeContext,
     plane: &SketchPlane,
     source: &sketch::ExternalSource,
-) -> Result<kernel_api::ProjectedEdge, String> {
+) -> Result<Vec<kernel_api::ProjectedEdge>, String> {
     let kernel = ctx.kernel.ok_or("no kernel to project with")?;
     let body = BodyId(source.body);
     let brep = ctx
@@ -4466,17 +4905,24 @@ pub(crate) fn project_source(
     // and the projection keeps the sketch's own coordinates.
     let local = placed_plane(plane, &ctx.document.body_placement(body).inverse());
     let f = |v: [f32; 3]| v.map(f64::from);
+    let plane = kernel_api::ProfilePlane {
+        origin: f(local.origin),
+        x_axis: f(local.x_axis),
+        y_axis: f(local.y_axis),
+        normal: f(local.normal),
+    };
+    if source.section {
+        let curves = kernel
+            .section_face(brep, f(source.point), &plane)
+            .map_err(|e| e.to_string())?;
+        if curves.is_empty() {
+            return Err("the face does not cross the sketch plane".to_string());
+        }
+        return Ok(curves);
+    }
     kernel
-        .project_edge(
-            brep,
-            f(source.point),
-            &kernel_api::ProfilePlane {
-                origin: f(local.origin),
-                x_axis: f(local.x_axis),
-                y_axis: f(local.y_axis),
-                normal: f(local.normal),
-            },
-        )
+        .project_edge(brep, f(source.point), &plane)
+        .map(|edge| vec![edge])
         .map_err(|e| e.to_string())
 }
 
@@ -4592,6 +5038,73 @@ pub(crate) fn carbon_copy_log(
             "Carbon copy of {name}: {count} elements; its constraints stay behind, as its \
              axes are turned against this sketch's"
         )
+    }
+}
+
+#[cfg(test)]
+mod constraint_filter {
+    use super::*;
+    use sketch::{ConstraintKind, Line, Point};
+
+    #[test]
+    fn each_filter_lists_its_own() {
+        let mut sketch = Sketch::new("t");
+        let point = |sketch: &mut Sketch, x: f32| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))))
+        };
+        let (a, b, c) = (
+            point(&mut sketch, 0.0),
+            point(&mut sketch, 5.0),
+            point(&mut sketch, 9.0),
+        );
+        let first = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let second = sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        let level = sketch.add_constraint(ConstraintKind::Horizontal { element: second });
+        let width = sketch.add_constraint(ConstraintKind::Length {
+            line: first,
+            length: 5.0,
+        });
+        let measured = sketch.add_constraint(ConstraintKind::Distance {
+            point1: a,
+            point2: c,
+            distance: 9.0,
+        });
+        for constraint in &mut sketch.constraints {
+            if constraint.id == width {
+                constraint.name = Some("width".into());
+            }
+            if constraint.id == measured {
+                constraint.driving = false;
+                constraint.parked = true;
+            }
+        }
+        let listed = |filter: ConstraintFilter, selected: &[Uuid], chosen: &[Uuid]| {
+            let selected: HashSet<Uuid> = selected.iter().copied().collect();
+            let chosen: HashSet<Uuid> = chosen.iter().copied().collect();
+            sketch
+                .constraints
+                .iter()
+                .filter(|c| filter.accepts(&sketch, c, &selected, &chosen))
+                .map(|c| c.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(listed(ConstraintFilter::All, &[], &[]).len(), 3);
+        assert_eq!(listed(ConstraintFilter::Geometric, &[], &[]), [level]);
+        assert_eq!(
+            listed(ConstraintFilter::Dimensional, &[], &[]),
+            [width, measured]
+        );
+        assert_eq!(listed(ConstraintFilter::Named, &[], &[]), [width]);
+        assert_eq!(listed(ConstraintFilter::Reference, &[], &[]), [measured]);
+        assert_eq!(listed(ConstraintFilter::Parked, &[], &[]), [measured]);
+        assert_eq!(listed(ConstraintFilter::Selected, &[], &[level]), [level]);
+        // The first line reaches its length, and through its end at `a` the
+        // distance; the second line's constraint is not its.
+        assert_eq!(
+            listed(ConstraintFilter::Related, &[first], &[]),
+            [width, measured]
+        );
+        assert_eq!(listed(ConstraintFilter::Related, &[c], &[]), [measured]);
     }
 }
 
@@ -4892,6 +5405,32 @@ mod placed_body {
 }
 
 #[cfg(test)]
+mod section_view {
+    use super::*;
+
+    fn keeps([a, b, c, d]: [f32; 4], p: [f32; 3]) -> bool {
+        a * p[0] + b * p[1] + c * p[2] + d >= 0.0
+    }
+
+    #[test]
+    fn the_viewers_side_of_the_plane_is_cut_away_and_the_plane_kept() {
+        let plane = SketchPlane::from_frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+        let from_above = section_equation(&plane, [0.0, 0.0, 50.0]);
+        assert!(keeps(from_above, [3.0, 4.0, 1.0]));
+        assert!(keeps(from_above, [3.0, 4.0, 5.0]), "the plane itself stays");
+        assert!(!keeps(from_above, [3.0, 4.0, 6.0]));
+        // Seen from below, the other side goes.
+        let from_below = section_equation(&plane, [0.0, 0.0, -50.0]);
+        assert!(keeps(from_below, [3.0, 4.0, 6.0]));
+        assert!(!keeps(from_below, [3.0, 4.0, 1.0]));
+        // A slanted plane cuts slanted.
+        let slanted = SketchPlane::from_frame([0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [1.0, 0.0, -1.0]);
+        let eq = section_equation(&slanted, [30.0, 0.0, 30.0]);
+        assert!(keeps(eq, [-1.0, 7.0, -1.0]) && !keeps(eq, [1.0, -7.0, 1.0]));
+    }
+}
+
+#[cfg(test)]
 mod close_sketch {
     use super::*;
     use core_document::Document;
@@ -4955,9 +5494,85 @@ mod external_geometry {
                 end: [x + 10.0, y],
             })
         }
+
+        /// Every face crosses the plane in two lines up the plane's Y axis,
+        /// either side of where the probe lands.
+        fn section_face(
+            &self,
+            _brep: &[u8],
+            near: [f64; 3],
+            plane: &ProfilePlane,
+        ) -> KernelResult<Vec<ProjectedEdge>> {
+            let d: Vec<f64> = (0..3).map(|k| near[k] - plane.origin[k]).collect();
+            let x: f64 = (0..3).map(|k| d[k] * plane.x_axis[k]).sum();
+            Ok([x - 1.0, x + 1.0]
+                .map(|x| ProjectedEdge::Line {
+                    start: [x, 0.0],
+                    end: [x, 5.0],
+                })
+                .to_vec())
+        }
     }
 
     static FLAT: FlatKernel = FlatKernel;
+
+    #[test]
+    fn a_picked_face_brings_in_where_it_crosses_the_plane_once_and_records_it() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        doc.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
+                "s".into(),
+                Some(body),
+            )
+            .unwrap();
+        let mut wb = SketchWorkbench {
+            active_sketch_id: Some(sketch),
+            external_refreshed: Some(sketch),
+            ..SketchWorkbench::default()
+        };
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(sketch);
+        ctx.kernel = Some(&FLAT);
+        // The tool's intersection variant is armed; the host picks a face.
+        let armed = WorkbenchInputEvent::KeyPress { key: KeyCode::A };
+        wb.on_input(&armed, Some("sketch.external:intersection"), &mut ctx);
+        ctx.selected_body_id = Some(body.0);
+        ctx.selected_face = Some(core_document::FaceRef {
+            point: [4.0, 2.0, -3.0],
+            normal: [1.0, 0.0, 0.0],
+            surface: None,
+        });
+        wb.on_frame(0.016, &mut ctx);
+        wb.on_frame(0.016, &mut ctx);
+        let recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+        assert_eq!(recorded.len(), 1, "taken once: {recorded:?}");
+        assert_eq!(recorded[0].id, "sketch.intersection");
+
+        let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
+        assert_eq!(stored.external.len(), 2, "both lines came in");
+        assert!(stored.external.values().all(|s| s.section));
+        let xs: Vec<f32> = stored
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) => Some(p.position.x),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            xs.iter()
+                .all(|x| (x - 3.0).abs() < 1e-5 || (x - 5.0).abs() < 1e-5)
+        );
+        // The edge variant again takes edges, not the face.
+        wb.on_input(&armed, Some("sketch.external:edges"), &mut ctx);
+        wb.on_frame(0.016, &mut ctx);
+        let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
+        assert_eq!(stored.external.len(), 2);
+    }
 
     #[test]
     fn a_picked_edge_comes_in_fixed_and_out_of_profiles() {
