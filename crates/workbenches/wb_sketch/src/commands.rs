@@ -328,6 +328,19 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.intersection",
+            "Add where faces of solids cross the sketch plane, as fixed references",
+        ))
+        .param(
+            "faces",
+            ParamKind::List,
+            "Each {body, point, normal}: a point on the face and its normal there, \
+             in the body's own frame",
+        )
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.constraints",
             "List the sketch's constraints",
         ))
@@ -494,6 +507,18 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let from = FeatureId(a.id("from")?);
             let before = ids_of(&feature.sketch);
             carbon_copy(ctx.document, sketch_id, &mut feature.sketch, from)
+                .map_err(CommandError::failed)?;
+            let made = made_since(&feature.sketch, &before);
+            return save(ctx, sketch_id, feature, made);
+        }
+        "sketch.intersection" => {
+            let faces = section_sources(args.get("faces"))?;
+            let before = ids_of(&feature.sketch);
+            let placed = crate::placed_plane(
+                &feature.plane,
+                &crate::sketch_placement(ctx.document, sketch_id),
+            );
+            add_external(ctx, &placed, &mut feature.sketch, &faces)
                 .map_err(CommandError::failed)?;
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
@@ -1059,7 +1084,7 @@ fn save(
     Ok(answer)
 }
 
-fn ids_of(
+pub(crate) fn ids_of(
     sketch: &Sketch,
 ) -> (
     std::collections::HashSet<Uuid>,
@@ -1256,13 +1281,42 @@ fn external_sources(
                 body,
                 point: v("point")?,
                 direction: v("direction")?,
+                section: false,
             })
         })
         .collect()
 }
 
-/// Project `edges` onto `plane` (the sketch's, where its body sits) and add
-/// what they come to as external geometry. How many elements came.
+/// Faces named as `{body, point, normal}`, in each body's own frame.
+fn section_sources(
+    value: Option<&Value>,
+) -> Result<Vec<crate::sketch::ExternalSource>, CommandError> {
+    let bad = || CommandError::bad("faces", "must be a list of {body, point, normal}");
+    let list = value.and_then(Value::as_array).ok_or_else(bad)?;
+    list.iter()
+        .map(|face| {
+            let body = face
+                .get("body")
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .ok_or_else(bad)?;
+            let v = |name: &str| -> Result<[f32; 3], CommandError> {
+                let v = vector3(face.get(name), "faces")?;
+                Ok(v.map(|c| c as f32))
+            };
+            Ok(crate::sketch::ExternalSource {
+                body,
+                point: v("point")?,
+                direction: v("normal")?,
+                section: true,
+            })
+        })
+        .collect()
+}
+
+/// Bring `edges` (edges to project, faces to cut) onto `plane` (the
+/// sketch's, where its body sits) and add what they come to as external
+/// geometry. How many elements came.
 pub(crate) fn add_external(
     ctx: &WorkbenchRuntimeContext,
     plane: &SketchPlane,
@@ -1273,7 +1327,11 @@ pub(crate) fn add_external(
     let mut last_error = None;
     for source in edges {
         match crate::project_source(ctx, plane, source) {
-            Ok(projected) => added += crate::external::add(sketch, &projected, *source),
+            Ok(curves) => {
+                for curve in &curves {
+                    added += crate::external::add(sketch, curve, *source);
+                }
+            }
             Err(why) => last_error = Some(why),
         }
     }

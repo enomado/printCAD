@@ -305,6 +305,9 @@ pub struct SketchWorkbench {
     /// user set them, for the hints that name a key.
     action_keys: HashMap<String, String>,
     sketch_picker: Option<SketchPicker>,
+    /// The external geometry tool takes picked faces and adds where they
+    /// cross the sketch plane (its intersection variant), not picked edges.
+    external_intersection: bool,
     /// The picked edges the external geometry tool has taken, so a pick is
     /// taken once.
     external_seen: HashSet<(Uuid, [u32; 3])>,
@@ -2397,6 +2400,14 @@ impl Workbench for SketchWorkbench {
                         Some("geometry.external"),
                     )
                     .icon("external-geometry")
+                    .variants(vec![
+                        ToolVariant::new("edges", "Projected edges", "external-geometry"),
+                        ToolVariant::new(
+                            "intersection",
+                            "Intersection with faces",
+                            "clipping-plane",
+                        ),
+                    ])
                     .row(1),
                 ));
                 context.register_tool(
@@ -2865,6 +2876,11 @@ impl Workbench for SketchWorkbench {
         // edge under it; the frame hook projects what was picked.
         if base == Some("sketch.external") {
             self.last_tool = Some("sketch.external".to_string());
+            let intersection = active_tool.and_then(tool_variant) == Some("intersection");
+            if intersection != self.external_intersection {
+                self.external_intersection = intersection;
+                self.external_seen.clear();
+            }
             return match event {
                 WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
                 _ => InputResult::ignored(),
@@ -3031,7 +3047,11 @@ impl Workbench for SketchWorkbench {
             self.refresh_external(ctx);
         }
         if self.last_tool.as_deref() == Some("sketch.external") {
-            self.take_external_picks(ctx);
+            if self.external_intersection {
+                self.take_intersection_picks(ctx);
+            } else {
+                self.take_external_picks(ctx);
+            }
         }
         self.drop_stale_wall_check(ctx);
         let seq = ctx.document.mutation_seq();
@@ -3158,6 +3178,10 @@ impl Workbench for SketchWorkbench {
         let tool = self.last_tool.as_deref().unwrap_or("sketch.select");
         let (name, prompt) = match self.tool_state.hint() {
             Some((name, prompt)) => (name, prompt),
+            None if tool == "sketch.external" && self.external_intersection => (
+                "Intersection",
+                "Click faces of a solid to add where they cross the sketch plane",
+            ),
             None => idle_hint(tool),
         };
         let mut keys: Vec<(String, &'static str)> = Vec::new();
@@ -4254,6 +4278,7 @@ impl SketchWorkbench {
                     body: edge.body,
                     point: local.point,
                     direction: local.direction,
+                    section: false,
                 }
             })
             .collect();
@@ -4306,9 +4331,63 @@ impl SketchWorkbench {
         }
     }
 
+    /// Add where every face picked since the intersection tool was armed
+    /// crosses the edited sketch's plane.
+    fn take_intersection_picks(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let (Some(face), Some(body)) = (ctx.selected_face, ctx.selected_body_id) else {
+            return;
+        };
+        if !self
+            .external_seen
+            .insert((body, face.point.map(f32::to_bits)))
+        {
+            return;
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let local = face.moved(&ctx.document.body_placement(BodyId(body)).inverse());
+        let source = sketch::ExternalSource {
+            body,
+            point: local.point,
+            direction: local.normal,
+            section: true,
+        };
+        let before = commands::ids_of(&feature.sketch);
+        let added =
+            match commands::add_external(ctx, &feature.plane, &mut feature.sketch, &[source]) {
+                Ok(added) => added,
+                Err(why) => {
+                    ctx.log_warn(format!("No intersection with that face: {why}"));
+                    return;
+                }
+            };
+        if let Some(id) = self.active_sketch_id {
+            ctx.record(
+                "sketch.intersection",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "faces": [{
+                        "body": body.to_string(),
+                        "point": source.point,
+                        "normal": source.direction,
+                    }],
+                })),
+                commands::made_since(&feature.sketch, &before),
+            );
+        }
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        ctx.log_info(match added {
+            1 => "Added 1 intersection element".to_string(),
+            n => format!("Added {n} intersection elements"),
+        });
+    }
+
     /// Bring the edited sketch's external geometry up to the solids it came
-    /// from: each edge projected again, moved in place where it is the same
-    /// kind of curve. An edge that no longer exists is left as it was.
+    /// from: each edge projected again and each face cut again, moved in
+    /// place where the curves are the same kinds. An edge or face that no
+    /// longer exists is left as it was.
     fn refresh_external(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return;
@@ -4329,7 +4408,7 @@ impl SketchWorkbench {
         }
         if lost > 0 {
             ctx.log_warn(format!(
-                "{lost} external element(s) kept where they were: their edges could not be projected"
+                "{lost} external element(s) kept where they were: their edges or faces could not be reached"
             ));
         }
         // Nothing moved: no edit to record.
@@ -4807,13 +4886,14 @@ pub(crate) fn section_equation(plane: &SketchPlane, eye: [f32; 3]) -> [f32; 4] {
     [keep.x, keep.y, keep.z, -keep.dot(o) + SECTION_MARGIN_MM]
 }
 
-/// The edge `source` names, projected onto the sketch plane `plane` (as
-/// the scene has it), in the sketch's own coordinates.
+/// What `source` comes to on the sketch plane `plane` (as the scene has
+/// it), in the sketch's own coordinates: its edge projected onto the plane,
+/// or the curves where its face crosses it.
 pub(crate) fn project_source(
     ctx: &WorkbenchRuntimeContext,
     plane: &SketchPlane,
     source: &sketch::ExternalSource,
-) -> Result<kernel_api::ProjectedEdge, String> {
+) -> Result<Vec<kernel_api::ProjectedEdge>, String> {
     let kernel = ctx.kernel.ok_or("no kernel to project with")?;
     let body = BodyId(source.body);
     let brep = ctx
@@ -4824,17 +4904,24 @@ pub(crate) fn project_source(
     // and the projection keeps the sketch's own coordinates.
     let local = placed_plane(plane, &ctx.document.body_placement(body).inverse());
     let f = |v: [f32; 3]| v.map(f64::from);
+    let plane = kernel_api::ProfilePlane {
+        origin: f(local.origin),
+        x_axis: f(local.x_axis),
+        y_axis: f(local.y_axis),
+        normal: f(local.normal),
+    };
+    if source.section {
+        let curves = kernel
+            .section_face(brep, f(source.point), &plane)
+            .map_err(|e| e.to_string())?;
+        if curves.is_empty() {
+            return Err("the face does not cross the sketch plane".to_string());
+        }
+        return Ok(curves);
+    }
     kernel
-        .project_edge(
-            brep,
-            f(source.point),
-            &kernel_api::ProfilePlane {
-                origin: f(local.origin),
-                x_axis: f(local.x_axis),
-                y_axis: f(local.y_axis),
-                normal: f(local.normal),
-            },
-        )
+        .project_edge(brep, f(source.point), &plane)
+        .map(|edge| vec![edge])
         .map_err(|e| e.to_string())
 }
 
@@ -5406,9 +5493,85 @@ mod external_geometry {
                 end: [x + 10.0, y],
             })
         }
+
+        /// Every face crosses the plane in two lines up the plane's Y axis,
+        /// either side of where the probe lands.
+        fn section_face(
+            &self,
+            _brep: &[u8],
+            near: [f64; 3],
+            plane: &ProfilePlane,
+        ) -> KernelResult<Vec<ProjectedEdge>> {
+            let d: Vec<f64> = (0..3).map(|k| near[k] - plane.origin[k]).collect();
+            let x: f64 = (0..3).map(|k| d[k] * plane.x_axis[k]).sum();
+            Ok([x - 1.0, x + 1.0]
+                .map(|x| ProjectedEdge::Line {
+                    start: [x, 0.0],
+                    end: [x, 5.0],
+                })
+                .to_vec())
+        }
     }
 
     static FLAT: FlatKernel = FlatKernel;
+
+    #[test]
+    fn a_picked_face_brings_in_where_it_crosses_the_plane_once_and_records_it() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        doc.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
+                "s".into(),
+                Some(body),
+            )
+            .unwrap();
+        let mut wb = SketchWorkbench {
+            active_sketch_id: Some(sketch),
+            external_refreshed: Some(sketch),
+            ..SketchWorkbench::default()
+        };
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(sketch);
+        ctx.kernel = Some(&FLAT);
+        // The tool's intersection variant is armed; the host picks a face.
+        let armed = WorkbenchInputEvent::KeyPress { key: KeyCode::A };
+        wb.on_input(&armed, Some("sketch.external:intersection"), &mut ctx);
+        ctx.selected_body_id = Some(body.0);
+        ctx.selected_face = Some(core_document::FaceRef {
+            point: [4.0, 2.0, -3.0],
+            normal: [1.0, 0.0, 0.0],
+            surface: None,
+        });
+        wb.on_frame(0.016, &mut ctx);
+        wb.on_frame(0.016, &mut ctx);
+        let recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+        assert_eq!(recorded.len(), 1, "taken once: {recorded:?}");
+        assert_eq!(recorded[0].id, "sketch.intersection");
+
+        let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
+        assert_eq!(stored.external.len(), 2, "both lines came in");
+        assert!(stored.external.values().all(|s| s.section));
+        let xs: Vec<f32> = stored
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) => Some(p.position.x),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            xs.iter()
+                .all(|x| (x - 3.0).abs() < 1e-5 || (x - 5.0).abs() < 1e-5)
+        );
+        // The edge variant again takes edges, not the face.
+        wb.on_input(&armed, Some("sketch.external:edges"), &mut ctx);
+        wb.on_frame(0.016, &mut ctx);
+        let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
+        assert_eq!(stored.external.len(), 2);
+    }
 
     #[test]
     fn a_picked_edge_comes_in_fixed_and_out_of_profiles() {

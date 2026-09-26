@@ -2338,3 +2338,97 @@ fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
     let refused = built_volume(&doc, body).unwrap_err();
     assert!(refused.contains("sketch plane"), "{refused}");
 }
+
+/// A sketch standing through a box takes the line where the box's side
+/// crosses its plane, fixed and out of profiles, and brings it up to the
+/// box when the box has grown.
+#[test]
+fn an_intersection_reference_is_where_a_face_crosses_the_sketch_plane() {
+    use core_document::{CommandArgs, Workbench, WorkbenchFeature, WorkbenchRuntimeContext};
+    use kernel_api::{BooleanOp, Kernel, Placement, PrimitiveKind, SolidOp};
+    let mut kernel = OgeomKernel::new();
+    kernel.initialize().unwrap();
+    let cube = |kernel: &mut OgeomKernel, height: f64| {
+        let ops = [SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: 10.0,
+                width: 10.0,
+                height,
+            },
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        }];
+        kernel
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .unwrap()
+            .brep_blob
+    };
+    let mut doc = Document::new("t");
+    let body = doc.create_body(None);
+    doc.set_imported_brep_data(body, cube(&mut kernel, 10.0), Vec::new());
+    // Upright through the box's middle: x across, z up.
+    let plane = wb_sketch::sketch::SketchPlane::from_frame(
+        [0.0, 5.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
+    let sketch = doc
+        .add_feature_in_body(
+            SketchFeature::new(Sketch::new("s"), plane),
+            "s".into(),
+            Some(body),
+        )
+        .unwrap();
+    let mut wb = wb_sketch::SketchWorkbench::default();
+    let args: CommandArgs = serde_json::from_value(serde_json::json!({
+        "sketch": sketch.0.to_string(),
+        "faces": [{"body": body.0.to_string(), "point": [0.0, 5.0, 5.0], "normal": [-1.0, 0.0, 0.0]}],
+    }))
+    .unwrap();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    let made = wb
+        .run_command("sketch.intersection", &args, &mut ctx)
+        .expect("the side crosses the plane");
+    assert_eq!(made["elements"].as_array().unwrap().len(), 3, "{made}");
+    let stored = |doc: &Document| {
+        SketchFeature::from_json(doc.get_feature_data(sketch).unwrap())
+            .unwrap()
+            .sketch
+    };
+    let line_ends = |sketch: &Sketch| {
+        let (_, source) = sketch.external.iter().next().unwrap();
+        assert!(source.section);
+        let line = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Line(l) => Some(l.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let mut ends = [
+            sketch.point_position(line.start).unwrap(),
+            sketch.point_position(line.end).unwrap(),
+        ];
+        ends.sort_by(|a, b| a.y.total_cmp(&b.y));
+        ends
+    };
+    let sketch_now = stored(&doc);
+    let [low, high] = line_ends(&sketch_now);
+    assert!(low.x.abs() < 1e-4 && low.y.abs() < 1e-4, "{low:?}");
+    assert!(
+        high.x.abs() < 1e-4 && (high.y - 10.0).abs() < 1e-4,
+        "{high:?}"
+    );
+    assert!(wb_sketch::profile::extract_wires(&sketch_now).is_err());
+
+    // The box grows: opening the sketch again brings the line up to it.
+    doc.set_imported_brep_data(body, cube(&mut kernel, 16.0), Vec::new());
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    ctx.active_document_object = Some(sketch);
+    wb.on_frame(0.016, &mut ctx);
+    let [_, high] = line_ends(&stored(&doc));
+    assert!((high.y - 16.0).abs() < 1e-4, "{high:?}");
+}

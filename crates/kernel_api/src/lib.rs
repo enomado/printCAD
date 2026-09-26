@@ -1260,6 +1260,20 @@ pub trait KernelQueries: Send + Sync {
         plane: &ProfilePlane,
     ) -> KernelResult<ProjectedEdge>;
 
+    /// Where the face of `brep` nearest `near` crosses `plane`, as the
+    /// curves the plane cuts from it, in the plane's own 2D coordinates:
+    /// each the exact line, circle or ellipse it is, or points along any
+    /// other. Empty when the face does not reach the plane. Both are in the
+    /// shape's own frame.
+    fn section_face(
+        &self,
+        _brep: &[u8],
+        _near: [f64; 3],
+        _plane: &ProfilePlane,
+    ) -> KernelResult<Vec<ProjectedEdge>> {
+        Err(KernelError::Unsupported("face section".into()))
+    }
+
     /// The curves of a DXF drawing, given as its text.
     fn read_dxf(&self, _text: &str) -> KernelResult<Drawing2d> {
         Err(KernelError::Unsupported("reading DXF".into()))

@@ -67,20 +67,26 @@ pub struct Sketch {
     /// before this field existed keep loading.
     #[serde(default)]
     pub construction: std::collections::HashSet<Uuid>,
-    /// Geometry projected from a solid's edges, by element id, each with the
-    /// edge it came from. It is fixed (the solver never moves it), left out
-    /// of profiles, and projected again when the sketch is edited.
+    /// Geometry projected from a solid's edges, or cut from its faces by the
+    /// sketch plane, by element id, each with the edge or face it came
+    /// from. It is fixed (the solver never moves it), left out of profiles,
+    /// and brought up to the solid again when the sketch is edited.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub external: std::collections::HashMap<Uuid, ExternalSource>,
 }
 
-/// The solid edge an external element was projected from: its body, and a
-/// point on it with its direction there, in that body's own frame.
+/// Where an external element came from, in its body's own frame: a solid
+/// edge it was projected from (a point on it and its direction there), or
+/// a face the sketch plane cut it from (a point on it and its normal
+/// there).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ExternalSource {
     pub body: Uuid,
     pub point: [f32; 3],
     pub direction: [f32; 3],
+    /// A face cut by the sketch plane, not an edge projected onto it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub section: bool,
 }
 
 impl Sketch {

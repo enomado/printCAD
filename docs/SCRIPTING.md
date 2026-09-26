@@ -645,6 +645,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `edges` (list): Each {body, point, direction}: a point on the edge and its direction, in the body's own frame
 - Returns {elements}: what it made
 
+`pc.sketch.intersection`: Add where faces of solids cross the sketch plane, as fixed references.
+
+- `sketch` (id): The sketch to draw in
+- `faces` (list): Each {body, point, normal}: a point on the face and its normal there, in the body's own frame
+- Returns {elements}: what it made
+
 `pc.sketch.constraints`: List the sketch's constraints.
 
 - `sketch` (id): The sketch to draw in

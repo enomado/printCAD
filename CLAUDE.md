@@ -314,7 +314,11 @@ through `ctx.kernel` (`kernel_api::KernelQueries`, the host hands benches
 and stores the result as geometry marked in `Sketch::external` with its
 `ExternalSource`: pinned in the solver, left out of profiles and passive
 drawing, drawn in the external colour, never dragged, and projected again
-once per editing session (in place when the curve is the same kind). File › Export
+once per editing session (in place when the curve is the same kind). Its
+intersection variant takes picked faces instead and adds the curves where
+each crosses the sketch plane (`KernelQueries::section_face`, the face's
+solid sectioned by the plane's half space and the edges on the face kept;
+`ExternalSource::section`), refreshed the same way. File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own; the start page's
