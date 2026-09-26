@@ -17,8 +17,10 @@ use super::tol;
 pub enum PatternTool {
     /// Re-run this shape-producing op per instance.
     Op(Box<SolidOp>),
-    /// Re-apply the whole running solid.
-    WholeBody(Shape),
+    /// Re-apply a solid as it stands: the whole running solid, or the
+    /// tool of an op that reads the solid it was built on (a face swept
+    /// off it), which a moved copy of the op would not find.
+    Solid(Shape),
 }
 
 pub struct ToolInstance {
@@ -61,7 +63,7 @@ pub fn apply(
                         .map_err(|e| format!("pattern general transform failed: {e}"))?
                         .shape
                 }
-                (PatternTool::WholeBody(shape), _) if is_isometry(matrix) => {
+                (PatternTool::Solid(shape), _) if is_isometry(matrix) => {
                     // A fresh copy: the boolean must see an independent
                     // operand, not the running solid under a placement.
                     let fresh = copied(model, shape)
@@ -72,7 +74,7 @@ pub fn apply(
                         .map_err(|e| format!("pattern transform failed: {e}"))?
                         .shape
                 }
-                (PatternTool::WholeBody(shape), _) => {
+                (PatternTool::Solid(shape), _) => {
                     general_transformed_shape(model, shape, &general_of(matrix), tol())
                         .map_err(|e| format!("pattern general transform failed: {e}"))?
                         .shape
@@ -274,6 +276,7 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
                     second_angle_deg,
                     midplane,
                     reversed,
+                    termination,
                 } if reflects(m) => SweepKind::Revolve {
                     axis_origin: flip_v(*axis_origin),
                     axis_dir: [-axis_dir[0], axis_dir[1]],
@@ -281,6 +284,7 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
                     second_angle_deg: *second_angle_deg,
                     midplane: *midplane,
                     reversed: *reversed,
+                    termination: *termination,
                 },
                 // A mirrored helix climbs the same axis, turning the other
                 // way.
@@ -355,7 +359,7 @@ fn map_termination(m: &[[f64; 4]; 4], term: &ExtrudeTermination) -> ExtrudeTermi
             normal: map_vector(m, *normal),
             offset: *offset,
         },
-        other => *other,
+        other => other.clone(),
     }
 }
 

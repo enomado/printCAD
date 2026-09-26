@@ -685,7 +685,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -695,7 +695,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -705,7 +705,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -715,7 +715,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -725,7 +725,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -735,7 +735,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -745,7 +745,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -755,7 +755,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -765,7 +765,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -775,7 +775,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -785,7 +785,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `variant` (string, optional): box (the default), cylinder, sphere, cone, torus or wedge
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
@@ -796,7 +796,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `variant` (string, optional): box (the default), cylinder, sphere, cone, torus or wedge
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
@@ -807,7 +807,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -817,7 +817,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -827,7 +827,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -837,7 +837,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -847,7 +847,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -857,7 +857,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -867,7 +867,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -877,7 +877,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -887,7 +887,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
@@ -897,7 +897,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id

@@ -15,6 +15,9 @@ use crate::{progress, tess};
 struct ToolSnapshot {
     op: SolidOp,
     subtractive: bool,
+    /// The tool itself, for an op a pattern cannot re-run elsewhere: one
+    /// that sweeps a face of the solid it was built on.
+    solid: Option<Shape>,
 }
 
 pub fn execute(
@@ -105,6 +108,19 @@ pub fn execute_previewing(
                 tool_snapshot = Some(ToolSnapshot {
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
+                    solid: None,
+                });
+                keep(&tool, *op);
+
+                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+            }
+            SolidOp::SweepFace { face, kind, op } => {
+                let tool = ops::sweep::build_face_tool(&mut model, base.as_ref(), face, kind)
+                    .map_err(&err)?;
+                tool_snapshot = Some(ToolSnapshot {
+                    op: solid_op.clone(),
+                    subtractive: *op == BooleanOp::Cut,
+                    solid: Some(tool.clone()),
                 });
                 keep(&tool, *op);
 
@@ -119,6 +135,7 @@ pub fn execute_previewing(
                 tool_snapshot = Some(ToolSnapshot {
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
+                    solid: None,
                 });
                 keep(&tool, *op);
 
@@ -135,6 +152,7 @@ pub fn execute_previewing(
                 tool_snapshot = Some(ToolSnapshot {
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
+                    solid: None,
                 });
                 keep(&tool, *op);
 
@@ -151,6 +169,7 @@ pub fn execute_previewing(
                 tool_snapshot = Some(ToolSnapshot {
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
+                    solid: None,
                 });
                 keep(&tool, *op);
 
@@ -205,7 +224,7 @@ pub fn execute_previewing(
                 let solid = base.ok_or_else(|| err("pattern needs an existing solid".into()))?;
                 let instances: Vec<pattern::ToolInstance> = if originals.is_empty() {
                     vec![pattern::ToolInstance {
-                        tool: pattern::PatternTool::WholeBody(solid.clone()),
+                        tool: pattern::PatternTool::Solid(solid.clone()),
                         subtractive: false,
                     }]
                 } else {
@@ -216,7 +235,10 @@ pub fn execute_previewing(
                                 .get(orig)
                                 .and_then(|t| t.as_ref())
                                 .map(|t| pattern::ToolInstance {
-                                    tool: pattern::PatternTool::Op(Box::new(t.op.clone())),
+                                    tool: match &t.solid {
+                                        Some(solid) => pattern::PatternTool::Solid(solid.clone()),
+                                        None => pattern::PatternTool::Op(Box::new(t.op.clone())),
+                                    },
                                     subtractive: t.subtractive,
                                 })
                                 .ok_or_else(|| {

@@ -26,12 +26,14 @@ fn fields(variant: &str) -> &'static [Field] {
             ("length2", "length2", "Second length", Some(LENGTH)),
             ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
             ("up_to_offset", "offset", "Offset", Some(LENGTH)),
+            ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
         ],
         "Pocket" => &[
             ("depth", "depth", "Depth", Some(LENGTH)),
             ("depth2", "depth2", "Second depth", Some(LENGTH)),
             ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
             ("up_to_offset", "offset", "Offset", Some(LENGTH)),
+            ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
         ],
         "Revolution" | "Groove" => &[
             ("angle_deg", "angle", "Angle", Some(ANGLE)),
@@ -321,7 +323,10 @@ mod tests {
         let pad = feature(
             serde_json::json!({"Pad": {"sketch": SKETCH, "length": 10.0, "reversed": false}}),
         );
-        assert_eq!(all_resolve(&pad), ["length", "length2", "taper", "offset"]);
+        assert_eq!(
+            all_resolve(&pad),
+            ["length", "length2", "taper", "offset", "offset2"]
+        );
         let hole = feature(serde_json::json!({"Hole": {
             "sketch": SKETCH, "diameter": 5.0, "depth": 8.0, "through_all": false,
             "cut": {"Counterbore": {"diameter": 9.0, "depth": 2.0}},

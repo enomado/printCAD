@@ -21,9 +21,9 @@ pub use build::{
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
-    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, ThreadSpec, TransformStep, primitive_icon,
-    primitive_preset,
+    ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
+    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, ThreadSpec,
+    TransformStep, primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -167,6 +167,20 @@ impl PartDesignWorkbench {
         })
     }
 
+    /// The flat face picked in the viewport, in `body`'s frame, as a
+    /// profile to pad or pocket; a curved face has no plane to extrude.
+    fn selected_profile_face(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FacePick> {
+        let face = ctx.selected_face_in(body)?;
+        let flat = matches!(
+            face.surface,
+            None | Some(kernel_api::FaceSurface::Plane { .. })
+        );
+        flat.then_some(FacePick {
+            point: face.point,
+            normal: face.normal,
+        })
+    }
+
     /// The flat face picked in the viewport, as a plane to mirror across;
     /// a curved face has no plane to offer.
     fn selected_mirror_face(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<MirrorPlane> {
@@ -234,28 +248,51 @@ impl PartDesignWorkbench {
         };
         let has_solid = Self::body_has_solid(ctx, body);
 
+        // With no sketch chosen, a flat face picked on the solid is the
+        // profile of a pad or a pocket.
+        let extrude_profile = || -> Result<(Option<FeatureId>, Option<FacePick>), String> {
+            if sketch.is_some() {
+                return Ok((sketch, None));
+            }
+            match Self::selected_profile_face(ctx, body) {
+                Some(face) if has_solid => Ok((None, Some(face))),
+                _ => Err("Select a sketch in the tree, or a flat face of the solid, first".into()),
+            }
+        };
+
         let feature = match tool {
-            "part.pad" => (
-                PartFeature::Pad {
-                    refine: false,
-                    sketch: need_sketch(sketch)?,
-                    length: 10.0,
-                    reversed: false,
-                    symmetric: false,
-                    mode: ExtrudeMode::Dimension,
-                    length2: 10.0,
-                    taper_deg: 0.0,
-                    up_to_face: None,
-                    up_to_offset: 0.0,
-                },
-                "Pad",
-            ),
+            "part.pad" => {
+                let (sketch, profile_face) = extrude_profile()?;
+                (
+                    PartFeature::Pad {
+                        refine: false,
+                        sketch,
+                        length: 10.0,
+                        reversed: false,
+                        symmetric: false,
+                        mode: ExtrudeMode::Dimension,
+                        length2: 10.0,
+                        taper_deg: 0.0,
+                        up_to_face: None,
+                        up_to_offset: 0.0,
+                        profile_face,
+                        direction: ExtrudeDirection::Normal,
+                        up_to_shape: Vec::new(),
+                        mode2: None,
+                        up_to_face2: None,
+                        up_to_offset2: 0.0,
+                        up_to_shape2: Vec::new(),
+                    },
+                    "Pad",
+                )
+            }
             "part.pocket" => {
                 need_material(has_solid)?;
+                let (sketch, profile_face) = extrude_profile()?;
                 (
                     PartFeature::Pocket {
                         refine: false,
-                        sketch: need_sketch(sketch)?,
+                        sketch,
                         depth: 5.0,
                         reversed: false,
                         symmetric: false,
@@ -265,6 +302,13 @@ impl PartDesignWorkbench {
                         taper_deg: 0.0,
                         up_to_face: None,
                         up_to_offset: 0.0,
+                        profile_face,
+                        direction: ExtrudeDirection::Normal,
+                        up_to_shape: Vec::new(),
+                        mode2: None,
+                        up_to_face2: None,
+                        up_to_offset2: 0.0,
+                        up_to_shape2: Vec::new(),
                     },
                     "Pocket",
                 )
@@ -278,6 +322,8 @@ impl PartDesignWorkbench {
                     reversed: false,
                     midplane: false,
                     second_angle_deg: None,
+                    mode: RevolveMode::Angle,
+                    up_to_face: None,
                 },
                 "Revolution",
             ),
@@ -292,6 +338,8 @@ impl PartDesignWorkbench {
                         reversed: false,
                         midplane: false,
                         second_angle_deg: None,
+                        mode: RevolveMode::Angle,
+                        up_to_face: None,
                     },
                     "Groove",
                 )
@@ -1664,7 +1712,7 @@ mod icon_coverage {
             FeatureId(uuid::Uuid::new_v4()),
             &PartFeature::Pad {
                 refine: false,
-                sketch: FeatureId(uuid::Uuid::new_v4()),
+                sketch: Some(FeatureId(uuid::Uuid::new_v4())),
                 length: 10.0,
                 reversed: false,
                 symmetric: false,
@@ -1673,6 +1721,13 @@ mod icon_coverage {
                 taper_deg: 0.0,
                 up_to_face: None,
                 up_to_offset: 0.0,
+                profile_face: None,
+                direction: Default::default(),
+                up_to_shape: Vec::new(),
+                mode2: None,
+                up_to_face2: None,
+                up_to_offset2: 0.0,
+                up_to_shape2: Vec::new(),
             },
         );
         let info = wb.feature_info(&node);

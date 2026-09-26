@@ -64,7 +64,7 @@ fn setup(width: f32, height: f32) -> (Document, BodyId, FeatureId) {
 fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) -> PartFeature {
     PartFeature::Pad {
         refine: false,
-        sketch,
+        sketch: Some(sketch),
         length,
         reversed,
         symmetric,
@@ -73,13 +73,20 @@ fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) 
         taper_deg: 0.0,
         up_to_face: None,
         up_to_offset: 0.0,
+        profile_face: None,
+        direction: Default::default(),
+        up_to_shape: Vec::new(),
+        mode2: None,
+        up_to_face2: None,
+        up_to_offset2: 0.0,
+        up_to_shape2: Vec::new(),
     }
 }
 
 fn pocket_feature(sketch: FeatureId, depth: f32) -> PartFeature {
     PartFeature::Pocket {
         refine: false,
-        sketch,
+        sketch: Some(sketch),
         depth,
         reversed: false,
         symmetric: false,
@@ -89,6 +96,13 @@ fn pocket_feature(sketch: FeatureId, depth: f32) -> PartFeature {
         taper_deg: 0.0,
         up_to_face: None,
         up_to_offset: 0.0,
+        profile_face: None,
+        direction: Default::default(),
+        up_to_shape: Vec::new(),
+        mode2: None,
+        up_to_face2: None,
+        up_to_offset2: 0.0,
+        up_to_shape2: Vec::new(),
     }
 }
 
@@ -258,6 +272,8 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            mode: Default::default(),
+            up_to_face: None,
         },
         "Revolution".into(),
         Some(body),
@@ -659,7 +675,7 @@ fn bore_rim_fillets() {
     doc.add_feature_in_body(
         PartFeature::Pocket {
             refine: false,
-            sketch: bore,
+            sketch: Some(bore),
             depth: 12.0,
             reversed: false,
             symmetric: false,
@@ -669,6 +685,13 @@ fn bore_rim_fillets() {
             taper_deg: 0.0,
             up_to_face: None,
             up_to_offset: 0.0,
+            profile_face: None,
+            direction: Default::default(),
+            up_to_shape: Vec::new(),
+            mode2: None,
+            up_to_face2: None,
+            up_to_offset2: 0.0,
+            up_to_shape2: Vec::new(),
         },
         "Pocket".into(),
         Some(body),
@@ -1043,6 +1066,8 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
                     reversed: false,
                     midplane: false,
                     second_angle_deg: None,
+                    mode: Default::default(),
+                    up_to_face: None,
                 },
                 "Revolution".into(),
                 Some(body),
@@ -1205,7 +1230,7 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
         doc.add_feature_in_body(
             PartFeature::Pocket {
                 refine: false,
-                sketch: hole,
+                sketch: Some(hole),
                 depth: 4.0,
                 reversed: false,
                 symmetric,
@@ -1215,6 +1240,13 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
                 taper_deg: 0.0,
                 up_to_face: None,
                 up_to_offset: 0.0,
+                profile_face: None,
+                direction: Default::default(),
+                up_to_shape: Vec::new(),
+                mode2: None,
+                up_to_face2: None,
+                up_to_offset2: 0.0,
+                up_to_shape2: Vec::new(),
             },
             "Pocket".into(),
             Some(body),
@@ -1940,4 +1972,369 @@ fn a_socket_head_seat_counterbores_to_the_table() {
         "{} against {want}",
         volume(&drilled)
     );
+}
+
+/// A rectangle from (x0, y0) to (x1, y1) on `plane`.
+fn rect_at(
+    plane: wb_sketch::sketch::SketchPlane,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+) -> SketchFeature {
+    let mut sketch = Sketch::new("r");
+    sketch.plane = plane;
+    let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
+    for i in 0..4 {
+        sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )));
+    }
+    SketchFeature::new(sketch, plane)
+}
+
+/// The plane z = `z`, sketched as the XY plane is.
+fn plane_at_z(z: f32) -> wb_sketch::sketch::SketchPlane {
+    wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
+}
+
+/// The volume the body's features build, or why they do not.
+fn built_volume(doc: &Document, body: BodyId) -> Result<f64, String> {
+    let ops = wb_part::body_build_ops(doc, body)
+        .map_err(|e| e.message)?
+        .ops;
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .map_err(|e| e.to_string())?;
+    kernel
+        .physical_properties(&built.brep_blob)
+        .map_err(|e| e.to_string())?
+        .volume_mm3
+        .ok_or_else(|| "no closed volume".into())
+}
+
+fn assert_built_volume(doc: &Document, body: BodyId, want: f64, what: &str) {
+    let got = built_volume(doc, body).unwrap_or_else(|e| panic!("{what}: {e}"));
+    assert!(
+        (got - want).abs() <= want * 1e-4,
+        "{what}: volume {got}, want {want}"
+    );
+}
+
+/// A 20 × 20 × 10 block, the body's first feature.
+fn block() -> (Document, BodyId) {
+    let (mut doc, body, sketch) = setup(20.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(sketch, 10.0, false, false),
+        "Block".into(),
+        Some(body),
+    )
+    .unwrap();
+    (doc, body)
+}
+
+/// Set fields of a pad or pocket the way `part.set` does.
+fn with(mut feature: PartFeature, fields: serde_json::Value) -> PartFeature {
+    use core_document::WorkbenchFeature;
+    let mut value = feature.to_json();
+    let inner = value
+        .as_object_mut()
+        .and_then(|m| m.values_mut().next())
+        .and_then(|v| v.as_object_mut())
+        .unwrap();
+    for (k, v) in fields.as_object().unwrap() {
+        assert!(inner.contains_key(k), "no field {k}");
+        inner.insert(k.clone(), v.clone());
+    }
+    feature = PartFeature::from_json(&value).unwrap();
+    feature
+}
+
+/// A pad runs along a vector or a picked edge as it is told, its length
+/// measured along that way, and refuses one that lies in the sketch.
+#[test]
+fn a_pad_runs_along_a_custom_vector_or_a_picked_edge() {
+    let (mut doc, body, sketch) = setup(10.0, 10.0);
+    let slanted = 1000.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let pad = doc
+        .add_feature_in_body(
+            with(
+                pad_feature(sketch, 10.0, false, false),
+                serde_json::json!({"direction": {"Custom": [0.0, 1.0, 1.0]}}),
+            ),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    assert_built_volume(&doc, body, slanted, "along a vector");
+    let data = with(
+        pad_feature(sketch, 10.0, false, false),
+        serde_json::json!({"direction": {"Edge": {"point": [0.0, 0.0, 0.0], "direction": [0.0, 1.0, 1.0]}}}),
+    );
+    doc.update_feature_data(pad, core_document::WorkbenchFeature::to_json(&data))
+        .unwrap();
+    assert_built_volume(&doc, body, slanted, "along an edge");
+    let data = with(
+        pad_feature(sketch, 10.0, false, false),
+        serde_json::json!({"direction": {"Custom": [1.0, 0.0, 0.0]}}),
+    );
+    doc.update_feature_data(pad, core_document::WorkbenchFeature::to_json(&data))
+        .unwrap();
+    let refused = built_volume(&doc, body).unwrap_err();
+    assert!(refused.contains("plane"), "{refused}");
+}
+
+/// Each side of a two-sided pad ends its own way: up 5 from its sketch,
+/// and down to the block's top (picked, or the first face it meets).
+#[test]
+fn each_side_of_a_two_sided_pad_ends_its_own_way() {
+    for second in [
+        serde_json::json!({"mode2": "UpToFace", "up_to_face2": {"point": [5.0, 5.0, 10.0], "normal": [0.0, 0.0, 1.0]}}),
+        serde_json::json!({"mode2": "ToFirst"}),
+        serde_json::json!({"mode": "TwoLengths", "mode2": "ToFirst"}),
+    ] {
+        let (mut doc, body) = block();
+        let top = doc
+            .add_feature_in_body(
+                rect_at(plane_at_z(20.0), 0.0, 0.0, 10.0, 10.0),
+                "top".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.add_feature_in_body(
+            with(pad_feature(top, 5.0, false, false), second.clone()),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+        // The block, and 10 × 10 from z = 10 up to z = 25.
+        assert_built_volume(&doc, body, 4000.0 + 1500.0, &second.to_string());
+    }
+}
+
+/// A flat face of the solid is a profile: padded out of the material, or
+/// pocketed into it, with no sketch.
+#[test]
+fn a_flat_face_of_the_solid_pads_and_pockets_with_no_sketch() {
+    let top = serde_json::json!({"point": [10.0, 10.0, 10.0], "normal": [0.0, 0.0, 1.0]});
+    let (mut doc, body) = block();
+    let (_, _, any) = setup(1.0, 1.0);
+    doc.add_feature_in_body(
+        with(
+            pad_feature(any, 5.0, false, false),
+            serde_json::json!({"sketch": null, "profile_face": top}),
+        ),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    assert_built_volume(&doc, body, 6000.0, "the top face padded 5");
+
+    let (mut doc, body) = block();
+    doc.add_feature_in_body(
+        with(
+            pocket_feature(any, 3.0),
+            serde_json::json!({"sketch": null, "profile_face": top}),
+        ),
+        "Pocket".into(),
+        Some(body),
+    )
+    .unwrap();
+    assert_built_volume(&doc, body, 2800.0, "the top face pocketed 3");
+}
+
+/// Up to shape: a pad run down over the step's edge stops on the step's
+/// top where it lies over the step and on the block's beside it.
+#[test]
+fn an_up_to_shape_pad_stops_where_each_line_first_meets_a_picked_face() {
+    let (mut doc, body) = block();
+    let step = doc
+        .add_feature_in_body(
+            rect_at(plane_at_z(10.0), 0.0, 0.0, 10.0, 20.0),
+            "step".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(step, 5.0, false, false),
+        "Step".into(),
+        Some(body),
+    )
+    .unwrap();
+    let top = doc
+        .add_feature_in_body(
+            rect_at(plane_at_z(20.0), 4.0, 5.0, 16.0, 15.0),
+            "top".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        with(
+            pad_feature(top, 5.0, true, false),
+            serde_json::json!({
+                "mode": "UpToShape",
+                "up_to_shape": [
+                    {"point": [5.0, 10.0, 15.0], "normal": [0.0, 0.0, 1.0]},
+                    {"point": [15.0, 10.0, 10.0], "normal": [0.0, 0.0, 1.0]}
+                ]
+            }),
+        ),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    assert_built_volume(&doc, body, 4000.0 + 1000.0 + 300.0 + 600.0, "up to shape");
+}
+
+/// A 5 × 10 rectangle standing on the XZ plane at x in [5, 10], and a
+/// wall x in [-20, 0], y in [0, 20], 10 high, beside the Z axis.
+fn wall_and_profile() -> (Document, BodyId, FeatureId) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let wall = doc
+        .add_feature_in_body(
+            rect_at(wb_sketch::sketch::SketchPlane::xy(), -20.0, 0.0, 0.0, 20.0),
+            "wall".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(wall, 10.0, false, false),
+        "Wall".into(),
+        Some(body),
+    )
+    .unwrap();
+    let profile = doc
+        .add_feature_in_body(
+            rect_at(wb_sketch::sketch::SketchPlane::xz(), 5.0, 0.0, 10.0, 10.0),
+            "profile".into(),
+            Some(body),
+        )
+        .unwrap();
+    (doc, body, profile)
+}
+
+fn revolution(sketch: FeatureId, fields: serde_json::Value) -> PartFeature {
+    with(
+        PartFeature::Revolution {
+            refine: false,
+            sketch,
+            angle_deg: 360.0,
+            axis: wb_part::RevolveAxis::SketchY,
+            reversed: false,
+            midplane: false,
+            second_angle_deg: None,
+            mode: wb_part::RevolveMode::Angle,
+            up_to_face: None,
+        },
+        fields,
+    )
+}
+
+/// A revolution turns until it meets the wall: up to its first face a
+/// quarter turn on, adding material there; a groove to its last face (or
+/// that face picked), half a turn on, cuts the quarter through the wall.
+#[test]
+fn a_revolution_or_a_groove_turns_up_to_the_face_it_meets() {
+    use core_document::WorkbenchFeature;
+    let ring = 75.0 * std::f64::consts::PI * 10.0;
+    let groove = |sketch, fields| {
+        let json = revolution(sketch, fields).to_json();
+        let inner = json.get("Revolution").cloned().unwrap();
+        PartFeature::from_json(&serde_json::json!({ "Groove": inner })).unwrap()
+    };
+    for (fields, cuts, change) in [
+        (serde_json::json!({"mode": "ToFirst"}), false, ring / 4.0),
+        (serde_json::json!({"mode": "ToLast"}), true, -ring / 4.0),
+        (
+            serde_json::json!({"mode": "UpToFace",
+                "up_to_face": {"point": [-10.0, 0.0, 5.0], "normal": [0.0, -1.0, 0.0]}}),
+            true,
+            -ring / 4.0,
+        ),
+    ] {
+        let (mut doc, body, profile) = wall_and_profile();
+        let feature = if cuts {
+            groove(profile, fields.clone())
+        } else {
+            revolution(profile, fields.clone())
+        };
+        doc.add_feature_in_body(feature, "Rev".into(), Some(body))
+            .unwrap();
+        assert_built_volume(&doc, body, 4000.0 + change, &fields.to_string());
+    }
+}
+
+/// A revolution turns about a line of its sketch, a datum line or a picked
+/// edge as it does about the sketch's own axis; an edge across the sketch
+/// plane is refused.
+#[test]
+fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
+    use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let mut ring = rect_at(wb_sketch::sketch::SketchPlane::xy(), 5.0, 0.0, 8.0, 2.0);
+    let a = ring
+        .sketch
+        .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, -1.0))));
+    let b = ring
+        .sketch
+        .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 4.0))));
+    let line = ring
+        .sketch
+        .add_geometry(GeometryElement::Line(Line::new(a, b)));
+    ring.sketch.set_construction(line, true);
+    let sketch = doc
+        .add_feature_in_body(ring, "ring".into(), Some(body))
+        .unwrap();
+    // A datum line along world Y: the YZ plane's x axis.
+    let datum = doc
+        .add_feature_in_body(
+            DatumFeature {
+                shape: DatumShape::Line { length: 20.0 },
+                attachment: DatumAttachment::BasePlane(BasePlane::YZ),
+                offset: Default::default(),
+            },
+            "Line".into(),
+            Some(body),
+        )
+        .unwrap();
+    let want = std::f64::consts::PI * (64.0 - 25.0) * 2.0;
+    let feature = doc
+        .add_feature_in_body(
+            revolution(sketch, serde_json::json!({})),
+            "Rev".into(),
+            Some(body),
+        )
+        .unwrap();
+    let edge = |direction: [f32; 3]| {
+        wb_part::RevolveAxis::Edge(wb_part::EdgePick {
+            point: [0.0, 3.0, 0.0],
+            direction,
+        })
+    };
+    for axis in [
+        wb_part::RevolveAxis::SketchLine(line),
+        wb_part::RevolveAxis::Datum(datum),
+        edge([0.0, 1.0, 0.0]),
+    ] {
+        let data = revolution(
+            sketch,
+            serde_json::json!({"axis": serde_json::to_value(axis).unwrap()}),
+        );
+        doc.update_feature_data(feature, core_document::WorkbenchFeature::to_json(&data))
+            .unwrap();
+        assert_built_volume(&doc, body, want, &format!("{axis:?}"));
+    }
+    let data = revolution(
+        sketch,
+        serde_json::json!({"axis": serde_json::to_value(edge([0.0, 0.0, 1.0])).unwrap()}),
+    );
+    doc.update_feature_data(feature, core_document::WorkbenchFeature::to_json(&data))
+        .unwrap();
+    let refused = built_volume(&doc, body).unwrap_err();
+    assert!(refused.contains("sketch plane"), "{refused}");
 }

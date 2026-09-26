@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::hole_tables::{ThreadSize, ThreadStandard};
 
-/// Which in-plane sketch axis a revolution/helix spins about.
+/// What a revolution or helix spins about. Every axis ends up in the
+/// sketch plane: the sketch's own axes and lines lie there already, and a
+/// picked edge or a datum line is taken as its shadow on the plane.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum RevolveAxis {
     /// The sketch's vertical (y) axis through the origin (the default).
@@ -17,6 +19,14 @@ pub enum RevolveAxis {
     SketchX,
     /// An arbitrary in-plane axis (point + direction in sketch coordinates).
     Custom { origin: [f32; 2], dir: [f32; 2] },
+    /// A straight edge of the solid, picked in the viewport, in the body's
+    /// own frame.
+    Edge(EdgePick),
+    /// A datum line of the body.
+    Datum(FeatureId),
+    /// A line of the sketch itself, by its element id: a construction line
+    /// drawn for the purpose, or an edge of the profile.
+    SketchLine(uuid::Uuid),
 }
 
 impl RevolveAxis {
@@ -25,23 +35,72 @@ impl RevolveAxis {
             RevolveAxis::SketchY => "Sketch Y axis",
             RevolveAxis::SketchX => "Sketch X axis",
             RevolveAxis::Custom { .. } => "Custom axis",
+            RevolveAxis::Edge(_) => "Picked edge",
+            RevolveAxis::Datum(_) => "Datum line",
+            RevolveAxis::SketchLine(_) => "Sketch line",
+        }
+    }
+}
+
+/// Where a revolution or groove stops turning.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum RevolveMode {
+    /// Through its angle (or two, or centred on the sketch).
+    #[default]
+    Angle,
+    /// On the first face of the existing material it meets.
+    ToFirst,
+    /// On the last face of the existing material it meets.
+    ToLast,
+    /// On a picked flat face whose plane holds the axis.
+    UpToFace,
+}
+
+impl RevolveMode {
+    pub const ALL: [RevolveMode; 4] = [
+        RevolveMode::Angle,
+        RevolveMode::ToFirst,
+        RevolveMode::ToLast,
+        RevolveMode::UpToFace,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            RevolveMode::Angle => "Angle",
+            RevolveMode::ToFirst => "To first",
+            RevolveMode::ToLast => "To last",
+            RevolveMode::UpToFace => "Up to face",
+        }
+    }
+}
+
+/// Which way a pad or pocket runs.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum ExtrudeDirection {
+    /// Along the sketch's normal (or the profile face's).
+    #[default]
+    Normal,
+    /// Along a vector, in the body's own frame.
+    Custom([f32; 3]),
+    /// Along a straight edge of the solid, picked in the viewport.
+    Edge(EdgePick),
+}
+
+impl ExtrudeDirection {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ExtrudeDirection::Normal => "Sketch normal",
+            ExtrudeDirection::Custom(_) => "Custom vector",
+            ExtrudeDirection::Edge(_) => "Picked edge",
         }
     }
 
-    /// Axis origin in sketch 2D coordinates.
-    pub fn origin_2d(&self) -> [f64; 2] {
+    /// The direction set, in the body's own frame; `None` along the normal.
+    pub fn vector(&self) -> Option<[f64; 3]> {
         match self {
-            RevolveAxis::SketchY | RevolveAxis::SketchX => [0.0, 0.0],
-            RevolveAxis::Custom { origin, .. } => [origin[0] as f64, origin[1] as f64],
-        }
-    }
-
-    /// Direction in sketch 2D coordinates.
-    pub fn dir_2d(&self) -> [f64; 2] {
-        match self {
-            RevolveAxis::SketchY => [0.0, 1.0],
-            RevolveAxis::SketchX => [1.0, 0.0],
-            RevolveAxis::Custom { dir, .. } => [dir[0] as f64, dir[1] as f64],
+            ExtrudeDirection::Normal => None,
+            ExtrudeDirection::Custom(v) => Some(v.map(f64::from)),
+            ExtrudeDirection::Edge(edge) => Some(edge.direction.map(f64::from)),
         }
     }
 }
@@ -67,18 +126,32 @@ pub enum ExtrudeMode {
     ToFirst,
     /// Stop at the last face hit along the direction.
     ToLast,
-    /// Stop on a picked planar face (plus offset).
+    /// Stop on a picked face (plus offset).
     UpToFace,
+    /// Stop on a set of picked faces, each line of the sweep at the first
+    /// of them it meets (plus offset along the sweep).
+    UpToShape,
 }
 
 impl ExtrudeMode {
-    pub const ALL: [ExtrudeMode; 6] = [
+    pub const ALL: [ExtrudeMode; 7] = [
         ExtrudeMode::Dimension,
         ExtrudeMode::TwoLengths,
         ExtrudeMode::ThroughAll,
         ExtrudeMode::ToFirst,
         ExtrudeMode::ToLast,
         ExtrudeMode::UpToFace,
+        ExtrudeMode::UpToShape,
+    ];
+
+    /// The ways the second side of a two-sided extrusion may end.
+    pub const SECOND_SIDE: [ExtrudeMode; 6] = [
+        ExtrudeMode::Dimension,
+        ExtrudeMode::ThroughAll,
+        ExtrudeMode::ToFirst,
+        ExtrudeMode::ToLast,
+        ExtrudeMode::UpToFace,
+        ExtrudeMode::UpToShape,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -89,6 +162,31 @@ impl ExtrudeMode {
             ExtrudeMode::ToFirst => "To first",
             ExtrudeMode::ToLast => "To last",
             ExtrudeMode::UpToFace => "Up to face",
+            ExtrudeMode::UpToShape => "Up to shape",
+        }
+    }
+
+    /// Whether the mode ends on existing material, so needs some.
+    pub fn needs_material(&self) -> bool {
+        matches!(
+            self,
+            ExtrudeMode::ThroughAll
+                | ExtrudeMode::ToFirst
+                | ExtrudeMode::ToLast
+                | ExtrudeMode::UpToShape
+        )
+    }
+
+    /// The end condition of each side: the first, and the second when the
+    /// extrusion runs both ways. Two lengths is a dimension each way, the
+    /// second side ending as `mode2` says when it is set.
+    pub fn sides(self, mode2: Option<ExtrudeMode>) -> (ExtrudeMode, Option<ExtrudeMode>) {
+        match self {
+            ExtrudeMode::TwoLengths => (
+                ExtrudeMode::Dimension,
+                Some(mode2.unwrap_or(ExtrudeMode::Dimension)),
+            ),
+            mode => (mode, mode2),
         }
     }
 }
@@ -497,9 +595,13 @@ pub enum PartFeature {
     /// Start the body from a copy of another body's solid, as that body
     /// is built now.
     Clone { source: BodyId },
-    /// Extrude the sketch profile, adding material.
+    /// Extrude the sketch profile (or a flat face of the solid), adding
+    /// material.
     Pad {
-        sketch: FeatureId,
+        /// The sketch whose profile it extrudes; `None` when the profile is
+        /// `profile_face`.
+        #[serde(default)]
+        sketch: Option<FeatureId>,
         length: f32,
         /// Extrude along -normal instead of +normal.
         reversed: bool,
@@ -519,11 +621,33 @@ pub enum PartFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// A flat face of the solid extruded in place of a sketch: its
+        /// boundaries are the profile and its outward normal the sketch's.
+        #[serde(default)]
+        profile_face: Option<FacePick>,
+        #[serde(default)]
+        direction: ExtrudeDirection,
+        /// The faces an up-to-shape extrusion stops on.
+        #[serde(default)]
+        up_to_shape: Vec<FacePick>,
+        /// How the second side ends, when the pad runs both ways.
+        #[serde(default)]
+        mode2: Option<ExtrudeMode>,
+        #[serde(default)]
+        up_to_face2: Option<FacePick>,
+        #[serde(default)]
+        up_to_offset2: f32,
+        #[serde(default)]
+        up_to_shape2: Vec<FacePick>,
     },
-    /// Extrude the sketch profile and subtract it (cuts against the sketch
-    /// normal by default: a face sketch's normal points out of the material).
+    /// Extrude the sketch profile (or a flat face of the solid) and
+    /// subtract it (cuts against the sketch normal by default: a face
+    /// sketch's normal points out of the material).
     Pocket {
-        sketch: FeatureId,
+        /// The sketch whose profile it cuts; `None` when the profile is
+        /// `profile_face`.
+        #[serde(default)]
+        sketch: Option<FeatureId>,
         depth: f32,
         reversed: bool,
         /// Cut half the depth to each side of the sketch plane.
@@ -547,6 +671,23 @@ pub enum PartFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// A flat face of the solid cut in place of a sketch's profile.
+        #[serde(default)]
+        profile_face: Option<FacePick>,
+        /// A direction set here is the way the cut runs; along the normal
+        /// it runs against it.
+        #[serde(default)]
+        direction: ExtrudeDirection,
+        #[serde(default)]
+        up_to_shape: Vec<FacePick>,
+        #[serde(default)]
+        mode2: Option<ExtrudeMode>,
+        #[serde(default)]
+        up_to_face2: Option<FacePick>,
+        #[serde(default)]
+        up_to_offset2: f32,
+        #[serde(default)]
+        up_to_shape2: Vec<FacePick>,
     },
     /// Revolve the sketch profile about an in-plane axis, adding material.
     Revolution {
@@ -563,6 +704,10 @@ pub enum PartFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        #[serde(default)]
+        mode: RevolveMode,
+        #[serde(default)]
+        up_to_face: Option<FacePick>,
     },
     /// Revolve the sketch profile and subtract it.
     Groove {
@@ -579,6 +724,10 @@ pub enum PartFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        #[serde(default)]
+        mode: RevolveMode,
+        #[serde(default)]
+        up_to_face: Option<FacePick>,
     },
     /// Skin through two or more section sketches.
     Loft {
@@ -752,9 +901,8 @@ impl PartFeature {
     /// The sketch this feature consumes, when it is sketch-based.
     pub fn sketch(&self) -> Option<FeatureId> {
         match self {
-            PartFeature::Pad { sketch, .. }
-            | PartFeature::Pocket { sketch, .. }
-            | PartFeature::Revolution { sketch, .. }
+            PartFeature::Pad { sketch, .. } | PartFeature::Pocket { sketch, .. } => *sketch,
+            PartFeature::Revolution { sketch, .. }
             | PartFeature::Groove { sketch, .. }
             | PartFeature::Helix { sketch, .. }
             | PartFeature::Hole { sketch, .. } => Some(*sketch),
@@ -992,6 +1140,21 @@ impl WorkbenchFeature for PartFeature {
         if let Some(originals) = self.originals() {
             deps.extend_from_slice(originals);
         }
+        if let PartFeature::Revolution {
+            axis: RevolveAxis::Datum(datum),
+            ..
+        }
+        | PartFeature::Groove {
+            axis: RevolveAxis::Datum(datum),
+            ..
+        }
+        | PartFeature::Helix {
+            axis: RevolveAxis::Datum(datum),
+            ..
+        } = self
+        {
+            deps.push(*datum);
+        }
         deps
     }
 
@@ -1126,6 +1289,53 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn an_old_pad_reads_as_one_sided_along_the_normal_from_its_sketch() {
+        let sketch = FeatureId::new();
+        let old = serde_json::json!({
+            "Pad": { "sketch": sketch, "length": 5.0, "reversed": false, "mode": "TwoLengths" }
+        });
+        let feature = PartFeature::from_json(&old).unwrap();
+        assert_eq!(feature.sketch(), Some(sketch));
+        let PartFeature::Pad {
+            profile_face,
+            direction,
+            up_to_shape,
+            mode,
+            mode2,
+            ..
+        } = feature
+        else {
+            panic!("a pad");
+        };
+        assert_eq!(profile_face, None);
+        assert_eq!(direction, ExtrudeDirection::Normal);
+        assert!(up_to_shape.is_empty());
+        // Two lengths is a dimension each way.
+        assert_eq!(
+            mode.sides(mode2),
+            (ExtrudeMode::Dimension, Some(ExtrudeMode::Dimension))
+        );
+        assert_eq!(
+            ExtrudeMode::UpToFace.sides(Some(ExtrudeMode::ThroughAll)),
+            (ExtrudeMode::UpToFace, Some(ExtrudeMode::ThroughAll))
+        );
+        assert_eq!(
+            ExtrudeMode::ToFirst.sides(None),
+            (ExtrudeMode::ToFirst, None)
+        );
+    }
+
+    #[test]
+    fn a_datum_axis_is_a_dependency() {
+        let (sketch, datum) = (FeatureId::new(), FeatureId::new());
+        let old = serde_json::json!({
+            "Revolution": { "sketch": sketch, "angle_deg": 180.0, "axis": {"Datum": datum} }
+        });
+        let feature = PartFeature::from_json(&old).unwrap();
+        assert_eq!(feature.dependencies(), vec![sketch, datum]);
     }
 
     #[test]

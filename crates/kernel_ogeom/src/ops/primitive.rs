@@ -375,6 +375,7 @@ fn revolve_synthetic(
         second_angle_deg: None,
         midplane: false,
         reversed: false,
+        termination: Default::default(),
     };
     sweep_tool(model, None, &profile, &kind)
 }

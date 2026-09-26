@@ -15,7 +15,7 @@ use wb_sketch::sketch::SketchPlane;
 fn pad(sketch: FeatureId, length: f32) -> PartFeature {
     PartFeature::Pad {
         refine: false,
-        sketch,
+        sketch: Some(sketch),
         length,
         reversed: false,
         symmetric: false,
@@ -24,6 +24,13 @@ fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         taper_deg: 0.0,
         up_to_face: None,
         up_to_offset: 0.0,
+        profile_face: None,
+        direction: Default::default(),
+        up_to_shape: Vec::new(),
+        mode2: None,
+        up_to_face2: None,
+        up_to_offset2: 0.0,
+        up_to_shape2: Vec::new(),
     }
 }
 
@@ -36,6 +43,8 @@ fn revolve(sketch: FeatureId) -> PartFeature {
         reversed: false,
         midplane: false,
         second_angle_deg: None,
+        mode: Default::default(),
+        up_to_face: None,
     }
 }
 
