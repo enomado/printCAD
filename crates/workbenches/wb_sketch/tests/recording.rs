@@ -417,3 +417,30 @@ fn arrays_clipboard_mirrors_planes_and_clearing_replay_too() {
     assert_eq!(out.error, None, "{script}");
     assert_eq!(all_sketches(&replay.doc), done, "{script}");
 }
+
+#[test]
+fn turned_rectangles_and_a_frame_replay_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    for (x, y) in [(1.0, 1.0), (9.0, 7.0), (0.0, 6.5)] {
+        s.click(x, y, "sketch.rect:3pt");
+    }
+    for (x, y) in [(-10.0, 1.0), (-6.0, 4.0), (-16.0, 9.0)] {
+        s.click(x, y, "sketch.rect:center3pt");
+    }
+    for (x, y) in [(2.0, -12.0), (14.0, -3.0)] {
+        s.click(x, y, "sketch.rect:frame");
+    }
+    s.key(KeyCode::A, None);
+
+    let done = summary(&s.sketch(id));
+    assert_eq!(
+        done.1.iter().filter(|c| **c == "line").count(),
+        16,
+        "{done:?}"
+    );
+    assert_eq!(
+        s.recorded.iter().filter(|r| r.id == "sketch.draw").count(),
+        3
+    );
+    assert_replays(&s.recorded, before, id, &done);
+}

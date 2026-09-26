@@ -2292,3 +2292,234 @@ fn shape_tools_constrain_their_shapes_cleanly() {
         );
     }
 }
+
+/// Every line's direction, by id.
+fn line_dirs(sketch: &Sketch) -> Vec<glam::Vec2> {
+    sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => {
+                Some((sketch.point_position(l.end)? - sketch.point_position(l.start)?).to_glam())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The four edges, in order, make a rectangle: every corner square and
+/// the loop closed.
+fn assert_rectangle(sketch: &Sketch) {
+    let dirs = line_dirs(sketch);
+    assert_eq!(dirs.len(), 4);
+    for i in 0..4 {
+        let (d0, d1) = (dirs[i], dirs[(i + 1) % 4]);
+        assert!(
+            d0.normalize().dot(d1.normalize()).abs() < 1e-3,
+            "corner {i} is square: {d0:?} {d1:?}"
+        );
+    }
+    assert!(point_use_counts(sketch).values().all(|&n| n == 2));
+}
+
+#[test]
+fn a_rectangle_from_three_corners_turns_with_its_first_edge() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for p in [(1.0, 1.0), (9.0, 7.0)] {
+        let fx = handle_click(
+            &mut state,
+            "sketch.rect3",
+            &mut sketch,
+            Vec2D::new(p.0, p.1),
+            0.1,
+        );
+        assert!(!fx.changed, "nothing before the third click");
+    }
+    // The third click only says how wide: 5 to the left of the edge.
+    let fx = handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(1.0 - 3.0 + 2.0, 1.0 + 4.0 + 1.5),
+        0.1,
+    );
+    assert!(fx.changed && state.is_idle());
+    assert_eq!((points(&sketch), lines(&sketch)), (4, 4));
+    assert_eq!(sketch.constraints.len(), 3, "2 parallel + 1 perpendicular");
+    assert_rectangle(&sketch);
+    let dirs = line_dirs(&sketch);
+    assert!((dirs[0].length() - 10.0).abs() < 1e-4);
+    assert!((dirs[1].length() - 5.0).abs() < 1e-4);
+
+    // Pulling one corner out of square, the constraints put it back.
+    let corner = match &sketch.geometry[2] {
+        GeometryElement::Point(p) => p.id,
+        _ => unreachable!(),
+    };
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
+        p.position = Vec2D::new(p.position.x + 1.0, p.position.y - 0.5);
+    }
+    crate::solver::solve_holding(&mut sketch, &[corner]);
+    assert_rectangle(&sketch);
+}
+
+#[test]
+fn a_third_click_on_the_first_edge_line_draws_nothing() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(1.0, 1.0),
+        0.1,
+    );
+    handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(5.0, 1.0),
+        0.1,
+    );
+    let fx = handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(9.0, 1.0),
+        0.1,
+    );
+    assert!(!fx.changed);
+    assert!(sketch.geometry.is_empty());
+}
+
+#[test]
+fn a_rectangle_from_its_centre_and_two_corners() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let tool = "sketch.rect_center3";
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.1);
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(5.0, 4.0), 0.1);
+    // Toward the next corner: it lands as far out as the first.
+    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(-5.0, 9.0), 0.1);
+    assert!(fx.changed && state.is_idle());
+    assert_eq!((points(&sketch), lines(&sketch)), (5, 4));
+    assert_rectangle(&sketch);
+    assert!(
+        sketch.geometry.iter().any(|g| matches!(
+            g,
+            GeometryElement::Point(p)
+                if (p.position.x + 2.0).abs() < 1e-4 && (p.position.y - 5.0).abs() < 1e-4
+        )),
+        "the second corner at (-2, 5)"
+    );
+    // The centre is construction and holds the corners symmetric.
+    let centre = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Point(p) if sketch.is_construction(p.id) => Some(p.id),
+            _ => None,
+        })
+        .expect("construction centre");
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(centre) {
+        p.position = Vec2D::new(3.0, 2.0);
+    }
+    crate::solver::solve_holding(&mut sketch, &[centre]);
+    assert_rectangle(&sketch);
+    let sum = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) if p.id != centre => Some(p.position.to_glam()),
+            _ => None,
+        })
+        .sum::<glam::Vec2>();
+    assert!((sum / 4.0 - glam::Vec2::new(3.0, 2.0)).length() < 1e-3);
+}
+
+#[test]
+fn a_frame_is_two_rectangles_a_dimensioned_wall_apart() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        offset_distance: 1.5,
+        ..ToolParams::default()
+    };
+    click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(1.0, 1.0),
+        0.1,
+        &params,
+    );
+    let fx = click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(11.0, 7.0),
+        0.1,
+        &params,
+    );
+    assert!(fx.changed && state.is_idle());
+    assert_eq!((points(&sketch), lines(&sketch)), (8, 8));
+    assert_eq!(sketch.constraints.len(), 12, "8 H/V + 4 wall distances");
+    let wires = crate::profile::extract_wires(&sketch).expect("two closed outlines");
+    assert_eq!(wires.len(), 2);
+    let inner_at = |sketch: &Sketch, x: f32, y: f32| {
+        sketch.geometry.iter().any(|g| {
+            matches!(g, GeometryElement::Point(p)
+                if (p.position.x - x).abs() < 1e-3 && (p.position.y - y).abs() < 1e-3)
+        })
+    };
+    assert!(inner_at(&sketch, 2.5, 2.5) && inner_at(&sketch, 9.5, 5.5));
+
+    // A thicker wall: every gap follows its dimension.
+    for c in &mut sketch.constraints {
+        if let ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } =
+            &mut c.kind
+        {
+            *value = 2.0;
+        }
+    }
+    assert!(matches!(
+        crate::solver::solve(&mut sketch),
+        crate::solver::SolveOutcome::Converged { .. }
+    ));
+    for c in &sketch.constraints {
+        if let ConstraintKind::DistanceX { a, b: Some(b), .. } = c.kind {
+            let gap = sketch.point_position(b).unwrap() - sketch.point_position(a).unwrap();
+            assert!((gap.x.abs() - 2.0).abs() < 1e-3 && (gap.y.abs() - 2.0).abs() < 1e-3);
+        }
+    }
+    assert_eq!(crate::profile::extract_wires(&sketch).unwrap().len(), 2);
+}
+
+#[test]
+fn a_frame_too_thin_for_its_wall_says_so() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        offset_distance: 3.0,
+        ..ToolParams::default()
+    };
+    click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(1.0, 1.0),
+        0.1,
+        &params,
+    );
+    let fx = click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(11.0, 6.0),
+        0.1,
+        &params,
+    );
+    assert!(!fx.changed && fx.log.is_some());
+    assert!(sketch.geometry.is_empty());
+}

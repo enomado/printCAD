@@ -3194,3 +3194,29 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
         xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min);
     assert!((width - 20.0).abs() < 1e-3, "{width}");
 }
+
+#[test]
+fn rectangle_variants_draw_turned_rectangles_and_frames() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    for (x, y) in [(1.0, 1.0), (9.0, 7.0), (0.0, 6.5)] {
+        h.click(x, y, "sketch.rect:3pt");
+    }
+    assert_eq!(h.counts(), (4, 4, 0, 0));
+    for (x, y) in [(-10.0, 1.0), (-6.0, 4.0), (-16.0, 9.0)] {
+        h.click(x, y, "sketch.rect:center3pt");
+    }
+    assert_eq!(h.counts(), (9, 8, 0, 0), "a construction centre as well");
+    for (x, y) in [(2.0, -12.0), (14.0, -3.0)] {
+        h.click(x, y, "sketch.rect:frame");
+    }
+    assert_eq!(h.counts(), (17, 16, 0, 0));
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(
+        wires.len(),
+        4,
+        "two turned rectangles and a frame's two outlines"
+    );
+    // The turned rectangle's first edge runs where it was clicked.
+    assert!(h.point_at(1.0, 1.0) && h.point_at(9.0, 7.0));
+}

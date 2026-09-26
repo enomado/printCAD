@@ -331,6 +331,7 @@ impl SketchWorkbench {
                     | "sketch.rotate"
                     | "sketch.bspline"
                     | "sketch.rect_rounded"
+                    | "sketch.rect_frame"
             )
         );
         if !has_settings {
@@ -371,6 +372,11 @@ impl SketchWorkbench {
                     Some("sketch.chamfer") => {
                         ui_kit::widgets::field_label(ui, "Length");
                         QtyField::mm(&mut params.chamfer_length).show(ui);
+                        ui.end_row();
+                    }
+                    Some("sketch.rect_frame") => {
+                        ui_kit::widgets::field_label(ui, "Wall");
+                        QtyField::mm(&mut params.offset_distance).show(ui);
                         ui.end_row();
                     }
                     Some("sketch.offset") => {

@@ -453,7 +453,9 @@ fn tool_icon(tool: &str) -> &'static str {
         "sketch.ellipse3" => "ellipse-3pt",
         "sketch.polyline" => "polyline",
         "sketch.ellipse_arc" => "arc-of-ellipse",
-        "sketch.rect_center" => "rectangle-centered",
+        "sketch.rect_center" | "sketch.rect_center3" => "rectangle-centered",
+        "sketch.rect3" => "rectangle",
+        "sketch.rect_frame" => "offset-geometry",
         "sketch.arc_slot" => "arc-slot",
         "sketch.chamfer" => "sketch-chamfer",
         _ => GEOMETRY_TOOLS
@@ -479,7 +481,9 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.ellipse_arc" => ("Arc of ellipse", "Click the center"),
         "sketch.bspline" => ("B-spline", "Click the first control point"),
         "sketch.rect" => ("Rectangle", "Click the first corner"),
-        "sketch.rect_center" => ("Rectangle", "Click the center"),
+        "sketch.rect_center" | "sketch.rect_center3" => ("Rectangle", "Click the center"),
+        "sketch.rect3" => ("Rectangle", "Click the first corner"),
+        "sketch.rect_frame" => ("Frame", "Click the first corner"),
         "sketch.polygon" => ("Polygon", "Click the center"),
         "sketch.slot" => ("Slot", "Click the centerline start"),
         "sketch.arc_slot" => ("Arc slot", "Click the arc center"),
@@ -2041,6 +2045,9 @@ impl Workbench for SketchWorkbench {
                     ToolVariant::new("corners", "Two corners", "rectangle"),
                     ToolVariant::new("center", "Center and corner", "rectangle-centered"),
                     ToolVariant::new("rounded", "Rounded", "rounded-rectangle"),
+                    ToolVariant::new("3pt", "Three corners", "rectangle"),
+                    ToolVariant::new("center3pt", "Center and two corners", "rectangle-centered"),
+                    ToolVariant::new("frame", "Frame", "offset-geometry"),
                 ],
                 "sketch.polygon" => vec![
                     ToolVariant::new("3", "Triangle", "triangle"),
@@ -3121,6 +3128,9 @@ fn canonical_tool(tool: &str) -> Option<String> {
         ("sketch.ellipse", Some("arc")) => "sketch.ellipse_arc".to_string(),
         ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
         ("sketch.rect", Some("rounded")) => "sketch.rect_rounded".to_string(),
+        ("sketch.rect", Some("3pt")) => "sketch.rect3".to_string(),
+        ("sketch.rect", Some("center3pt")) => "sketch.rect_center3".to_string(),
+        ("sketch.rect", Some("frame")) => "sketch.rect_frame".to_string(),
         ("sketch.slot", Some("arc")) => "sketch.arc_slot".to_string(),
         ("sketch.fillet", Some("chamfer")) => "sketch.chamfer".to_string(),
         ("sketch.polygon", Some(_)) => "sketch.polygon".to_string(),
@@ -4180,6 +4190,9 @@ pub(crate) fn is_draw_tool(tool: &str) -> bool {
             | "sketch.bspline"
             | "sketch.rect"
             | "sketch.rect_center"
+            | "sketch.rect3"
+            | "sketch.rect_center3"
+            | "sketch.rect_frame"
             | "sketch.polygon"
             | "sketch.slot"
             | "sketch.arc_slot"

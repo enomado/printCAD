@@ -17,7 +17,10 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
-pub use draw::{arc_slot_shape, polygon_vertices, slot_corners};
+pub use draw::{
+    arc_slot_shape, frame_inner_corners, polygon_vertices, rect_center3_corners, rect3_corners,
+    slot_corners,
+};
 pub use modify::trim_preview;
 pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
 
@@ -36,6 +39,18 @@ pub enum ToolState {
     RectFrom { corner: SnapTarget },
     /// Centered-rectangle tool: center picked.
     RectCenterAt { center: Vec2D },
+    /// Three-corner rectangle: first corner picked.
+    Rect3A { a: SnapTarget },
+    /// Three-corner rectangle: one edge picked, waiting for the width.
+    Rect3B { a: SnapTarget, b: SnapTarget },
+    /// Rectangle from its centre and two corners: centre picked.
+    RectCenter3At { center: SnapTarget },
+    /// Rectangle from its centre and two corners: centre and a corner
+    /// picked, waiting for the direction of the next corner.
+    RectCenter3Corner {
+        center: SnapTarget,
+        corner: SnapTarget,
+    },
     /// Circle tool: center picked, waiting for a rim point.
     CircleFrom { center: SnapTarget },
     /// 3-point circle: first rim point picked.
@@ -186,6 +201,10 @@ impl ToolState {
             }
             ToolState::RectFrom { .. } => Some("Rectangle: click the opposite corner"),
             ToolState::RectCenterAt { .. } => Some("Rectangle: click a corner"),
+            ToolState::Rect3A { .. } => Some("Rectangle: click the second corner"),
+            ToolState::Rect3B { .. } => Some("Rectangle: click to set the width"),
+            ToolState::RectCenter3At { .. } => Some("Rectangle: click a corner"),
+            ToolState::RectCenter3Corner { .. } => Some("Rectangle: click toward the next corner"),
             ToolState::CircleFrom { .. } => Some("Circle: click a point on the rim"),
             ToolState::Circle3One { .. } => Some("Circle: click a second rim point"),
             ToolState::Circle3Two { .. } => Some("Circle: click a third rim point"),
@@ -404,6 +423,11 @@ pub fn handle_click(
             draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
         }
         "sketch.rect_center" => draw::rect_center(state, sketch, cursor, snap_tol),
+        "sketch.rect3" => draw::rect3(state, sketch, cursor, snap_tol),
+        "sketch.rect_center3" => draw::rect_center3(state, sketch, cursor, snap_tol),
+        "sketch.rect_frame" => {
+            draw::rect_frame(state, sketch, cursor, snap_tol, params.offset_distance)
+        }
         "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
         "sketch.circle3" => draw::circle3(state, sketch, cursor, snap_tol),
         "sketch.arc" => draw::arc(state, sketch, cursor, snap_tol),

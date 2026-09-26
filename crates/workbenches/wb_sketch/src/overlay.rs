@@ -662,6 +662,71 @@ fn push_preview(
                     1.5,
                     false,
                 );
+                if active_tool == Some("sketch.rect_frame")
+                    && let Some(inner) =
+                        crate::tools::frame_inner_corners(a, cursor, params.offset_distance)
+                {
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        inner.into_iter().chain([inner[0]]),
+                        pal.preview,
+                        1.5,
+                        false,
+                    );
+                }
+            }
+        }
+        ToolState::Rect3A { a } | ToolState::RectCenter3At { center: a } => {
+            if let Some(a) = pos(a) {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [a, cursor].into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                push_point_marker(out, proj, a, pal.preview);
+            }
+        }
+        ToolState::Rect3B { a, b } => {
+            if let (Some(a), Some(b)) = (pos(a), pos(b)) {
+                let outline = match crate::tools::rect3_corners(a, b, cursor) {
+                    Some((c, d)) => vec![a, b, c, d, a],
+                    None => vec![a, b],
+                };
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    outline.into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+            }
+        }
+        ToolState::RectCenter3Corner { center, corner } => {
+            if let (Some(c), Some(k)) = (pos(center), pos(corner)) {
+                match crate::tools::rect_center3_corners(c, k, cursor) {
+                    Some(corners) => push_polyline(
+                        &mut out.lines,
+                        proj,
+                        corners.into_iter().chain([corners[0]]),
+                        pal.preview,
+                        1.5,
+                        false,
+                    ),
+                    None => push_polyline(
+                        &mut out.lines,
+                        proj,
+                        [c, k].into_iter(),
+                        pal.preview,
+                        1.0,
+                        true,
+                    ),
+                }
+                push_point_marker(out, proj, c, pal.preview);
             }
         }
         ToolState::CircleFrom { center } => {

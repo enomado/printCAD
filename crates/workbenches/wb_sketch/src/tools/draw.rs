@@ -413,6 +413,276 @@ pub(super) fn rect_center(
     }
 }
 
+/// The other two corners of the rectangle with edge `a → b` whose opposite
+/// edge passes through `toward`: `(c, d)`, with `c` beyond `b`. `None` when
+/// the edge is degenerate or `toward` lies on its line.
+pub fn rect3_corners(a: Vec2D, b: Vec2D, toward: Vec2D) -> Option<(Vec2D, Vec2D)> {
+    let edge = (b - a).to_glam();
+    let len = edge.length();
+    if len < 1e-6 {
+        return None;
+    }
+    let n = edge.perp() / len;
+    let width = n.dot((toward - a).to_glam());
+    if width.abs() < 1e-6 {
+        return None;
+    }
+    let offset = n * width;
+    Some((
+        Vec2D::from_glam(b.to_glam() + offset),
+        Vec2D::from_glam(a.to_glam() + offset),
+    ))
+}
+
+/// A rectangle at any angle from three corners: the first two clicks are
+/// one edge, the third how far the opposite edge lies from it. Held a
+/// rectangle by parallel and perpendicular constraints, so it keeps its
+/// turn.
+pub(super) fn rect3(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+) -> ToolEffect {
+    match *state {
+        ToolState::Rect3A { a } => {
+            let b = snap_point_or_curve(sketch, cursor, snap_tol);
+            let (Some(pa), Some(pb)) = (a.position(sketch), b.position(sketch)) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            if (pb - pa).to_glam().length() < 1e-6 {
+                return ToolEffect::none();
+            }
+            *state = ToolState::Rect3B { a, b };
+            ToolEffect::none()
+        }
+        ToolState::Rect3B { a, b } => {
+            let (Some(pa), Some(pb)) = (a.position(sketch), b.position(sketch)) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let Some((c, d)) = rect3_corners(pa, pb, cursor) else {
+                return ToolEffect::none(); // the third click is on the edge's line
+            };
+            let ia = materialize_on_curve(sketch, a, snap_tol);
+            let ib = materialize_on_curve(sketch, b, snap_tol);
+            let ic = place(sketch, c, snap_tol);
+            let id = derived(sketch, d, snap_tol);
+            close_parallelogram_square(sketch, [ia, ib, ic, id]);
+            *state = ToolState::Idle;
+            ToolEffect::changed(format!(
+                "Rectangle {:.2} × {:.2} from three corners",
+                (pb - pa).to_glam().length(),
+                (c - pb).to_glam().length()
+            ))
+        }
+        _ => {
+            let a = snap_point_or_curve(sketch, cursor, snap_tol);
+            *state = ToolState::Rect3A { a };
+            ToolEffect::none()
+        }
+    }
+}
+
+/// Four corners in order → four shared-vertex lines, opposite sides held
+/// parallel and the first corner square: a rectangle free to turn.
+fn close_parallelogram_square(sketch: &mut Sketch, corners: [Uuid; 4]) -> [Uuid; 4] {
+    let edges: [Uuid; 4] = std::array::from_fn(|i| {
+        sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )))
+    });
+    sketch.add_constraint(ConstraintKind::Parallel {
+        line1: edges[0],
+        line2: edges[2],
+    });
+    sketch.add_constraint(ConstraintKind::Parallel {
+        line1: edges[1],
+        line2: edges[3],
+    });
+    sketch.add_constraint(ConstraintKind::Perpendicular {
+        line1: edges[0],
+        line2: edges[1],
+    });
+    edges
+}
+
+/// The corners of the rectangle centred at `center` with a corner at
+/// `corner` and the next corner in the direction of `toward`: every corner
+/// of a rectangle is as far from its centre as the others. Returned in
+/// order round the rectangle, `corner` first. `None` when the two corners
+/// would coincide or sit opposite each other.
+pub fn rect_center3_corners(center: Vec2D, corner: Vec2D, toward: Vec2D) -> Option<[Vec2D; 4]> {
+    let c = center.to_glam();
+    let r = (corner.to_glam() - c).length();
+    let dir = (toward.to_glam() - c).normalize_or_zero();
+    if r < 1e-6 || dir == glam::Vec2::ZERO {
+        return None;
+    }
+    let p1 = corner.to_glam();
+    let p2 = c + dir * r;
+    let (p3, p4) = (2.0 * c - p1, 2.0 * c - p2);
+    if (p2 - p1).length() < 1e-4 * r || (p2 - p3).length() < 1e-4 * r {
+        return None;
+    }
+    Some([p1, p2, p3, p4].map(Vec2D::from_glam))
+}
+
+/// A rectangle at any angle from its centre and two neighbouring corners:
+/// the second click is a corner, the third the direction of the next one.
+/// A construction point at the centre, each pair of opposite corners
+/// symmetric about it, and one corner square.
+pub(super) fn rect_center3(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+) -> ToolEffect {
+    match *state {
+        ToolState::RectCenter3At { center } => {
+            let corner = snap_point_or_curve(sketch, cursor, snap_tol);
+            let (Some(c), Some(k)) = (center.position(sketch), corner.position(sketch)) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            if (k - c).to_glam().length() < 1e-6 {
+                return ToolEffect::none();
+            }
+            *state = ToolState::RectCenter3Corner { center, corner };
+            ToolEffect::none()
+        }
+        ToolState::RectCenter3Corner { center, corner } => {
+            let (Some(c), Some(k)) = (center.position(sketch), corner.position(sketch)) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let Some([_, p2, p3, p4]) = rect_center3_corners(c, k, cursor) else {
+                return ToolEffect::none();
+            };
+            let middle = materialize_on_curve(sketch, center, snap_tol);
+            let i1 = materialize_on_curve(sketch, corner, snap_tol);
+            let i2 = derived(sketch, p2, snap_tol);
+            let i3 = derived(sketch, p3, snap_tol);
+            let i4 = derived(sketch, p4, snap_tol);
+            let edges: [Uuid; 4] = std::array::from_fn(|i| {
+                let ids = [i1, i2, i3, i4];
+                sketch.add_geometry(GeometryElement::Line(Line::new(ids[i], ids[(i + 1) % 4])))
+            });
+            if matches!(center, SnapTarget::New(_)) {
+                sketch.set_construction(middle, true);
+            }
+            sketch.add_constraint(ConstraintKind::SymmetricAboutPoint {
+                point1: i1,
+                point2: i3,
+                center: middle,
+            });
+            sketch.add_constraint(ConstraintKind::SymmetricAboutPoint {
+                point1: i2,
+                point2: i4,
+                center: middle,
+            });
+            sketch.add_constraint(ConstraintKind::Perpendicular {
+                line1: edges[0],
+                line2: edges[1],
+            });
+            *state = ToolState::Idle;
+            ToolEffect::changed(format!(
+                "Rectangle {:.2} × {:.2} from its centre and two corners",
+                (p2 - k).to_glam().length(),
+                (p3 - p2).to_glam().length()
+            ))
+        }
+        _ => {
+            let center = snap_point_or_curve(sketch, cursor, snap_tol);
+            *state = ToolState::RectCenter3At { center };
+            ToolEffect::none()
+        }
+    }
+}
+
+/// The inner outline of a frame drawn corner `a` to corner `c`: the
+/// rectangle `offset` inside it, corners in the same order as the outer
+/// one's (`a`, `(c.x, a.y)`, `c`, `(a.x, c.y)`). `None` when the offset
+/// leaves nothing inside.
+pub fn frame_inner_corners(a: Vec2D, c: Vec2D, offset: f32) -> Option<[Vec2D; 4]> {
+    let (w, h) = ((c.x - a.x).abs(), (c.y - a.y).abs());
+    if offset <= 1e-6 || 2.0 * offset >= w.min(h) - 1e-6 {
+        return None;
+    }
+    let (sx, sy) = ((c.x - a.x).signum(), (c.y - a.y).signum());
+    let ia = Vec2D::new(a.x + sx * offset, a.y + sy * offset);
+    let ic = Vec2D::new(c.x - sx * offset, c.y - sy * offset);
+    Some([ia, Vec2D::new(ic.x, ia.y), ic, Vec2D::new(ia.x, ic.y)])
+}
+
+/// A frame: a rectangle and a second one `offset` inside it, in one go.
+/// Both are held rectangles and the gap between them is dimensioned on
+/// every side, so the frame keeps its wall as it is resized.
+pub(super) fn rect_frame(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+    offset: f32,
+) -> ToolEffect {
+    let ToolState::RectFrom { corner } = *state else {
+        return rect(state, sketch, cursor, snap_tol);
+    };
+    let Some(a) = corner.position(sketch) else {
+        *state = ToolState::Idle;
+        return ToolEffect::none();
+    };
+    let c = cursor;
+    if (c.x - a.x).abs() < 1e-6 || (c.y - a.y).abs() < 1e-6 {
+        return ToolEffect::none();
+    }
+    let Some(inner) = frame_inner_corners(a, c, offset) else {
+        return ToolEffect::log(format!(
+            "A frame {:.2} × {:.2} has no room for a {offset:.2} wall",
+            (c.x - a.x).abs(),
+            (c.y - a.y).abs()
+        ));
+    };
+    // The inner outline first: the outer one's edges are the last lines
+    // made, which is where typed width and height look for them.
+    let [ia, ib, ic, id] =
+        inner.map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(p))));
+    close_rectangle(sketch, ia, ib, ic, id);
+    let effect = rect(state, sketch, cursor, snap_tol);
+    if !effect.changed {
+        return effect;
+    }
+    // `rect` ends with its edges a → b, b → c, c → d, d → a: the corner at
+    // `a` starts the first and the one at `c` the third, and the gap is
+    // measured from those two.
+    let mut edges = sketch.geometry.iter().rev().filter_map(|g| match g {
+        GeometryElement::Line(l) => Some(l.start),
+        _ => None,
+    });
+    let (_, outer_c, _, outer_a) = (edges.next(), edges.next(), edges.next(), edges.next());
+    if let (Some(oa), Some(oc)) = (outer_a, outer_c) {
+        for (outer, inner) in [(oa, ia), (oc, ic)] {
+            sketch.add_constraint(ConstraintKind::DistanceX {
+                a: outer,
+                b: Some(inner),
+                value: offset,
+            });
+            sketch.add_constraint(ConstraintKind::DistanceY {
+                a: outer,
+                b: Some(inner),
+                value: offset,
+            });
+        }
+    }
+    ToolEffect::changed(format!(
+        "Frame {:.2} × {:.2}, wall {offset:.2}",
+        (c.x - a.x).abs(),
+        (c.y - a.y).abs()
+    ))
+}
+
 pub(super) fn circle(
     state: &mut ToolState,
     sketch: &mut Sketch,

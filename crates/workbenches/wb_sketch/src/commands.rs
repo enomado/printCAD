@@ -159,7 +159,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .param(
             "tool",
             ParamKind::String,
-            "line, polyline, rect, rect_center, rect_rounded, circle, circle3, arc, arc3, \
+            "line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, \
+             circle, circle3, arc, arc3, \
              ellipse, ellipse3, ellipse_arc, bspline, polygon, slot, arc_slot, point, fillet, \
              chamfer, trim, extend, split, offset, translate, rotate, scale or mirror",
         )
@@ -1289,6 +1290,9 @@ const DRAW_TOOLS: &[&str] = &[
     "rect",
     "rect_rounded",
     "rect_center",
+    "rect3",
+    "rect_center3",
+    "rect_frame",
     "circle",
     "circle3",
     "arc",
