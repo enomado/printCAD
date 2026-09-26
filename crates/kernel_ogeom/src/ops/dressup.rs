@@ -5,12 +5,13 @@
 //! edge at once, resolved on the solid as it stands, so blends and bevels
 //! that meet at a vertex close their corner between them.
 
-use kernel_api::{ChamferSpec, EdgeSelection};
+use kernel_api::{ChamferSpec, EdgeSelection, ThicknessJoin};
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{Chamfer, chamfer_edges_with, fillet_edges};
+use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
 use ogeom::offset::{apply_draft, make_thick_solid};
-use ogeom::topo::{Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
+use ogeom::topo::{EdgeRepr, Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
 
 use super::tol;
 
@@ -190,12 +191,16 @@ pub fn fillet(
     solid: &Shape,
     radius: f64,
     edges: &EdgeSelection,
+    follow_tangent: bool,
 ) -> Result<Shape, String> {
     let probes = selection_probes(model, solid, edges)?;
     if probes.0.is_empty() {
         return Err("fillet selection matches no edges".into());
     }
-    let chain = chain_of(model, solid, probes)?;
+    let mut chain = chain_of(model, solid, probes)?;
+    if follow_tangent {
+        chain = tangent_chain(model, solid, chain)?;
+    }
     fillet_edges(model, solid, &chain, radius, tol())
         .map(|b| b.shape)
         .map_err(|e| format!("fillet failed: {e}"))
@@ -254,18 +259,109 @@ fn chain_of(
     Ok(chain)
 }
 
+/// How far apart two edge ends may lie and still meet at one vertex, mm.
+const END_REACH: f64 = 1e-4;
+
+/// The sine of the widest angle two edges may turn through where they
+/// meet and still run on tangentially (one degree).
+const TANGENT_SINE: f64 = 0.017_452;
+
+/// An edge's two ends, placed: each a point and the way the edge's curve
+/// runs there. A degenerate edge, or one with no curve, has none.
+fn edge_ends(model: &Model, edge: &Shape) -> Option<[(Point, Vector); 2]> {
+    let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
+        return None;
+    };
+    if data.degenerate {
+        return None;
+    }
+    let Some(EdgeRepr::Curve3d {
+        curve,
+        location,
+        range,
+    }) = data.curve3d()
+    else {
+        return None;
+    };
+    let geometry = model.geometry().curve(*curve)?;
+    let local = location.composed(model.datums()).ok()?;
+    let placed = edge.transform(model.datums()).ok()?;
+    let end = |u: f64| -> Option<(Point, Vector)> {
+        let point = geometry.point_at(u, tol()).ok()?;
+        let along = geometry.d1_at(u, tol()).ok()?;
+        Some((
+            placed.apply(local.apply(point)),
+            placed.apply_vector(local.apply_vector(along)),
+        ))
+    };
+    Some([end(range.0)?, end(range.1)?])
+}
+
+/// Whether two ways run along one line, either way round.
+fn parallel(a: Vector, b: Vector) -> bool {
+    let (la, lb) = (a.magnitude(), b.magnitude());
+    la > 1e-12 && lb > 1e-12 && a.cross(b).magnitude() <= TANGENT_SINE * la * lb
+}
+
+/// `chain` and every edge of `solid` reached from it through ends where
+/// two edges meet tangentially: a picked side of a rounded corner brings
+/// the round and the side past it, and stops where the outline turns a
+/// corner.
+fn tangent_chain(model: &Model, solid: &Shape, chain: Vec<Shape>) -> Result<Vec<Shape>, String> {
+    let edges = explore_unique(model, solid, ShapeType::Edge)
+        .map_err(|e| format!("exploring the solid failed: {e}"))?;
+    let ends: Vec<Option<[(Point, Vector); 2]>> =
+        edges.iter().map(|edge| edge_ends(model, edge)).collect();
+    let index_of = |shape: &Shape| edges.iter().position(|e| e.is_same(shape));
+    let mut taken = vec![false; edges.len()];
+    let mut queue: Vec<usize> = Vec::new();
+    for edge in &chain {
+        if let Some(i) = index_of(edge)
+            && !taken[i]
+        {
+            taken[i] = true;
+            queue.push(i);
+        }
+    }
+    let mut result = chain;
+    while let Some(i) = queue.pop() {
+        let Some(mine) = ends[i] else { continue };
+        for (j, theirs) in ends.iter().enumerate() {
+            let Some(theirs) = theirs else { continue };
+            if taken[j] {
+                continue;
+            }
+            let meets = mine.iter().any(|(p, t)| {
+                theirs
+                    .iter()
+                    .any(|(q, s)| p.distance(*q) <= END_REACH && parallel(*t, *s))
+            });
+            if meets {
+                taken[j] = true;
+                queue.push(j);
+                result.push(edges[j].clone());
+            }
+        }
+    }
+    Ok(result)
+}
+
 pub fn chamfer(
     model: &mut Model,
     solid: &Shape,
     spec: &ChamferSpec,
     flip: bool,
     edges: &EdgeSelection,
+    follow_tangent: bool,
 ) -> Result<Shape, String> {
     let probes = selection_probes(model, solid, edges)?;
     if probes.0.is_empty() {
         return Err("chamfer selection matches no edges".into());
     }
-    let chain = chain_of(model, solid, probes)?;
+    let mut chain = chain_of(model, solid, probes)?;
+    if follow_tangent {
+        chain = tangent_chain(model, solid, chain)?;
+    }
     let mut specs = Vec::with_capacity(chain.len());
     for edge in chain {
         let spec = match spec {
@@ -358,7 +454,15 @@ pub fn thickness(
     value: f64,
     open_face_points: &[[f64; 3]],
     inward: bool,
+    join: ThicknessJoin,
 ) -> Result<Shape, String> {
+    if join == ThicknessJoin::Arc {
+        return Err(
+            "the kernel cannot round a thickness's walls where they meet yet; \
+             use the intersection join"
+                .into(),
+        );
+    }
     let mut removed = Vec::with_capacity(open_face_points.len());
     for p in open_face_points {
         removed.push(nearest_of(model, solid, ShapeType::Face, point3(*p))?);

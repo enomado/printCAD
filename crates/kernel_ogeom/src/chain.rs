@@ -203,13 +203,24 @@ pub fn execute_probing(
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
-            SolidOp::Fillet { radius, edges } => {
+            SolidOp::Fillet {
+                radius,
+                edges,
+                follow_tangent,
+            } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
-                ops::dressup::fillet(&mut model, &solid, *radius, edges).map_err(&err)?
+                ops::dressup::fillet(&mut model, &solid, *radius, edges, *follow_tangent)
+                    .map_err(&err)?
             }
-            SolidOp::Chamfer { spec, flip, edges } => {
+            SolidOp::Chamfer {
+                spec,
+                flip,
+                edges,
+                follow_tangent,
+            } => {
                 let solid = base.ok_or_else(|| err("chamfer needs an existing solid".into()))?;
-                ops::dressup::chamfer(&mut model, &solid, spec, *flip, edges).map_err(&err)?
+                ops::dressup::chamfer(&mut model, &solid, spec, *flip, edges, *follow_tangent)
+                    .map_err(&err)?
             }
             SolidOp::Draft {
                 angle_deg,
@@ -240,9 +251,10 @@ pub fn execute_probing(
                 value,
                 open_faces,
                 inward,
+                join,
             } => {
                 let solid = base.ok_or_else(|| err("thickness needs an existing solid".into()))?;
-                ops::dressup::thickness(&mut model, &solid, *value, open_faces, *inward)
+                ops::dressup::thickness(&mut model, &solid, *value, open_faces, *inward, *join)
                     .map_err(&err)?
             }
             SolidOp::Transform {

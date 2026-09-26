@@ -559,13 +559,18 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 let hole_ops = hole_ops(document, &feature).map_err(&fail)?;
                 plan.ops.extend(hole_ops);
             }
-            PartFeature::Fillet { radius, edges } => {
+            PartFeature::Fillet {
+                radius,
+                edges,
+                follow_tangent,
+            } => {
                 if *radius <= 0.0 {
                     return Err(fail("fillet radius must be positive".into()));
                 }
                 plan.ops.push(SolidOp::Fillet {
                     radius: *radius as f64,
                     edges: edge_selection(edges),
+                    follow_tangent: *follow_tangent,
                 });
             }
             PartFeature::Chamfer {
@@ -575,6 +580,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 angle_deg,
                 flip,
                 edges,
+                follow_tangent,
             } => {
                 if *size <= 0.0 {
                     return Err(fail("chamfer size must be positive".into()));
@@ -602,6 +608,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     spec,
                     flip: *flip,
                     edges: edge_selection(edges),
+                    follow_tangent: *follow_tangent,
                 });
             }
             PartFeature::Draft {
@@ -635,6 +642,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 value,
                 faces,
                 inward,
+                join,
             } => {
                 if faces.is_empty() {
                     return Err(fail("select at least one face to open".into()));
@@ -643,6 +651,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     value: *value as f64,
                     open_faces: face_points(faces),
                     inward: *inward,
+                    join: *join,
                 });
             }
             PartFeature::Mirrored {
@@ -665,11 +674,19 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 occurrences,
                 spacing_mode,
                 reversed,
+                spacings,
             } => {
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let transforms =
-                    linear_transforms(axis, *length, *occurrences, *spacing_mode, *reversed)
-                        .map_err(&fail)?;
+                let axis = pattern_axis(document, axis).map_err(&fail)?;
+                let transforms = linear_transforms(
+                    axis,
+                    *length,
+                    *occurrences,
+                    *spacing_mode,
+                    *reversed,
+                    spacings,
+                )
+                .map_err(&fail)?;
                 if !transforms.is_empty() {
                     plan.ops.push(SolidOp::Transform {
                         transforms,
@@ -684,10 +701,20 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 angle_deg,
                 occurrences,
                 reversed,
+                step_mode,
+                angles,
             } => {
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let transforms =
-                    polar_transforms(axis, *angle_deg, *occurrences, *reversed).map_err(&fail)?;
+                let axis = pattern_axis(document, axis).map_err(&fail)?;
+                let transforms = polar_transforms(
+                    axis,
+                    *angle_deg,
+                    *occurrences,
+                    *reversed,
+                    *step_mode,
+                    angles,
+                )
+                .map_err(&fail)?;
                 if !transforms.is_empty() {
                     plan.ops.push(SolidOp::Transform {
                         transforms,
@@ -701,7 +728,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 refine: _,
             } => {
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let transforms = multi_transforms(steps).map_err(&fail)?;
+                let transforms = multi_transforms(document, steps).map_err(&fail)?;
                 if !transforms.is_empty() {
                     plan.ops.push(SolidOp::Transform {
                         transforms,
@@ -1797,12 +1824,69 @@ fn mat_scale(center: [f64; 3], factor: f64) -> Mat4 {
     m
 }
 
-fn linear_transforms(
+/// A pattern's axis as a point and a unit direction, in the body's own
+/// frame: a picked edge as it was picked, a datum line where the datum
+/// sits now, a sketch's axis where the sketch sits now.
+pub(crate) fn pattern_axis(
+    document: &Document,
     axis: &PatternAxis,
+) -> Result<([f64; 3], [f64; 3]), String> {
+    let (origin, dir) = match axis {
+        PatternAxis::X => ([0.0; 3], [1.0, 0.0, 0.0]),
+        PatternAxis::Y => ([0.0; 3], [0.0, 1.0, 0.0]),
+        PatternAxis::Z => ([0.0; 3], [0.0, 0.0, 1.0]),
+        PatternAxis::Custom { origin, dir } => (origin.map(f64::from), dir.map(f64::from)),
+        PatternAxis::Edge(edge) => (edge.point.map(f64::from), edge.direction.map(f64::from)),
+        PatternAxis::Datum(id) => {
+            let data = document
+                .feature_values(*id)
+                .ok_or("the pattern's datum line is missing")?;
+            let datum = core_document::DatumFeature::from_json(data)
+                .map_err(|_| "the pattern's axis is not a datum".to_string())?;
+            if !matches!(datum.shape, core_document::DatumShape::Line { .. }) {
+                return Err("the pattern's datum is not a line".into());
+            }
+            let frame = datum.frame();
+            (frame.origin.map(f64::from), frame.x_axis.map(f64::from))
+        }
+        PatternAxis::Sketch { sketch, axis } => {
+            let data = document
+                .feature_values(*sketch)
+                .ok_or("the pattern axis's sketch is missing")?;
+            let sketch = SketchFeature::from_json(data)
+                .map_err(|_| "the pattern's axis is not a sketch's".to_string())?;
+            let plane = profile::plane_of(&sketch.plane);
+            let dir = match axis {
+                crate::feature::SketchAxis::Horizontal => plane.x_axis,
+                crate::feature::SketchAxis::Vertical => plane.y_axis,
+                crate::feature::SketchAxis::Normal => plane.normal,
+            };
+            (plane.origin, dir)
+        }
+    };
+    let dir = normalize(dir).map_err(|_| "the pattern axis has no direction".to_string())?;
+    Ok((origin, dir))
+}
+
+/// The offsets from the original, first copy to last, of `count` copies
+/// spaced `even` apart, save where `gaps` gives the gap before a copy.
+fn uneven_offsets(count: u32, even: f64, gaps: &[f32]) -> Vec<f64> {
+    let mut at = 0.0;
+    (0..count as usize)
+        .map(|i| {
+            at += gaps.get(i).map_or(even, |gap| f64::from(*gap));
+            at
+        })
+        .collect()
+}
+
+fn linear_transforms(
+    (_, dir): ([f64; 3], [f64; 3]),
     length: f32,
     occurrences: u32,
     spacing_mode: bool,
     reversed: bool,
+    spacings: &[f32],
 ) -> Result<Vec<Mat4>, String> {
     // One occurrence is the original alone: nothing to copy.
     if occurrences == 0 {
@@ -1811,29 +1895,35 @@ fn linear_transforms(
     if occurrences == 1 {
         return Ok(Vec::new());
     }
-    let dir = normalize(axis.dir())?;
     let sign = if reversed { -1.0 } else { 1.0 };
     let spacing = if spacing_mode {
         f64::from(length)
     } else {
         f64::from(length) / f64::from(occurrences - 1)
     };
-    if spacing.abs() < 1e-9 {
+    let gaps = spacings.len().min(occurrences as usize - 1);
+    if spacing.abs() < 1e-9 && gaps < occurrences as usize - 1 {
         return Err("pattern spacing is zero".into());
     }
-    Ok((1..occurrences)
-        .map(|k| {
-            let d = spacing * f64::from(k) * sign;
+    if let Some(i) = spacings[..gaps].iter().position(|gap| gap.abs() < 1e-6) {
+        return Err(format!("spacing {} of the pattern is zero", i + 1));
+    }
+    Ok(uneven_offsets(occurrences - 1, spacing, spacings)
+        .into_iter()
+        .map(|offset| {
+            let d = offset * sign;
             mat_translation([dir[0] * d, dir[1] * d, dir[2] * d])
         })
         .collect())
 }
 
 fn polar_transforms(
-    axis: &PatternAxis,
+    (origin, dir): ([f64; 3], [f64; 3]),
     angle_deg: f32,
     occurrences: u32,
     reversed: bool,
+    step_mode: bool,
+    angles: &[f32],
 ) -> Result<Vec<Mat4>, String> {
     if occurrences == 0 {
         return Err("a polar pattern needs at least 1 occurrence".into());
@@ -1842,22 +1932,32 @@ fn polar_transforms(
         return Ok(Vec::new());
     }
     let full_circle = (f64::from(angle_deg) - 360.0).abs() < 1e-6;
-    let step = if full_circle {
+    let step = if step_mode {
+        f64::from(angle_deg)
+    } else if full_circle {
         // 360° spreads evenly without doubling the original position.
         f64::from(angle_deg) / f64::from(occurrences)
     } else {
         f64::from(angle_deg) / f64::from(occurrences - 1)
     };
+    let gaps = angles.len().min(occurrences as usize - 1);
+    if step.abs() < 1e-9 && gaps < occurrences as usize - 1 {
+        return Err("the pattern's angle between occurrences is zero".into());
+    }
+    if let Some(i) = angles[..gaps].iter().position(|gap| gap.abs() < 1e-6) {
+        return Err(format!("step angle {} of the pattern is zero", i + 1));
+    }
     let sign = if reversed { -1.0 } else { 1.0 };
-    (1..occurrences)
-        .map(|k| mat_rotation(axis.origin(), axis.dir(), step * f64::from(k) * sign))
+    uneven_offsets(occurrences - 1, step, angles)
+        .into_iter()
+        .map(|angle| mat_rotation(origin, dir, angle * sign))
         .collect()
 }
 
 /// Cartesian composition: each step's occurrences (including the identity)
 /// apply to every result of the previous steps; the pure identity is dropped
 /// because the base solid already contains the original.
-fn multi_transforms(steps: &[TransformStep]) -> Result<Vec<Mat4>, String> {
+fn multi_transforms(document: &Document, steps: &[TransformStep]) -> Result<Vec<Mat4>, String> {
     if steps.is_empty() {
         return Err("a multi-transform needs at least one step".into());
     }
@@ -1868,12 +1968,26 @@ fn multi_transforms(steps: &[TransformStep]) -> Result<Vec<Mat4>, String> {
                 axis,
                 length,
                 occurrences,
-            } => linear_transforms(axis, *length, *occurrences, false, false)?,
+            } => linear_transforms(
+                pattern_axis(document, axis)?,
+                *length,
+                *occurrences,
+                false,
+                false,
+                &[],
+            )?,
             TransformStep::Polar {
                 axis,
                 angle_deg,
                 occurrences,
-            } => polar_transforms(axis, *angle_deg, *occurrences, false)?,
+            } => polar_transforms(
+                pattern_axis(document, axis)?,
+                *angle_deg,
+                *occurrences,
+                false,
+                false,
+                &[],
+            )?,
             TransformStep::Mirror { plane } => {
                 let (point, normal) = plane.plane();
                 vec![mat_mirror(point, normal)]
@@ -2295,6 +2409,7 @@ mod tests {
             length: 30.0,
             occurrences,
             spacing_mode: false,
+            spacings: Vec::new(),
             reversed: false,
         };
         let id = doc
@@ -2328,6 +2443,7 @@ mod tests {
             length: 30.0,
             occurrences: 2,
             spacing_mode: false,
+            spacings: Vec::new(),
             reversed: false,
         };
         doc.add_feature_in_body(pattern, "Pattern".into(), Some(body))
@@ -2347,7 +2463,8 @@ mod tests {
         assert!(
             !PartFeature::Fillet {
                 radius: 1.0,
-                edges: crate::feature::EdgeSel::All
+                edges: crate::feature::EdgeSel::All,
+                follow_tangent: false,
             }
             .can_refine()
         );
@@ -3098,6 +3215,7 @@ mod tests {
                 length: 30.0,
                 occurrences: 4,
                 spacing_mode: false,
+                spacings: Vec::new(),
                 reversed: false,
             },
             "Pattern".into(),
@@ -3122,11 +3240,95 @@ mod tests {
 
     #[test]
     fn polar_full_circle_spacing_avoids_overlap() {
-        let transforms = polar_transforms(&PatternAxis::Z, 360.0, 4, false).unwrap();
+        let z = ([0.0; 3], [0.0, 0.0, 1.0]);
+        let transforms = polar_transforms(z, 360.0, 4, false, false, &[]).unwrap();
         assert_eq!(transforms.len(), 3);
         // First occurrence at 90°: X axis maps to Y.
         let t = &transforms[0];
         assert!((t[0][0]).abs() < 1e-9 && (t[1][0] - 1.0).abs() < 1e-9);
+    }
+
+    /// Where a transform takes the point `p`.
+    fn apply(m: &Mat4, p: [f64; 3]) -> [f64; 3] {
+        std::array::from_fn(|i| m[i][0] * p[0] + m[i][1] * p[1] + m[i][2] * p[2] + m[i][3])
+    }
+
+    fn near(a: [f64; 3], b: [f64; 3]) -> bool {
+        (0..3).all(|i| (a[i] - b[i]).abs() < 1e-9)
+    }
+
+    #[test]
+    fn a_polar_pattern_by_step_turns_each_occurrence_by_the_step() {
+        let z = ([0.0; 3], [0.0, 0.0, 1.0]);
+        let transforms = polar_transforms(z, 30.0, 4, false, true, &[]).unwrap();
+        let x = [1.0, 0.0, 0.0];
+        let turned = |deg: f64| {
+            let r = deg.to_radians();
+            [r.cos(), r.sin(), 0.0]
+        };
+        for (k, t) in transforms.iter().enumerate() {
+            assert!(near(apply(t, x), turned(30.0 * (k + 1) as f64)), "copy {k}");
+        }
+        // Uneven: 10° then 50°, the third step the even 30°.
+        let transforms = polar_transforms(z, 30.0, 4, false, true, &[10.0, 50.0]).unwrap();
+        for (t, deg) in transforms.iter().zip([10.0, 60.0, 90.0]) {
+            assert!(near(apply(t, x), turned(deg)), "{deg}");
+        }
+        assert!(polar_transforms(z, 30.0, 3, false, true, &[0.0]).is_err());
+    }
+
+    #[test]
+    fn uneven_spacing_puts_each_copy_its_own_gap_past_the_last() {
+        let x = ([0.0; 3], [1.0, 0.0, 0.0]);
+        let transforms = linear_transforms(x, 30.0, 4, false, false, &[5.0, 15.0]).unwrap();
+        let at: Vec<f64> = transforms.iter().map(|t| t[0][3]).collect();
+        // 5, then 15 more, then the even 10 more.
+        assert_eq!(at, vec![5.0, 20.0, 30.0]);
+        let reversed = linear_transforms(x, 30.0, 3, false, true, &[5.0, 15.0]).unwrap();
+        assert_eq!(reversed[1][0][3], -20.0);
+        let err = linear_transforms(x, 30.0, 3, false, false, &[5.0, 0.0]).unwrap_err();
+        assert!(err.contains("spacing 2"), "{err}");
+    }
+
+    #[test]
+    fn a_pattern_axis_resolves_from_an_edge_a_datum_line_or_a_sketch() {
+        use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
+        let (mut doc, body, sketch) = doc_with_body_sketch();
+        let edge = PatternAxis::Edge(crate::EdgePick {
+            point: [1.0, 2.0, 3.0],
+            direction: [0.0, 0.0, 2.0],
+        });
+        assert_eq!(
+            pattern_axis(&doc, &edge).unwrap(),
+            ([1.0, 2.0, 3.0], [0.0, 0.0, 1.0])
+        );
+        // The YZ plane's line runs along world Y.
+        let datum = doc
+            .add_feature_in_body(
+                DatumFeature {
+                    shape: DatumShape::Line { length: 20.0 },
+                    attachment: DatumAttachment::BasePlane(BasePlane::YZ),
+                    offset: Default::default(),
+                },
+                "Line".into(),
+                Some(body),
+            )
+            .unwrap();
+        let (_, dir) = pattern_axis(&doc, &PatternAxis::Datum(datum)).unwrap();
+        assert!(near(dir, [0.0, 1.0, 0.0]), "{dir:?}");
+        assert!(pattern_axis(&doc, &PatternAxis::Datum(sketch)).is_err());
+        let sketch_axis = |axis| PatternAxis::Sketch { sketch, axis };
+        for (axis, want) in [
+            (crate::SketchAxis::Horizontal, [1.0, 0.0, 0.0]),
+            (crate::SketchAxis::Vertical, [0.0, 1.0, 0.0]),
+            (crate::SketchAxis::Normal, [0.0, 0.0, 1.0]),
+        ] {
+            let (origin, dir) = pattern_axis(&doc, &sketch_axis(axis)).unwrap();
+            assert!(
+                near(origin, [0.0; 3]) && near(dir, want),
+                "{axis:?}: {dir:?}"
+            );
+        }
     }
 
     #[test]
@@ -3151,7 +3353,7 @@ mod tests {
                 occurrences: 2,
             },
         ];
-        let transforms = multi_transforms(&steps).unwrap();
+        let transforms = multi_transforms(&Document::new("t"), &steps).unwrap();
         // 2x2 grid minus the original.
         assert_eq!(transforms.len(), 3);
     }

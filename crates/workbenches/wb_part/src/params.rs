@@ -215,6 +215,24 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
                 ));
             }
         }
+        "LinearPattern" | "PolarPattern" => {
+            // An uneven pattern's gaps: `spacing1`, `spacing2`, … or
+            // `step_angle1`, … from the first occurrence on.
+            let (list, name, label, dim) = if variant == "LinearPattern" {
+                ("spacings", "spacing", "Spacing", LENGTH)
+            } else {
+                ("angles", "step_angle", "Step angle", ANGLE)
+            };
+            let gaps = body.get(list).and_then(Value::as_array);
+            for i in 0..gaps.map_or(0, Vec::len) {
+                out.push(parameter(
+                    format!("/{variant}/{list}/{i}"),
+                    &format!("{name}{}", i + 1),
+                    &format!("{label} {}", i + 1),
+                    Some(dim),
+                ));
+            }
+        }
         _ => {}
     }
     out

@@ -25,8 +25,8 @@ pub use build::{
 };
 pub use feature::{
     ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
-    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, ThreadSpec,
-    TransformStep, primitive_icon, primitive_preset,
+    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, SketchAxis,
+    ThreadSpec, TransformStep, primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -447,7 +447,14 @@ impl PartDesignWorkbench {
             "part.fillet" => {
                 need_material(has_solid)?;
                 let edges = Self::selected_edges(ctx, body);
-                (PartFeature::Fillet { radius: 1.0, edges }, "Fillet")
+                (
+                    PartFeature::Fillet {
+                        radius: 1.0,
+                        edges,
+                        follow_tangent: true,
+                    },
+                    "Fillet",
+                )
             }
             "part.chamfer" => {
                 need_material(has_solid)?;
@@ -460,6 +467,7 @@ impl PartDesignWorkbench {
                         angle_deg: 45.0,
                         flip: false,
                         edges,
+                        follow_tangent: true,
                     },
                     "Chamfer",
                 )
@@ -487,6 +495,7 @@ impl PartDesignWorkbench {
                         value: 1.0,
                         faces: vec![pick],
                         inward: true,
+                        join: kernel_api::ThicknessJoin::Intersection,
                     },
                     "Thickness",
                 )
@@ -516,6 +525,7 @@ impl PartDesignWorkbench {
                         length: 30.0,
                         occurrences: 3,
                         spacing_mode: false,
+                        spacings: Vec::new(),
                         reversed: false,
                     },
                     "LinearPattern",
@@ -533,6 +543,8 @@ impl PartDesignWorkbench {
                         angle_deg: 360.0,
                         occurrences: 4,
                         reversed: false,
+                        step_mode: false,
+                        angles: Vec::new(),
                     },
                     "PolarPattern",
                 )

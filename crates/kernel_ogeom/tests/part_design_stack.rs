@@ -319,6 +319,7 @@ fn fillet_feature_rounds_the_pad_through_the_full_stack() {
         PartFeature::Fillet {
             radius: 2.0,
             edges: wb_part::EdgeSel::All,
+            follow_tangent: false,
         },
         "Fillet".into(),
         Some(body),
@@ -429,6 +430,7 @@ fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
             length: 40.0,
             occurrences: 3,
             spacing_mode: false,
+            spacings: Vec::new(),
             reversed: false,
         },
         "Pattern".into(),
@@ -704,6 +706,7 @@ fn bore_rim_fillets() {
                 point: [26.0, 15.0, 12.0],
                 direction: [0.0, 1.0, 0.0],
             }]),
+            follow_tangent: false,
         },
         "Fillet".into(),
         Some(body),
@@ -2337,4 +2340,352 @@ fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
         .unwrap();
     let refused = built_volume(&doc, body).unwrap_err();
     assert!(refused.contains("sketch plane"), "{refused}");
+}
+
+/// A 60 × 60 × 4 plate and a boss of radius 3, 6 high on its top at
+/// (`x`, `y`): the document, the body, the plate's sketch and the boss.
+fn plate_with_boss(x: f32, y: f32) -> (Document, BodyId, FeatureId, FeatureId) {
+    let (mut doc, body, plate) = setup(60.0, 60.0);
+    doc.add_feature_in_body(
+        pad_feature(plate, 4.0, false, false),
+        "Plate".into(),
+        Some(body),
+    )
+    .unwrap();
+    let boss = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), x, y, 3.0),
+            "boss".into(),
+            Some(body),
+        )
+        .unwrap();
+    let boss = doc
+        .add_feature_in_body(
+            pad_feature(boss, 6.0, false, false),
+            "Boss".into(),
+            Some(body),
+        )
+        .unwrap();
+    (doc, body, plate, boss)
+}
+
+/// The plate and `n` whole bosses.
+fn plate_and_bosses(n: f64) -> f64 {
+    60.0 * 60.0 * 4.0 + n * std::f64::consts::PI * 9.0 * 6.0
+}
+
+/// The volume and the bounds of what the body's features build.
+fn built_solid(doc: &Document, body: BodyId) -> (f64, [f32; 3], [f32; 3]) {
+    let ops = wb_part::body_build_ops(doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let volume = kernel
+        .physical_properties(&built.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    let (min, max) = mesh_bounds(&built.mesh);
+    (volume, min, max)
+}
+
+fn linear_pattern(original: FeatureId, fields: serde_json::Value) -> PartFeature {
+    with(
+        PartFeature::LinearPattern {
+            refine: false,
+            originals: vec![original],
+            axis: wb_part::PatternAxis::X,
+            length: 50.0,
+            occurrences: 3,
+            spacing_mode: false,
+            spacings: Vec::new(),
+            reversed: false,
+        },
+        fields,
+    )
+}
+
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 0.1
+}
+
+/// A linear pattern runs along a picked edge, a datum line or a sketch's
+/// axis as it does along the body's Y axis: bosses at y = 10, 35 and 60,
+/// the last overhanging the plate's far side.
+#[test]
+fn a_linear_pattern_runs_along_an_edge_a_datum_line_or_a_sketch_axis() {
+    use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    let (mut doc, body, plate, boss) = plate_with_boss(10.0, 10.0);
+    // The YZ plane's datum line runs along world Y.
+    let datum = doc
+        .add_feature_in_body(
+            DatumFeature {
+                shape: DatumShape::Line { length: 20.0 },
+                attachment: DatumAttachment::BasePlane(BasePlane::YZ),
+                offset: Default::default(),
+            },
+            "Line".into(),
+            Some(body),
+        )
+        .unwrap();
+    let pattern = doc
+        .add_feature_in_body(
+            linear_pattern(boss, serde_json::json!({})),
+            "Pattern".into(),
+            Some(body),
+        )
+        .unwrap();
+    let edge = wb_part::PatternAxis::Edge(wb_part::EdgePick {
+        point: [0.0, 30.0, 4.0],
+        direction: [0.0, 1.0, 0.0],
+    });
+    let sketch_v = wb_part::PatternAxis::Sketch {
+        sketch: plate,
+        axis: wb_part::SketchAxis::Vertical,
+    };
+    for axis in [
+        wb_part::PatternAxis::Y,
+        edge,
+        wb_part::PatternAxis::Datum(datum),
+        sketch_v,
+    ] {
+        let data = linear_pattern(
+            boss,
+            serde_json::json!({"axis": serde_json::to_value(axis).unwrap()}),
+        );
+        doc.update_feature_data(pattern, core_document::WorkbenchFeature::to_json(&data))
+            .unwrap();
+        let (volume, _, max) = built_solid(&doc, body);
+        assert!(
+            (volume - plate_and_bosses(3.0)).abs() < 1.0,
+            "{axis:?}: volume {volume}"
+        );
+        assert!(
+            close(max[1], 63.0) && close(max[0], 60.0),
+            "{axis:?}: {max:?}"
+        );
+    }
+}
+
+/// Uneven spacing: the bosses 15 then 35 apart, the last overhanging the
+/// plate's side; along the sketch's normal the copies stack up in z.
+#[test]
+fn an_uneven_linear_pattern_spaces_each_occurrence_its_own_way() {
+    let (mut doc, body, _, boss) = plate_with_boss(10.0, 10.0);
+    doc.add_feature_in_body(
+        linear_pattern(boss, serde_json::json!({"spacings": [15.0, 35.0]})),
+        "Pattern".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, _, max) = built_solid(&doc, body);
+    assert!((volume - plate_and_bosses(3.0)).abs() < 1.0, "{volume}");
+    assert!(close(max[0], 63.0), "{max:?}");
+
+    // Along the plate sketch's normal, the boss copied 6 and 20 up: one
+    // column 6 + 6 high and one standing apart.
+    let (mut doc, body, plate, boss) = plate_with_boss(10.0, 10.0);
+    let normal = wb_part::PatternAxis::Sketch {
+        sketch: plate,
+        axis: wb_part::SketchAxis::Normal,
+    };
+    doc.add_feature_in_body(
+        linear_pattern(
+            boss,
+            serde_json::json!({
+                "axis": serde_json::to_value(normal).unwrap(),
+                "spacings": [6.0, 14.0]
+            }),
+        ),
+        "Pattern".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, _, max) = built_solid(&doc, body);
+    assert!((volume - plate_and_bosses(3.0)).abs() < 1.0, "{volume}");
+    assert!(close(max[2], 30.0), "{max:?}");
+}
+
+/// A polar pattern by step about a round edge's axis: 90° a step, three
+/// occurrences stand at 0°, 90° and 180° about the plate's centre, each
+/// overhanging a side; the same angle as the overall one puts them at
+/// 0°, 45° and 90°.
+#[test]
+fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
+    let axis = wb_part::PatternAxis::Edge(wb_part::EdgePick {
+        point: [30.0, 30.0, 10.0],
+        direction: [0.0, 0.0, 1.0],
+    });
+    let polar = |boss, step_mode: bool, angles: &[f32]| PartFeature::PolarPattern {
+        refine: false,
+        originals: vec![boss],
+        axis,
+        angle_deg: 90.0,
+        occurrences: 3,
+        reversed: false,
+        step_mode,
+        angles: angles.to_vec(),
+    };
+    let (mut doc, body, _, boss) = plate_with_boss(58.0, 30.0);
+    let pattern = doc
+        .add_feature_in_body(polar(boss, true, &[]), "Pattern".into(), Some(body))
+        .unwrap();
+    let (volume, min, max) = built_solid(&doc, body);
+    assert!((volume - plate_and_bosses(3.0)).abs() < 1.0, "{volume}");
+    assert!(close(min[0], -1.0) && close(min[1], 0.0), "{min:?}");
+    assert!(close(max[0], 61.0) && close(max[1], 61.0), "{max:?}");
+
+    let data = polar(boss, false, &[]);
+    doc.update_feature_data(pattern, core_document::WorkbenchFeature::to_json(&data))
+        .unwrap();
+    let (_, min, _) = built_solid(&doc, body);
+    assert!(close(min[0], 0.0), "overall 90°: {min:?}");
+
+    // Uneven: 180° then 90° more stands the last at 270°, off the near side.
+    let data = polar(boss, true, &[180.0, 90.0]);
+    doc.update_feature_data(pattern, core_document::WorkbenchFeature::to_json(&data))
+        .unwrap();
+    let (_, min, max) = built_solid(&doc, body);
+    assert!(close(min[0], -1.0) && close(min[1], -1.0), "{min:?}");
+    assert!(close(max[1], 60.0), "{max:?}");
+}
+
+/// The block hollowed to walls of 1, open at the top, its walls joined as
+/// `join` says; `inward` keeps the block's outside, else the walls grow
+/// around it.
+fn thickened_block(inward: bool, join: kernel_api::ThicknessJoin) -> Result<f64, String> {
+    let (mut doc, body) = block();
+    doc.add_feature_in_body(
+        PartFeature::Thickness {
+            value: 1.0,
+            faces: vec![wb_part::FacePick {
+                point: [10.0, 10.0, 10.0],
+                normal: [0.0, 0.0, 1.0],
+            }],
+            inward,
+            join,
+        },
+        "Thickness".into(),
+        Some(body),
+    )
+    .unwrap();
+    built_volume(&doc, body)
+}
+
+/// The intersection join: walls that run on to sharp corners, inward
+/// (the block less an 18 × 18 × 9 cavity) and outward (a 22 × 22 × 11
+/// box less the block). Inward on a convex block, the arc join meets the
+/// intersection's walls as they are.
+#[test]
+fn a_thickness_joins_its_walls_by_intersection() {
+    use kernel_api::ThicknessJoin::Intersection;
+    let inward = thickened_block(true, Intersection).unwrap();
+    assert!((inward - 1084.0).abs() < 1084.0 * 1e-4, "inward {inward}");
+    let outward = thickened_block(false, Intersection).unwrap();
+    assert!(
+        (outward - 1324.0).abs() < 1324.0 * 1e-4,
+        "outward {outward}"
+    );
+}
+
+/// The arc join: outward, the walls round about every edge of the block
+/// below its open top, radius 1: the block grown by a ball of radius 1,
+/// cut flush at the top, less the block itself.
+#[test]
+#[ignore = "kernel: make_thick_solid has no arc join (ogeom-rs#75)"]
+fn a_thickness_joins_its_walls_by_intersection_or_arc() {
+    use kernel_api::ThicknessJoin::Arc;
+    let pi = std::f64::consts::PI;
+    let rounded = 1200.0 + 30.0 * pi + 2.0 / 3.0 * pi;
+    let outward = thickened_block(false, Arc).unwrap();
+    assert!(
+        (outward - rounded).abs() < rounded * 1e-4,
+        "outward {outward}"
+    );
+    let inward = thickened_block(true, Arc).unwrap();
+    assert!((inward - 1084.0).abs() < 1084.0 * 1e-4, "inward {inward}");
+}
+
+/// The block with its vertical edge at x = y = 20 rounded to radius 3,
+/// and a dress-up of the top edges on top of it.
+fn block_with_rounded_corner(dress_up: PartFeature) -> Result<f64, String> {
+    let (mut doc, body) = block();
+    doc.add_feature_in_body(
+        PartFeature::Fillet {
+            radius: 3.0,
+            edges: wb_part::EdgeSel::Edges(vec![wb_part::EdgePick {
+                point: [20.0, 20.0, 5.0],
+                direction: [0.0, 0.0, 1.0],
+            }]),
+            follow_tangent: false,
+        },
+        "Corner".into(),
+        Some(body),
+    )
+    .unwrap();
+    doc.add_feature_in_body(dress_up, "Top".into(), Some(body))
+        .unwrap();
+    built_volume(&doc, body)
+}
+
+/// The top edges the rounded corner joins: the side at x = 20, the round,
+/// and the side at y = 20.
+fn top_chain() -> Vec<wb_part::EdgePick> {
+    let d = 3.0 * std::f32::consts::FRAC_1_SQRT_2;
+    vec![
+        wb_part::EdgePick {
+            point: [20.0, 8.0, 10.0],
+            direction: [0.0, 1.0, 0.0],
+        },
+        wb_part::EdgePick {
+            point: [17.0 + d, 17.0 + d, 10.0],
+            direction: [-1.0, 1.0, 0.0],
+        },
+        wb_part::EdgePick {
+            point: [8.0, 20.0, 10.0],
+            direction: [1.0, 0.0, 0.0],
+        },
+    ]
+}
+
+/// A fillet or a chamfer on one top edge beside the rounded corner takes
+/// the whole tangent chain: the round and the side past it, as picking all
+/// three does; the chain stops at the block's sharp corners.
+#[test]
+fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
+    let fillet = |edges: Vec<wb_part::EdgePick>, follow_tangent| PartFeature::Fillet {
+        radius: 1.0,
+        edges: wb_part::EdgeSel::Edges(edges),
+        follow_tangent,
+    };
+    let chain = top_chain();
+    let one = vec![chain[0]];
+    let all = block_with_rounded_corner(fillet(chain.clone(), false)).unwrap();
+    let followed = block_with_rounded_corner(fillet(one.clone(), true)).unwrap();
+    assert!(
+        (all - followed).abs() < all * 1e-6,
+        "the chain followed {followed}, picked edge by edge {all}"
+    );
+    let rounded_corner = 4000.0 - 9.0 * (1.0 - std::f64::consts::FRAC_PI_4) * 10.0;
+    // Three edges' worth of material off: a round of radius 1 takes
+    // (1 - pi/4) mm² of section along some 31 mm of edge.
+    let taken = rounded_corner - followed;
+    assert!(taken > 0.2146 * 25.0 && taken < 0.2146 * 40.0, "{taken}");
+
+    let chamfer = |edges: Vec<wb_part::EdgePick>, follow_tangent| PartFeature::Chamfer {
+        size: 1.0,
+        mode: wb_part::ChamferMode::EqualDistance,
+        size2: 1.0,
+        angle_deg: 45.0,
+        flip: false,
+        edges: wb_part::EdgeSel::Edges(edges),
+        follow_tangent,
+    };
+    let all = block_with_rounded_corner(chamfer(chain, false)).unwrap();
+    let followed = block_with_rounded_corner(chamfer(one, true)).unwrap();
+    assert!(
+        (all - followed).abs() < all * 1e-6,
+        "the chain followed {followed}, picked edge by edge {all}"
+    );
 }

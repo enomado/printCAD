@@ -894,6 +894,27 @@ pub struct EdgeProbe {
     pub direction: [f64; 3],
 }
 
+/// How a thickness's walls meet across an edge of the solid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ThicknessJoin {
+    /// The walls run on until they meet: sharp corners.
+    #[default]
+    Intersection,
+    /// The walls round about the edge, the wall thickness its radius.
+    Arc,
+}
+
+impl ThicknessJoin {
+    pub const ALL: [ThicknessJoin; 2] = [ThicknessJoin::Intersection, ThicknessJoin::Arc];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ThicknessJoin::Intersection => "Intersection",
+            ThicknessJoin::Arc => "Arc",
+        }
+    }
+}
+
 /// Chamfer sizing, mirroring the three standard input styles.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ChamferSpec {
@@ -917,9 +938,7 @@ pub enum BoolKind {
 pub enum SolidOp {
     /// Start the chain from a snapshot of another solid, in the native
     /// format `SolidBuildResult::brep_blob` carries. Only ever the first op.
-    Shape {
-        brep: Vec<u8>,
-    },
+    Shape { brep: Vec<u8> },
     Sweep {
         profile: Profile,
         kind: SweepKind,
@@ -953,14 +972,22 @@ pub enum SolidOp {
         placement: Placement,
         op: BooleanOp,
     },
+    /// Round the selected edges; with `follow_tangent`, every edge meeting
+    /// one of them tangentially joins the selection, and so on along the
+    /// chain.
     Fillet {
         radius: f64,
         edges: EdgeSelection,
+        #[serde(default)]
+        follow_tangent: bool,
     },
+    /// Bevel the selected edges, taking tangent chains as a fillet does.
     Chamfer {
         spec: ChamferSpec,
         flip: bool,
         edges: EdgeSelection,
+        #[serde(default)]
+        follow_tangent: bool,
     },
     /// Tilt the selected faces by `angle_deg` about their intersection with
     /// the neutral plane.
@@ -979,6 +1006,9 @@ pub enum SolidOp {
         value: f64,
         open_faces: Vec<[f64; 3]>,
         inward: bool,
+        /// How the walls meet where the solid's faces meet.
+        #[serde(default)]
+        join: ThicknessJoin,
     },
     /// Re-apply earlier steps' tool solids (or the whole current solid when
     /// `originals` is empty) under each transform, fusing additive tools and
