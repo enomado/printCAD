@@ -157,6 +157,7 @@ fn summary(sketch: &Sketch) -> (Vec<(i64, i64)>, Vec<&'static str>, Vec<String>)
             GeometryElement::Arc(_) => Some("arc"),
             GeometryElement::Ellipse(_) => Some("ellipse"),
             GeometryElement::BSpline(_) => Some("bspline"),
+            GeometryElement::Conic(_) => Some("conic"),
         })
         .collect();
     curves.sort();
@@ -524,5 +525,21 @@ fn joining_a_polyline_leaves_one_spline_and_replays() {
     let done = summary(&sketch);
     assert_eq!(done.1, ["bspline"], "{done:?}");
     assert!(s.recorded.iter().any(|r| r.id == "sketch.join"));
+    assert_replays(&s.recorded, before, id, &done);
+}
+
+#[test]
+fn conic_arcs_replay_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
+        s.click(x, y, "sketch.ellipse:parabola");
+    }
+    for (x, y) in [(10.0, 1.0), (13.0, 1.0), (15.0, 3.0), (18.0, -1.0)] {
+        s.click(x, y, "sketch.ellipse:hyperbola");
+    }
+    s.click(1.0, 1.05, "sketch.split");
+    s.key(KeyCode::A, None);
+    let done = summary(&s.sketch(id));
+    assert_eq!(done.1, ["conic", "conic", "conic"], "{done:?}");
     assert_replays(&s.recorded, before, id, &done);
 }

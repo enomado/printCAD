@@ -359,6 +359,17 @@ enum ResidualSpec {
     },
     /// p - (s + e)/2 (2 residuals).
     Midpoint { p: usize, s: usize, e: usize },
+    /// A parabola's or hyperbola's end point on its curve: the curve's
+    /// equation over its gradient, ≈ signed distance. The shape (axis,
+    /// minor) is fixed; the point and the curve's centre move.
+    OnConic {
+        p: usize,
+        c: usize,
+        axis_x: f64,
+        axis_y: f64,
+        minor: f64,
+        hyperbola: bool,
+    },
 }
 
 impl ResidualSpec {
@@ -493,6 +504,29 @@ impl ResidualSpec {
                 out.push(v[p] - (v[s] + v[e]) * 0.5);
                 out.push(v[p + 1] - (v[s + 1] + v[e + 1]) * 0.5);
             }
+            ResidualSpec::OnConic {
+                p,
+                c,
+                axis_x,
+                axis_y,
+                minor,
+                hyperbola,
+            } => {
+                let a = axis_x.hypot(axis_y).max(MIN_LEN);
+                let (ux, uy) = (axis_x / a, axis_y / a);
+                let (dx, dy) = (v[p] - v[c], v[p + 1] - v[c + 1]);
+                let x = dx * ux + dy * uy;
+                let y = -dx * uy + dy * ux;
+                let distance = if hyperbola {
+                    let (a2, b2) = (a * a, minor.max(MIN_LEN).powi(2));
+                    let f = x * x / a2 - y * y / b2 - 1.0;
+                    let g = ((2.0 * x / a2).powi(2) + (2.0 * y / b2).powi(2)).sqrt();
+                    f / g.max(MIN_LEN)
+                } else {
+                    (x - y * y / (4.0 * a)) / (1.0 + (y / (2.0 * a)).powi(2)).sqrt()
+                };
+                out.push(distance);
+            }
         }
     }
 }
@@ -613,7 +647,8 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
             // shape and spline control points carry no residuals (yet).
             GeometryElement::Line(_)
             | GeometryElement::Ellipse(_)
-            | GeometryElement::BSpline(_) => {}
+            | GeometryElement::BSpline(_)
+            | GeometryElement::Conic(_) => {}
         }
     }
     // External geometry is where the solid's edge put it: its points and
@@ -942,6 +977,8 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         }
     }
 
+    specs.extend(conic_end_residuals(sketch, &point_var));
+
     let residual_len = specs.iter().map(ResidualSpec::dim).sum();
     let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
     System {
@@ -952,6 +989,37 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         specs,
         residual_len,
     }
+}
+
+/// A parabola's or hyperbola's arc ends on its curve whatever else holds:
+/// both ends of every one join every solve, so dragging an end slides it
+/// along the curve and dragging the centre takes the arc along.
+fn conic_end_residuals(
+    sketch: &Sketch,
+    point_var: &impl Fn(Uuid) -> Option<usize>,
+) -> Vec<ResidualSpec> {
+    let mut specs = Vec::new();
+    for element in &sketch.geometry {
+        let GeometryElement::Conic(conic) = element else {
+            continue;
+        };
+        let Some(c) = point_var(conic.center) else {
+            continue;
+        };
+        for end in [conic.start, conic.end] {
+            if let Some(p) = point_var(end) {
+                specs.push(ResidualSpec::OnConic {
+                    p,
+                    c,
+                    axis_x: f64::from(conic.axis.x),
+                    axis_y: f64::from(conic.axis.y),
+                    minor: f64::from(conic.minor),
+                    hyperbola: conic.kind == crate::sketch::ConicKind::Hyperbola,
+                });
+            }
+        }
+    }
+    specs
 }
 
 /// Resolve an optional point reference: absent is fine (measure from the
@@ -1160,7 +1228,8 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
             }
             GeometryElement::Line(_)
             | GeometryElement::Ellipse(_)
-            | GeometryElement::BSpline(_) => {}
+            | GeometryElement::BSpline(_)
+            | GeometryElement::Conic(_) => {}
         }
     }
 }

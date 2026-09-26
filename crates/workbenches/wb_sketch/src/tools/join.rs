@@ -60,6 +60,12 @@ fn chain_curve(sketch: &Sketch, geom: &GeometryElement) -> Option<(Uuid, Uuid, V
             points[n] = f(at(ends.end)?);
             Some((ends.start, ends.end, points))
         }
+        GeometryElement::Conic(c) => {
+            let mut points: Vec<[f64; 2]> = c.points(sketch, n)?.into_iter().map(f).collect();
+            points[0] = f(at(c.start)?);
+            points[n] = f(at(c.end)?);
+            Some((c.start, c.end, points))
+        }
         GeometryElement::BSpline(b) if !b.periodic => {
             let (first, last) = (*b.control_points.first()?, *b.control_points.last()?);
             let points = b.points(sketch, n)?.into_iter().map(f).collect();
@@ -158,7 +164,7 @@ pub fn join(sketch: &mut Sketch, selected: &HashSet<Uuid>, tolerance: f32) -> To
     }
     if curves.len() != picked {
         return ToolEffect::log(
-            "Only lines, arcs, arcs of ellipses and open splines join; leave the rest out",
+            "Only lines, arcs, arcs of conics and open splines join; leave the rest out",
         );
     }
     let Some(Walk {

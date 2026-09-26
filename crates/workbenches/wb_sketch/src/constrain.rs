@@ -37,7 +37,7 @@ impl SelectionShape {
                 GeometryElement::Line(_) => shape.lines.push(id),
                 GeometryElement::Circle(_) | GeometryElement::Arc(_) => shape.circles.push(id),
                 GeometryElement::Ellipse(_) => shape.ellipses.push(id),
-                GeometryElement::BSpline(_) => {}
+                GeometryElement::BSpline(_) | GeometryElement::Conic(_) => {}
             }
         }
         // The origin and the axes hold no entry in `geometry`, but they take

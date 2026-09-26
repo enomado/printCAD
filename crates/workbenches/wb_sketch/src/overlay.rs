@@ -381,6 +381,18 @@ fn push_element(
                 );
             }
         }
+        GeometryElement::Conic(c) => {
+            if let Some(points) = c.points(sketch, CIRCLE_SEGMENTS) {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    points.into_iter(),
+                    color,
+                    thickness,
+                    dashed,
+                );
+            }
+        }
         GeometryElement::BSpline(b) => {
             let ctrl: Option<Vec<Vec2D>> = b
                 .control_points
@@ -528,6 +540,18 @@ fn push_ghost(
             // arc too, and for a mirror, which turns an arc's direction.
             GeometryElement::Ellipse(e) => {
                 if let Some(points) = e.points(sketch, CIRCLE_SEGMENTS) {
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        points.into_iter().map(|p| xf.apply(p)),
+                        pal.preview,
+                        1.5,
+                        false,
+                    );
+                }
+            }
+            GeometryElement::Conic(c) => {
+                if let Some(points) = c.points(sketch, CIRCLE_SEGMENTS) {
                     push_polyline(
                         &mut out.lines,
                         proj,
@@ -1141,6 +1165,87 @@ fn push_preview(
                     .copied()
                     .unwrap_or(*start);
                 push_point_marker(out, proj, on_rim, pal.preview);
+            }
+        }
+        ToolState::ConicAt { center, .. } => {
+            if let Some(c) = pos(center) {
+                push_point_marker(out, proj, c, pal.preview);
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [c, cursor].into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+            }
+        }
+        ToolState::ConicAxis { kind, center, axis } => {
+            if let Some(c) = pos(center) {
+                let minor = match kind {
+                    crate::sketch::ConicKind::Parabola => Some(0.0),
+                    crate::sketch::ConicKind::Hyperbola => {
+                        crate::conic::hyperbola_minor(c, c + *axis, cursor)
+                    }
+                };
+                if let Some(shape) =
+                    minor.and_then(|m| crate::conic::Shape::new(*kind, c, *axis, m))
+                {
+                    let t = shape.param([f64::from(cursor.x), f64::from(cursor.y)]);
+                    let reach = t.abs().max(1.0) * 1.5;
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        shape.sample(-reach, reach, CIRCLE_SEGMENTS).into_iter(),
+                        pal.preview,
+                        1.0,
+                        true,
+                    );
+                    let [x, y] = shape.point(t);
+                    push_point_marker(out, proj, Vec2D::new(x as f32, y as f32), pal.preview);
+                }
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [c, c + *axis].into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+                push_point_marker(out, proj, c, pal.preview);
+            }
+        }
+        ToolState::ConicStart {
+            kind,
+            center,
+            axis,
+            minor,
+            start,
+        } => {
+            if let Some(shape) =
+                pos(center).and_then(|c| crate::conic::Shape::new(*kind, c, *axis, *minor))
+            {
+                let param = |p: Vec2D| shape.param([f64::from(p.x), f64::from(p.y)]);
+                let (t0, t1) = (param(*start), param(cursor));
+                let reach = t0.abs().max(t1.abs()).max(1.0) * 1.5;
+                // The whole curve faintly, the arc it will keep firmly.
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    shape.sample(-reach, reach, CIRCLE_SEGMENTS).into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    shape.sample(t0, t1, CIRCLE_SEGMENTS).into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                push_point_marker(out, proj, *start, pal.preview);
             }
         }
         ToolState::BSplineDraw { points } => {

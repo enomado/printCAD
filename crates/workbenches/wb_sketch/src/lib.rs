@@ -3,6 +3,7 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
 mod commands;
+pub mod conic;
 mod constrain;
 mod dxf;
 mod external;
@@ -460,6 +461,8 @@ fn tool_icon(tool: &str) -> &'static str {
         "sketch.ellipse3" => "ellipse-3pt",
         "sketch.polyline" => "polyline",
         "sketch.ellipse_arc" => "arc-of-ellipse",
+        "sketch.parabola" => "arc-of-parabola",
+        "sketch.hyperbola" => "arc-of-hyperbola",
         "sketch.rect_center" | "sketch.rect_center3" => "rectangle-centered",
         "sketch.rect3" => "rectangle",
         "sketch.rect_frame" => "offset-geometry",
@@ -486,6 +489,8 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.ellipse" => ("Ellipse", "Click the center"),
         "sketch.ellipse3" => ("Ellipse", "Click one end of the major axis"),
         "sketch.ellipse_arc" => ("Arc of ellipse", "Click the center"),
+        "sketch.parabola" => ("Arc of parabola", "Click the vertex"),
+        "sketch.hyperbola" => ("Arc of hyperbola", "Click the center"),
         "sketch.bspline" => ("B-spline", "Click its first point"),
         "sketch.rect" => ("Rectangle", "Click the first corner"),
         "sketch.rect_center" | "sketch.rect_center3" => ("Rectangle", "Click the center"),
@@ -2088,6 +2093,8 @@ impl Workbench for SketchWorkbench {
                     ToolVariant::new("center", "Center and axes", "ellipse"),
                     ToolVariant::new("3pt", "Three points", "ellipse-3pt"),
                     ToolVariant::new("arc", "Arc of ellipse", "arc-of-ellipse"),
+                    ToolVariant::new("parabola", "Arc of parabola", "arc-of-parabola"),
+                    ToolVariant::new("hyperbola", "Arc of hyperbola", "arc-of-hyperbola"),
                 ],
                 "sketch.bspline" => vec![
                     ToolVariant::new("open", "Open", "bspline"),
@@ -3192,6 +3199,8 @@ fn canonical_tool(tool: &str) -> Option<String> {
         ("sketch.circle", Some("3pt")) => "sketch.circle3".to_string(),
         ("sketch.ellipse", Some("3pt")) => "sketch.ellipse3".to_string(),
         ("sketch.ellipse", Some("arc")) => "sketch.ellipse_arc".to_string(),
+        ("sketch.ellipse", Some("parabola")) => "sketch.parabola".to_string(),
+        ("sketch.ellipse", Some("hyperbola")) => "sketch.hyperbola".to_string(),
         ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
         ("sketch.rect", Some("rounded")) => "sketch.rect_rounded".to_string(),
         ("sketch.rect", Some("3pt")) => "sketch.rect3".to_string(),
@@ -3439,9 +3448,9 @@ impl SketchWorkbench {
                 GeometryElement::Line(l) => vec![l.start, l.end],
                 GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                 GeometryElement::Circle(c) => vec![c.center],
-                curve @ (GeometryElement::Ellipse(_) | GeometryElement::BSpline(_)) => {
-                    Sketch::curve_point_ids(curve)
-                }
+                curve @ (GeometryElement::Ellipse(_)
+                | GeometryElement::BSpline(_)
+                | GeometryElement::Conic(_)) => Sketch::curve_point_ids(curve),
             })
             .collect();
         self.selected.clear();
@@ -3646,9 +3655,9 @@ impl SketchWorkbench {
                     GeometryElement::Line(l) => vec![l.start, l.end],
                     GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                     GeometryElement::Circle(c) => vec![c.center],
-                    curve @ (GeometryElement::Ellipse(_) | GeometryElement::BSpline(_)) => {
-                        Sketch::curve_point_ids(curve)
-                    }
+                    curve @ (GeometryElement::Ellipse(_)
+                    | GeometryElement::BSpline(_)
+                    | GeometryElement::Conic(_)) => Sketch::curve_point_ids(curve),
                 };
                 if refs.iter().any(|r| free.contains(r)) {
                     self.selected.insert(g.id());
@@ -4303,6 +4312,8 @@ pub(crate) fn is_draw_tool(tool: &str) -> bool {
             | "sketch.ellipse"
             | "sketch.ellipse3"
             | "sketch.ellipse_arc"
+            | "sketch.parabola"
+            | "sketch.hyperbola"
             | "sketch.bspline"
             | "sketch.rect"
             | "sketch.rect_center"
@@ -4361,6 +4372,9 @@ fn element_fully_inside(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max
         },
         // Sampled boundary points all inside is exact enough for selection.
         GeometryElement::Ellipse(e) => e
+            .points(sketch, 32)
+            .is_some_and(|points| points.into_iter().all(inside)),
+        GeometryElement::Conic(c) => c
             .points(sketch, 32)
             .is_some_and(|points| points.into_iter().all(inside)),
         // The spline lies in its control polygon's convex hull, so all

@@ -26,7 +26,7 @@ pub use join::{JOIN_TOLERANCE, join};
 pub use modify::{next_stroke_crossing, trim_preview};
 pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
 
-use crate::sketch::{ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
+use crate::sketch::{ConicKind, ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::{self, SnapTarget};
 
 /// In-progress state of the active drawing tool.
@@ -107,6 +107,26 @@ pub enum ToolState {
         center: SnapTarget,
         major: Vec2D,
         ratio: f32,
+        start: Vec2D,
+    },
+    /// Arc of parabola or hyperbola: the parabola's vertex or the
+    /// hyperbola's centre picked.
+    ConicAt { kind: ConicKind, center: SnapTarget },
+    /// Arc of parabola or hyperbola: the axis picked (the focus, or the
+    /// branch's vertex), waiting for the arc's start, which on a hyperbola
+    /// also sets how wide it opens.
+    ConicAxis {
+        kind: ConicKind,
+        center: SnapTarget,
+        axis: Vec2D,
+    },
+    /// Arc of parabola or hyperbola: the curve and the arc's start set,
+    /// waiting for its end.
+    ConicStart {
+        kind: ConicKind,
+        center: SnapTarget,
+        axis: Vec2D,
+        minor: f32,
         start: Vec2D,
     },
     /// Polyline: waiting for the next segment's end. `first` is the chain's
@@ -240,6 +260,30 @@ impl ToolState {
             ToolState::EllipseArcStart { .. } => {
                 Some("Arc of ellipse: click the arc's end (counter-clockwise)")
             }
+            ToolState::ConicAt {
+                kind: ConicKind::Parabola,
+                ..
+            } => Some("Arc of parabola: click the focus"),
+            ToolState::ConicAt {
+                kind: ConicKind::Hyperbola,
+                ..
+            } => Some("Arc of hyperbola: click the vertex of the branch"),
+            ToolState::ConicAxis {
+                kind: ConicKind::Parabola,
+                ..
+            } => Some("Arc of parabola: click the arc's start"),
+            ToolState::ConicAxis {
+                kind: ConicKind::Hyperbola,
+                ..
+            } => Some("Arc of hyperbola: click the arc's start beyond the vertex"),
+            ToolState::ConicStart {
+                kind: ConicKind::Parabola,
+                ..
+            } => Some("Arc of parabola: click the arc's end"),
+            ToolState::ConicStart {
+                kind: ConicKind::Hyperbola,
+                ..
+            } => Some("Arc of hyperbola: click the arc's end"),
             ToolState::PolylineFrom { arc: false, .. } => {
                 Some("Polyline: click the next point; M for arcs, right-click or Esc to finish")
             }
@@ -445,6 +489,8 @@ pub fn handle_click(
         "sketch.ellipse3" => draw::ellipse3(state, sketch, cursor, snap_tol),
         "sketch.ellipse_arc" => draw::ellipse_arc(state, sketch, cursor, snap_tol),
         "sketch.bspline" => draw::bspline(state, sketch, cursor, snap_tol),
+        "sketch.parabola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Parabola),
+        "sketch.hyperbola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Hyperbola),
         "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params.polygon_sides),
         "sketch.slot" => draw::slot(state, sketch, cursor, snap_tol, params.slot_width),
         "sketch.arc_slot" => draw::arc_slot(state, sketch, cursor, snap_tol, params.slot_width),

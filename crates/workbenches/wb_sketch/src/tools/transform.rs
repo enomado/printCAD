@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use super::{ToolEffect, ToolState};
 use crate::sketch::{
-    Arc, BSpline, Circle, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
+    Arc, BSpline, Circle, Conic, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch,
+    Vec2D,
 };
 use crate::snap;
 
@@ -131,6 +132,10 @@ pub(super) fn apply_to_selection(
             GeometryElement::Arc(a) if selected.contains(&a.id) => a.radius *= scale,
             GeometryElement::Ellipse(e) if selected.contains(&e.id) => {
                 e.major = xf.apply_vec(e.major);
+            }
+            GeometryElement::Conic(c) if selected.contains(&c.id) => {
+                c.axis = xf.apply_vec(c.axis);
+                c.minor *= scale;
             }
             _ => {}
         }
@@ -382,6 +387,17 @@ pub fn copy_mapped(
                 }
                 .with_shape_of(b),
             ),
+            // A mirror turns the curve over: the axis stays, the ends swap
+            // sides of it, and the arc keeps them.
+            GeometryElement::Conic(c) => GeometryElement::Conic(Conic {
+                id: Uuid::new_v4(),
+                center: map[&c.center],
+                axis: xf.apply_vec(c.axis),
+                minor: c.minor * scale,
+                start: map[&c.start],
+                end: map[&c.end],
+                ..c.clone()
+            }),
             GeometryElement::Point(_) => continue,
         };
         let flag = source.is_construction(geom.id());

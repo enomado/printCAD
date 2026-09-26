@@ -182,6 +182,7 @@ impl Sketch {
                 None => vec![e.center],
             },
             GeometryElement::BSpline(b) => b.point_ids(),
+            GeometryElement::Conic(c) => vec![c.center, c.start, c.end],
         }
     }
 
@@ -603,6 +604,7 @@ pub enum GeometryElement {
     Circle(Circle),
     Ellipse(Ellipse),
     BSpline(BSpline),
+    Conic(Conic),
 }
 
 impl GeometryElement {
@@ -614,6 +616,7 @@ impl GeometryElement {
             GeometryElement::Circle(c) => c.id,
             GeometryElement::Ellipse(e) => e.id,
             GeometryElement::BSpline(b) => b.id,
+            GeometryElement::Conic(c) => c.id,
         }
     }
 }
@@ -862,6 +865,59 @@ impl BSpline {
             }
         }
         ids
+    }
+}
+
+/// Which curve a conic arc is an arc of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConicKind {
+    Parabola,
+    Hyperbola,
+}
+
+/// An arc of a parabola, or of one branch of a hyperbola, between two
+/// points held on it. In the curve's own frame, `axis` along x and its
+/// left-hand perpendicular along y, the parabola is `(t²/4f, t)` from its
+/// vertex, `f` the focal distance, and the hyperbola's branch
+/// `(a·cosh t, b·sinh t)` from its centre. The shape (`axis`, `minor`)
+/// holds still in the solver; the centre and the end points move.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conic {
+    pub id: Uuid,
+    pub kind: ConicKind,
+    /// The parabola's vertex; the hyperbola's centre.
+    pub center: Uuid,
+    /// Along the axis, the way the curve opens: for a parabola from the
+    /// vertex to the focus (its length the focal distance), for a
+    /// hyperbola from the centre to the vertex of the branch (its length
+    /// the semi-major axis).
+    pub axis: Vec2D,
+    /// The hyperbola's semi-minor axis; a parabola has none.
+    #[serde(default)]
+    pub minor: f32,
+    /// Where the arc starts and ends: points on the curve.
+    pub start: Uuid,
+    pub end: Uuid,
+}
+
+impl Conic {
+    pub fn new(
+        kind: ConicKind,
+        center: Uuid,
+        axis: Vec2D,
+        minor: f32,
+        start: Uuid,
+        end: Uuid,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            kind,
+            center,
+            axis,
+            minor,
+            start,
+            end,
+        }
     }
 }
 

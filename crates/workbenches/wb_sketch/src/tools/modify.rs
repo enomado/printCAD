@@ -699,6 +699,9 @@ pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect
 // ------------------------------------------------------------------ split
 
 pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
+    if let Some(effect) = split_conic(sketch, cursor, tol) {
+        return effect;
+    }
     let Some(id) = curve_under_cursor(sketch, cursor, tol, false) else {
         return ToolEffect::log("Click a line or an arc to split");
     };
@@ -752,6 +755,51 @@ pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect 
         }
         Prim::Circle { .. } => ToolEffect::none(),
     }
+}
+
+/// Split the arc of a parabola or hyperbola under the cursor, when one is
+/// nearer than any line or arc: two arcs of the same curve, sharing its
+/// centre and meeting at a new point on it. `None` when no such arc is the
+/// nearest curve there.
+fn split_conic(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> Option<ToolEffect> {
+    let distance = |g: &GeometryElement| snap::distance_to_element(sketch, g, cursor);
+    let (id, d) = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Conic(_)))
+        .filter(|g| !sketch.is_external(g.id()))
+        .filter_map(|g| Some((g.id(), distance(g)?)))
+        .filter(|(_, d)| *d <= tol)
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    let nearer = curve_under_cursor(sketch, cursor, tol, false)
+        .and_then(|other| distance(sketch.get_geometry(other)?))
+        .is_some_and(|other| other < d);
+    if nearer {
+        return None;
+    }
+    let Some(GeometryElement::Conic(conic)) = sketch.get_geometry(id).cloned() else {
+        return None;
+    };
+    let (shape, t0, t1) = conic.params(sketch)?;
+    let t = shape.param([f64::from(cursor.x), f64::from(cursor.y)]);
+    let (lo, hi) = (t0.min(t1), t0.max(t1));
+    let eps = (hi - lo) * f64::from(SPAN_EPS);
+    if !(lo + eps..=hi - eps).contains(&t) {
+        return Some(ToolEffect::log("Too close to an end to split"));
+    }
+    let [x, y] = shape.point(t);
+    let middle = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
+        x as f32, y as f32,
+    ))));
+    if let Some(GeometryElement::Conic(first)) = sketch.get_geometry_mut(id) {
+        first.end = middle;
+    }
+    sketch.add_geometry(GeometryElement::Conic(crate::sketch::Conic {
+        id: Uuid::new_v4(),
+        start: middle,
+        ..conic
+    }));
+    Some(ToolEffect::changed("Split arc"))
 }
 
 // ----------------------------------------------------------------- offset

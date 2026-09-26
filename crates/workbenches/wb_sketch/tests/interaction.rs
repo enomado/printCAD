@@ -3336,3 +3336,53 @@ fn join_lights_up_for_two_curves_and_leaves_a_kink_alone() {
     assert_eq!((h.counts().1, splines), (2, 0));
     assert!(h.point_at(1.0, 1.0) && h.point_at(15.0, 3.0));
 }
+
+#[test]
+fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
+        h.click(x, y, "sketch.ellipse:parabola");
+    }
+    // Its ends at (-3, 3) and (5, 3): a line snapped to both closes it.
+    h.click(5.0, 3.0, "sketch.line");
+    h.click(-3.0, 3.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    for (x, y) in [(10.0, 1.0), (13.0, 1.0), (15.0, 3.0), (18.0, -1.0)] {
+        h.click(x, y, "sketch.ellipse:hyperbola");
+    }
+    let sketch = h.sketch();
+    let conics = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Conic(_)))
+        .count();
+    assert_eq!(conics, 2);
+    assert!(h.point_at(15.0, 3.0) && h.point_at(15.0, -1.0));
+    let wires = wb_sketch::profile::extract_wires(&sketch);
+    assert!(
+        matches!(wires, Err(wb_sketch::profile::ProfileError::OpenAt(_))),
+        "the hyperbola's arc is still open"
+    );
+    h.click(15.0, 3.0, "sketch.line");
+    h.click(15.0, -1.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 2);
+
+    // Dragging an end slides it along its curve.
+    h.click(15.0, 3.0, "sketch.select");
+    h.mouse_move(16.0, 5.0, "sketch.select");
+    h.release(16.0, 5.0, "sketch.select");
+    let sketch = h.sketch();
+    for g in &sketch.geometry {
+        if let GeometryElement::Conic(c) = g {
+            let shape = wb_sketch::conic::Shape::of(c, &sketch).unwrap();
+            for id in [c.start, c.end] {
+                let p = sketch.point_position(id).unwrap();
+                let miss = shape.distance([f64::from(p.x), f64::from(p.y)]).abs();
+                assert!(miss < 1e-3, "an end is {miss} off its curve");
+            }
+        }
+    }
+}

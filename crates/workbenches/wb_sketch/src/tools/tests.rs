@@ -2818,3 +2818,170 @@ fn join_refuses_branches_gaps_and_circles() {
     assert!(!join(&mut sketch, &with_circle, 0.01).changed);
     assert_eq!(arcs(&sketch), 1, "nothing was touched");
 }
+
+fn conic_of(sketch: &Sketch) -> crate::sketch::Conic {
+    sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Conic(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("a conic")
+}
+
+/// How far each end of every conic arc is from its curve.
+fn worst_end_miss(sketch: &Sketch) -> f64 {
+    sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Conic(c) => Some(c),
+            _ => None,
+        })
+        .flat_map(|c| {
+            let shape = crate::conic::Shape::of(c, sketch).unwrap();
+            [c.start, c.end].map(|id| {
+                let p = sketch.point_position(id).unwrap();
+                shape.distance([f64::from(p.x), f64::from(p.y)]).abs()
+            })
+        })
+        .fold(0.0, f64::max)
+}
+
+#[test]
+fn an_arc_of_parabola_from_vertex_focus_and_two_ends() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let tool = "sketch.parabola";
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0)] {
+        let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(x, y), 0.1);
+        assert!(!fx.changed);
+    }
+    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(5.0, 7.0), 0.1);
+    assert!(fx.changed && state.is_idle());
+    assert_eq!(points(&sketch), 3, "vertex and two ends");
+    let conic = conic_of(&sketch);
+    assert_eq!(conic.kind, crate::sketch::ConicKind::Parabola);
+    // The ends land on the curve level with the clicks across its axis.
+    let at = |id| sketch.point_position(id).unwrap();
+    assert!((at(conic.start) - Vec2D::new(-3.0, 3.0)).to_glam().length() < 1e-5);
+    assert!((at(conic.end) - Vec2D::new(5.0, 3.0)).to_glam().length() < 1e-5);
+    assert!(worst_end_miss(&sketch) < 1e-6);
+
+    // Closed by a line, it is a profile of an exact rational quadratic.
+    line_between(&mut sketch, conic.end, conic.start);
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(wires[0].segments.iter().any(|s| matches!(
+        s,
+        kernel_api::ProfileSegment::Nurbs { degree: 2, control_points, weights, .. }
+            if control_points.len() == 3 && weights.is_empty()
+    )));
+
+    // Its vertex dragged, the ends stay on the curve.
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(conic.center) {
+        p.position = Vec2D::new(2.0, 0.0);
+    }
+    crate::solver::solve_holding(&mut sketch, &[conic.center]);
+    assert!(
+        worst_end_miss(&sketch) < 1e-4,
+        "{}",
+        worst_end_miss(&sketch)
+    );
+}
+
+#[test]
+fn an_arc_of_hyperbola_opens_as_wide_as_its_start_says() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let tool = "sketch.hyperbola";
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.1);
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(4.0, 1.0), 0.1);
+    // Inside the vertex no branch passes: the click is ignored.
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(3.0, 3.0), 0.1);
+    assert!(matches!(state, ToolState::ConicAxis { .. }));
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(6.0, 3.0), 0.1);
+    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(9.0, -1.0), 0.1);
+    assert!(fx.changed);
+    let conic = conic_of(&sketch);
+    assert!((conic.minor - 1.5).abs() < 1e-4, "{}", conic.minor);
+    let at = |id| sketch.point_position(id).unwrap();
+    assert!((at(conic.start) - Vec2D::new(6.0, 3.0)).to_glam().length() < 1e-4);
+    assert!((at(conic.end) - Vec2D::new(6.0, -1.0)).to_glam().length() < 1e-4);
+    line_between(&mut sketch, conic.end, conic.start);
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(wires[0].segments.iter().any(|s| matches!(
+        s,
+        kernel_api::ProfileSegment::Nurbs { weights, .. } if weights.len() == 3 && weights[1] > 1.0
+    )));
+}
+
+#[test]
+fn a_conic_arc_splits_into_two_of_the_same_curve() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
+        handle_click(
+            &mut state,
+            "sketch.parabola",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+        );
+    }
+    // At the vertex, right on the curve.
+    let fx = handle_click(
+        &mut state,
+        "sketch.split",
+        &mut sketch,
+        Vec2D::new(1.0, 1.05),
+        0.1,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let halves: Vec<crate::sketch::Conic> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Conic(c) => Some(c.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(halves.len(), 2);
+    assert_eq!(halves[0].center, halves[1].center);
+    assert_eq!(halves[0].end, halves[1].start);
+    let middle = sketch.point_position(halves[0].end).unwrap();
+    assert!((middle - Vec2D::new(1.0, 1.0)).to_glam().length() < 1e-4);
+    assert!(worst_end_miss(&sketch) < 1e-6);
+}
+
+#[test]
+fn a_turned_or_mirrored_conic_keeps_its_ends_on_it() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for (x, y) in [(1.0, 1.0), (4.0, 1.0), (6.0, 3.0), (9.0, -1.0)] {
+        handle_click(
+            &mut state,
+            "sketch.hyperbola",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+        );
+    }
+    let all: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
+    let turn = Similarity::rotation_about(glam::Vec2::new(2.0, 2.0), 0.7);
+    let copies = copy_from(&sketch.clone(), &mut sketch, &all, &turn);
+    assert!(copies > 0);
+    let mirror = Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
+    copy_from(&sketch.clone(), &mut sketch, &all, &mirror);
+    let conics = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Conic(_)))
+        .count();
+    assert_eq!(conics, 3);
+    assert!(
+        worst_end_miss(&sketch) < 1e-4,
+        "{}",
+        worst_end_miss(&sketch)
+    );
+}

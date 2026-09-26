@@ -7,7 +7,8 @@ use super::ToolParams;
 use super::{ToolEffect, ToolState, materialize, materialize_on_curve, short};
 use crate::geom2d;
 use crate::sketch::{
-    Arc, BSpline, Circle, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
+    Arc, BSpline, Circle, Conic, ConicKind, ConstraintKind, Ellipse, GeometryElement, Line, Point,
+    Sketch, Vec2D,
 };
 use crate::snap::{self, AxisSnap, SnapTarget, arc_angles};
 use crate::spline;
@@ -1066,6 +1067,107 @@ pub(super) fn bspline(
         }
     }
     ToolEffect::none()
+}
+
+/// Arc of a parabola or a hyperbola: the vertex (parabola) or centre
+/// (hyperbola), then the focus or the branch's vertex, which set the axis;
+/// then the arc's start, which on a hyperbola also sets how wide it opens,
+/// and its end. The end points are points held on the curve.
+pub(super) fn conic(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+    kind: ConicKind,
+) -> ToolEffect {
+    use crate::conic::{Shape, hyperbola_minor};
+    let on_curve = |shape: &Shape, p: Vec2D| {
+        let t = shape.param([f64::from(p.x), f64::from(p.y)]);
+        let [x, y] = shape.point(t);
+        (t, Vec2D::new(x as f32, y as f32))
+    };
+    match *state {
+        ToolState::ConicAt { kind, center } => {
+            let Some(c) = center.position(sketch) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let axis = cursor - c;
+            if axis.to_glam().length() < 1e-6 {
+                return ToolEffect::none();
+            }
+            *state = ToolState::ConicAxis { kind, center, axis };
+            ToolEffect::none()
+        }
+        ToolState::ConicAxis { kind, center, axis } => {
+            let Some(c) = center.position(sketch) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let minor = match kind {
+                ConicKind::Parabola => 0.0,
+                ConicKind::Hyperbola => match hyperbola_minor(c, c + axis, cursor) {
+                    Some(b) => b,
+                    None => return ToolEffect::none(), // not beyond the vertex
+                },
+            };
+            let Some(shape) = Shape::new(kind, c, axis, minor) else {
+                return ToolEffect::none();
+            };
+            let (_, start) = on_curve(&shape, cursor);
+            *state = ToolState::ConicStart {
+                kind,
+                center,
+                axis,
+                minor,
+                start,
+            };
+            ToolEffect::none()
+        }
+        ToolState::ConicStart {
+            kind,
+            center,
+            axis,
+            minor,
+            start,
+        } => {
+            let Some(c) = center.position(sketch) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let Some(shape) = Shape::new(kind, c, axis, minor) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let (t0, start) = on_curve(&shape, start);
+            let (t1, end) = on_curve(&shape, cursor);
+            if (t1 - t0).abs() < 1e-4 {
+                return ToolEffect::none();
+            }
+            let center_id = materialize(sketch, center);
+            let start_id = sketch.add_geometry(GeometryElement::Point(Point::new(start)));
+            let end_id = sketch.add_geometry(GeometryElement::Point(Point::new(end)));
+            sketch.add_geometry(GeometryElement::Conic(Conic::new(
+                kind, center_id, axis, minor, start_id, end_id,
+            )));
+            *state = ToolState::Idle;
+            ToolEffect::changed(match kind {
+                ConicKind::Parabola => format!(
+                    "Arc of parabola, focal distance {:.2}",
+                    axis.to_glam().length()
+                ),
+                ConicKind::Hyperbola => format!(
+                    "Arc of hyperbola, semi-axes {:.2} × {minor:.2}",
+                    axis.to_glam().length()
+                ),
+            })
+        }
+        _ => {
+            let center = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            *state = ToolState::ConicAt { kind, center };
+            ToolEffect::none()
+        }
+    }
 }
 
 /// The spline the tool's clicks so far make with `params`: over them as

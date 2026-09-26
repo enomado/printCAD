@@ -95,6 +95,11 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
                     out.push(pts.iter().map(|p| to_world(*p)).collect());
                 }
             }
+            GeometryElement::Conic(conic) => {
+                if let Some(pts) = conic.points(sketch, 48) {
+                    out.push(pts.iter().map(|p| to_world(*p)).collect());
+                }
+            }
             GeometryElement::BSpline(spline) => {
                 if let Some(pts) = spline.points(sketch, 64) {
                     out.push(pts.iter().map(|p| to_world(*p)).collect());

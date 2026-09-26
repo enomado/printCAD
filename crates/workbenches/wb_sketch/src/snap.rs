@@ -384,6 +384,7 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
         // to well under any click tolerance.
         GeometryElement::Ellipse(e) => polyline_distance(&e.points(sketch, 48)?, p),
         GeometryElement::BSpline(b) => polyline_distance(&b.points(sketch, 64)?, p),
+        GeometryElement::Conic(c) => polyline_distance(&c.points(sketch, 64)?, p),
     }
 }
 

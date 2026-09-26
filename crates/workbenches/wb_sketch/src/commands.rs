@@ -161,7 +161,7 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::String,
             "line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, \
              circle, circle3, arc, arc3, \
-             ellipse, ellipse3, ellipse_arc, bspline, polygon, slot, arc_slot, point, fillet, \
+             ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, \
              chamfer, trim, extend, split, offset, translate, rotate, scale or mirror",
         )
         .param(
@@ -242,7 +242,7 @@ pub fn register(context: &mut WorkbenchContext) {
         .param(
             "items",
             ParamKind::List,
-            "The lines, arcs, arcs of ellipses and open splines to merge",
+            "The lines, arcs, arcs of ellipses, parabolas and hyperbolas, and open splines to merge",
         )
         .optional(
             "tolerance",
@@ -1337,6 +1337,8 @@ const DRAW_TOOLS: &[&str] = &[
     "ellipse",
     "ellipse3",
     "ellipse_arc",
+    "parabola",
+    "hyperbola",
     "bspline",
     "polygon",
     "slot",

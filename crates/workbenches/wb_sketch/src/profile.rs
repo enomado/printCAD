@@ -165,6 +165,34 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     }
                 }
             }
+            // An arc of a parabola or a hyperbola joins the curves at its
+            // ends, as a circular arc does, drawn exactly as the rational
+            // quadratic it is.
+            GeometryElement::Conic(c) => {
+                let at = |id: Uuid| {
+                    sketch
+                        .point_position(id)
+                        .map(v2)
+                        .ok_or(ProfileError::MissingPoint(id))
+                };
+                let (start, end) = (at(c.start)?, at(c.end)?);
+                let (shape, t0, t1) = c.params(sketch).ok_or(ProfileError::MissingPoint(c.id))?;
+                let ([_, middle, _], weight) = shape.quadratic(t0, t1);
+                let weights = match c.kind {
+                    crate::sketch::ConicKind::Parabola => Vec::new(),
+                    crate::sketch::ConicKind::Hyperbola => vec![1.0, weight, 1.0],
+                };
+                edges.push(EdgeCurve {
+                    ends: (c.start, c.end),
+                    segment: ProfileSegment::Nurbs {
+                        degree: 2,
+                        knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                        control_points: vec![start, middle, end],
+                        weights,
+                        periodic: false,
+                    },
+                });
+            }
             // Periodic B-splines close on themselves; open ones connect via
             // their first/last control point like any other curve.
             GeometryElement::BSpline(b) => {
