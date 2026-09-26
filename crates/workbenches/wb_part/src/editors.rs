@@ -17,7 +17,7 @@ use ui_kit::widgets::{
 use crate::build::part_features_of_body;
 use crate::feature::{
     ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
-    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, TransformStep,
+    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, SketchAxis, TransformStep,
 };
 
 mod hole;
@@ -888,14 +888,68 @@ fn revolve_axis_editor(
     changed
 }
 
-fn pattern_axis_editor(ui: &mut Ui, axis: &mut PatternAxis, id_salt: impl egui::AsIdSalt) -> bool {
+/// The datum lines of a body and the axes of the sketches before
+/// `feature`, as pattern axis choices.
+fn pattern_axis_choices(
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    feature: FeatureId,
+) -> Vec<(PatternAxis, String)> {
+    let mut choices = Vec::new();
+    for (id, name, datum) in core_document::datums_of_body(ctx.document, body) {
+        if matches!(datum.shape, core_document::DatumShape::Line { .. }) {
+            choices.push((PatternAxis::Datum(id), name));
+        }
+    }
+    for (sketch, name) in crate::build::sketch_choices(ctx.document, body, feature, None) {
+        for axis in SketchAxis::ALL {
+            choices.push((
+                PatternAxis::Sketch { sketch, axis },
+                format!("{name} {}", axis.label()),
+            ));
+        }
+    }
+    choices
+}
+
+/// A picked edge as a pattern axis: a circular edge gives its axis
+/// (centre and normal), a straight one itself.
+fn edge_axis(edge: &core_document::EdgeRef) -> EdgePick {
+    match edge.circle {
+        Some(circle) => EdgePick {
+            point: circle.center,
+            direction: circle.normal,
+        },
+        None => EdgePick {
+            point: edge.point,
+            direction: edge.direction,
+        },
+    }
+}
+
+/// What a pattern runs along or turns about: the body's axes, a custom
+/// axis, a datum line, a sketch's axis or a picked edge.
+fn pattern_axis_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    (body, feature): (BodyId, FeatureId),
+    axis: &mut PatternAxis,
+    id_salt: impl egui::AsIdSalt,
+) -> bool {
     let mut changed = false;
+    let references = pattern_axis_choices(ctx, body, feature);
+    let shown = references
+        .iter()
+        .find(|(choice, _)| choice == axis)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| axis.label().to_string());
     ui.horizontal(|ui| {
         label_cell(ui, "Axis");
         egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(axis.label())
+            .selected_text(shown)
             .show_ui(ui, |ui| {
-                for candidate in [
+                let picked_edge = picked_edges(ctx).first().map(edge_axis);
+                let mut candidates: Vec<(PatternAxis, String)> = [
                     PatternAxis::X,
                     PatternAxis::Y,
                     PatternAxis::Z,
@@ -903,16 +957,62 @@ fn pattern_axis_editor(ui: &mut Ui, axis: &mut PatternAxis, id_salt: impl egui::
                         origin: [0.0; 3],
                         dir: [0.0, 0.0, 1.0],
                     },
-                ] {
-                    let is_current =
-                        std::mem::discriminant(axis) == std::mem::discriminant(&candidate);
-                    if ui.selectable_label(is_current, candidate.label()).clicked() && !is_current {
+                ]
+                .into_iter()
+                .map(|c| (c, c.label().to_string()))
+                .collect();
+                candidates.extend(references.iter().cloned());
+                candidates.push((
+                    PatternAxis::Edge(picked_edge.unwrap_or(EdgePick {
+                        point: [0.0; 3],
+                        direction: [0.0, 0.0, 1.0],
+                    })),
+                    "Picked edge".to_string(),
+                ));
+                for (candidate, name) in candidates {
+                    let is_current = match (&*axis, &candidate) {
+                        (PatternAxis::Datum(_), PatternAxis::Datum(_))
+                        | (PatternAxis::Sketch { .. }, PatternAxis::Sketch { .. }) => {
+                            *axis == candidate
+                        }
+                        _ => std::mem::discriminant(axis) == std::mem::discriminant(&candidate),
+                    };
+                    if ui.selectable_label(is_current, name).clicked() && !is_current {
                         *axis = candidate;
                         changed = true;
                     }
                 }
             });
     });
+    if let PatternAxis::Edge(edge) = axis {
+        ui.horizontal_wrapped(|ui| {
+            label_cell(ui, "Edge:");
+            mono_label(
+                ui,
+                format!(
+                    "({:.1}, {:.1}, {:.1})",
+                    edge.point[0], edge.point[1], edge.point[2]
+                ),
+                FONT_XS,
+                TEXT1,
+            );
+            if ui
+                .add_enabled_ui(!ctx.selected_edges.is_empty(), |ui| {
+                    accent_outline_button(ui, "Use selected edge")
+                })
+                .inner
+                .on_hover_text(
+                    "Click a straight edge in the viewport, or a round one for its axis, \
+                     then press this",
+                )
+                .clicked()
+                && let Some(picked) = picked_edges(ctx).first()
+            {
+                *edge = edge_axis(picked);
+                changed = true;
+            }
+        });
+    }
     if let PatternAxis::Custom { origin, dir } = axis {
         ui.horizontal(|ui| {
             label_cell(ui, "Origin");
@@ -926,6 +1026,63 @@ fn pattern_axis_editor(ui: &mut Ui, axis: &mut PatternAxis, id_salt: impl egui::
                 changed |= ui.add(egui::DragValue::new(v).speed(0.1)).changed();
             }
         });
+    }
+    changed
+}
+
+/// How an uneven pattern's gaps show: the switch that turns them on, the
+/// formula name and label of each (numbered from 1), and their unit.
+struct Gaps {
+    toggle: &'static str,
+    name: &'static str,
+    label: &'static str,
+    degrees: bool,
+}
+
+/// An uneven pattern's gaps, one per step from an occurrence to the next.
+/// Turned on, the list starts at the even gap and follows the occurrence
+/// count; turned off, it empties and the pattern spaces evenly.
+fn gaps_editor(
+    ui: &mut Ui,
+    fx: &mut Formulas,
+    gaps: &mut Vec<f32>,
+    (occurrences, even): (u32, f32),
+    how: Gaps,
+) -> bool {
+    let mut changed = false;
+    let mut uneven = !gaps.is_empty();
+    if check_row(ui, &mut uneven, how.toggle)
+        .on_hover_text("Set the gap from each occurrence to the next on its own")
+        .changed()
+    {
+        gaps.clear();
+        changed = true;
+    }
+    if !uneven {
+        return changed;
+    }
+    let wanted = occurrences.saturating_sub(1).max(1) as usize;
+    if gaps.len() != wanted {
+        gaps.resize(wanted, even);
+        changed = true;
+    }
+    for (i, gap) in gaps.iter_mut().enumerate() {
+        let label = format!("{} {}:", how.label, i + 1);
+        let name = format!("{}{}", how.name, i + 1);
+        let mut value = f64::from(*gap);
+        changed |= named_f64(ui, fx, &mut value, (&label, &name), |ui, v| {
+            let mut shown = *v as f32;
+            let edited = field(ui, &label, |ui| {
+                if how.degrees {
+                    QtyField::degrees(&mut shown).speed(1.0).show(ui)
+                } else {
+                    QtyField::mm(&mut shown).speed(0.5).show(ui)
+                }
+            });
+            *v = f64::from(shown);
+            edited
+        });
+        *gap = value as f32;
     }
     changed
 }
@@ -1824,14 +1981,38 @@ pub fn feature_editor(
             occurrences,
             spacing_mode,
             reversed,
+            spacings,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            changed |= pattern_axis_editor(ui, axis, ("linear_axis", feature_id));
+            changed |= pattern_axis_editor(
+                ui,
+                ctx,
+                (body, feature_id),
+                axis,
+                ("linear_axis", feature_id),
+            );
             changed |= count_drag(ui, fx, occurrences, "Occurrences:");
             changed |= check_row(ui, spacing_mode, "Length is spacing")
                 .on_hover_text("Off: length is the overall span")
                 .changed();
             changed |= mm_drag(ui, fx, length, "Length:");
+            let even = if *spacing_mode || *occurrences < 2 {
+                *length
+            } else {
+                *length / (*occurrences - 1) as f32
+            };
+            changed |= gaps_editor(
+                ui,
+                fx,
+                spacings,
+                (*occurrences, even),
+                Gaps {
+                    toggle: "Uneven spacing",
+                    name: "spacing",
+                    label: "Spacing",
+                    degrees: false,
+                },
+            );
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::PolarPattern {
@@ -1841,11 +2022,44 @@ pub fn feature_editor(
             angle_deg,
             occurrences,
             reversed,
+            step_mode,
+            angles,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            changed |= pattern_axis_editor(ui, axis, ("polar_axis", feature_id));
+            changed |= pattern_axis_editor(
+                ui,
+                ctx,
+                (body, feature_id),
+                axis,
+                ("polar_axis", feature_id),
+            );
             changed |= count_drag(ui, fx, occurrences, "Occurrences:");
+            changed |= check_row(ui, step_mode, "Angle is the step")
+                .on_hover_text(
+                    "On: the angle between one occurrence and the next. \
+                     Off: the angle all of them span",
+                )
+                .changed();
             changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=360.0);
+            let even = if *step_mode || *occurrences < 2 {
+                *angle_deg
+            } else if (*angle_deg - 360.0).abs() < 1e-6 {
+                *angle_deg / *occurrences as f32
+            } else {
+                *angle_deg / (*occurrences - 1) as f32
+            };
+            changed |= gaps_editor(
+                ui,
+                fx,
+                angles,
+                (*occurrences, even),
+                Gaps {
+                    toggle: "Uneven steps",
+                    name: "step_angle",
+                    label: "Step angle",
+                    degrees: true,
+                },
+            );
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::MultiTransform {
@@ -1881,7 +2095,13 @@ pub fn feature_editor(
                         length,
                         occurrences,
                     } => {
-                        changed |= pattern_axis_editor(ui, axis, ("mt_lin", feature_id, i));
+                        changed |= pattern_axis_editor(
+                            ui,
+                            ctx,
+                            (body, feature_id),
+                            axis,
+                            ("mt_lin", feature_id, i),
+                        );
                         changed |= mm_drag(ui, fx, length, "Length:");
                         changed |= count_drag(ui, fx, occurrences, "Occurrences:");
                     }
@@ -1890,7 +2110,13 @@ pub fn feature_editor(
                         angle_deg,
                         occurrences,
                     } => {
-                        changed |= pattern_axis_editor(ui, axis, ("mt_pol", feature_id, i));
+                        changed |= pattern_axis_editor(
+                            ui,
+                            ctx,
+                            (body, feature_id),
+                            axis,
+                            ("mt_pol", feature_id, i),
+                        );
                         changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=360.0);
                         changed |= count_drag(ui, fx, occurrences, "Occurrences:");
                     }

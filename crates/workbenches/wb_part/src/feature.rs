@@ -306,7 +306,35 @@ impl MirrorPlane {
     }
 }
 
-/// A pattern direction/axis in world space.
+/// Which of a sketch's own axes a pattern runs along or turns about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SketchAxis {
+    /// The sketch's horizontal (x) axis through its origin.
+    #[default]
+    Horizontal,
+    /// The sketch's vertical (y) axis through its origin.
+    Vertical,
+    /// The sketch's normal through its origin.
+    Normal,
+}
+
+impl SketchAxis {
+    pub const ALL: [SketchAxis; 3] = [
+        SketchAxis::Horizontal,
+        SketchAxis::Vertical,
+        SketchAxis::Normal,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SketchAxis::Horizontal => "H axis",
+            SketchAxis::Vertical => "V axis",
+            SketchAxis::Normal => "normal",
+        }
+    }
+}
+
+/// A pattern direction/axis, in the body's own frame.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum PatternAxis {
     X,
@@ -316,6 +344,16 @@ pub enum PatternAxis {
     Custom {
         origin: [f32; 3],
         dir: [f32; 3],
+    },
+    /// A straight edge of the solid picked in the viewport, or the axis of
+    /// a circular one: its centre and its normal.
+    Edge(EdgePick),
+    /// A datum line of the body.
+    Datum(FeatureId),
+    /// One of a sketch's own axes, where the sketch sits.
+    Sketch {
+        sketch: FeatureId,
+        axis: SketchAxis,
     },
 }
 
@@ -328,24 +366,17 @@ impl PatternAxis {
             PatternAxis::Y => "Y axis",
             PatternAxis::Z => "Z axis",
             PatternAxis::Custom { .. } => "Custom axis",
+            PatternAxis::Edge(_) => "Picked edge",
+            PatternAxis::Datum(_) => "Datum line",
+            PatternAxis::Sketch { .. } => "Sketch axis",
         }
     }
 
-    pub fn origin(&self) -> [f64; 3] {
+    /// The feature the axis follows, when it is a datum's or a sketch's.
+    pub fn reference(&self) -> Option<FeatureId> {
         match self {
-            PatternAxis::Custom { origin, .. } => {
-                [origin[0] as f64, origin[1] as f64, origin[2] as f64]
-            }
-            _ => [0.0; 3],
-        }
-    }
-
-    pub fn dir(&self) -> [f64; 3] {
-        match self {
-            PatternAxis::X => [1.0, 0.0, 0.0],
-            PatternAxis::Y => [0.0, 1.0, 0.0],
-            PatternAxis::Z => [0.0, 0.0, 1.0],
-            PatternAxis::Custom { dir, .. } => [dir[0] as f64, dir[1] as f64, dir[2] as f64],
+            PatternAxis::Datum(id) | PatternAxis::Sketch { sketch: id, .. } => Some(*id),
+            _ => None,
         }
     }
 }
@@ -864,6 +895,11 @@ pub enum PartFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// Uneven spacing: the gap from each occurrence to the next, first
+        /// to last. A gap past the list's end is the even spacing `length`
+        /// gives; an empty list spaces every occurrence evenly.
+        #[serde(default)]
+        spacings: Vec<f32>,
     },
     PolarPattern {
         originals: Vec<FeatureId>,
@@ -875,6 +911,15 @@ pub enum PartFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// `angle_deg` is the angle between occurrences instead of the
+        /// overall one.
+        #[serde(default)]
+        step_mode: bool,
+        /// Uneven steps: the angle from each occurrence to the next, first
+        /// to last, degrees. A step past the list's end is the even one
+        /// `angle_deg` gives; an empty list turns every occurrence evenly.
+        #[serde(default)]
+        angles: Vec<f32>,
     },
     MultiTransform {
         originals: Vec<FeatureId>,
@@ -1155,6 +1200,26 @@ impl WorkbenchFeature for PartFeature {
         {
             deps.push(*datum);
         }
+        let axes: Vec<&PatternAxis> = match self {
+            PartFeature::LinearPattern { axis, .. } | PartFeature::PolarPattern { axis, .. } => {
+                vec![axis]
+            }
+            PartFeature::MultiTransform { steps, .. } => steps
+                .iter()
+                .filter_map(|step| match step {
+                    TransformStep::Linear { axis, .. } | TransformStep::Polar { axis, .. } => {
+                        Some(axis)
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for reference in axes.into_iter().filter_map(PatternAxis::reference) {
+            if !deps.contains(&reference) {
+                deps.push(reference);
+            }
+        }
         deps
     }
 
@@ -1376,7 +1441,34 @@ mod tests {
             occurrences: 3,
             spacing_mode: false,
             reversed: false,
+            spacings: Vec::new(),
         };
         assert_eq!(pattern.dependencies(), vec![a]);
+    }
+
+    #[test]
+    fn a_pattern_follows_the_datum_or_sketch_its_axis_comes_from() {
+        let (original, datum, sketch) = (FeatureId::new(), FeatureId::new(), FeatureId::new());
+        let linear = serde_json::json!({
+            "LinearPattern": {
+                "originals": [original], "axis": {"Datum": datum},
+                "length": 10.0, "occurrences": 3
+            }
+        });
+        let linear = PartFeature::from_json(&linear).unwrap();
+        assert_eq!(linear.dependencies(), vec![original, datum]);
+        let polar = serde_json::json!({
+            "PolarPattern": {
+                "originals": [original],
+                "axis": {"Sketch": {"sketch": sketch, "axis": "Normal"}},
+                "angle_deg": 90.0, "occurrences": 3
+            }
+        });
+        let polar = PartFeature::from_json(&polar).unwrap();
+        assert_eq!(polar.dependencies(), vec![original, sketch]);
+        assert!(matches!(
+            polar,
+            PartFeature::PolarPattern { step_mode: false, ref angles, .. } if angles.is_empty()
+        ));
     }
 }

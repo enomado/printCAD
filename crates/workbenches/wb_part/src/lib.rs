@@ -22,8 +22,8 @@ pub use build::{
 };
 pub use feature::{
     ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
-    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, ThreadSpec,
-    TransformStep, primitive_icon, primitive_preset,
+    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, SketchAxis,
+    ThreadSpec, TransformStep, primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -513,6 +513,7 @@ impl PartDesignWorkbench {
                         length: 30.0,
                         occurrences: 3,
                         spacing_mode: false,
+                        spacings: Vec::new(),
                         reversed: false,
                     },
                     "LinearPattern",
@@ -530,6 +531,8 @@ impl PartDesignWorkbench {
                         angle_deg: 360.0,
                         occurrences: 4,
                         reversed: false,
+                        step_mode: false,
+                        angles: Vec::new(),
                     },
                     "PolarPattern",
                 )

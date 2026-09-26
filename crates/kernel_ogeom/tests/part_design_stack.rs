@@ -429,6 +429,7 @@ fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
             length: 40.0,
             occurrences: 3,
             spacing_mode: false,
+            spacings: Vec::new(),
             reversed: false,
         },
         "Pattern".into(),
@@ -2337,4 +2338,213 @@ fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
         .unwrap();
     let refused = built_volume(&doc, body).unwrap_err();
     assert!(refused.contains("sketch plane"), "{refused}");
+}
+
+/// A 60 × 60 × 4 plate and a boss of radius 3, 6 high on its top at
+/// (`x`, `y`): the document, the body, the plate's sketch and the boss.
+fn plate_with_boss(x: f32, y: f32) -> (Document, BodyId, FeatureId, FeatureId) {
+    let (mut doc, body, plate) = setup(60.0, 60.0);
+    doc.add_feature_in_body(
+        pad_feature(plate, 4.0, false, false),
+        "Plate".into(),
+        Some(body),
+    )
+    .unwrap();
+    let boss = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), x, y, 3.0),
+            "boss".into(),
+            Some(body),
+        )
+        .unwrap();
+    let boss = doc
+        .add_feature_in_body(
+            pad_feature(boss, 6.0, false, false),
+            "Boss".into(),
+            Some(body),
+        )
+        .unwrap();
+    (doc, body, plate, boss)
+}
+
+/// The plate and `n` whole bosses.
+fn plate_and_bosses(n: f64) -> f64 {
+    60.0 * 60.0 * 4.0 + n * std::f64::consts::PI * 9.0 * 6.0
+}
+
+/// The volume and the bounds of what the body's features build.
+fn built_solid(doc: &Document, body: BodyId) -> (f64, [f32; 3], [f32; 3]) {
+    let ops = wb_part::body_build_ops(doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let volume = kernel
+        .physical_properties(&built.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    let (min, max) = mesh_bounds(&built.mesh);
+    (volume, min, max)
+}
+
+fn linear_pattern(original: FeatureId, fields: serde_json::Value) -> PartFeature {
+    with(
+        PartFeature::LinearPattern {
+            refine: false,
+            originals: vec![original],
+            axis: wb_part::PatternAxis::X,
+            length: 50.0,
+            occurrences: 3,
+            spacing_mode: false,
+            spacings: Vec::new(),
+            reversed: false,
+        },
+        fields,
+    )
+}
+
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 0.1
+}
+
+/// A linear pattern runs along a picked edge, a datum line or a sketch's
+/// axis as it does along the body's Y axis: bosses at y = 10, 35 and 60,
+/// the last overhanging the plate's far side.
+#[test]
+fn a_linear_pattern_runs_along_an_edge_a_datum_line_or_a_sketch_axis() {
+    use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    let (mut doc, body, plate, boss) = plate_with_boss(10.0, 10.0);
+    // The YZ plane's datum line runs along world Y.
+    let datum = doc
+        .add_feature_in_body(
+            DatumFeature {
+                shape: DatumShape::Line { length: 20.0 },
+                attachment: DatumAttachment::BasePlane(BasePlane::YZ),
+                offset: Default::default(),
+            },
+            "Line".into(),
+            Some(body),
+        )
+        .unwrap();
+    let pattern = doc
+        .add_feature_in_body(
+            linear_pattern(boss, serde_json::json!({})),
+            "Pattern".into(),
+            Some(body),
+        )
+        .unwrap();
+    let edge = wb_part::PatternAxis::Edge(wb_part::EdgePick {
+        point: [0.0, 30.0, 4.0],
+        direction: [0.0, 1.0, 0.0],
+    });
+    let sketch_v = wb_part::PatternAxis::Sketch {
+        sketch: plate,
+        axis: wb_part::SketchAxis::Vertical,
+    };
+    for axis in [
+        wb_part::PatternAxis::Y,
+        edge,
+        wb_part::PatternAxis::Datum(datum),
+        sketch_v,
+    ] {
+        let data = linear_pattern(
+            boss,
+            serde_json::json!({"axis": serde_json::to_value(axis).unwrap()}),
+        );
+        doc.update_feature_data(pattern, core_document::WorkbenchFeature::to_json(&data))
+            .unwrap();
+        let (volume, _, max) = built_solid(&doc, body);
+        assert!(
+            (volume - plate_and_bosses(3.0)).abs() < 1.0,
+            "{axis:?}: volume {volume}"
+        );
+        assert!(
+            close(max[1], 63.0) && close(max[0], 60.0),
+            "{axis:?}: {max:?}"
+        );
+    }
+}
+
+/// Uneven spacing: the bosses 15 then 35 apart, the last overhanging the
+/// plate's side; along the sketch's normal the copies stack up in z.
+#[test]
+fn an_uneven_linear_pattern_spaces_each_occurrence_its_own_way() {
+    let (mut doc, body, _, boss) = plate_with_boss(10.0, 10.0);
+    doc.add_feature_in_body(
+        linear_pattern(boss, serde_json::json!({"spacings": [15.0, 35.0]})),
+        "Pattern".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, _, max) = built_solid(&doc, body);
+    assert!((volume - plate_and_bosses(3.0)).abs() < 1.0, "{volume}");
+    assert!(close(max[0], 63.0), "{max:?}");
+
+    // Along the plate sketch's normal, the boss copied 6 and 20 up: one
+    // column 6 + 6 high and one standing apart.
+    let (mut doc, body, plate, boss) = plate_with_boss(10.0, 10.0);
+    let normal = wb_part::PatternAxis::Sketch {
+        sketch: plate,
+        axis: wb_part::SketchAxis::Normal,
+    };
+    doc.add_feature_in_body(
+        linear_pattern(
+            boss,
+            serde_json::json!({
+                "axis": serde_json::to_value(normal).unwrap(),
+                "spacings": [6.0, 14.0]
+            }),
+        ),
+        "Pattern".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, _, max) = built_solid(&doc, body);
+    assert!((volume - plate_and_bosses(3.0)).abs() < 1.0, "{volume}");
+    assert!(close(max[2], 30.0), "{max:?}");
+}
+
+/// A polar pattern by step about a round edge's axis: 90° a step, three
+/// occurrences stand at 0°, 90° and 180° about the plate's centre, each
+/// overhanging a side; the same angle as the overall one puts them at
+/// 0°, 45° and 90°.
+#[test]
+fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
+    let axis = wb_part::PatternAxis::Edge(wb_part::EdgePick {
+        point: [30.0, 30.0, 10.0],
+        direction: [0.0, 0.0, 1.0],
+    });
+    let polar = |boss, step_mode: bool, angles: &[f32]| PartFeature::PolarPattern {
+        refine: false,
+        originals: vec![boss],
+        axis,
+        angle_deg: 90.0,
+        occurrences: 3,
+        reversed: false,
+        step_mode,
+        angles: angles.to_vec(),
+    };
+    let (mut doc, body, _, boss) = plate_with_boss(58.0, 30.0);
+    let pattern = doc
+        .add_feature_in_body(polar(boss, true, &[]), "Pattern".into(), Some(body))
+        .unwrap();
+    let (volume, min, max) = built_solid(&doc, body);
+    assert!((volume - plate_and_bosses(3.0)).abs() < 1.0, "{volume}");
+    assert!(close(min[0], -1.0) && close(min[1], 0.0), "{min:?}");
+    assert!(close(max[0], 61.0) && close(max[1], 61.0), "{max:?}");
+
+    let data = polar(boss, false, &[]);
+    doc.update_feature_data(pattern, core_document::WorkbenchFeature::to_json(&data))
+        .unwrap();
+    let (_, min, _) = built_solid(&doc, body);
+    assert!(close(min[0], 0.0), "overall 90°: {min:?}");
+
+    // Uneven: 180° then 90° more stands the last at 270°, off the near side.
+    let data = polar(boss, true, &[180.0, 90.0]);
+    doc.update_feature_data(pattern, core_document::WorkbenchFeature::to_json(&data))
+        .unwrap();
+    let (_, min, max) = built_solid(&doc, body);
+    assert!(close(min[0], -1.0) && close(min[1], -1.0), "{min:?}");
+    assert!(close(max[1], 60.0), "{max:?}");
 }
