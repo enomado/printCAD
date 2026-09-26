@@ -15,6 +15,7 @@ pub use import::is_iges;
 mod mesh;
 pub use mesh::is_mesh_file;
 mod ops;
+mod probe;
 mod profile;
 mod queries;
 pub use queries::{OgeomQueries, QUERIES};
@@ -172,6 +173,22 @@ impl OgeomKernel {
             message: e.to_string(),
         })?;
         chain::execute_previewing(ops, detail, preview)
+    }
+
+    /// [`Self::execute_solid_chain_previewing`], with the answers to
+    /// `probes`, each asked part way through the chain.
+    pub fn execute_solid_chain_probing(
+        &mut self,
+        ops: &[SolidOp],
+        detail: &TessellationSettings,
+        preview: Option<std::ops::Range<usize>>,
+        probes: &[kernel_api::ChainProbe],
+    ) -> Result<SolidBuildResult, ChainError> {
+        self.initialize().map_err(|e| ChainError {
+            op_index: 0,
+            message: e.to_string(),
+        })?;
+        chain::execute_probing(ops, detail, preview, probes)
     }
 }
 

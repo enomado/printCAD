@@ -4,8 +4,8 @@
 //! snapshots for patterns are in-model `Shape`s — no per-op serialization.
 
 use kernel_api::{
-    BoolKind, BooleanOp, ChainError, FeaturePreview, SolidBuildResult, SolidOp,
-    TessellationSettings,
+    BoolKind, BooleanOp, ChainError, ChainProbe, FeaturePreview, ProbeAnswer, SolidBuildResult,
+    SolidOp, TessellationSettings,
 };
 use ogeom::topo::{Model, Shape};
 
@@ -35,6 +35,19 @@ pub fn execute_previewing(
     ops_list: &[SolidOp],
     detail: &TessellationSettings,
     preview: Option<std::ops::Range<usize>>,
+) -> Result<SolidBuildResult, ChainError> {
+    execute_probing(ops_list, detail, preview, &[])
+}
+
+/// [`execute_previewing`], and the answers to `probes`, each asked of the
+/// solid as it stands after its `after_op` ops, in
+/// [`SolidBuildResult::probes`]. A probe asked before any op, or past the
+/// chain's end, is answered with an error.
+pub fn execute_probing(
+    ops_list: &[SolidOp],
+    detail: &TessellationSettings,
+    preview: Option<std::ops::Range<usize>>,
+    probes: &[ChainProbe],
 ) -> Result<SolidBuildResult, ChainError> {
     let chain_err = |op_index: usize, message: String| ChainError { op_index, message };
 
@@ -74,8 +87,23 @@ pub fn execute_previewing(
     let mut after: Option<Shape> = None;
     let mut preview_tools: Vec<Shape> = Vec::new();
     let mut preview_cuts = false;
+    let mut answers: Vec<Result<ProbeAnswer, String>> = probes
+        .iter()
+        .map(|p| {
+            Err(if p.after_op == 0 {
+                "there is no solid before it".to_string()
+            } else {
+                "it stands past the end of the history".to_string()
+            })
+        })
+        .collect();
 
     for (index, solid_op) in ops_list.iter().enumerate() {
+        if index > 0
+            && let Some(shape) = current.as_ref()
+        {
+            ask(&mut model, shape, index, probes, &mut answers);
+        }
         progress::context(format_args!(
             "{} {}/{}",
             progress::op_label(solid_op),
@@ -279,6 +307,13 @@ pub fn execute_previewing(
     }
 
     let final_shape = current.expect("chain validated non-empty");
+    ask(
+        &mut model,
+        &final_shape,
+        ops_list.len(),
+        probes,
+        &mut answers,
+    );
     let mesh = tess::mesh_shape(&model, &final_shape, &[], detail).map_err(|e| {
         chain_err(
             ops_list.len() - 1,
@@ -312,7 +347,23 @@ pub fn execute_previewing(
         mesh,
         bounds_mm,
         preview,
+        probes: answers,
     })
+}
+
+/// Answer the probes asked of the solid after `after_op` ops.
+fn ask(
+    model: &mut Model,
+    shape: &Shape,
+    after_op: usize,
+    probes: &[ChainProbe],
+    answers: &mut [Result<ProbeAnswer, String>],
+) {
+    for (probe, answer) in probes.iter().zip(answers.iter_mut()) {
+        if probe.after_op == after_op {
+            *answer = crate::probe::answer(model, shape, &probe.probe);
+        }
+    }
 }
 
 /// The preview of a feature: its tools meshed as one, and the body to show
@@ -339,6 +390,7 @@ fn feature_preview(
                 mesh,
                 bounds_mm,
                 preview: None,
+                probes: Vec::new(),
             }))
         }
         None => None,

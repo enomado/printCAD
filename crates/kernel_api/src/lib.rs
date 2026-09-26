@@ -1037,6 +1037,8 @@ pub struct SolidBuildResult {
     pub bounds_mm: Option<([f32; 3], [f32; 3])>,
     /// What the feature being edited does, when the build was asked for it.
     pub preview: Option<Box<FeaturePreview>>,
+    /// The answers to the chain's probes, in the order they were asked.
+    pub probes: Vec<Result<ProbeAnswer, String>>,
 }
 
 /// What a feature being edited does to its body, beside the body without
@@ -1223,6 +1225,69 @@ pub struct FaceProbe {
     pub normal: [f64; 3],
 }
 
+/// A question about a solid a reference stands on, named geometrically so
+/// it can be asked again of the solid a rebuild makes.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ShapeProbe {
+    /// The face nearest `point` (among faces as near, the one whose outward
+    /// normal agrees best with `normal`), and where on it `point` falls.
+    Face { point: [f64; 3], normal: [f64; 3] },
+    /// The edge nearest `point` that runs along `direction` there (a zero
+    /// direction takes the nearest edge whichever way it runs).
+    Edge {
+        point: [f64; 3],
+        direction: [f64; 3],
+    },
+    /// The solid's centre of mass and principal axes of inertia.
+    Mass,
+}
+
+/// What a solid answers to a [`ShapeProbe`], in the solid's own frame.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ProbeAnswer {
+    /// The point of the face nearest the probe's, the face's outward normal
+    /// there, and the face's surface.
+    Face {
+        point: [f64; 3],
+        normal: [f64; 3],
+        surface: FaceSurface,
+    },
+    /// The point of the edge nearest the probe's and the way the edge runs
+    /// there, its two ends and its middle (halfway along its parameter,
+    /// which is halfway along an arc), and the circle it runs round when
+    /// it is a circle or an arc of one.
+    Edge {
+        point: [f64; 3],
+        direction: [f64; 3],
+        start: [f64; 3],
+        end: [f64; 3],
+        middle: [f64; 3],
+        circle: Option<ProbedCircle>,
+    },
+    /// The centre of mass and the principal axes of inertia, the axis of
+    /// the smallest moment first.
+    Mass {
+        centre: [f64; 3],
+        axes: [[f64; 3]; 3],
+    },
+}
+
+/// The circle an edge runs round.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ProbedCircle {
+    pub centre: [f64; 3],
+    pub normal: [f64; 3],
+    pub radius: f64,
+}
+
+/// A probe asked part way through a solid-op chain: of the solid the first
+/// `after_op` ops make.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ChainProbe {
+    pub after_op: usize,
+    pub probe: ShapeProbe,
+}
+
 /// The centre line of a pipe-like solid between two of its faces.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CentreLine {
@@ -1282,6 +1347,12 @@ pub trait KernelQueries: Send + Sync {
         _tolerance: f64,
     ) -> KernelResult<CentreLine> {
         Err(KernelError::Unsupported("centre line".into()))
+    }
+
+    /// What the shape in `brep` answers to `probe`, in the shape's own
+    /// frame.
+    fn probe(&self, _brep: &[u8], _probe: &ShapeProbe) -> KernelResult<ProbeAnswer> {
+        Err(KernelError::Unsupported("probing a shape".into()))
     }
 }
 

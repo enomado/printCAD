@@ -3,7 +3,8 @@
 
 use kernel_api::{
     CentreLine, FaceProbe, KernelError, KernelQueries, KernelResult, MedialPath, MedialRegion,
-    Narrowest, Overlap, Profile, ProfilePlane, ProjectedEdge, TessellationSettings,
+    Narrowest, Overlap, ProbeAnswer, Profile, ProfilePlane, ProjectedEdge, ShapeProbe,
+    TessellationSettings,
 };
 use ogeom::algo::{MedialGraph, linear_properties, medial_graph, volume_properties};
 use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_plane};
@@ -209,6 +210,11 @@ impl KernelQueries for OgeomQueries {
             straight,
         })
     }
+
+    fn probe(&self, brep: &[u8], probe: &ShapeProbe) -> KernelResult<ProbeAnswer> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        crate::probe::answer(&mut model, &root, probe).map_err(other)
+    }
 }
 
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -218,7 +224,11 @@ fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
 /// The face of `root` a probe names: the nearest to its point, and among
 /// faces as near (a point on the edge between them), the one whose outward
 /// normal agrees best with the probe's.
-fn face_named(model: &mut Model, root: &Shape, probe: &FaceProbe) -> KernelResult<Shape> {
+pub(crate) fn face_named(
+    model: &mut Model,
+    root: &Shape,
+    probe: &FaceProbe,
+) -> KernelResult<Shape> {
     let tol = tess::tolerances();
     let point = Point::new(probe.point[0], probe.point[1], probe.point[2]);
     let normal = Vector::new(probe.normal[0], probe.normal[1], probe.normal[2]);

@@ -449,7 +449,7 @@ fn pack_rgb_key(rgb: &[f32; 3]) -> u32 {
 /// What a face's surface is, placed as the face is. A plane's normal is
 /// the one the face's triangles face, whichever way the surface's own frame
 /// points.
-fn face_surface(model: &Model, face: &Shape, facing: [f32; 3]) -> FaceSurface {
+pub(crate) fn face_surface(model: &Model, face: &Shape, facing: [f32; 3]) -> FaceSurface {
     let Some(node) = model.node(face) else {
         return FaceSurface::Other;
     };
