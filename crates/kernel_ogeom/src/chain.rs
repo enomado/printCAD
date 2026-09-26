@@ -186,16 +186,15 @@ pub fn execute_probing(
             SolidOp::Pipe {
                 profile,
                 spine,
-                frenet,
+                frame,
+                corner,
+                sections,
                 op,
             } => {
                 let tool =
-                    ops::loft_pipe::pipe_tool(&mut model, profile, spine, *frenet).map_err(&err)?;
-                tool_snapshot = Some(ToolSnapshot {
-                    op: solid_op.clone(),
-                    subtractive: *op == BooleanOp::Cut,
-                    solid: None,
-                });
+                    ops::loft_pipe::pipe_tool(&mut model, profile, spine, frame, *corner, sections)
+                        .map_err(&err)?;
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?

@@ -17,8 +17,8 @@ use ui_kit::widgets::{
 use crate::build::part_features_of_body;
 use crate::feature::{
     BorrowedRef, ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick,
-    HelixMode, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, SketchAxis,
-    TransformStep,
+    HelixMode, MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis,
+    RevolveMode, SketchAxis, TransformStep,
 };
 
 mod borrow;
@@ -61,6 +61,9 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Height", "height"),
     ("Cone angle", "cone_angle"),
     ("Growth", "growth"),
+    ("Binormal X", "binormal_x"),
+    ("Binormal Y", "binormal_y"),
+    ("Binormal Z", "binormal_z"),
     ("Diameter", "diameter"),
     ("Bore Ø", "counterbore_diameter"),
     ("Bore depth", "counterbore_depth"),
@@ -969,6 +972,83 @@ fn revolve_axis_editor(
     changed
 }
 
+/// A pipe's orientation: which kind, and the path or direction it takes.
+fn pipe_orientation_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    fx: &mut Formulas,
+    body: BodyId,
+    feature_id: FeatureId,
+    spine: FeatureId,
+    orientation: &mut PipeOrientation,
+) -> bool {
+    let mut changed = false;
+    // A binormal starts square to the path's plane, where it holds.
+    let normal = crate::build::sketch_normal(ctx.document, spine).unwrap_or([0.0, 0.0, 1.0]);
+    let kinds = [
+        PipeOrientation::Standard,
+        PipeOrientation::Frenet,
+        PipeOrientation::Auxiliary { path: spine },
+        PipeOrientation::Binormal {
+            x: normal[0],
+            y: normal[1],
+            z: normal[2],
+        },
+    ];
+    ui.horizontal(|ui| {
+        label_cell(ui, "Orientation");
+        egui::ComboBox::from_id_salt(("pipe_orientation", feature_id))
+            .selected_text(orientation.label())
+            .show_ui(ui, |ui| {
+                for candidate in kinds {
+                    let same =
+                        std::mem::discriminant(orientation) == std::mem::discriminant(&candidate);
+                    if ui.selectable_label(same, candidate.label()).clicked() && !same {
+                        *orientation = candidate;
+                        changed = true;
+                    }
+                }
+            });
+    })
+    .response
+    .on_hover_text(
+        "Standard keeps the section from twisting; Frenet turns it with the \
+         path's curvature; an auxiliary path turns it to face a second path; \
+         a binormal holds one direction of it fixed",
+    );
+    match orientation {
+        PipeOrientation::Auxiliary { path } => {
+            if let Some(new) = sketch_combo(
+                ui,
+                ctx,
+                body,
+                ("pipe_auxiliary", feature_id),
+                Some(*path),
+                "Auxiliary path:",
+            ) {
+                *path = new;
+                changed = true;
+            }
+        }
+        PipeOrientation::Binormal { x, y, z } => {
+            for (value, label) in [(x, "Binormal X:"), (y, "Binormal Y:"), (z, "Binormal Z:")] {
+                changed |= number_drag(ui, fx, value, label);
+            }
+        }
+        PipeOrientation::Standard | PipeOrientation::Frenet => {}
+    }
+    changed
+}
+
+/// A plain number, a formula field where the feature has its parameter.
+fn number_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
+    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
+        *value = v as f32;
+        return changed;
+    }
+    field(ui, label, |ui| QtyField::new(value).speed(0.05).show(ui))
+}
+
 /// The datum lines of a body and the axes of the sketches before
 /// `feature`, as pattern axis choices.
 fn pattern_axis_choices(
@@ -1841,7 +1921,9 @@ pub fn feature_editor(
             refine: _,
             profile,
             spine,
-            frenet,
+            orientation,
+            corner,
+            sections,
             subtractive,
         } => {
             if let Some(new) = sketch_combo(
@@ -1866,9 +1948,57 @@ pub fn feature_editor(
                 *spine = new;
                 changed = true;
             }
-            changed |= check_row(ui, frenet, "Frenet orientation")
-                .on_hover_text("Rotate the profile with the path's curvature frame")
-                .changed();
+            changed |= pipe_orientation_editor(ui, ctx, fx, body, feature_id, *spine, orientation);
+            ui.horizontal(|ui| {
+                label_cell(ui, "Corners");
+                egui::ComboBox::from_id_salt(("pipe_corner", feature_id))
+                    .selected_text(corner.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in PipeCorner::ALL {
+                            if ui
+                                .selectable_label(*corner == candidate, candidate.label())
+                                .clicked()
+                                && *corner != candidate
+                            {
+                                *corner = candidate;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+            label_cell(ui, "Sections along the path (in order)");
+            let mut remove = None;
+            for (i, section) in sections.iter().enumerate() {
+                let name = ctx
+                    .document
+                    .get_feature_meta(*section)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_else(|| "(missing)".into());
+                ui.horizontal(|ui| {
+                    mono_label(ui, format!("{}. {name}", i + 1), FONT_XS, TEXT1);
+                    if small_secondary_button(ui, "✕").clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                sections.remove(i);
+                changed = true;
+            }
+            if let Some(new) = sketch_combo(
+                ui,
+                ctx,
+                body,
+                ("pipe_section_add", feature_id),
+                None,
+                "Add section:",
+            ) && new != *profile
+                && new != *spine
+                && !sections.contains(&new)
+            {
+                sections.push(new);
+                changed = true;
+            }
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Helix {
@@ -2486,6 +2616,15 @@ mod panel_width {
                 "reversed": false, "subtractive": false}}),
             json!({"Loft": {"sections": [s], "ruled": false, "closed": false, "subtractive": false}}),
             json!({"Pipe": {"profile": s, "spine": s, "frenet": false, "subtractive": false}}),
+            json!({"Pipe": {"profile": s, "spine": s, "subtractive": false,
+                "orientation": {"Binormal": {"x": 0.0, "y": 0.0, "z": 1.0}},
+                "corner": "Round", "sections": [s]}}),
+            json!({"Pipe": {"profile": s, "spine": s, "subtractive": false,
+                "orientation": {"Auxiliary": {"path": s}}}}),
+            json!({"Helix": {"sketch": s, "axis": "SketchY", "mode": "HeightTurnsGrowth",
+                "pitch": 2.0, "height": 0.0, "turns": 3.0, "growth": 2.0, "left_handed": false,
+                "cone_angle_deg": 0.0, "reversed": false, "subtractive": true,
+                "keep_inside": true}}),
             json!({"Fillet": {"radius": 1.0}}),
             json!({"Chamfer": {"size": 1.0, "mode": "DistanceAngle"}}),
             json!({"Draft": {"angle_deg": 3.0, "neutral": {"point": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0]}, "faces": []}}),

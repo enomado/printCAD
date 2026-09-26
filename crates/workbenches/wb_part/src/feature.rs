@@ -232,6 +232,87 @@ impl HelixMode {
     }
 }
 
+/// How a pipe's section turns as it runs down its path.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum PipeOrientation {
+    /// The section neither twists nor kinks where the path bends.
+    #[default]
+    Standard,
+    /// The section turns with the path's own curvature frame.
+    Frenet,
+    /// One direction of the section keeps pointing at a second path sketch
+    /// running beside the first.
+    Auxiliary { path: FeatureId },
+    /// The section keeps a fixed binormal, a direction in the body's frame.
+    Binormal { x: f32, y: f32, z: f32 },
+}
+
+impl PipeOrientation {
+    /// The kinds, one each, for choosing between them.
+    pub fn label(&self) -> &'static str {
+        match self {
+            PipeOrientation::Standard => "Standard",
+            PipeOrientation::Frenet => "Frenet",
+            PipeOrientation::Auxiliary { .. } => "Auxiliary path",
+            PipeOrientation::Binormal { .. } => "Binormal",
+        }
+    }
+
+    /// The second path sketch this orientation follows, if any.
+    pub fn path(&self) -> Option<FeatureId> {
+        match self {
+            PipeOrientation::Auxiliary { path } => Some(*path),
+            _ => None,
+        }
+    }
+}
+
+/// Reads a [`PipeOrientation`] or the `frenet` flag it stands in for.
+fn deserialize_pipe_orientation<'de, D>(deserializer: D) -> Result<PipeOrientation, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Stored {
+        Flag(bool),
+        Orientation(PipeOrientation),
+    }
+    Ok(match Stored::deserialize(deserializer)? {
+        Stored::Flag(true) => PipeOrientation::Frenet,
+        Stored::Flag(false) => PipeOrientation::Standard,
+        Stored::Orientation(orientation) => orientation,
+    })
+}
+
+/// How a pipe's section turns a sharp corner of its path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PipeCorner {
+    /// Carried into the corner and sheared onto the plane bisecting it.
+    #[default]
+    Transformed,
+    /// Each leg runs on straight past the corner, the outside left square.
+    Right,
+    /// Turned about the corner, the outside rounded.
+    Round,
+}
+
+impl PipeCorner {
+    pub const ALL: [PipeCorner; 3] = [
+        PipeCorner::Transformed,
+        PipeCorner::Right,
+        PipeCorner::Round,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            PipeCorner::Transformed => "Transformed",
+            PipeCorner::Right => "Right corner",
+            PipeCorner::Round => "Round corner",
+        }
+    }
+}
+
 /// Chamfer sizing style.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum ChamferMode {
@@ -858,7 +939,21 @@ pub enum PartFeature {
     Pipe {
         profile: FeatureId,
         spine: FeatureId,
-        frenet: bool,
+        /// How the section turns down the path; files that hold only the
+        /// `frenet` flag read it as the frame it named.
+        #[serde(
+            default,
+            alias = "frenet",
+            deserialize_with = "deserialize_pipe_orientation"
+        )]
+        orientation: PipeOrientation,
+        /// How the section turns the path's sharp corners.
+        #[serde(default)]
+        corner: PipeCorner,
+        /// Further section sketches the pipe passes through down its path,
+        /// in order, after the profile.
+        #[serde(default)]
+        sections: Vec<FeatureId>,
         subtractive: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
@@ -1073,7 +1168,18 @@ impl PartFeature {
     pub fn sketches(&self) -> Vec<FeatureId> {
         match self {
             PartFeature::Loft { sections, .. } => sections.clone(),
-            PartFeature::Pipe { profile, spine, .. } => vec![*profile, *spine],
+            PartFeature::Pipe {
+                profile,
+                spine,
+                orientation,
+                sections,
+                ..
+            } => {
+                let mut all = vec![*profile, *spine];
+                all.extend(orientation.path());
+                all.extend(sections.iter().copied());
+                all
+            }
             _ => self.sketch().into_iter().collect(),
         }
     }
@@ -1588,6 +1694,59 @@ mod tests {
     }
 
     #[test]
+    fn an_old_pipe_reads_its_frenet_flag_as_its_orientation() {
+        let old = |frenet: bool| {
+            serde_json::json!({
+                "Pipe": {
+                    "profile": FeatureId::new(),
+                    "spine": FeatureId::new(),
+                    "frenet": frenet,
+                    "subtractive": false
+                }
+            })
+        };
+        for (frenet, orientation) in [
+            (true, PipeOrientation::Frenet),
+            (false, PipeOrientation::Standard),
+        ] {
+            let feature = PartFeature::from_json(&old(frenet)).unwrap();
+            let PartFeature::Pipe {
+                orientation: read,
+                corner,
+                sections,
+                ..
+            } = &feature
+            else {
+                panic!("not a pipe: {feature:?}");
+            };
+            assert_eq!(*read, orientation);
+            assert_eq!(*corner, PipeCorner::Transformed);
+            assert!(sections.is_empty());
+            // Written again, it carries the orientation and reads back.
+            let again = PartFeature::from_json(&feature.to_json()).unwrap();
+            assert_eq!(again, feature);
+        }
+    }
+
+    #[test]
+    fn a_pipe_orientation_round_trips() {
+        let feature = PartFeature::Pipe {
+            refine: false,
+            profile: FeatureId::new(),
+            spine: FeatureId::new(),
+            orientation: PipeOrientation::Binormal {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+            },
+            corner: PipeCorner::Round,
+            sections: vec![FeatureId::new()],
+            subtractive: true,
+        };
+        assert_eq!(PartFeature::from_json(&feature.to_json()).unwrap(), feature);
+    }
+
+    #[test]
     fn an_old_helix_neither_grows_nor_keeps_inside() {
         let old = serde_json::json!({
             "Helix": {
@@ -1615,10 +1774,24 @@ mod tests {
             refine: false,
             profile: a,
             spine: b,
-            frenet: false,
+            orientation: PipeOrientation::Standard,
+            corner: PipeCorner::Transformed,
+            sections: Vec::new(),
             subtractive: false,
         };
         assert_eq!(pipe.dependencies(), vec![a, b]);
+
+        let (c, d) = (FeatureId::new(), FeatureId::new());
+        let guided = PartFeature::Pipe {
+            refine: false,
+            profile: a,
+            spine: b,
+            orientation: PipeOrientation::Auxiliary { path: c },
+            corner: PipeCorner::Transformed,
+            sections: vec![d],
+            subtractive: false,
+        };
+        assert_eq!(guided.dependencies(), vec![a, b, c, d]);
 
         let pattern = PartFeature::LinearPattern {
             refine: false,

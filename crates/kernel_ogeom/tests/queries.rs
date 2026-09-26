@@ -224,7 +224,9 @@ fn a_bent_tube_has_a_centre_line_along_its_bend() {
                 }],
             }],
         },
-        frenet: false,
+        frame: kernel_api::PipeFrame::RotationMinimizing,
+        corner: kernel_api::PipeCorner::Transformed,
+        sections: Vec::new(),
         op: BooleanOp::NewSolid,
     }]);
     let line = QUERIES

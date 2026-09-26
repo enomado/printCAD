@@ -46,6 +46,26 @@ fn fields(variant: &str) -> &'static [Field] {
             ("cone_angle_deg", "cone_angle", "Cone angle", Some(ANGLE)),
             ("growth", "growth", "Growth per turn", Some(LENGTH)),
         ],
+        "Pipe" => &[
+            (
+                "orientation/Binormal/x",
+                "binormal_x",
+                "Binormal X",
+                Some(NUMBER),
+            ),
+            (
+                "orientation/Binormal/y",
+                "binormal_y",
+                "Binormal Y",
+                Some(NUMBER),
+            ),
+            (
+                "orientation/Binormal/z",
+                "binormal_z",
+                "Binormal Z",
+                Some(NUMBER),
+            ),
+        ],
         "Hole" => &[
             ("diameter", "diameter", "Diameter", Some(LENGTH)),
             ("depth", "depth", "Depth", Some(LENGTH)),
@@ -248,6 +268,7 @@ pub(crate) fn every_name() -> Vec<&'static str> {
         "Revolution",
         "Groove",
         "Helix",
+        "Pipe",
         "Hole",
         "Fillet",
         "Chamfer",

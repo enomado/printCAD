@@ -17,7 +17,8 @@ use wb_sketch::sketch::{GeometryElement, Sketch};
 
 use crate::feature::{
     BorrowSource, DrillPoint, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode, HoleCut,
-    PartFeature, PatternAxis, RevolveAxis, RevolveMode, ThreadSpec, TransformStep,
+    PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode, ThreadSpec,
+    TransformStep,
 };
 
 /// This body's part features in creation order (the build history).
@@ -557,15 +558,29 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 refine: _,
                 profile,
                 spine,
-                frenet,
+                orientation,
+                corner,
+                sections,
                 subtractive,
             } => {
                 let profile = sketch_profile(document, *profile).map_err(&fail)?;
-                let spine = sketch_spine(document, *spine).map_err(&fail)?;
+                let spine =
+                    sketch_spine(document, *spine, profile_anchor(&profile)).map_err(&fail)?;
+                let frame = pipe_frame(document, orientation).map_err(&fail)?;
+                let mut section_profiles = Vec::with_capacity(sections.len());
+                for section in sections {
+                    section_profiles.push(sketch_profile(document, *section).map_err(&fail)?);
+                }
                 plan.ops.push(SolidOp::Pipe {
                     profile,
                     spine,
-                    frenet: *frenet,
+                    frame,
+                    corner: match corner {
+                        PipeCorner::Transformed => kernel_api::PipeCorner::Transformed,
+                        PipeCorner::Right => kernel_api::PipeCorner::Right,
+                        PipeCorner::Round => kernel_api::PipeCorner::Round,
+                    },
+                    sections: section_profiles,
                     op: shape_boolean(*subtractive),
                 });
             }
@@ -1722,6 +1737,13 @@ fn load_sketch(document: &Document, sketch_id: FeatureId) -> Result<SketchFeatur
     SketchFeature::from_json(data).map_err(|e| format!("invalid sketch data: {e}"))
 }
 
+/// The normal of a sketch's plane, in its body's frame.
+pub(crate) fn sketch_normal(document: &Document, sketch_id: FeatureId) -> Option<[f32; 3]> {
+    load_sketch(document, sketch_id)
+        .ok()
+        .map(|sketch| sketch.plane.normal)
+}
+
 fn sketch_profile(document: &Document, sketch_id: FeatureId) -> Result<Profile, String> {
     profile_of(&load_sketch(document, sketch_id)?)
 }
@@ -1736,7 +1758,53 @@ fn profile_of(sketch_feature: &SketchFeature) -> Result<Profile, String> {
 
 /// Extract a sketch's geometry as a single connected path (open or closed)
 /// for use as a pipe spine.
-fn sketch_spine(document: &Document, sketch_id: FeatureId) -> Result<Profile, String> {
+/// The kernel's frame for a pipe's orientation: an auxiliary path read as a
+/// spine of its own, a binormal as the direction it names in the body's
+/// frame, where every profile of the build sits.
+fn pipe_frame(
+    document: &Document,
+    orientation: &PipeOrientation,
+) -> Result<kernel_api::PipeFrame, String> {
+    use kernel_api::PipeFrame;
+    Ok(match orientation {
+        PipeOrientation::Standard => PipeFrame::RotationMinimizing,
+        PipeOrientation::Frenet => PipeFrame::Frenet,
+        PipeOrientation::Auxiliary { path } => PipeFrame::Auxiliary {
+            path: sketch_spine(document, *path, None)
+                .map_err(|e| format!("auxiliary path: {e}"))?,
+        },
+        PipeOrientation::Binormal { x, y, z } => {
+            let direction = [f64::from(*x), f64::from(*y), f64::from(*z)];
+            if direction.iter().all(|c| *c == 0.0) {
+                return Err("the binormal direction is zero".into());
+            }
+            PipeFrame::Binormal { direction }
+        }
+    })
+}
+
+/// Where a profile sits, near enough to tell which end of a path it is at:
+/// its first curve's centre, or where that curve starts when it has none.
+fn profile_anchor(profile: &Profile) -> Option<[f64; 3]> {
+    let [u, v] = match profile.wires.first()?.segments.first()? {
+        ProfileSegment::Line { start, .. } | ProfileSegment::Arc { start, .. } => *start,
+        ProfileSegment::Circle { center, .. }
+        | ProfileSegment::Ellipse { center, .. }
+        | ProfileSegment::EllipseArc { center, .. } => *center,
+        ProfileSegment::BSpline { control_points, .. }
+        | ProfileSegment::Nurbs { control_points, .. } => *control_points.first()?,
+    };
+    let plane = &profile.plane;
+    Some([0, 1, 2].map(|k| plane.origin[k] + plane.x_axis[k] * u + plane.y_axis[k] * v))
+}
+
+/// A sketch's curves as one path, in order. An open path runs from the end
+/// nearer `near` (where the profile swept along it sits).
+fn sketch_spine(
+    document: &Document,
+    sketch_id: FeatureId,
+    near: Option<[f64; 3]>,
+) -> Result<Profile, String> {
     let sketch_feature = load_sketch(document, sketch_id)?;
     let sketch = &sketch_feature.sketch;
     let plane = profile::plane_of(&sketch_feature.plane);
@@ -1795,16 +1863,36 @@ fn sketch_spine(document: &Document, sketch_id: FeatureId) -> Result<Profile, St
     if degree.values().any(|d| *d > 2) {
         return Err("the spine path branches; it must be a single chain".into());
     }
-    let odd: Vec<uuid::Uuid> = degree
-        .iter()
-        .filter(|(_, d)| **d == 1)
-        .map(|(id, _)| *id)
-        .collect();
+    // The open ends, in the order the sketch holds its curves.
+    let mut odd: Vec<uuid::Uuid> = Vec::new();
+    for (a, b, _) in &endpoints {
+        for end in [*a, *b] {
+            if degree[&end] == 1 && !odd.contains(&end) {
+                odd.push(end);
+            }
+        }
+    }
     if odd.len() != 2 && !odd.is_empty() {
         return Err("the spine must be one connected chain".into());
     }
 
-    let start = odd.first().copied().unwrap_or(endpoints[0].0);
+    // An open path starts at the end nearer `near`, else at its first.
+    let world = |id: uuid::Uuid| {
+        sketch.point_position(id).map(|p| {
+            let (u, v) = (f64::from(p.x), f64::from(p.y));
+            [0, 1, 2].map(|k| plane.origin[k] + plane.x_axis[k] * u + plane.y_axis[k] * v)
+        })
+    };
+    let distance = |id: uuid::Uuid, to: [f64; 3]| {
+        world(id).map_or(f64::INFINITY, |p| {
+            (0..3).map(|k| (p[k] - to[k]).powi(2)).sum::<f64>()
+        })
+    };
+    let start = match (odd.as_slice(), near) {
+        ([first, second], Some(to)) if distance(*second, to) < distance(*first, to) => *second,
+        ([first, ..], _) => *first,
+        _ => endpoints[0].0,
+    };
     let mut remaining: Vec<(uuid::Uuid, uuid::Uuid, usize)> = endpoints.clone();
     let mut segments = Vec::with_capacity(curves.len());
     let mut cursor = start;
@@ -3546,7 +3634,7 @@ mod tests {
             .add_feature_in_body(SketchFeature::new(sketch, plane), "path".into(), Some(body))
             .unwrap();
 
-        let spine = sketch_spine(&doc, spine_id).unwrap();
+        let spine = sketch_spine(&doc, spine_id, None).unwrap();
         assert_eq!(spine.wires.len(), 1);
         assert_eq!(spine.wires[0].segments.len(), 2);
         // Consecutive segments share an endpoint.
@@ -3557,6 +3645,35 @@ mod tests {
             panic!("line expected");
         };
         assert_eq!(end, start);
+    }
+
+    #[test]
+    fn an_open_spine_starts_at_the_end_by_its_profile() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let mut sketch = Sketch::new("path");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 10.0))));
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
+        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        let plane = sketch.plane;
+        let spine_id = doc
+            .add_feature_in_body(SketchFeature::new(sketch, plane), "path".into(), Some(body))
+            .unwrap();
+        let first_start = |near| {
+            let spine = sketch_spine(&doc, spine_id, near).unwrap();
+            match spine.wires[0].segments[0] {
+                ProfileSegment::Line { start, .. } => start,
+                _ => panic!("line expected"),
+            }
+        };
+        // The same end every time without a profile to go by.
+        for _ in 0..8 {
+            assert_eq!(first_start(None), [0.0, 0.0]);
+        }
+        assert_eq!(first_start(Some([10.0, 10.0, 0.0])), [10.0, 10.0]);
+        assert_eq!(first_start(Some([0.0, -1.0, 0.0])), [0.0, 0.0]);
     }
 
     #[test]
@@ -3578,7 +3695,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            sketch_spine(&doc, spine_id)
+            sketch_spine(&doc, spine_id, None)
                 .unwrap_err()
                 .contains("branches")
         );
@@ -4297,5 +4414,78 @@ mod tests {
             .unwrap();
         let plan = body_build_ops(&doc, body).unwrap();
         assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Fuse);
+    }
+
+    #[test]
+    fn a_pipe_hands_its_orientation_corners_and_sections_to_the_kernel() {
+        let (mut doc, body, profile) = doc_with_body_sketch();
+        let spine = doc
+            .add_feature_in_body(rect_sketch(), "spine".into(), Some(body))
+            .unwrap();
+        let guide = doc
+            .add_feature_in_body(rect_sketch(), "guide".into(), Some(body))
+            .unwrap();
+        let section = doc
+            .add_feature_in_body(rect_sketch(), "section".into(), Some(body))
+            .unwrap();
+        let pipe = |orientation: PipeOrientation| PartFeature::Pipe {
+            refine: false,
+            profile,
+            spine,
+            orientation,
+            corner: PipeCorner::Round,
+            sections: vec![section],
+            subtractive: false,
+        };
+        let op_of = |feature: PartFeature| {
+            let mut doc = doc.clone();
+            doc.add_feature_in_body(feature, "Pipe".into(), Some(body))
+                .unwrap();
+            body_build_ops(&doc, body).map(|plan| plan.ops.into_iter().next().unwrap())
+        };
+        let Ok(SolidOp::Pipe {
+            frame,
+            corner,
+            sections,
+            ..
+        }) = op_of(pipe(PipeOrientation::Frenet))
+        else {
+            panic!("not a pipe")
+        };
+        assert_eq!(frame, kernel_api::PipeFrame::Frenet);
+        assert_eq!(corner, kernel_api::PipeCorner::Round);
+        assert_eq!(sections.len(), 1);
+
+        let Ok(SolidOp::Pipe { frame, .. }) = op_of(pipe(PipeOrientation::Binormal {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        })) else {
+            panic!("not a pipe")
+        };
+        assert_eq!(
+            frame,
+            kernel_api::PipeFrame::Binormal {
+                direction: [0.0, 1.0, 0.0]
+            }
+        );
+
+        let Ok(SolidOp::Pipe { frame, .. }) =
+            op_of(pipe(PipeOrientation::Auxiliary { path: guide }))
+        else {
+            panic!("not a pipe")
+        };
+        assert!(
+            matches!(frame, kernel_api::PipeFrame::Auxiliary { ref path } if path.wires.len() == 1),
+            "{frame:?}"
+        );
+
+        let zero = op_of(pipe(PipeOrientation::Binormal {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }))
+        .unwrap_err();
+        assert!(zero.message.contains("binormal"), "{}", zero.message);
     }
 }

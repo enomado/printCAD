@@ -452,7 +452,9 @@ fn pipe_sweeps_profile_along_l_path() {
             wires: vec![circle_wire(0.0, 0.0, 2.0)],
         },
         spine,
-        frenet: false,
+        frame: kernel_api::PipeFrame::RotationMinimizing,
+        corner: kernel_api::PipeCorner::Transformed,
+        sections: Vec::new(),
         op: BooleanOp::NewSolid,
     }];
     let result = kernel.execute_solid_chain(&ops, &detail).expect("pipe");
@@ -1706,7 +1708,9 @@ fn pipe_along(profile: ProfileWire, spine: Vec<ProfileSegment>) -> SolidOp {
             plane: xz_plane(),
             wires: vec![ProfileWire { segments: spine }],
         },
-        frenet: false,
+        frame: kernel_api::PipeFrame::RotationMinimizing,
+        corner: kernel_api::PipeCorner::Transformed,
+        sections: Vec::new(),
         op: BooleanOp::NewSolid,
     }
 }

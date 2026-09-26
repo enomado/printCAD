@@ -818,6 +818,65 @@ pub enum SweepKind {
     },
 }
 
+/// How a pipe's section turns as it runs down its path.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub enum PipeFrame {
+    /// Rotation-minimizing: the section neither twists nor kinks where the
+    /// path bends.
+    #[default]
+    RotationMinimizing,
+    /// The path's own curvature frame, turning with it.
+    Frenet,
+    /// The section turns about the path so that one direction of it keeps
+    /// pointing at a second path running beside the first.
+    Auxiliary { path: Profile },
+    /// The section keeps a fixed binormal: the world-space direction square
+    /// to the path that the section's frame holds all the way.
+    Binormal { direction: [f64; 3] },
+}
+
+impl PipeFrame {
+    /// The frame an older `frenet` flag named.
+    pub fn from_frenet(frenet: bool) -> Self {
+        if frenet {
+            PipeFrame::Frenet
+        } else {
+            PipeFrame::RotationMinimizing
+        }
+    }
+}
+
+/// Reads a [`PipeFrame`] or the `frenet` flag it stands in for.
+pub fn deserialize_pipe_frame<'de, D>(deserializer: D) -> Result<PipeFrame, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Stored {
+        Flag(bool),
+        Frame(PipeFrame),
+    }
+    Ok(match Stored::deserialize(deserializer)? {
+        Stored::Flag(frenet) => PipeFrame::from_frenet(frenet),
+        Stored::Frame(frame) => frame,
+    })
+}
+
+/// How a pipe's section turns a sharp corner of its path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PipeCorner {
+    /// The section is carried into the corner and sheared onto the plane
+    /// bisecting it: the two legs meet on that mitre.
+    #[default]
+    Transformed,
+    /// Each leg runs on straight past the corner and the two are fused,
+    /// leaving the outside of the corner square.
+    Right,
+    /// The section turns about the corner, the outside of it rounded.
+    Round,
+}
+
 /// Parametric primitive shapes (dimensions in millimetres, angles degrees).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum PrimitiveKind {
@@ -982,11 +1041,19 @@ pub enum SolidOp {
         op: BooleanOp,
     },
     /// Sweep a profile along an open or closed spine wire from another
-    /// sketch. `frenet` uses a Frenet frame instead of the corrected frame.
+    /// sketch, the section turning as `frame` says and turning its corners
+    /// as `corner` says. With `sections`, the section changes shape down
+    /// the path, passing through each of them where it crosses the path,
+    /// in order, the profile first.
     Pipe {
         profile: Profile,
         spine: Profile,
-        frenet: bool,
+        #[serde(default, alias = "frenet", deserialize_with = "deserialize_pipe_frame")]
+        frame: PipeFrame,
+        #[serde(default)]
+        corner: PipeCorner,
+        #[serde(default)]
+        sections: Vec<Profile>,
         op: BooleanOp,
     },
     Primitive {
@@ -1432,4 +1499,43 @@ pub enum KernelError {
     Import(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pipe_json(frame: &str) -> String {
+        let plane = r#"{"origin":[0,0,0],"x_axis":[1,0,0],"y_axis":[0,1,0],"normal":[0,0,1]}"#;
+        let profile = format!(
+            r#"{{"plane":{plane},"wires":[{{"segments":[{{"Circle":{{"center":[0,0],"radius":1}}}}]}}]}}"#
+        );
+        format!(r#"{{"Pipe":{{"profile":{profile},"spine":{profile},{frame}"op":"NewSolid"}}}}"#)
+    }
+
+    fn frame_of(json: &str) -> PipeFrame {
+        match serde_json::from_str::<SolidOp>(json).unwrap() {
+            SolidOp::Pipe { frame, .. } => frame,
+            other => panic!("not a pipe: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_pipe_written_with_the_frenet_flag_reads_as_its_frame() {
+        assert_eq!(frame_of(&pipe_json(r#""frenet":true,"#)), PipeFrame::Frenet);
+        assert_eq!(
+            frame_of(&pipe_json(r#""frenet":false,"#)),
+            PipeFrame::RotationMinimizing
+        );
+        assert_eq!(frame_of(&pipe_json("")), PipeFrame::RotationMinimizing);
+    }
+
+    #[test]
+    fn a_pipe_frame_round_trips() {
+        let frame = PipeFrame::Binormal {
+            direction: [0.0, 0.0, 1.0],
+        };
+        let text = serde_json::to_string(&frame).unwrap();
+        assert_eq!(frame_of(&pipe_json(&format!(r#""frame":{text},"#))), frame);
+    }
 }

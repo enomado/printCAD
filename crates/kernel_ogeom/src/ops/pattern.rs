@@ -7,7 +7,9 @@
 //! affine maps go through the kernel's NURBS rebuild
 //! (`general_transformed_shape`), which also produces concrete topology.
 
-use kernel_api::{ExtrudeTermination, Placement, Profile, ProfilePlane, SolidOp, SweepKind};
+use kernel_api::{
+    ExtrudeTermination, PipeFrame, Placement, Profile, ProfilePlane, SolidOp, SweepKind,
+};
 use ogeom::algo::{copied, general_transformed_shape, transformed};
 use ogeom::math::{GeneralTransform, Matrix3, Transform, Vector};
 use ogeom::topo::{Model, Shape};
@@ -109,9 +111,11 @@ fn build_tool_op(model: &mut Model, base: Option<&Shape>, op: &SolidOp) -> Resul
         SolidOp::Pipe {
             profile,
             spine,
-            frenet,
+            frame,
+            corner,
+            sections,
             ..
-        } => super::loft_pipe::pipe_tool(model, profile, spine, *frenet),
+        } => super::loft_pipe::pipe_tool(model, profile, spine, frame, *corner, sections),
         _ => Err("pattern references an op that produces no tool solid".into()),
     }
 }
@@ -340,12 +344,24 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
         SolidOp::Pipe {
             profile,
             spine,
-            frenet,
+            frame,
+            corner,
+            sections,
             op,
         } => SolidOp::Pipe {
             profile: map_profile(m, profile),
             spine: map_profile(m, spine),
-            frenet: *frenet,
+            frame: match frame {
+                PipeFrame::Auxiliary { path } => PipeFrame::Auxiliary {
+                    path: map_profile(m, path),
+                },
+                PipeFrame::Binormal { direction } => PipeFrame::Binormal {
+                    direction: map_vector(m, *direction),
+                },
+                other => other.clone(),
+            },
+            corner: *corner,
+            sections: sections.iter().map(|s| map_profile(m, s)).collect(),
             op: *op,
         },
         other => other.clone(),

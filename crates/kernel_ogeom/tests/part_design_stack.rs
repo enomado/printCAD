@@ -2729,6 +2729,338 @@ fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f32; 2]]) -
     SketchFeature::new(sketch, plane)
 }
 
+/// A quarter arc on the XY plane about (20, 0), radius 20, from the origin
+/// (heading along -Y) to (20, -20): a path 10π long.
+fn quarter_arc_sketch() -> SketchFeature {
+    use wb_sketch::sketch::Arc;
+    let plane = wb_sketch::sketch::SketchPlane::xy();
+    let mut sketch = Sketch::new("arc");
+    sketch.plane = plane;
+    let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(20.0, 0.0))));
+    let start = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let end = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(20.0, -20.0))));
+    sketch.add_geometry(GeometryElement::Arc(Arc::new(center, start, end, 20.0)));
+    SketchFeature::new(sketch, plane)
+}
+
+/// A body holding a pipe of `profile` along `path`, with the sketches the
+/// pipe's options name added from `extra`.
+fn pipe_body(
+    profile: SketchFeature,
+    path: SketchFeature,
+    extra: &[SketchFeature],
+    pipe: impl FnOnce(FeatureId, FeatureId, &[FeatureId]) -> PartFeature,
+) -> (Document, BodyId) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let profile = doc
+        .add_feature_in_body(profile, "profile".into(), Some(body))
+        .unwrap();
+    let path = doc
+        .add_feature_in_body(path, "path".into(), Some(body))
+        .unwrap();
+    let extra: Vec<FeatureId> = extra
+        .iter()
+        .map(|s| {
+            doc.add_feature_in_body(s.clone(), "sketch".into(), Some(body))
+                .unwrap()
+        })
+        .collect();
+    doc.add_feature_in_body(pipe(profile, path, &extra), "Pipe".into(), Some(body))
+        .unwrap();
+    (doc, body)
+}
+
+fn pipe_of(
+    profile: FeatureId,
+    spine: FeatureId,
+    orientation: wb_part::PipeOrientation,
+    corner: wb_part::PipeCorner,
+    sections: Vec<FeatureId>,
+) -> PartFeature {
+    PartFeature::Pipe {
+        refine: false,
+        profile,
+        spine,
+        orientation,
+        corner,
+        sections,
+        subtractive: false,
+    }
+}
+
+/// A 2 × 2 square on the XZ plane, the section a pipe carries.
+fn square_section() -> SketchFeature {
+    rect_sketch_on(wb_sketch::sketch::SketchPlane::xz(), 2.0, 2.0)
+}
+
+fn unit_circle_section() -> SketchFeature {
+    circle_sketch_on(wb_sketch::sketch::SketchPlane::xz(), 0.0, 0.0, 1.0)
+}
+
+/// A binormal square to the plane of a bending path holds the section the
+/// way the rotation-minimizing frame does: the same tube, which never
+/// leans out of the plane.
+#[test]
+fn a_pipe_holding_the_binormal_of_its_paths_plane_builds() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    for orientation in [
+        PipeOrientation::Standard,
+        PipeOrientation::Binormal {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+        },
+    ] {
+        let (doc, body) = pipe_body(square_section(), quarter_arc_sketch(), &[], |p, s, _| {
+            pipe_of(p, s, orientation, PipeCorner::Transformed, Vec::new())
+        });
+        let (volume, min, max) = built_body(&doc, body).unwrap();
+        assert_near(
+            volume,
+            4.0 * 10.0 * std::f64::consts::PI,
+            5e-3,
+            &format!("{orientation:?}"),
+        );
+        assert!(
+            (max[2] - 1.0).abs() < 0.02 && (min[2] + 1.0).abs() < 0.02,
+            "{orientation:?}: z from {} to {}",
+            min[2],
+            max[2]
+        );
+    }
+    // Along a straight path any binormal off it holds.
+    let straight = polyline_sketch(
+        wb_sketch::sketch::SketchPlane::xy(),
+        &[[0.0, 0.0], [0.0, 20.0]],
+    );
+    let (doc, body) = pipe_body(unit_circle_section(), straight, &[], |p, s, _| {
+        let binormal = PipeOrientation::Binormal {
+            x: 1.0,
+            y: 0.0,
+            z: 1.0,
+        };
+        pipe_of(p, s, binormal, PipeCorner::Transformed, Vec::new())
+    });
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    assert_near(volume, 20.0 * std::f64::consts::PI, 5e-3, "straight");
+}
+
+/// A binormal leaning off the plane of a bending path turns the section
+/// about the path: the square that starts square to Z ends turned 45°
+/// about the path, reaching √2 out of the plane.
+#[test]
+#[ignore = "kernel: make_pipe_shell has no frame law holding a fixed binormal (ogeom-rs#76)"]
+fn a_pipe_holding_a_leaning_binormal_turns_its_section() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let (doc, body) = pipe_body(square_section(), quarter_arc_sketch(), &[], |p, s, _| {
+        let binormal = PipeOrientation::Binormal {
+            x: 1.0,
+            y: 0.0,
+            z: 1.0,
+        };
+        pipe_of(p, s, binormal, PipeCorner::Transformed, Vec::new())
+    });
+    let (volume, _, max) = built_body(&doc, body).unwrap();
+    assert_near(volume, 4.0 * 10.0 * std::f64::consts::PI, 5e-3, "volume");
+    assert!(
+        (max[2] - std::f32::consts::SQRT_2).abs() < 0.02,
+        "{}",
+        max[2]
+    );
+}
+
+/// A section turned by an auxiliary path: the path runs beside a straight
+/// spine from +X at its start round to +Z at its end, so the square turns a
+/// quarter turn along the way, reaching √2 out along X halfway.
+#[test]
+#[ignore = "kernel: make_pipe_shell has no frame law following an auxiliary spine (ogeom-rs#76)"]
+fn a_pipe_oriented_by_an_auxiliary_path_turns_toward_it() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    // The auxiliary line from (5, 0, 0) to (0, 20, 5), on the plane through
+    // it square to (1, 0, 1).
+    let plane = wb_sketch::sketch::SketchPlane::from_face([5.0, 0.0, 0.0], [1.0, 0.0, 1.0]);
+    let at = |p: [f32; 3]| {
+        let d = [
+            p[0] - plane.origin[0],
+            p[1] - plane.origin[1],
+            p[2] - plane.origin[2],
+        ];
+        let dot = |a: [f32; 3]| d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+        [dot(plane.x_axis), dot(plane.y_axis)]
+    };
+    let guide = polyline_sketch(plane, &[at([5.0, 0.0, 0.0]), at([0.0, 20.0, 5.0])]);
+    let straight = polyline_sketch(
+        wb_sketch::sketch::SketchPlane::xy(),
+        &[[0.0, 0.0], [0.0, 20.0]],
+    );
+    let (doc, body) = pipe_body(square_section(), straight, &[guide], |p, s, extra| {
+        let guided = PipeOrientation::Auxiliary { path: extra[0] };
+        pipe_of(p, s, guided, PipeCorner::Transformed, Vec::new())
+    });
+    let (volume, _, max) = built_body(&doc, body).unwrap();
+    assert_near(volume, 80.0, 5e-3, "volume");
+    assert!(
+        (max[0] - std::f32::consts::SQRT_2).abs() < 0.02,
+        "{}",
+        max[0]
+    );
+}
+
+/// The path of the corner tests: an L of two 10 mm legs.
+fn l_path() -> SketchFeature {
+    polyline_sketch(
+        wb_sketch::sketch::SketchPlane::xy(),
+        &[[0.0, 0.0], [0.0, 10.0], [10.0, 10.0]],
+    )
+}
+
+/// The unit circle round the L: transformed corners mitre it, the tube as
+/// long as the path.
+#[test]
+fn a_pipe_with_transformed_corners_mitres_its_path() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let (doc, body) = pipe_body(unit_circle_section(), l_path(), &[], |p, s, _| {
+        pipe_of(
+            p,
+            s,
+            PipeOrientation::Standard,
+            PipeCorner::Transformed,
+            Vec::new(),
+        )
+    });
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    assert_near(volume, 20.0 * std::f64::consts::PI, 5e-3, "mitred");
+}
+
+/// The same tube from the L's far end: the profile sits there, so the path
+/// runs from there, and the circle is turned onto the first leg.
+#[test]
+#[ignore = "kernel: make_pipe_shell misses its skin tolerance on this placement of the circle's seam (ogeom-rs#82)"]
+fn a_pipe_from_the_far_end_of_its_path_mitres_it_alike() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let far = circle_sketch_on(
+        wb_sketch::sketch::SketchPlane::from_face([10.0, 10.0, 0.0], [0.0, -1.0, 0.0]),
+        10.0,
+        0.0,
+        1.0,
+    );
+    let (doc, body) = pipe_body(far, l_path(), &[], |p, s, _| {
+        pipe_of(
+            p,
+            s,
+            PipeOrientation::Standard,
+            PipeCorner::Transformed,
+            Vec::new(),
+        )
+    });
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    assert_near(volume, 20.0 * std::f64::consts::PI, 5e-3, "mitred");
+}
+
+/// A path with no sharp corner turns none, whatever the corner mode.
+#[test]
+fn corner_modes_leave_a_smooth_path_alone() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    for corner in PipeCorner::ALL {
+        let (doc, body) = pipe_body(
+            unit_circle_section(),
+            quarter_arc_sketch(),
+            &[],
+            |p, s, _| pipe_of(p, s, PipeOrientation::Standard, corner, Vec::new()),
+        );
+        let (volume, ..) = built_body(&doc, body).unwrap();
+        let pi = std::f64::consts::PI;
+        assert_near(volume, 10.0 * pi * pi, 5e-3, &format!("{corner:?}"));
+    }
+    // A sharp corner in either of the other modes waits on the kernel, and
+    // says so on the feature.
+    let (doc, body) = pipe_body(unit_circle_section(), l_path(), &[], |p, s, _| {
+        pipe_of(
+            p,
+            s,
+            PipeOrientation::Standard,
+            PipeCorner::Round,
+            Vec::new(),
+        )
+    });
+    let refused = built_body(&doc, body).unwrap_err();
+    assert!(refused.contains("round"), "{refused}");
+}
+
+/// Right corners run each leg of the L on past the corner by the section's
+/// radius and fuse the two: two 11 mm cylinders less the bicylinder they
+/// share (16/3 for a unit radius).
+#[test]
+#[ignore = "kernel: make_pipe_shell has no corner mode other than the mitre (ogeom-rs#77)"]
+fn a_pipe_with_right_corners_runs_its_legs_on_and_fuses_them() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let (doc, body) = pipe_body(unit_circle_section(), l_path(), &[], |p, s, _| {
+        pipe_of(
+            p,
+            s,
+            PipeOrientation::Standard,
+            PipeCorner::Right,
+            Vec::new(),
+        )
+    });
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    let pi = std::f64::consts::PI;
+    assert_near(volume, 22.0 * pi - 16.0 / 3.0, 5e-3, "right corner");
+}
+
+/// Round corners end each leg square at the corner and turn the section
+/// about it: the two 10 mm cylinders, less the quarter bicylinder they
+/// share, and the quarter ball outside the corner.
+#[test]
+#[ignore = "kernel: make_pipe_shell has no corner mode other than the mitre (ogeom-rs#77)"]
+fn a_pipe_with_round_corners_turns_its_section_about_them() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let (doc, body) = pipe_body(unit_circle_section(), l_path(), &[], |p, s, _| {
+        pipe_of(
+            p,
+            s,
+            PipeOrientation::Standard,
+            PipeCorner::Round,
+            Vec::new(),
+        )
+    });
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    let pi = std::f64::consts::PI;
+    assert_near(
+        volume,
+        20.0 * pi - 4.0 / 3.0 + pi / 3.0,
+        5e-3,
+        "round corner",
+    );
+}
+
+/// A pipe through a second section: a circle of radius 2 at the start of a
+/// straight 20 mm path growing to radius 3 at its end, the frustum between.
+#[test]
+#[ignore = "kernel: no sweep of several sections along a spine (ogeom-rs#78)"]
+fn a_pipe_through_two_sections_changes_its_shape_down_the_path() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let straight = polyline_sketch(
+        wb_sketch::sketch::SketchPlane::xy(),
+        &[[0.0, 0.0], [0.0, 20.0]],
+    );
+    let end = circle_sketch_on(
+        wb_sketch::sketch::SketchPlane::from_face([0.0, 20.0, 0.0], [0.0, 1.0, 0.0]),
+        0.0,
+        0.0,
+        3.0,
+    );
+    let start = circle_sketch_on(wb_sketch::sketch::SketchPlane::xz(), 0.0, 0.0, 2.0);
+    let (doc, body) = pipe_body(start, straight, &[end], |p, s, extra| {
+        let standard = PipeOrientation::Standard;
+        pipe_of(p, s, standard, PipeCorner::Transformed, extra.to_vec())
+    });
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    let pi = std::f64::consts::PI;
+    assert_near(volume, pi * 20.0 / 3.0 * (4.0 + 6.0 + 9.0), 1e-2, "frustum");
+}
+
 /// A 1 × 1 square 5 to 6 mm from the sketch's Y axis.
 fn coil_section() -> SketchFeature {
     let mut sketch = Sketch::new("coil");

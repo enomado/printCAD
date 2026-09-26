@@ -848,6 +848,16 @@ on the start page (`Screen::Start`); the recent list lives in
   asks for a flat spiral, which the kernel's helical sweep refuses (a pitch
   of 0), so the feature carries that error. A subtractive helix with
   "keep inside" is `BooleanOp::Common` (a pattern cannot repeat it).
+- Pipe: `SolidOp::Pipe` carries a `PipeFrame` (rotation-minimizing,
+  Frenet, auxiliary path, binormal; files with the old `frenet` flag read
+  as the first two), a `PipeCorner` and further `sections`; an open path
+  runs from the end its profile sits by (`sketch_spine`). The kernel's
+  pipe shell knows only the first two frames and mitred (transformed)
+  corners: a binormal square to a planar path's plane or off a straight
+  one builds as the rotation-minimizing frame, which it equals, and right
+  or round corners build on a path without sharp corners; the rest, and
+  any extra section, fail on the feature with the kernel named. The
+  `kernel:` ignored tests in `part_design_stack.rs` are the wanted cases.
 - Hole threads: `wb_part/src/hole_tables.rs` holds the thread standards
   (ISO metric coarse and fine, UNC/UNF/UNEF, BSW/BSF, BSP G and Rc, NPT),
   their classes, the ISO 4762/10642 seats and the user's `hole_cuts.json`

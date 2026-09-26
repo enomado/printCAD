@@ -28,8 +28,8 @@ pub use build::{
 pub use feature::{
     BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeDirection,
     ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit,
-    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, SketchAxis, ThreadSpec,
-    TransformStep, primitive_icon, primitive_preset,
+    MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
+    SketchAxis, ThreadSpec, TransformStep, primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -397,7 +397,9 @@ impl PartDesignWorkbench {
                         refine: false,
                         profile,
                         spine,
-                        frenet: false,
+                        orientation: PipeOrientation::Standard,
+                        corner: PipeCorner::Transformed,
+                        sections: Vec::new(),
                         subtractive,
                     },
                     "Pipe",
