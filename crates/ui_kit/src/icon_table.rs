@@ -230,6 +230,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("hexagon", include_str!("../icons/hexagon.svg")),
     ("hole", include_str!("../icons/hole.svg")),
     ("info", include_str!("../icons/info.svg")),
+    ("involute-gear", include_str!("../icons/involute-gear.svg")),
     ("joint-align", include_str!("../icons/joint-align.svg")),
     ("joint-mate", include_str!("../icons/joint-mate.svg")),
     ("line", include_str!("../icons/line.svg")),
@@ -394,6 +395,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("slot", include_str!("../icons/slot.svg")),
     ("snap", include_str!("../icons/snap.svg")),
     ("split", include_str!("../icons/split.svg")),
+    ("sprocket", include_str!("../icons/sprocket.svg")),
     ("square", include_str!("../icons/square.svg")),
     (
         "subtractive-box",

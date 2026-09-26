@@ -16,6 +16,10 @@ pub struct SketchFeature {
     /// turned or flipped, the datum takes the sketch with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub support: Option<DatumSupport>,
+    /// The numbers the sketch's curves are made from, for a generated
+    /// sketch (a gear, a sprocket, a shaft); its curves follow them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generator: Option<crate::generator::Generator>,
 }
 
 /// A sketch's place on a datum: a datum plane, or one of a coordinate
@@ -70,6 +74,7 @@ impl SketchFeature {
             sketch,
             plane,
             support: None,
+            generator: None,
         }
     }
 
@@ -78,6 +83,7 @@ impl SketchFeature {
             sketch,
             plane: SketchPlane::default(),
             support: None,
+            generator: None,
         }
     }
 }
