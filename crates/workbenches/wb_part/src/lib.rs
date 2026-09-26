@@ -3,6 +3,7 @@
 //! The workbench edits the document's feature tree; the app shell watches
 //! for dirty part features and drives the kernel rebuild (see `build.rs`).
 
+mod borrow;
 mod build;
 mod centre;
 mod commands;
@@ -15,15 +16,17 @@ mod params;
 #[cfg(feature = "egui")]
 mod task;
 
+pub use borrow::freeze;
 pub use build::{
     BuildError, BuildPlan, body_build_ops, delete_feature, hole_diameter, invalidate_body,
     mark_all_part_features_dirty, part_feature_ids, part_features_of_body, pending_body_rebuilds,
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
-    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, ThreadSpec,
-    TransformStep, primitive_icon, primitive_preset,
+    BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeDirection,
+    ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit,
+    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, ThreadSpec, TransformStep,
+    primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -107,11 +110,13 @@ fn primitive_variants(subtractive: bool) -> Vec<ToolVariant> {
 }
 
 impl PartDesignWorkbench {
-    /// The sketch feature currently selected in the tree, if any.
+    /// The sketch feature currently selected in the tree, if any: a sketch
+    /// of the body, or one another body lends it.
     fn selected_sketch(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
         let id = ctx.active_document_object?;
         let node = ctx.document.get_feature_meta(id)?;
-        (node.workbench_id.as_str() == "wb.sketch").then_some(id)
+        (node.workbench_id.as_str() == "wb.sketch" || borrow::lends_sketch(ctx.document, id))
+            .then_some(id)
     }
 
     /// The body the current selection belongs to: the selected feature's
@@ -133,8 +138,12 @@ impl PartDesignWorkbench {
         (node.workbench_id.as_str() == "wb.part").then_some(id)
     }
 
+    /// Whether the body's history builds anything: borrowed geometry
+    /// alone does not.
     fn body_has_solid(ctx: &WorkbenchRuntimeContext, body: BodyId) -> bool {
-        !part_features_of_body(ctx.document, body).is_empty()
+        part_features_of_body(ctx.document, body)
+            .iter()
+            .any(|(_, f)| !matches!(f, PartFeature::Borrow { .. }))
     }
 
     /// `base` when no feature has that name, else `base_n` one past the
@@ -582,6 +591,7 @@ impl PartDesignWorkbench {
                     "Scaled",
                 )
             }
+            "part.borrow" => (Self::borrow_from_selection(ctx, body)?, "Borrowed"),
             "part.boolean" => {
                 need_material(has_solid)?;
                 let other = ctx
@@ -604,6 +614,66 @@ impl PartDesignWorkbench {
             _ => return Err(format!("unknown tool {tool}")),
         };
         Ok(feature)
+    }
+
+    /// What a new borrow in `body` takes from the selection: the faces and
+    /// edges picked on another body, else the latest sketch of another
+    /// body.
+    fn borrow_from_selection(
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+    ) -> Result<PartFeature, String> {
+        let face_body = ctx
+            .selected_body_id
+            .map(BodyId)
+            .filter(|b| *b != body && ctx.selected_face.is_some());
+        let edge_body = ctx
+            .selected_edges
+            .first()
+            .map(|e| BodyId(e.body))
+            .filter(|b| *b != body);
+        if let Some(from) = face_body.or(edge_body) {
+            let faces = ctx
+                .selected_face_in(from)
+                .filter(|_| face_body == Some(from))
+                .map(|face| FacePick {
+                    point: face.point,
+                    normal: face.normal,
+                })
+                .into_iter()
+                .collect();
+            let edges = ctx
+                .selected_edges_in(from)
+                .iter()
+                .filter(|e| BodyId(e.body) == from)
+                .map(|e| EdgePick {
+                    point: e.point,
+                    direction: e.direction,
+                })
+                .collect();
+            return Ok(PartFeature::Borrow {
+                source: BorrowSource::Solid {
+                    body: from,
+                    faces,
+                    edges,
+                },
+                frozen: None,
+            });
+        }
+        let sketch = ctx
+            .document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.body != Some(body))
+            .max_by_key(|(id, n)| (n.seq, **id))
+            .map(|(id, _)| *id)
+            .ok_or(
+                "Pick a face or an edge of another body, or draw a sketch in another body, first",
+            )?;
+        Ok(PartFeature::Borrow {
+            source: BorrowSource::Sketch(sketch),
+            frozen: None,
+        })
     }
 
     /// Create a datum feature anchored to the selected face (or the XY base
@@ -806,8 +876,29 @@ impl Workbench for PartDesignWorkbench {
                 .map(|f| f.kind_label().to_string())
                 .unwrap_or_else(|| "Part design feature".to_string()),
             family_label: "Part design feature".to_string(),
-            builds_solid: true,
+            builds_solid: !matches!(feature, Some(PartFeature::Borrow { .. })),
         }
+    }
+
+    /// A borrow draws what it lends where its body sits, in the palette's
+    /// external colour: the sketch's curves, or the outlines of the faces
+    /// and edges.
+    fn passive_geometry(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
+    ) -> Option<core_document::PassiveGeometry> {
+        let borrow = borrow::borrow_of(document, id)?;
+        let mesh = borrow::lines(document, &borrow);
+        if mesh.positions.is_empty() {
+            return None;
+        }
+        Some(core_document::PassiveGeometry {
+            mesh,
+            revision: borrow::lines_revision(document, id, &borrow),
+            tint: core_document::PassiveTint::External,
+        })
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -872,6 +963,10 @@ impl Workbench for PartDesignWorkbench {
             ),
         );
         register(context, action("part.clone", "Clone", "clone", "datum"));
+        register(
+            context,
+            action("part.borrow", "Borrow geometry", "clone-geometry", "datum"),
+        );
         // Profiles made from numbers.
         register(context, generators::tool());
         generators::register(context);
@@ -1141,12 +1236,14 @@ impl Workbench for PartDesignWorkbench {
                 // for this body (offering the clicked face when the selection
                 // landed on solid geometry), and finishing the sketch returns
                 // here (the host tracks the return bench).
+                // A borrow selected in the tree offers its first flat face.
+                let face = ctx
+                    .active_document_object
+                    .and_then(|id| borrow::flat_face_in_world(ctx.document, id))
+                    .or(ctx.selected_face);
                 ctx.request(HostRequest::StartOn {
                     workbench: WorkbenchId::from("wb.sketch"),
-                    attach: core_document::SketchAttachRequest {
-                        body: body.0,
-                        face: ctx.selected_face,
-                    },
+                    attach: core_document::SketchAttachRequest { body: body.0, face },
                 });
                 InputResult::consumed()
             }
@@ -1254,6 +1351,7 @@ impl Workbench for PartDesignWorkbench {
             | "part.coordinate_system"
             | "part.generator" => has_body,
             "part.clone" => has_body && !has_solid,
+            "part.borrow" => has_body && ctx.document.bodies().len() > 1,
             "part.scaled" => has_solid,
             "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,
             "part.pocket"

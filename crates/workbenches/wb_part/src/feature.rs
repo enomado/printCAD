@@ -27,6 +27,8 @@ pub enum RevolveAxis {
     /// A line of the sketch itself, by its element id: a construction line
     /// drawn for the purpose, or an edge of the profile.
     SketchLine(uuid::Uuid),
+    /// A straight edge another body lends this one.
+    Borrowed(BorrowedRef),
 }
 
 impl RevolveAxis {
@@ -38,6 +40,7 @@ impl RevolveAxis {
             RevolveAxis::Edge(_) => "Picked edge",
             RevolveAxis::Datum(_) => "Datum line",
             RevolveAxis::SketchLine(_) => "Sketch line",
+            RevolveAxis::Borrowed(_) => "Borrowed edge",
         }
     }
 }
@@ -84,6 +87,8 @@ pub enum ExtrudeDirection {
     Custom([f32; 3]),
     /// Along a straight edge of the solid, picked in the viewport.
     Edge(EdgePick),
+    /// Along a straight edge another body lends this one.
+    Borrowed(BorrowedRef),
 }
 
 impl ExtrudeDirection {
@@ -92,13 +97,16 @@ impl ExtrudeDirection {
             ExtrudeDirection::Normal => "Sketch normal",
             ExtrudeDirection::Custom(_) => "Custom vector",
             ExtrudeDirection::Edge(_) => "Picked edge",
+            ExtrudeDirection::Borrowed(_) => "Borrowed edge",
         }
     }
 
     /// The direction set, in the body's own frame; `None` along the normal.
+    /// A borrowed edge's is where its body has it, which the build works
+    /// out.
     pub fn vector(&self) -> Option<[f64; 3]> {
         match self {
-            ExtrudeDirection::Normal => None,
+            ExtrudeDirection::Normal | ExtrudeDirection::Borrowed(_) => None,
             ExtrudeDirection::Custom(v) => Some(v.map(f64::from)),
             ExtrudeDirection::Edge(edge) => Some(edge.direction.map(f64::from)),
         }
@@ -131,6 +139,8 @@ pub enum ExtrudeMode {
     /// Stop on a set of picked faces, each line of the sweep at the first
     /// of them it meets (plus offset along the sweep).
     UpToShape,
+    /// Stop on a face another body lends (plus offset).
+    UpToBorrowed(BorrowedRef),
 }
 
 impl ExtrudeMode {
@@ -163,6 +173,7 @@ impl ExtrudeMode {
             ExtrudeMode::ToLast => "To last",
             ExtrudeMode::UpToFace => "Up to face",
             ExtrudeMode::UpToShape => "Up to shape",
+            ExtrudeMode::UpToBorrowed(_) => "Up to borrowed face",
         }
     }
 
@@ -589,6 +600,74 @@ pub enum DrillPoint {
     Angled { angle_deg: f32 },
 }
 
+/// What a body borrows from another: one of its sketches, or faces and
+/// edges of its solid.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BorrowSource {
+    /// A sketch of another body: its profile, where that body sits.
+    Sketch(FeatureId),
+    /// Faces and edges of another body's solid, each where it was picked,
+    /// in that body's own frame, and re-found on the solid as it is built.
+    Solid {
+        body: BodyId,
+        #[serde(default)]
+        faces: Vec<FacePick>,
+        #[serde(default)]
+        edges: Vec<EdgePick>,
+    },
+}
+
+/// Borrowed geometry as it was when it was frozen, in the borrowing body's
+/// frame: what the body keeps once it stops following the source.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct FrozenBorrow {
+    /// The sketch, with its plane in the borrowing body's frame, as a
+    /// sketch feature's data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sketch: Option<serde_json::Value>,
+    #[serde(default)]
+    pub faces: Vec<FrozenFace>,
+    #[serde(default)]
+    pub edges: Vec<FrozenEdge>,
+}
+
+/// A borrowed face as it was frozen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FrozenFace {
+    /// Where it was picked, in the borrowing body's frame.
+    pub pick: FacePick,
+    /// The face alone, as a native-format snapshot in its own body's frame.
+    pub shape: String,
+    /// What moves `shape` into the borrowing body's frame, a rigid
+    /// row-major 4×4 matrix.
+    pub transform: [[f64; 4]; 4],
+    /// Its surface, in the borrowing body's frame, when the mesh knew it.
+    #[serde(default)]
+    pub surface: Option<kernel_api::FaceSurface>,
+    /// Its outline, pairs of points in the borrowing body's frame.
+    #[serde(default)]
+    pub outline: Vec<[f32; 3]>,
+}
+
+/// A borrowed edge as it was frozen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FrozenEdge {
+    /// A point of it and its direction there, in the borrowing body's
+    /// frame.
+    pub pick: EdgePick,
+    /// Its outline, pairs of points in the borrowing body's frame.
+    #[serde(default)]
+    pub outline: Vec<[f32; 3]>,
+}
+
+/// One face or edge of a borrow: the borrow feature and its place in the
+/// borrow's list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BorrowedRef {
+    pub borrow: FeatureId,
+    pub index: usize,
+}
+
 /// A solid-modeling feature in a body's linear history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PartFeature {
@@ -891,6 +970,16 @@ pub enum PartFeature {
         #[serde(default)]
         refine: bool,
     },
+    /// Geometry of another body lent to this one, where the two bodies
+    /// sit: a sketch whose profile features here take, faces they stop on
+    /// or sketch on, edges they turn about or run along. It builds nothing
+    /// itself.
+    Borrow {
+        source: BorrowSource,
+        /// The geometry as it was frozen; `None` follows the source.
+        #[serde(default)]
+        frozen: Option<FrozenBorrow>,
+    },
 }
 
 fn default_true() -> bool {
@@ -918,6 +1007,45 @@ impl PartFeature {
             PartFeature::Pipe { profile, spine, .. } => vec![*profile, *spine],
             _ => self.sketch().into_iter().collect(),
         }
+    }
+
+    /// The borrows whose faces or edges this feature takes: a face it
+    /// stops on, an edge it turns about or runs along.
+    pub fn borrows(&self) -> Vec<FeatureId> {
+        let mut borrows = Vec::new();
+        match self {
+            PartFeature::Pad {
+                mode,
+                mode2,
+                direction,
+                ..
+            }
+            | PartFeature::Pocket {
+                mode,
+                mode2,
+                direction,
+                ..
+            } => {
+                for mode in std::iter::once(mode).chain(mode2) {
+                    if let ExtrudeMode::UpToBorrowed(r) = mode {
+                        borrows.push(r.borrow);
+                    }
+                }
+                if let ExtrudeDirection::Borrowed(r) = direction {
+                    borrows.push(r.borrow);
+                }
+            }
+            PartFeature::Revolution { axis, .. }
+            | PartFeature::Groove { axis, .. }
+            | PartFeature::Helix { axis, .. } => {
+                if let RevolveAxis::Borrowed(r) = axis {
+                    borrows.push(r.borrow);
+                }
+            }
+            _ => {}
+        }
+        borrows.dedup();
+        borrows
     }
 
     /// Earlier part features this feature re-applies (patterns/mirror).
@@ -975,6 +1103,7 @@ impl PartFeature {
             PartFeature::PolarPattern { .. } => "Polar Pattern",
             PartFeature::MultiTransform { .. } => "Multi Transform",
             PartFeature::BodyBoolean { .. } => "Boolean",
+            PartFeature::Borrow { .. } => "Borrowed geometry",
             PartFeature::Clone { .. } => "Clone",
         }
     }
@@ -1033,6 +1162,7 @@ impl PartFeature {
             PartFeature::PolarPattern { .. } => "polar-pattern",
             PartFeature::MultiTransform { .. } => "multi-transform",
             PartFeature::BodyBoolean { .. } => "boolean",
+            PartFeature::Borrow { .. } => "clone-geometry",
             PartFeature::Clone { .. } => "clone",
         }
     }
@@ -1154,6 +1284,19 @@ impl WorkbenchFeature for PartFeature {
         } = self
         {
             deps.push(*datum);
+        }
+        for borrow in self.borrows() {
+            if !deps.contains(&borrow) {
+                deps.push(borrow);
+            }
+        }
+        // A borrowed sketch that follows its source changes with it.
+        if let PartFeature::Borrow {
+            source: BorrowSource::Sketch(sketch),
+            frozen: None,
+        } = self
+        {
+            deps.push(*sketch);
         }
         deps
     }

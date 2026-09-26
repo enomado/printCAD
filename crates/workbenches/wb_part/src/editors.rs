@@ -16,10 +16,11 @@ use ui_kit::widgets::{
 
 use crate::build::part_features_of_body;
 use crate::feature::{
-    ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
-    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, TransformStep,
+    BorrowedRef, ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick,
+    HelixMode, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode, TransformStep,
 };
 
+mod borrow;
 mod hole;
 
 /// The label column of a parameter row.
@@ -338,22 +339,20 @@ fn extrude_mode_combo(
     id_salt: impl egui::AsIdSalt,
     mode: &mut ExtrudeMode,
     first_feature: bool,
+    borrowed: &[(BorrowedRef, String)],
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         label_cell(ui, "Type");
         egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(mode.label())
+            .selected_text(mode_name(*mode, borrowed))
             .show_ui(ui, |ui| {
-                for candidate in ExtrudeMode::ALL {
+                for (candidate, name) in mode_choices(&ExtrudeMode::ALL, borrowed) {
                     // Material-relative modes need an earlier solid.
                     if first_feature && candidate.needs_material() {
                         continue;
                     }
-                    if ui
-                        .selectable_label(*mode == candidate, candidate.label())
-                        .clicked()
-                        && *mode != candidate
+                    if ui.selectable_label(*mode == candidate, name).clicked() && *mode != candidate
                     {
                         *mode = candidate;
                         changed = true;
@@ -362,6 +361,35 @@ fn extrude_mode_combo(
             });
     });
     changed
+}
+
+/// The end conditions offered: `modes`, then one per face the body
+/// borrows.
+fn mode_choices(
+    modes: &[ExtrudeMode],
+    borrowed: &[(BorrowedRef, String)],
+) -> Vec<(ExtrudeMode, String)> {
+    modes
+        .iter()
+        .map(|m| (*m, m.label().to_string()))
+        .chain(
+            borrowed
+                .iter()
+                .map(|(r, name)| (ExtrudeMode::UpToBorrowed(*r), format!("Up to {name}"))),
+        )
+        .collect()
+}
+
+/// What an end condition is called: a borrowed face by the face.
+fn mode_name(mode: ExtrudeMode, borrowed: &[(BorrowedRef, String)]) -> String {
+    match mode {
+        ExtrudeMode::UpToBorrowed(r) => borrowed
+            .iter()
+            .find(|(c, _)| *c == r)
+            .map(|(_, name)| format!("Up to {name}"))
+            .unwrap_or_else(|| mode.label().to_string()),
+        _ => mode.label().to_string(),
+    }
 }
 
 /// "Use selected face" picker row. Shows the current pick and captures the
@@ -605,26 +633,57 @@ fn edge_pick_row(
 fn extrude_direction_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
     direction: &mut ExtrudeDirection,
     id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
+    let borrowed = crate::borrow::edges_of_body(ctx.document, body);
+    let shown = match direction {
+        ExtrudeDirection::Borrowed(r) => borrowed
+            .iter()
+            .find(|(c, _)| c == r)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| direction.label().to_string()),
+        _ => direction.label().to_string(),
+    };
     ui.horizontal(|ui| {
         label_cell(ui, "Direction");
         egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(direction.label())
+            .selected_text(shown)
             .show_ui(ui, |ui| {
-                for candidate in [
-                    ExtrudeDirection::Normal,
-                    ExtrudeDirection::Custom([0.0, 0.0, 1.0]),
-                    ExtrudeDirection::Edge(EdgePick {
-                        point: [0.0; 3],
-                        direction: [0.0, 0.0, 1.0],
-                    }),
-                ] {
-                    let is_current =
-                        std::mem::discriminant(direction) == std::mem::discriminant(&candidate);
-                    if ui.selectable_label(is_current, candidate.label()).clicked() && !is_current {
+                let mut candidates = vec![
+                    (
+                        ExtrudeDirection::Normal,
+                        ExtrudeDirection::Normal.label().to_string(),
+                    ),
+                    (
+                        ExtrudeDirection::Custom([0.0, 0.0, 1.0]),
+                        "Custom vector".to_string(),
+                    ),
+                    (
+                        ExtrudeDirection::Edge(EdgePick {
+                            point: [0.0; 3],
+                            direction: [0.0, 0.0, 1.0],
+                        }),
+                        "Picked edge".to_string(),
+                    ),
+                ];
+                candidates.extend(
+                    borrowed
+                        .iter()
+                        .map(|(r, name)| (ExtrudeDirection::Borrowed(*r), name.clone())),
+                );
+                for (candidate, name) in candidates {
+                    let is_current = match (&*direction, &candidate) {
+                        (ExtrudeDirection::Borrowed(_), ExtrudeDirection::Borrowed(_)) => {
+                            *direction == candidate
+                        }
+                        _ => {
+                            std::mem::discriminant(direction) == std::mem::discriminant(&candidate)
+                        }
+                    };
+                    if ui.selectable_label(is_current, name).clicked() && !is_current {
                         // A picked edge starts from the one picked now.
                         *direction = match candidate {
                             ExtrudeDirection::Edge(_) => match picked_edges(ctx).first() {
@@ -642,7 +701,7 @@ fn extrude_direction_editor(
             });
     });
     match direction {
-        ExtrudeDirection::Normal => {}
+        ExtrudeDirection::Normal | ExtrudeDirection::Borrowed(_) => {}
         ExtrudeDirection::Custom(v) => {
             ui.horizontal(|ui| {
                 label_cell(ui, "Vector");
@@ -711,6 +770,9 @@ fn extrude_side_rows(
             changed |= face_pick_row(ui, ctx, face, "Target face:");
             changed |= mm_drag(ui, fx, offset.0, offset.1);
         }
+        ExtrudeMode::UpToBorrowed(_) => {
+            changed |= mm_drag(ui, fx, offset.0, offset.1);
+        }
         ExtrudeMode::UpToShape => {
             changed |= face_list_editor(ui, ctx, shape, "Stop faces:");
             changed |= mm_drag(ui, fx, offset.0, offset.1);
@@ -728,13 +790,14 @@ fn second_side_combo(
     first: ExtrudeMode,
     mode2: &mut Option<ExtrudeMode>,
     first_feature: bool,
+    borrowed: &[(BorrowedRef, String)],
 ) -> bool {
     let mut changed = false;
     let required = first == ExtrudeMode::TwoLengths;
     let shown = match *mode2 {
-        None if required => ExtrudeMode::Dimension.label(),
-        None => "None",
-        Some(mode) => mode.label(),
+        None if required => ExtrudeMode::Dimension.label().to_string(),
+        None => "None".to_string(),
+        Some(mode) => mode_name(mode, borrowed),
     };
     ui.horizontal(|ui| {
         label_cell(ui, "Second side");
@@ -744,13 +807,13 @@ fn second_side_combo(
                 if !required && ui.selectable_label(mode2.is_none(), "None").clicked() {
                     changed |= mode2.take().is_some();
                 }
-                for candidate in ExtrudeMode::SECOND_SIDE {
+                for (candidate, name) in mode_choices(&ExtrudeMode::SECOND_SIDE, borrowed) {
                     if first_feature && candidate.needs_material() {
                         continue;
                     }
                     let current = *mode2 == Some(candidate)
                         || (required && mode2.is_none() && candidate == ExtrudeMode::Dimension);
-                    if ui.selectable_label(current, candidate.label()).clicked() && !current {
+                    if ui.selectable_label(current, name).clicked() && !current {
                         *mode2 = Some(candidate);
                         changed = true;
                     }
@@ -790,6 +853,9 @@ fn axis_choices(
         if matches!(datum.shape, core_document::DatumShape::Line { .. }) {
             choices.push((RevolveAxis::Datum(id), name));
         }
+    }
+    for (r, name) in crate::borrow::edges_of_body(ctx.document, body) {
+        choices.push((RevolveAxis::Borrowed(r), name));
     }
     choices
 }
@@ -848,7 +914,10 @@ fn revolve_axis_editor(
                 for (candidate, name) in candidates {
                     let is_current = match (&*axis, &candidate) {
                         (RevolveAxis::SketchLine(_), RevolveAxis::SketchLine(_))
-                        | (RevolveAxis::Datum(_), RevolveAxis::Datum(_)) => *axis == candidate,
+                        | (RevolveAxis::Datum(_), RevolveAxis::Datum(_))
+                        | (RevolveAxis::Borrowed(_), RevolveAxis::Borrowed(_)) => {
+                            *axis == candidate
+                        }
                         _ => std::mem::discriminant(axis) == std::mem::discriminant(&candidate),
                     };
                     if ui.selectable_label(is_current, name).clicked() && !is_current {
@@ -1400,7 +1469,9 @@ pub fn feature_editor(
                 sketch,
                 profile_face,
             );
-            changed |= extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature);
+            let borrowed = crate::borrow::faces_of_body(ctx.document, body);
+            changed |=
+                extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature, &borrowed);
             changed |= extrude_side_rows(
                 ui,
                 ctx,
@@ -1415,8 +1486,14 @@ pub fn feature_editor(
                 changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
             }
             if !(*mode == ExtrudeMode::Dimension && *symmetric) {
-                changed |=
-                    second_side_combo(ui, ("pad_mode2", feature_id), *mode, mode2, first_feature);
+                changed |= second_side_combo(
+                    ui,
+                    ("pad_mode2", feature_id),
+                    *mode,
+                    mode2,
+                    first_feature,
+                    &borrowed,
+                );
                 if let (_, Some(second)) = mode.sides(*mode2) {
                     changed |= extrude_side_rows(
                         ui,
@@ -1430,7 +1507,7 @@ pub fn feature_editor(
                     );
                 }
             }
-            changed |= extrude_direction_editor(ui, ctx, direction, ("pad_dir", feature_id));
+            changed |= extrude_direction_editor(ui, ctx, body, direction, ("pad_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
         }
@@ -1469,7 +1546,14 @@ pub fn feature_editor(
                 *mode = ExtrudeMode::ThroughAll;
                 changed = true;
             }
-            changed |= extrude_mode_combo(ui, ("pocket_mode", feature_id), mode, first_feature);
+            let borrowed = crate::borrow::faces_of_body(ctx.document, body);
+            changed |= extrude_mode_combo(
+                ui,
+                ("pocket_mode", feature_id),
+                mode,
+                first_feature,
+                &borrowed,
+            );
             *through_all = *mode == ExtrudeMode::ThroughAll;
             changed |= extrude_side_rows(
                 ui,
@@ -1491,6 +1575,7 @@ pub fn feature_editor(
                     *mode,
                     mode2,
                     first_feature,
+                    &borrowed,
                 );
                 if let (_, Some(second)) = mode.sides(*mode2) {
                     changed |= extrude_side_rows(
@@ -1505,7 +1590,8 @@ pub fn feature_editor(
                     );
                 }
             }
-            changed |= extrude_direction_editor(ui, ctx, direction, ("pocket_dir", feature_id));
+            changed |=
+                extrude_direction_editor(ui, ctx, body, direction, ("pocket_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed")
                 .on_hover_text("Cut along the sketch normal instead of against it")
                 .changed();
@@ -1992,6 +2078,9 @@ pub fn feature_editor(
                     });
             });
         }
+        PartFeature::Borrow { source, frozen } => {
+            changed |= borrow::borrow_editor(ui, ctx, body, feature_id, source, frozen);
+        }
         PartFeature::BodyBoolean {
             tool_body,
             kind,
@@ -2172,6 +2261,10 @@ mod panel_width {
             json!({"MultiTransform": {"originals": [], "steps": [
                 {"Scale": {"factor": 2.0, "center": [0.0, 0.0, 0.0], "occurrences": 2}},
                 {"Mirror": {"plane": "XZ"}}]}}),
+            json!({"Borrow": {"source": {"Sketch": s}}}),
+            json!({"Borrow": {"source": {"Solid": {"body": body.0.to_string(),
+                "faces": [{"point": [100.0, 200.0, 300.0], "normal": [0.0, 0.0, 1.0]}],
+                "edges": [{"point": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]}]}}}}),
             json!({"Primitive": {
                 "kind": {"Cylinder": {"radius": 5.0, "height": 10.0, "angle_deg": 360.0}},
                 "placement": {"origin": [0.0, 0.0, 0.0], "x_axis": [1.0, 0.0, 0.0], "z_axis": [0.0, 0.0, 1.0]},

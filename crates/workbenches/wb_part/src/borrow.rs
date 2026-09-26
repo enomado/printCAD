@@ -1,0 +1,1069 @@
+//! Geometry one body borrows from another (`PartFeature::Borrow`): a
+//! sketch, or faces and edges of a solid, placed in the borrowing body's
+//! frame where the two bodies sit. A live borrow follows its source (the
+//! sketch as it is solved now, the solid as it is built now, the bodies as
+//! they are placed now); a frozen one keeps the snapshot taken when it was
+//! frozen, stored with it.
+//!
+//! Features of the borrowing body take a borrowed sketch as their profile
+//! (through `build::load_sketch`), a borrowed face as the face they stop on
+//! and a borrowed edge as the axis they turn about or the way they run.
+
+use std::collections::HashMap;
+
+use core_document::{BodyId, BodyPlacement, Document, FeatureId, WorkbenchFeature};
+use kernel_api::{FaceSurface, KernelQueries, TriMesh};
+use wb_sketch::SketchFeature;
+
+use crate::feature::{
+    BorrowSource, BorrowedRef, EdgePick, FacePick, FrozenBorrow, FrozenEdge, FrozenFace,
+    PartFeature,
+};
+
+/// A borrow feature as the build reads it.
+pub(crate) struct Borrow {
+    /// The body that borrows.
+    pub body: BodyId,
+    pub source: BorrowSource,
+    pub frozen: Option<FrozenBorrow>,
+}
+
+/// The borrow `id` is, when it is one.
+pub(crate) fn borrow_of(document: &Document, id: FeatureId) -> Option<Borrow> {
+    let node = document.get_feature_meta(id)?;
+    if node.workbench_id.as_str() != "wb.part" {
+        return None;
+    }
+    match PartFeature::from_json(document.feature_values(id)?).ok()? {
+        PartFeature::Borrow { source, frozen } => Some(Borrow {
+            body: node.body?,
+            source,
+            frozen,
+        }),
+        _ => None,
+    }
+}
+
+/// The body the source lives in: the sketch's body, or the solid's. `None`
+/// for a sketch that belongs to no body, which lies in the document's frame.
+pub(crate) fn source_body(document: &Document, source: &BorrowSource) -> Option<BodyId> {
+    match source {
+        BorrowSource::Sketch(sketch) => document.get_feature_meta(*sketch)?.body,
+        BorrowSource::Solid { body, .. } => Some(*body),
+    }
+}
+
+/// What carries a point of `source`'s frame (the document's when `None`)
+/// into `using`'s frame, where the two bodies sit.
+pub(crate) fn relative(
+    document: &Document,
+    using: BodyId,
+    source: Option<BodyId>,
+) -> BodyPlacement {
+    let into_using = document.body_placement(using).inverse();
+    match source {
+        Some(source) => into_using.after(&document.body_placement(source)),
+        None => into_using,
+    }
+}
+
+/// Why `source` cannot be borrowed by `using`, if it cannot.
+pub(crate) fn refusal(document: &Document, using: BodyId, source: &BorrowSource) -> Option<String> {
+    match source {
+        BorrowSource::Sketch(sketch) => {
+            let Some(node) = document.get_feature_meta(*sketch) else {
+                return Some("the borrowed sketch is not in this document".into());
+            };
+            if node.workbench_id.as_str() != "wb.sketch" {
+                return Some("what it borrows is not a sketch".into());
+            }
+            (node.body == Some(using))
+                .then(|| "the sketch is this body's own; a feature can take it directly".into())
+        }
+        BorrowSource::Solid { body, .. } => {
+            if *body == using {
+                return Some("a body cannot borrow from itself; pick another body".into());
+            }
+            (!document.bodies().iter().any(|b| b.id == *body))
+                .then(|| "the body it borrows from is not in this document".into())
+        }
+    }
+}
+
+/// A sketch feature's plane (and its sketch's copy of it) moved by
+/// `placement`: the same sketch, seen from another frame.
+fn placed_sketch(mut feature: SketchFeature, placement: &BodyPlacement) -> SketchFeature {
+    let place = |plane: &mut wb_sketch::sketch::SketchPlane| {
+        plane.origin = placement.point(plane.origin);
+        plane.normal = placement.direction(plane.normal);
+        plane.x_axis = placement.direction(plane.x_axis);
+        plane.y_axis = placement.direction(plane.y_axis);
+    };
+    place(&mut feature.plane);
+    place(&mut feature.sketch.plane);
+    // The copy's plane is where it lies here, whatever it follows at home.
+    feature.support = None;
+    feature
+}
+
+/// The source sketch as it is now, in `using`'s frame.
+fn live_sketch(
+    document: &Document,
+    using: BodyId,
+    sketch: FeatureId,
+) -> Result<SketchFeature, String> {
+    let data = document
+        .feature_values(sketch)
+        .ok_or("the borrowed sketch is not in this document")?;
+    let feature =
+        SketchFeature::from_json(data).map_err(|e| format!("invalid borrowed sketch: {e}"))?;
+    let home = document.get_feature_meta(sketch).and_then(|n| n.body);
+    Ok(placed_sketch(feature, &relative(document, using, home)))
+}
+
+/// The sketch the borrow `id` lends, in its borrowing body's frame; `None`
+/// when `id` is not a borrow.
+pub(crate) fn sketch(document: &Document, id: FeatureId) -> Option<Result<SketchFeature, String>> {
+    let borrow = borrow_of(document, id)?;
+    Some(borrowed_sketch(document, &borrow))
+}
+
+fn borrowed_sketch(document: &Document, borrow: &Borrow) -> Result<SketchFeature, String> {
+    if let Some(frozen) = &borrow.frozen {
+        let data = frozen
+            .sketch
+            .as_ref()
+            .ok_or("this borrow was frozen with no sketch in it")?;
+        return SketchFeature::from_json(data).map_err(|e| format!("invalid frozen sketch: {e}"));
+    }
+    let BorrowSource::Sketch(sketch) = &borrow.source else {
+        return Err("this borrow lends faces and edges, not a sketch".into());
+    };
+    if let Some(why) = refusal(document, borrow.body, &borrow.source) {
+        return Err(why);
+    }
+    live_sketch(document, borrow.body, *sketch)
+}
+
+/// Whether the borrow `id` lends a sketch.
+pub(crate) fn lends_sketch(document: &Document, id: FeatureId) -> bool {
+    borrow_of(document, id).is_some_and(|b| match &b.frozen {
+        Some(frozen) => frozen.sketch.is_some(),
+        None => matches!(b.source, BorrowSource::Sketch(_)),
+    })
+}
+
+/// A borrowed face, ready for the kernel: a shape, what moves it into the
+/// borrowing body's frame, and where the face was picked in that frame.
+pub(crate) struct KernelFace {
+    pub shape: Vec<u8>,
+    pub transform: Option<[[f64; 4]; 4]>,
+    pub point: [f64; 3],
+}
+
+/// The borrow `r` names, or why there is none.
+fn referenced(document: &Document, r: &BorrowedRef) -> Result<Borrow, String> {
+    borrow_of(document, r.borrow).ok_or_else(|| "the borrowed geometry it uses is gone".to_string())
+}
+
+/// The source body of a live borrow of faces and edges, checked: it lends
+/// only when it is not itself built from the borrowing body.
+fn live_solid_source(document: &Document, borrow: &Borrow) -> Result<BodyId, String> {
+    let BorrowSource::Solid { body, .. } = &borrow.source else {
+        return Err("this borrow lends a sketch, not faces or edges".into());
+    };
+    if let Some(why) = refusal(document, borrow.body, &borrow.source) {
+        return Err(why);
+    }
+    if crate::build::bodies_reach(document, *body, borrow.body) {
+        return Err(
+            "the body it borrows from is built from this one in turn; one of the two has to go"
+                .into(),
+        );
+    }
+    Ok(*body)
+}
+
+/// The borrowed face `r` names, for the kernel to stop on.
+pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<KernelFace, String> {
+    let borrow = referenced(document, r)?;
+    if let Some(frozen) = &borrow.frozen {
+        let face = frozen
+            .faces
+            .get(r.index)
+            .ok_or("the borrow has no such face; pick it again")?;
+        return Ok(KernelFace {
+            shape: face.shape.clone().into_bytes(),
+            transform: Some(face.transform),
+            point: face.pick.point.map(f64::from),
+        });
+    }
+    let source = live_solid_source(document, &borrow)?;
+    let BorrowSource::Solid { faces, .. } = &borrow.source else {
+        unreachable!("checked above");
+    };
+    let pick = faces
+        .get(r.index)
+        .ok_or("the borrow has no such face; pick it again")?;
+    let shape = document
+        .imported_brep_blob(source)
+        .ok_or("the body it borrows from has no solid yet")?
+        .to_vec();
+    let placement = relative(document, borrow.body, Some(source));
+    Ok(KernelFace {
+        shape,
+        transform: (!placement.is_identity()).then(|| placement.rows()),
+        point: placement.point(pick.point).map(f64::from),
+    })
+}
+
+/// The borrowed edge `r` names, as a point of it and its direction there,
+/// in the borrowing body's frame.
+pub(crate) fn edge(document: &Document, r: &BorrowedRef) -> Result<EdgePick, String> {
+    let borrow = referenced(document, r)?;
+    if let Some(frozen) = &borrow.frozen {
+        return frozen
+            .edges
+            .get(r.index)
+            .map(|e| e.pick)
+            .ok_or_else(|| "the borrow has no such edge; pick it again".to_string());
+    }
+    let source = live_solid_source(document, &borrow)?;
+    let BorrowSource::Solid { edges, .. } = &borrow.source else {
+        unreachable!("checked above");
+    };
+    let pick = edges
+        .get(r.index)
+        .ok_or("the borrow has no such edge; pick it again")?;
+    let (mesh, _) = document
+        .local_geometry(source)
+        .ok_or("the body it borrows from has no solid yet")?;
+    let found =
+        mesh_edge(&mesh, pick).ok_or("no edge of the source solid lies where it was picked")?;
+    let placement = relative(document, borrow.body, Some(source));
+    Ok(EdgePick {
+        point: placement.point(found.pick.point),
+        direction: placement.direction(found.pick.direction),
+    })
+}
+
+/// A face of a borrow, as the borrowing body sees it.
+pub(crate) struct SeenFace {
+    pub pick: FacePick,
+    pub surface: Option<FaceSurface>,
+    /// Pairs of points.
+    pub outline: Vec<[f32; 3]>,
+}
+
+/// A body's faces and edges as the borrow lends them, in the borrowing
+/// body's frame, drawn from the source's mesh (live) or the snapshot.
+pub(crate) fn seen(document: &Document, borrow: &Borrow) -> (Vec<SeenFace>, Vec<FrozenEdge>) {
+    if let Some(frozen) = &borrow.frozen {
+        let faces = frozen
+            .faces
+            .iter()
+            .map(|f| SeenFace {
+                pick: f.pick,
+                surface: f.surface,
+                outline: f.outline.clone(),
+            })
+            .collect();
+        return (faces, frozen.edges.clone());
+    }
+    let BorrowSource::Solid {
+        body: source,
+        faces,
+        edges,
+    } = &borrow.source
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let Some((mesh, _)) = document.local_geometry(*source) else {
+        return (Vec::new(), Vec::new());
+    };
+    let placement = relative(document, borrow.body, Some(*source));
+    let seen_faces = faces
+        .iter()
+        .filter_map(|pick| mesh_face(&mesh, pick))
+        .map(|face| moved_face(face, &placement))
+        .collect();
+    let seen_edges = edges
+        .iter()
+        .filter_map(|pick| mesh_edge(&mesh, pick))
+        .map(|edge| moved_edge(edge, &placement))
+        .collect();
+    (seen_faces, seen_edges)
+}
+
+fn moved_face(face: SeenFace, placement: &BodyPlacement) -> SeenFace {
+    SeenFace {
+        pick: FacePick {
+            point: placement.point(face.pick.point),
+            normal: placement.direction(face.pick.normal),
+        },
+        surface: face
+            .surface
+            .map(|s| s.moved(|p| placement.point(p), |d| placement.direction(d))),
+        outline: face.outline.iter().map(|p| placement.point(*p)).collect(),
+    }
+}
+
+fn moved_edge(edge: FrozenEdge, placement: &BodyPlacement) -> FrozenEdge {
+    FrozenEdge {
+        pick: EdgePick {
+            point: placement.point(edge.pick.point),
+            direction: placement.direction(edge.pick.direction),
+        },
+        outline: edge.outline.iter().map(|p| placement.point(*p)).collect(),
+    }
+}
+
+/// The snapshot a borrow keeps once frozen: its source as it is now, in
+/// `using`'s frame. Faces are taken out of the source's solid by the
+/// kernel, so they need it.
+pub fn freeze(
+    document: &Document,
+    kernel: Option<&dyn KernelQueries>,
+    using: BodyId,
+    source: &BorrowSource,
+) -> Result<FrozenBorrow, String> {
+    if let Some(why) = refusal(document, using, source) {
+        return Err(why);
+    }
+    match source {
+        BorrowSource::Sketch(sketch) => {
+            let placed = live_sketch(document, using, *sketch)?;
+            Ok(FrozenBorrow {
+                sketch: Some(placed.to_json()),
+                ..FrozenBorrow::default()
+            })
+        }
+        BorrowSource::Solid { body, faces, edges } => {
+            let (mesh, _) = document
+                .local_geometry(*body)
+                .ok_or("the body it borrows from has no solid yet")?;
+            let placement = relative(document, using, Some(*body));
+            let mut frozen = FrozenBorrow::default();
+            if !faces.is_empty() {
+                let kernel = kernel.ok_or("freezing faces needs the geometry kernel")?;
+                let brep = document
+                    .imported_brep_blob(*body)
+                    .ok_or("the body it borrows from has no solid yet")?;
+                for pick in faces {
+                    let shape = kernel
+                        .face_of(brep, pick.point.map(f64::from))
+                        .map_err(|e| format!("taking a face out of the source: {e}"))?;
+                    let shape = String::from_utf8(shape)
+                        .map_err(|_| "the kernel gave a face snapshot that is not text")?;
+                    let seen = mesh_face(&mesh, pick)
+                        .map(|face| moved_face(face, &placement))
+                        .unwrap_or_else(|| SeenFace {
+                            pick: FacePick {
+                                point: placement.point(pick.point),
+                                normal: placement.direction(pick.normal),
+                            },
+                            surface: None,
+                            outline: Vec::new(),
+                        });
+                    frozen.faces.push(FrozenFace {
+                        pick: FacePick {
+                            point: placement.point(pick.point),
+                            normal: placement.direction(pick.normal),
+                        },
+                        shape,
+                        transform: placement.rows(),
+                        surface: seen.surface,
+                        outline: seen.outline,
+                    });
+                }
+            }
+            for pick in edges {
+                let edge = mesh_edge(&mesh, pick)
+                    .ok_or("no edge of the source solid lies where an edge was picked")?;
+                frozen.edges.push(moved_edge(edge, &placement));
+            }
+            Ok(frozen)
+        }
+    }
+}
+
+/// What a live borrow in `using` follows, summed up: where its source sits
+/// relative to it and what the source is now (the sketch's data, the
+/// solid's geometry revision). A change means what stands on it rebuilds.
+pub(crate) fn inputs(document: &Document, using: BodyId, source: &BorrowSource) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match source {
+        BorrowSource::Sketch(sketch) => document
+            .feature_values(*sketch)
+            .map(core_document::data_revision)
+            .hash(&mut hasher),
+        BorrowSource::Solid { body, .. } => document
+            .imported_geometry(*body)
+            .map(|g| g.revision)
+            .hash(&mut hasher),
+    }
+    let placement = relative(document, using, source_body(document, source));
+    for row in placement.rows() {
+        for value in row {
+            value.to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+/// The borrows of `body`, each with its data, in history order.
+pub(crate) fn borrows_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, Borrow)> {
+    crate::build::part_features_of_body(document, body)
+        .into_iter()
+        .filter_map(|(id, feature)| match feature {
+            PartFeature::Borrow { source, frozen } => Some((
+                id,
+                Borrow {
+                    body,
+                    source,
+                    frozen,
+                },
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The faces `body` borrows, each named for a choice list.
+#[cfg_attr(not(feature = "egui"), allow(dead_code))]
+pub(crate) fn faces_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedRef, String)> {
+    let mut out = Vec::new();
+    for (id, borrow) in borrows_of_body(document, body) {
+        let name = feature_name(document, id);
+        let count = match &borrow.frozen {
+            Some(frozen) => frozen.faces.len(),
+            None => match &borrow.source {
+                BorrowSource::Solid { faces, .. } => faces.len(),
+                BorrowSource::Sketch(_) => 0,
+            },
+        };
+        for index in 0..count {
+            out.push((
+                BorrowedRef { borrow: id, index },
+                format!("{name}: face {}", index + 1),
+            ));
+        }
+    }
+    out
+}
+
+/// The edges `body` borrows, each named for a choice list.
+#[cfg_attr(not(feature = "egui"), allow(dead_code))]
+pub(crate) fn edges_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedRef, String)> {
+    let mut out = Vec::new();
+    for (id, borrow) in borrows_of_body(document, body) {
+        let name = feature_name(document, id);
+        let count = match &borrow.frozen {
+            Some(frozen) => frozen.edges.len(),
+            None => match &borrow.source {
+                BorrowSource::Solid { edges, .. } => edges.len(),
+                BorrowSource::Sketch(_) => 0,
+            },
+        };
+        for index in 0..count {
+            out.push((
+                BorrowedRef { borrow: id, index },
+                format!("{name}: edge {}", index + 1),
+            ));
+        }
+    }
+    out
+}
+
+fn feature_name(document: &Document, id: FeatureId) -> String {
+    document
+        .get_feature_meta(id)
+        .map(|n| n.name.clone())
+        .unwrap_or_else(|| "Borrowed".into())
+}
+
+/// The first flat face the borrow `id` lends, in world space, for a sketch
+/// to be drawn on.
+pub(crate) fn flat_face_in_world(
+    document: &Document,
+    id: FeatureId,
+) -> Option<core_document::FaceRef> {
+    let borrow = borrow_of(document, id)?;
+    let (faces, _) = seen(document, &borrow);
+    let placement = document.body_placement(borrow.body);
+    faces.into_iter().find_map(|face| {
+        let (point, normal) = match face.surface {
+            Some(FaceSurface::Plane { normal, .. }) => (face.pick.point, normal),
+            Some(_) => return None,
+            None => (face.pick.point, face.pick.normal),
+        };
+        Some(core_document::FaceRef {
+            point: placement.point(point),
+            normal: placement.direction(normal),
+            surface: None,
+        })
+    })
+}
+
+/// What the borrow draws in its body's frame: the sketch's curves, or the
+/// outlines of its faces and edges.
+pub(crate) fn lines(document: &Document, borrow: &Borrow) -> TriMesh {
+    let lends_sketch = match &borrow.frozen {
+        Some(frozen) => frozen.sketch.is_some(),
+        None => matches!(borrow.source, BorrowSource::Sketch(_)),
+    };
+    if lends_sketch {
+        return match borrowed_sketch(document, borrow) {
+            Ok(feature) => wb_sketch::render::sketch_to_lines(&feature.sketch, &feature.plane),
+            Err(_) => TriMesh::default(),
+        };
+    }
+    let (faces, edges) = seen(document, borrow);
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    for face in &faces {
+        positions.extend_from_slice(&face.outline);
+        normals.extend(std::iter::repeat_n(face.pick.normal, face.outline.len()));
+    }
+    for edge in &edges {
+        positions.extend_from_slice(&edge.outline);
+        normals.extend(std::iter::repeat_n([0.0, 0.0, 1.0], edge.outline.len()));
+    }
+    let edges = (0..positions.len() as u32 / 2 * 2).collect();
+    TriMesh {
+        positions,
+        normals,
+        edges,
+        ..TriMesh::default()
+    }
+}
+
+/// What the scene draws for the borrow changes when this does.
+pub(crate) fn lines_revision(document: &Document, id: FeatureId, borrow: &Borrow) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    document
+        .feature_values(id)
+        .map(core_document::data_revision)
+        .hash(&mut hasher);
+    if borrow.frozen.is_none() {
+        inputs(document, borrow.body, &borrow.source).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn length(a: [f32; 3]) -> f32 {
+    dot(a, a).sqrt()
+}
+
+/// The point of the segment `a`–`b` nearest `p`.
+fn nearest_on_segment(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    let ab = sub(b, a);
+    let len2 = dot(ab, ab);
+    if len2 <= f32::EPSILON {
+        return a;
+    }
+    let t = (dot(sub(p, a), ab) / len2).clamp(0.0, 1.0);
+    [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t]
+}
+
+/// How far `p` is from the triangle `a`, `b`, `c`.
+fn triangle_distance(p: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
+    let n = cross(sub(b, a), sub(c, a));
+    let n_len = length(n);
+    if n_len > f32::EPSILON {
+        let n = n.map(|v| v / n_len);
+        let d = dot(sub(p, a), n);
+        let q = [p[0] - n[0] * d, p[1] - n[1] * d, p[2] - n[2] * d];
+        let inside = [(a, b), (b, c), (c, a)]
+            .iter()
+            .all(|(u, v)| dot(cross(sub(*v, *u), sub(q, *u)), n) >= -1e-6);
+        if inside {
+            return d.abs();
+        }
+    }
+    [(a, b), (b, c), (c, a)]
+        .iter()
+        .map(|(u, v)| length(sub(p, nearest_on_segment(p, *u, *v))))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// A point rounded to a thousandth of a millimetre, for matching.
+type Key = [i64; 3];
+
+/// How many triangles share a side, and its two ends.
+type Side = (usize, [f32; 3], [f32; 3]);
+
+/// How far a pick may lie from the geometry it names: a pick lands on
+/// drawn triangles, a chord off a curved surface.
+const PICK_REACH_MM: f32 = 0.5;
+
+/// The face of `mesh` a pick names: its outline, its surface when the mesh
+/// records it, and the pick's normal.
+fn mesh_face(mesh: &TriMesh, pick: &FacePick) -> Option<SeenFace> {
+    let triangle = |t: usize| {
+        let at = |k: usize| mesh.positions[mesh.indices[t * 3 + k] as usize];
+        (at(0), at(1), at(2))
+    };
+    let count = mesh.indices.len() / 3;
+    let (nearest, distance) = (0..count)
+        .map(|t| {
+            let (a, b, c) = triangle(t);
+            (t, triangle_distance(pick.point, a, b, c))
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))?;
+    if distance > PICK_REACH_MM {
+        return None;
+    }
+    let members: Vec<usize> = match mesh.faces.get(nearest) {
+        Some(face) => (0..count)
+            .filter(|t| mesh.faces.get(*t) == Some(face))
+            .collect(),
+        None => vec![nearest],
+    };
+    let surface = mesh
+        .faces
+        .get(nearest)
+        .and_then(|face| mesh.face_surfaces.get(*face as usize))
+        .copied()
+        .filter(|s| *s != FaceSurface::Other);
+    // The outline: the sides of the face's triangles no other of them
+    // shares, points matched to a thousandth of a millimetre.
+    let key = |p: [f32; 3]| -> Key { p.map(|v| (v * 1000.0).round() as i64) };
+    let mut sides: HashMap<(Key, Key), Side> = HashMap::new();
+    for t in &members {
+        let (a, b, c) = triangle(*t);
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            let (ku, kv) = (key(u), key(v));
+            let k = if ku <= kv { (ku, kv) } else { (kv, ku) };
+            sides.entry(k).or_insert((0, u, v)).0 += 1;
+        }
+    }
+    let mut outline = Vec::new();
+    for (count, u, v) in sides.into_values() {
+        if count == 1 {
+            outline.push(u);
+            outline.push(v);
+        }
+    }
+    Some(SeenFace {
+        pick: *pick,
+        surface,
+        outline,
+    })
+}
+
+/// The edge of `mesh`'s outline a pick names: a point of it nearest the
+/// pick and its direction there (turned the way the pick ran), with the
+/// whole edge's outline.
+fn mesh_edge(mesh: &TriMesh, pick: &EdgePick) -> Option<FrozenEdge> {
+    let segment = |s: usize| {
+        (
+            mesh.positions[mesh.edges[s * 2] as usize],
+            mesh.positions[mesh.edges[s * 2 + 1] as usize],
+        )
+    };
+    let count = mesh.edges.len() / 2;
+    let (nearest, distance) = (0..count)
+        .map(|s| {
+            let (a, b) = segment(s);
+            (
+                s,
+                length(sub(pick.point, nearest_on_segment(pick.point, a, b))),
+            )
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))?;
+    if distance > PICK_REACH_MM {
+        return None;
+    }
+    let (a, b) = segment(nearest);
+    let mut direction = sub(b, a);
+    let len = length(direction);
+    if len <= f32::EPSILON {
+        return None;
+    }
+    direction = direction.map(|v| v / len);
+    if dot(direction, pick.direction) < 0.0 {
+        direction = direction.map(|v| -v);
+    }
+    let members: Vec<usize> = match mesh.edge_ids.get(nearest) {
+        Some(edge) => (0..count)
+            .filter(|s| mesh.edge_ids.get(*s) == Some(edge))
+            .collect(),
+        None => vec![nearest],
+    };
+    let mut outline = Vec::with_capacity(members.len() * 2);
+    for s in members {
+        let (u, v) = segment(s);
+        outline.push(u);
+        outline.push(v);
+    }
+    Some(FrozenEdge {
+        pick: EdgePick {
+            point: nearest_on_segment(pick.point, a, b),
+            direction,
+        },
+        outline,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A unit cube's top face as two triangles, a side as two more, with
+    /// their kernel faces and the top's outline edges named.
+    fn cube_top() -> TriMesh {
+        TriMesh {
+            positions: vec![
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [0.0, 1.0, 1.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 6],
+            indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 1, 4, 1, 0],
+            edges: vec![0, 1, 1, 2, 2, 3, 3, 0],
+            faces: vec![0, 0, 1, 1],
+            edge_ids: vec![0, 1, 2, 3],
+            face_surfaces: vec![
+                FaceSurface::Plane {
+                    origin: [0.0, 0.0, 1.0],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                FaceSurface::Plane {
+                    origin: [0.0, 0.0, 0.0],
+                    normal: [0.0, -1.0, 0.0],
+                },
+            ],
+            ..TriMesh::default()
+        }
+    }
+
+    #[test]
+    fn a_picked_face_brings_its_whole_outline_and_its_plane() {
+        let mesh = cube_top();
+        let face = mesh_face(
+            &mesh,
+            &FacePick {
+                point: [0.6, 0.3, 1.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+        )
+        .unwrap();
+        // Four sides, the diagonal the two triangles share left out.
+        assert_eq!(face.outline.len(), 8);
+        assert!(matches!(face.surface, Some(FaceSurface::Plane { .. })));
+        let far = FacePick {
+            point: [5.0, 5.0, 5.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        assert!(mesh_face(&mesh, &far).is_none(), "too far to name a face");
+    }
+
+    #[test]
+    fn a_picked_edge_runs_the_way_it_was_picked() {
+        let mesh = cube_top();
+        let edge = mesh_edge(
+            &mesh,
+            &EdgePick {
+                point: [0.5, 0.0, 1.0],
+                direction: [-1.0, 0.0, 0.0],
+            },
+        )
+        .unwrap();
+        assert_eq!(edge.pick.direction, [-1.0, 0.0, 0.0]);
+        assert_eq!(edge.pick.point, [0.5, 0.0, 1.0]);
+        assert_eq!(edge.outline.len(), 2);
+    }
+
+    #[test]
+    fn a_placed_sketch_moves_its_plane_and_drops_its_support() {
+        let mut feature = SketchFeature::new(
+            wb_sketch::sketch::Sketch::new("s"),
+            wb_sketch::sketch::SketchPlane::xy(),
+        );
+        feature.support = Some(wb_sketch::DatumSupport {
+            datum: FeatureId::new(),
+            plane: None,
+            offset: 0.0,
+        });
+        // A quarter turn about x, then 10 mm along it.
+        let half = std::f32::consts::FRAC_PI_4;
+        let placement = BodyPlacement {
+            translation: [10.0, 0.0, 0.0],
+            rotation: [half.sin(), 0.0, 0.0, half.cos()],
+        };
+        let placed = placed_sketch(feature, &placement);
+        assert!(placed.support.is_none());
+        let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
+        assert!(close(placed.plane.origin, [10.0, 0.0, 0.0]));
+        // A quarter turn about x takes +z to -y.
+        assert!(close(placed.plane.normal, [0.0, -1.0, 0.0]));
+        assert_eq!(placed.plane, placed.sketch.plane);
+    }
+
+    use crate::PartDesignWorkbench;
+    use crate::feature::{ExtrudeDirection, ExtrudeMode};
+    use core_document::{CommandResult, Workbench, WorkbenchRuntimeContext};
+    use serde_json::{Value, json};
+
+    fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
+        let mut bench = PartDesignWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        bench.run_command(id, args.as_object().unwrap(), &mut ctx)
+    }
+
+    fn id_of(value: &Value) -> FeatureId {
+        FeatureId(uuid::Uuid::parse_str(value.as_str().unwrap()).unwrap())
+    }
+
+    /// Two bodies, the first with a sketch in it.
+    fn two_bodies(doc: &mut Document) -> (BodyId, FeatureId, BodyId) {
+        let a = doc.create_body(Some("A".into()));
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(
+                    wb_sketch::sketch::Sketch::new("s"),
+                    wb_sketch::sketch::SketchPlane::xy(),
+                ),
+                "Sketch".into(),
+                Some(a),
+            )
+            .unwrap();
+        let b = doc.create_body(Some("B".into()));
+        (a, sketch, b)
+    }
+
+    fn data(doc: &Document, id: FeatureId) -> PartFeature {
+        PartFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap()
+    }
+
+    /// Live, a borrowed sketch depends on its source, so an edit of the
+    /// sketch reaches what the borrowing body builds from it; frozen, it
+    /// keeps a copy placed in its own body's frame and depends on nothing.
+    #[test]
+    fn freezing_a_borrowed_sketch_keeps_a_placed_copy_and_lets_go_of_the_source() {
+        let mut doc = Document::new("t");
+        let (_, sketch, b) = two_bodies(&mut doc);
+        doc.set_body_placement(
+            b,
+            BodyPlacement {
+                translation: [0.0, 0.0, 10.0],
+                ..BodyPlacement::IDENTITY
+            },
+        );
+        let borrowed = id_of(
+            &call(
+                &mut doc,
+                "part.borrow",
+                json!({"body": b.0.to_string(), "sketch": sketch.0.to_string()}),
+            )
+            .unwrap(),
+        );
+        assert_eq!(doc.feature_tree().dependencies(borrowed), vec![sketch]);
+        assert!(lends_sketch(&doc, borrowed));
+        let seen = super::sketch(&doc, borrowed).unwrap().unwrap();
+        assert_eq!(seen.plane.origin, [0.0, 0.0, -10.0], "A's plane, from B");
+
+        call(
+            &mut doc,
+            "part.freeze",
+            json!({"feature": borrowed.0.to_string()}),
+        )
+        .unwrap();
+        let PartFeature::Borrow {
+            frozen: Some(frozen),
+            ..
+        } = data(&doc, borrowed)
+        else {
+            panic!("frozen");
+        };
+        let kept = SketchFeature::from_json(frozen.sketch.as_ref().unwrap()).unwrap();
+        assert_eq!(kept.plane.origin, [0.0, 0.0, -10.0]);
+        assert!(doc.feature_tree().dependencies(borrowed).is_empty());
+        doc.clear_feature_dirty(borrowed);
+        doc.mark_feature_dirty(sketch);
+        assert!(
+            !doc.get_feature_meta(borrowed).unwrap().dirty,
+            "an edit of the source does not reach a frozen borrow"
+        );
+
+        call(
+            &mut doc,
+            "part.freeze",
+            json!({"feature": borrowed.0.to_string(), "frozen": false}),
+        )
+        .unwrap();
+        assert!(matches!(
+            data(&doc, borrowed),
+            PartFeature::Borrow { frozen: None, .. }
+        ));
+        assert_eq!(doc.feature_tree().dependencies(borrowed), vec![sketch]);
+    }
+
+    #[test]
+    fn a_body_borrows_from_another_body_only() {
+        let mut doc = Document::new("t");
+        let (a, sketch, b) = two_bodies(&mut doc);
+        let own = call(
+            &mut doc,
+            "part.borrow",
+            json!({"body": a.0.to_string(), "sketch": sketch.0.to_string()}),
+        );
+        assert!(own.is_err(), "its own sketch needs no borrowing");
+        let itself = call(
+            &mut doc,
+            "part.borrow",
+            json!({"body": b.0.to_string(), "from": b.0.to_string(), "faces": []}),
+        );
+        assert!(itself.is_err());
+        let both = call(
+            &mut doc,
+            "part.borrow",
+            json!({"body": b.0.to_string(), "sketch": sketch.0.to_string(), "from": a.0.to_string()}),
+        );
+        assert!(both.is_err());
+        // Faces are taken out of a solid by the kernel; A has none yet.
+        let frozen_faces = call(
+            &mut doc,
+            "part.borrow",
+            json!({"body": b.0.to_string(), "from": a.0.to_string(), "frozen": true,
+                "faces": [{"point": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0]}]}),
+        );
+        assert!(frozen_faces.is_err());
+        assert_eq!(
+            doc.feature_tree().all_nodes().count(),
+            1,
+            "a refused call adds nothing"
+        );
+        let made = call(
+            &mut doc,
+            "part.borrow",
+            json!({"body": b.0.to_string(), "from": a.0.to_string(),
+                "faces": [{"point": [1.0, 2.0, 3.0], "normal": [0.0, 0.0, 1.0]}],
+                "edges": [{"point": {"x": 1.0, "y": 2.0, "z": 0.0}, "direction": [1.0, 0.0, 0.0]}]}),
+        )
+        .unwrap();
+        let PartFeature::Borrow {
+            source: BorrowSource::Solid { body, faces, edges },
+            frozen: None,
+        } = data(&doc, id_of(&made))
+        else {
+            panic!("a live borrow of faces and edges");
+        };
+        assert_eq!(body, a);
+        assert_eq!(faces[0].point, [1.0, 2.0, 3.0]);
+        assert_eq!(edges[0].point, [1.0, 2.0, 0.0]);
+    }
+
+    /// A feature that stops on a borrowed face or runs along a borrowed
+    /// edge depends on the borrow, so a change of what it lends rebuilds it.
+    #[test]
+    fn what_takes_a_borrowed_face_or_edge_depends_on_the_borrow() {
+        let face = BorrowedRef {
+            borrow: FeatureId::new(),
+            index: 0,
+        };
+        let edge = BorrowedRef {
+            borrow: FeatureId::new(),
+            index: 1,
+        };
+        let sketch = FeatureId::new();
+        let pad = PartFeature::from_json(&json!({"Pad": {
+            "sketch": sketch.0.to_string(), "length": 10.0, "reversed": false,
+            "mode2": {"UpToBorrowed": face},
+            "direction": {"Borrowed": edge},
+        }}))
+        .unwrap();
+        assert!(matches!(
+            pad,
+            PartFeature::Pad {
+                mode: ExtrudeMode::Dimension,
+                direction: ExtrudeDirection::Borrowed(_),
+                ..
+            }
+        ));
+        assert_eq!(pad.dependencies(), vec![sketch, face.borrow, edge.borrow]);
+    }
+
+    /// The tool makes a borrow of the latest sketch of another body, and
+    /// its task records as the call that makes the same borrow.
+    #[cfg(feature = "egui")]
+    #[test]
+    fn the_tool_borrows_another_bodys_sketch_and_records_the_call() {
+        let mut doc = Document::new("t");
+        let (_, sketch, b) = two_bodies(&mut doc);
+        let before = doc.clone();
+        let mut bench = PartDesignWorkbench::default();
+        let made = {
+            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.selected_body_id = Some(b.0);
+            bench.on_input(
+                &core_document::WorkbenchInputEvent::KeyPress {
+                    key: core_document::KeyCode::A,
+                },
+                Some("part.borrow"),
+                &mut ctx,
+            );
+            ctx.active_document_object.unwrap()
+        };
+        assert_eq!(doc.get_feature_meta(made).unwrap().body, Some(b));
+        assert!(matches!(
+            data(&doc, made),
+            PartFeature::Borrow { source: BorrowSource::Sketch(s), frozen: None } if s == sketch
+        ));
+        let egui_ctx = egui::Context::default();
+        ui_kit::apply_theme(&egui_ctx);
+        let mut recorded = Vec::new();
+        for accept in [false, true] {
+            let mut output = egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut ctx =
+                    WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+                ctx.active_document_object = Some(made);
+                bench.ui_task_panel(
+                    ui,
+                    &mut ctx,
+                    core_document::TaskRequest {
+                        accept,
+                        cancel: false,
+                    },
+                );
+                recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert_eq!(recorded[0].id, "part.borrow");
+        let mut replay = before;
+        let again = call(
+            &mut replay,
+            "part.borrow",
+            Value::Object(recorded[0].args.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            replay.get_feature_data(id_of(&again)),
+            doc.get_feature_data(made)
+        );
+    }
+}

@@ -155,6 +155,53 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "part.borrow",
+            "Borrow another body's sketch, or faces and edges of its solid",
+        )
+        .param("body", ParamKind::Id, "The body that borrows")
+        .optional(
+            "sketch",
+            ParamKind::Id,
+            "A sketch of another body: its profile, for this body's features",
+        )
+        .optional(
+            "from",
+            ParamKind::Id,
+            "Or the body whose solid lends faces and edges",
+        )
+        .optional(
+            "faces",
+            ParamKind::List,
+            "With from: faces it lends, each {point, normal} in that body's own frame",
+        )
+        .optional(
+            "edges",
+            ParamKind::List,
+            "With from: edges it lends, each {point, direction} in that body's own frame",
+        )
+        .optional(
+            "frozen",
+            ParamKind::Bool,
+            "Keep the geometry as it is now rather than follow the source",
+        )
+        .optional("name", ParamKind::String, "Its name in the tree")
+        .returns("the borrow's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "part.freeze",
+            "Freeze borrowed geometry as it is now, or let it follow its source again",
+        )
+        .param("feature", ParamKind::Id, "The borrow")
+        .optional(
+            "frozen",
+            ParamKind::Bool,
+            "true (the default) takes the source as it is now; false follows it again",
+        )
+        .returns("nothing"),
+    );
+    context.register_command(
+        CommandSpec::new(
             "part.centre_line",
             "Measure the centre line of a tube-like solid between two of its faces",
         )
@@ -214,6 +261,12 @@ pub fn run(
     if id == "part.centre_line" {
         return crate::centre::command(&a, ctx);
     }
+    if id == "part.borrow" {
+        return borrow(&a, ctx);
+    }
+    if id == "part.freeze" {
+        return freeze(&a, ctx);
+    }
     if !FEATURES.iter().any(|(f, _)| *f == id) {
         return Err(CommandError::Unknown(id.to_string()));
     }
@@ -223,7 +276,9 @@ pub fn run(
             .document
             .get_feature_meta(sketch)
             .ok_or_else(|| CommandError::bad("sketch", "is not a feature of this document"))?;
-        if node.workbench_id.as_str() != "wb.sketch" {
+        if node.workbench_id.as_str() != "wb.sketch"
+            && !crate::borrow::lends_sketch(ctx.document, sketch)
+        {
             return Err(CommandError::bad("sketch", "is not a sketch"));
         }
         // The toolbar's path reads the sketch from the selection.
@@ -406,6 +461,125 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     Ok(json!(id.0.to_string()))
 }
 
+/// `part.borrow`: a borrow of a sketch, or of faces and edges, added to a
+/// body as a feature of its history.
+fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    use crate::feature::{BorrowSource, EdgePick, FacePick};
+    let body = BodyId(a.id("body")?);
+    if !ctx.document.bodies().iter().any(|b| b.id == body) {
+        return Err(CommandError::bad("body", "is not a body of this document"));
+    }
+    if ctx.document.body_solid_is_imported(body) {
+        return Err(CommandError::bad(
+            "body",
+            "came from an import and takes no features; borrow into a body of its own",
+        ));
+    }
+    let source = match (a.opt_id("sketch")?, a.opt_id("from")?) {
+        (Some(sketch), None) => BorrowSource::Sketch(FeatureId(sketch)),
+        (None, Some(from)) => {
+            let list = |name: &str| match a.0.get(name) {
+                None | Some(Value::Null) => Ok(Vec::new()),
+                Some(Value::Array(items)) => Ok(items.clone()),
+                // A script's empty table.
+                Some(Value::Object(map)) if map.is_empty() => Ok(Vec::new()),
+                Some(_) => Err(CommandError::bad(name, "must be a list")),
+            };
+            let faces = list("faces")?
+                .iter()
+                .map(|f| {
+                    Ok(FacePick {
+                        point: vector3(f.get("point"), "faces")?,
+                        normal: vector3(f.get("normal"), "faces")?,
+                    })
+                })
+                .collect::<Result<Vec<_>, CommandError>>()?;
+            let edges = list("edges")?
+                .iter()
+                .map(|e| {
+                    Ok(EdgePick {
+                        point: vector3(e.get("point"), "edges")?,
+                        direction: vector3(e.get("direction"), "edges")?,
+                    })
+                })
+                .collect::<Result<Vec<_>, CommandError>>()?;
+            BorrowSource::Solid {
+                body: BodyId(from),
+                faces,
+                edges,
+            }
+        }
+        _ => {
+            return Err(CommandError::bad(
+                "sketch",
+                "give a sketch, or from with the faces and edges it lends, not both",
+            ));
+        }
+    };
+    if let Some(why) = crate::borrow::refusal(ctx.document, body, &source) {
+        let arg = if matches!(source, BorrowSource::Sketch(_)) {
+            "sketch"
+        } else {
+            "from"
+        };
+        return Err(CommandError::bad(arg, why));
+    }
+    let frozen = if a.opt_bool("frozen")?.unwrap_or(false) {
+        Some(
+            crate::borrow::freeze(ctx.document, ctx.kernel, body, &source)
+                .map_err(CommandError::failed)?,
+        )
+    } else {
+        None
+    };
+    let name = a
+        .opt_string("name")?
+        .map(str::to_string)
+        .unwrap_or_else(|| PartDesignWorkbench::next_feature_name(ctx, "Borrowed"));
+    let id = ctx
+        .document
+        .add_feature_in_body(PartFeature::Borrow { source, frozen }, name, Some(body))
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.mark_feature_dirty(id);
+    ctx.active_document_object = Some(id);
+    Ok(json!(id.0.to_string()))
+}
+
+/// `part.freeze`: a borrow takes its source as it is now, or follows it
+/// again.
+fn freeze(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let id = FeatureId(a.id("feature")?);
+    let not_a_borrow = || CommandError::bad("feature", "is not borrowed geometry");
+    let body = ctx
+        .document
+        .get_feature_meta(id)
+        .and_then(|n| n.body)
+        .ok_or_else(not_a_borrow)?;
+    let Some(PartFeature::Borrow { source, .. }) = ctx
+        .document
+        .get_feature_data(id)
+        .and_then(|d| PartFeature::from_json(d).ok())
+    else {
+        return Err(not_a_borrow());
+    };
+    let frozen = if a.opt_bool("frozen")?.unwrap_or(true) {
+        Some(
+            crate::borrow::freeze(ctx.document, ctx.kernel, body, &source)
+                .map_err(CommandError::failed)?,
+        )
+    } else {
+        None
+    };
+    let feature = PartFeature::Borrow { source, frozen };
+    ctx.document
+        .update_feature_data(id, feature.to_json())
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document
+        .set_feature_dependencies(id, feature.dependencies());
+    ctx.document.mark_feature_dirty(id);
+    Ok(Value::Null)
+}
+
 pub(crate) fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
     let bad = || CommandError::bad(name, "must be {x, y, z}");
     let v = match value {
@@ -434,6 +608,10 @@ pub(crate) fn record_task(
         return;
     };
     let id = json!(task.feature.0.to_string());
+    if let Ok(PartFeature::Borrow { source, frozen }) = PartFeature::from_json(&node.data) {
+        record_borrow(ctx, task, &node.name, source, frozen.is_some());
+        return;
+    }
     match (&task.made_by, &task.kind) {
         (Some((tool, body)), crate::task::TaskKind::Part) => {
             let command = core_document::base_tool_id(tool);
@@ -534,6 +712,67 @@ pub(crate) fn record_task(
                 ctx.record("part.set", args, Value::Null);
             }
         }
+    }
+}
+
+/// A borrow's task as a recording says it: made, as `part.borrow` with
+/// what it borrows; edited, as `part.set` of its source and `part.freeze`
+/// when it was frozen, taken again or let go.
+#[cfg(feature = "egui")]
+fn record_borrow(
+    ctx: &mut WorkbenchRuntimeContext,
+    task: &crate::task::TaskState,
+    name: &str,
+    source: crate::feature::BorrowSource,
+    frozen: bool,
+) {
+    use crate::feature::BorrowSource;
+    let id = json!(task.feature.0.to_string());
+    if let Some((_, body)) = &task.made_by {
+        let mut args = Map::new();
+        args.insert("body".into(), json!(body.0.to_string()));
+        args.insert("name".into(), json!(name));
+        match &source {
+            BorrowSource::Sketch(sketch) => {
+                args.insert("sketch".into(), json!(sketch.0.to_string()));
+            }
+            BorrowSource::Solid { body, faces, edges } => {
+                args.insert("from".into(), json!(body.0.to_string()));
+                args.insert("faces".into(), json!(faces));
+                args.insert("edges".into(), json!(edges));
+            }
+        }
+        if frozen {
+            args.insert("frozen".into(), json!(true));
+        }
+        ctx.record("part.borrow", args, id);
+        return;
+    }
+    let Ok(PartFeature::Borrow {
+        source: source_before,
+        frozen: frozen_before,
+    }) = PartFeature::from_json(&task.snapshot)
+    else {
+        return;
+    };
+    if source_before != source {
+        let mut args = Map::new();
+        args.insert("feature".into(), id.clone());
+        args.insert("source".into(), json!(source));
+        ctx.record("part.set", args, Value::Null);
+    }
+    let now =
+        ctx.document.get_feature_data(task.feature).and_then(|d| {
+            match PartFeature::from_json(d).ok()? {
+                PartFeature::Borrow { frozen, .. } => Some(frozen),
+                _ => None,
+            }
+        });
+    if now.is_some_and(|now| now != frozen_before) {
+        let mut args = Map::new();
+        args.insert("feature".into(), id);
+        args.insert("frozen".into(), json!(frozen));
+        ctx.record("part.freeze", args, Value::Null);
     }
 }
 
