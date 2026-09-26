@@ -9,6 +9,7 @@ mod commands;
 #[cfg(feature = "egui")]
 mod editors;
 mod feature;
+mod generators;
 mod params;
 #[cfg(feature = "egui")]
 mod task;
@@ -813,6 +814,9 @@ impl Workbench for PartDesignWorkbench {
             ),
         );
         register(context, action("part.clone", "Clone", "clone", "datum"));
+        // Profiles made from numbers.
+        register(context, generators::tool());
+        generators::register(context);
         // Additive.
         register(context, action("part.pad", "Pad", "pad", "additive"));
         register(
@@ -956,6 +960,9 @@ impl Workbench for PartDesignWorkbench {
         args: &core_document::CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> core_document::CommandResult {
+        if generators::is_command(id) {
+            return generators::command(id, args, ctx);
+        }
         commands::run(self, id, args, ctx)
     }
 
@@ -1066,6 +1073,7 @@ impl Workbench for PartDesignWorkbench {
                 }
                 InputResult::consumed()
             }
+            Some("part.generator") => generators::insert(ctx, active_tool.unwrap_or_default()),
             Some("part.new_sketch") => {
                 let Some(body) = Self::target_body(ctx) else {
                     ctx.log_warn("Select a body (or one of its features) first");
@@ -1185,7 +1193,8 @@ impl Workbench for PartDesignWorkbench {
             | "part.datum_plane"
             | "part.datum_line"
             | "part.datum_point"
-            | "part.coordinate_system" => has_body,
+            | "part.coordinate_system"
+            | "part.generator" => has_body,
             "part.clone" => has_body && !has_solid,
             "part.scaled" => has_solid,
             "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,
