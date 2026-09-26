@@ -3833,3 +3833,53 @@ fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
         "the ellipse and its centre are left"
     );
 }
+
+#[test]
+fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(2.0, 3.0, "sketch.line");
+    h.click(12.0, 5.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(7.0, 4.0, "sketch.select");
+    h.release(7.0, 4.0, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.constrain.horizontal"));
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    let glyph = h
+        .marks()
+        .into_iter()
+        .find(|m| is_icon(m, "constraint-horizontal"))
+        .expect("the horizontal glyph shows");
+    h.press_px((glyph.pos[0], glyph.pos[1]));
+    h.release_px((glyph.pos[0], glyph.pos[1]));
+    assert!(h.tool_enabled("sketch.park_constraints"));
+    h.key(KeyCode::A, Some("sketch.park_constraints"));
+    assert!(h.sketch().constraints.iter().all(|c| c.parked));
+    assert!(
+        !h.marks()
+            .iter()
+            .any(|m| is_icon(m, "constraint-horizontal")),
+        "parked, the glyph is off the normal layer"
+    );
+    // Still solved: a dragged end keeps the line level.
+    h.click(12.0, 4.0, "sketch.select");
+    h.mouse_move(12.0, 9.0, "sketch.select");
+    h.release(12.0, 9.0, "sketch.select");
+    let sketch = h.sketch();
+    let ys: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.y),
+            _ => None,
+        })
+        .collect();
+    assert!((ys[0] - ys[1]).abs() < 1e-3, "{ys:?}");
+    // The parked layer shows it, and only it.
+    h.key(KeyCode::A, Some("sketch.parked_layer"));
+    assert!(
+        h.marks()
+            .iter()
+            .any(|m| is_icon(m, "constraint-horizontal"))
+    );
+}

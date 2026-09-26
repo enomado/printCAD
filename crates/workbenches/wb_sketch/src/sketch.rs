@@ -1017,6 +1017,10 @@ pub struct Constraint {
     /// constraints; set by dragging the label).
     #[serde(default)]
     pub label_offset: Option<Vec2D>,
+    /// Its glyph is on the parked layer, drawn only while that layer is
+    /// shown; it solves all the same.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parked: bool,
 }
 
 impl Constraint {
@@ -1028,6 +1032,7 @@ impl Constraint {
             active: true,
             name: None,
             label_offset: None,
+            parked: false,
         }
     }
 
@@ -1071,6 +1076,8 @@ impl<'de> Deserialize<'de> for Constraint {
                 name: Option<String>,
                 #[serde(default)]
                 label_offset: Option<Vec2D>,
+                #[serde(default)]
+                parked: bool,
             },
             Legacy(ConstraintKind),
         }
@@ -1083,6 +1090,7 @@ impl<'de> Deserialize<'de> for Constraint {
                 active,
                 name,
                 label_offset,
+                parked,
             } => Constraint {
                 id,
                 kind,
@@ -1090,6 +1098,7 @@ impl<'de> Deserialize<'de> for Constraint {
                 active,
                 name,
                 label_offset,
+                parked,
             },
             Repr::Legacy(kind) => Constraint::new(kind),
         })
@@ -1413,6 +1422,19 @@ mod constraint_record_tests {
         let back: Constraint = serde_json::from_value(json).unwrap();
         let off = back.label_offset.unwrap();
         assert!((off.x + 3.5).abs() < 1e-6 && (off.y - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_parked_constraint_round_trips_and_an_unparked_one_says_nothing() {
+        let mut c = Constraint::new(ConstraintKind::Horizontal {
+            element: Uuid::new_v4(),
+        });
+        let json = serde_json::to_value(&c).unwrap();
+        assert!(json.get("parked").is_none());
+        c.parked = true;
+        let back: Constraint = serde_json::from_value(serde_json::to_value(&c).unwrap()).unwrap();
+        assert!(back.parked);
+        assert!(back.is_solved(), "a parked constraint still solves");
     }
 
     #[test]

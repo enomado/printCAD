@@ -579,7 +579,8 @@ fn curve_dimension_lines(
     })
 }
 
-/// Build every glyph for the sketch's constraints, in viewport pixels.
+/// Build every glyph for the sketch's constraints on one layer, in
+/// viewport pixels: the parked constraints' (`parked`) or the others'.
 /// `bound` are the dimensions a formula sets: drawn in the formula colour,
 /// their value marked `ƒ`.
 pub fn build(
@@ -588,10 +589,12 @@ pub fn build(
     selected: &HashSet<Uuid>,
     bound: &HashSet<Uuid>,
     pal: &SketchPalette,
+    parked: bool,
 ) -> Vec<Glyph> {
+    let shown = || sketch.constraints.iter().filter(|c| c.parked == parked);
     // Repeated relational kinds get a shared 1-based index suffix.
     let mut totals: HashMap<&'static str, usize> = HashMap::new();
-    for c in &sketch.constraints {
+    for c in shown() {
         if pair_refs(&c.kind).is_some() {
             *totals.entry(constraint_icon(&c.kind)).or_default() += 1;
         }
@@ -600,7 +603,7 @@ pub fn build(
 
     let mut out = Vec::new();
     let units_per_px = proj.units_per_px();
-    for c in &sketch.constraints {
+    for c in shown() {
         let color = if selected.contains(&c.id) {
             pal.selected
         } else if !c.active {

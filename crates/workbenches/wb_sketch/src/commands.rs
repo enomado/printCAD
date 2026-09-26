@@ -261,7 +261,7 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.set_constraint",
-            "Make constraints driving or reference, active or not",
+            "Make constraints driving or reference, active or not, parked or not",
         ))
         .param("items", ParamKind::List, "The constraints")
         .optional(
@@ -269,7 +269,13 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Bool,
             "false: a reference dimension that only measures",
         )
-        .optional("active", ParamKind::Bool, "false: kept but not solved"),
+        .optional("active", ParamKind::Bool, "false: kept but not solved")
+        .optional(
+            "parked",
+            ParamKind::Bool,
+            "true: its symbol moves to the parked layer, drawn only while that layer shows; \
+             it still solves",
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -633,8 +639,12 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "sketch.set_constraint" => {
             let items = ids(args.get("items"), "items", sketch)?;
-            let (driving, active) = (a.opt_bool("driving")?, a.opt_bool("active")?);
-            set_constraints(sketch, &items, driving, active);
+            let flags = ConstraintFlags {
+                driving: a.opt_bool("driving")?,
+                active: a.opt_bool("active")?,
+                parked: a.opt_bool("parked")?,
+            };
+            set_constraints(sketch, &items, flags);
             Value::Null
         }
         "sketch.paste" => {
@@ -1087,22 +1097,28 @@ fn feature_ids(value: Option<&Value>, name: &str) -> Result<Vec<FeatureId>, Comm
 }
 
 /// Set the driving and active flags of `items`, where given.
-pub(crate) fn set_constraints(
-    sketch: &mut Sketch,
-    items: &[Uuid],
-    driving: Option<bool>,
-    active: Option<bool>,
-) {
+pub(crate) fn set_constraints(sketch: &mut Sketch, items: &[Uuid], flags: ConstraintFlags) {
     for c in &mut sketch.constraints {
         if items.contains(&c.id) {
-            if let Some(driving) = driving {
+            if let Some(driving) = flags.driving {
                 c.driving = driving;
             }
-            if let Some(active) = active {
+            if let Some(active) = flags.active {
                 c.active = active;
+            }
+            if let Some(parked) = flags.parked {
+                c.parked = parked;
             }
         }
     }
+}
+
+/// The flags `sketch.set_constraint` sets; `None` leaves one as it is.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ConstraintFlags {
+    pub driving: Option<bool>,
+    pub active: Option<bool>,
+    pub parked: Option<bool>,
 }
 
 /// Add `clip`'s geometry to `sketch`, moved by `by`.

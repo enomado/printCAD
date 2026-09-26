@@ -607,12 +607,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `tolerance` (number, optional): How far the spline may stray from the curves, mm (0.01)
 - Returns {elements}: what it made
 
-`pc.sketch.set_constraint`: Make constraints driving or reference, active or not.
+`pc.sketch.set_constraint`: Make constraints driving or reference, active or not, parked or not.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): The constraints
 - `driving` (boolean, optional): false: a reference dimension that only measures
 - `active` (boolean, optional): false: kept but not solved
+- `parked` (boolean, optional): true: its symbol moves to the parked layer, drawn only while that layer shows; it still solves
 
 `pc.sketch.mirror_sketch`: A new sketch on the same plane: this one's geometry mirrored across its Y axis.
 

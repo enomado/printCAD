@@ -313,11 +313,21 @@ pub struct SketchWorkbench {
     renaming_constraint: Option<Uuid>,
     /// Substring filter over the constraint list.
     constraint_filter: String,
+    /// The glyphs drawn are the parked constraints', not the others'.
+    parked_layer: bool,
     /// The shape being drawn, until it is recorded.
     draw_record: Option<DrawRecord>,
     /// The last wall thickness check, drawn until the sketch changes, the
     /// session ends, Escape or another tool.
     wall_check: Option<walls::WallCheck>,
+}
+
+/// A flag each constraint carries, as the toolbar flips it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConstraintFlag {
+    Driving,
+    Active,
+    Parked,
 }
 
 /// The solver's verdict on the edited sketch, as the panel, HUD and status
@@ -1138,13 +1148,7 @@ impl SketchWorkbench {
             return None;
         }
         let proj = SketchProjector::new(ctx, feature.plane);
-        let glyphs = glyphs::build(
-            &feature.sketch,
-            &proj,
-            &self.selected_constraints,
-            &self.bound_dimensions(ctx),
-            &ctx.sketch_palette,
-        );
+        let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
         glyphs::hit_test(&glyphs, [viewport_pos.0, viewport_pos.1]).map(|g| GlyphHit {
             constraint: g.constraint,
             dimensional: g.dimensional,
@@ -2418,6 +2422,11 @@ impl Workbench for SketchWorkbench {
                 "toggle-driving",
             ),
             ("sketch.toggle_active", "Toggle active", "toggle-active"),
+            (
+                "sketch.park_constraints",
+                "Park / unpark constraints",
+                "pin",
+            ),
         ] {
             context.register_tool(
                 ToolDescriptor::new_action(id, label, Some("constraints.toggle"))
@@ -2473,6 +2482,15 @@ impl Workbench for SketchWorkbench {
                 Some("constraints.view"),
             )
             .icon("show-hide-constraints")
+            .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.parked_layer",
+                "Show parked constraints",
+                Some("constraints.view"),
+            )
+            .icon("eye")
             .row(2),
         );
         context.register_tool(
@@ -2619,8 +2637,27 @@ impl Workbench for SketchWorkbench {
                     return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
                 }
                 "sketch.merge" => return self.open_sketch_picker(SketchPickerMode::Merge),
-                "sketch.toggle_driving" => return self.toggle_constraint_flag(ctx, true),
-                "sketch.toggle_active" => return self.toggle_constraint_flag(ctx, false),
+                "sketch.toggle_driving" => {
+                    return self.toggle_constraint_flag(ctx, ConstraintFlag::Driving);
+                }
+                "sketch.toggle_active" => {
+                    return self.toggle_constraint_flag(ctx, ConstraintFlag::Active);
+                }
+                "sketch.park_constraints" => {
+                    let result = self.toggle_constraint_flag(ctx, ConstraintFlag::Parked);
+                    // What moved to the other layer is out of sight.
+                    self.selected_constraints.clear();
+                    return result;
+                }
+                "sketch.parked_layer" => {
+                    self.parked_layer = !self.parked_layer;
+                    ctx.log_info(if self.parked_layer {
+                        "Showing the parked constraints"
+                    } else {
+                        "Showing the constraints in place"
+                    });
+                    return InputResult::consumed();
+                }
                 "sketch.select_conflicting" => return self.select_offenders(ctx, true),
                 "sketch.select_redundant" => return self.select_offenders(ctx, false),
                 "sketch.delete_all_geometry" => return self.delete_all(ctx, true),
@@ -2883,7 +2920,7 @@ impl Workbench for SketchWorkbench {
             "sketch.join" => {
                 editing && self.selection_shape.all.len() - self.selection_shape.points.len() >= 2
             }
-            "sketch.toggle_driving" | "sketch.toggle_active" => {
+            "sketch.toggle_driving" | "sketch.toggle_active" | "sketch.park_constraints" => {
                 editing && !self.selected_constraints.is_empty()
             }
             "sketch.select_conflicting" => {
@@ -2911,6 +2948,7 @@ impl Workbench for SketchWorkbench {
             "sketch.show_constraints" => self.options.constraints_hidden,
             "sketch.grid" => self.options.grid_on,
             "sketch.rendering_order" => self.options.construction_on_top,
+            "sketch.parked_layer" => self.parked_layer,
             "sketch.carbon_copy" | "sketch.merge" => self.sketch_picker.as_ref().is_some_and(|p| {
                 (p.mode == SketchPickerMode::Merge) == (tool_id == "sketch.merge")
             }),
@@ -3025,6 +3063,10 @@ impl Workbench for SketchWorkbench {
                 format!("Zoom {zoom:.1}×"),
             ]
             .into_iter()
+            .chain(
+                self.parked_layer
+                    .then(|| "Constraints: parked layer".to_string()),
+            )
             .chain(self.shown_wall_check().map(walls::WallCheck::summary))
             .collect(),
             ovp,
@@ -3085,13 +3127,7 @@ impl Workbench for SketchWorkbench {
             out.extend(walls::overlays(check, &proj, &pal));
         }
         if !self.options.constraints_hidden {
-            let glyphs = glyphs::build(
-                &feature.sketch,
-                &proj,
-                &self.selected_constraints,
-                &self.bound_dimensions(ctx),
-                &pal,
-            );
+            let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
             out.extend(glyphs::dimension_overlays(&glyphs));
         }
         out
@@ -3113,15 +3149,9 @@ impl Workbench for SketchWorkbench {
         }
         if !self.options.constraints_hidden {
             out.extend(
-                glyphs::build(
-                    &feature.sketch,
-                    &proj,
-                    &self.selected_constraints,
-                    &self.bound_dimensions(ctx),
-                    &pal,
-                )
-                .iter()
-                .filter_map(glyphs::Glyph::mark),
+                self.glyphs(ctx, &feature.sketch, &proj)
+                    .iter()
+                    .filter_map(glyphs::Glyph::mark),
             );
         }
         out
@@ -3140,16 +3170,10 @@ impl Workbench for SketchWorkbench {
         let mut labels: Vec<ScreenSpaceLabel> = if self.options.constraints_hidden {
             Vec::new()
         } else {
-            glyphs::build(
-                &feature.sketch,
-                &proj,
-                &self.selected_constraints,
-                &self.bound_dimensions(ctx),
-                &pal,
-            )
-            .iter()
-            .filter_map(glyphs::Glyph::label)
-            .collect()
+            self.glyphs(ctx, &feature.sketch, &proj)
+                .iter()
+                .filter_map(glyphs::Glyph::label)
+                .collect()
         };
         // What the cursor would snap to, by name.
         labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
@@ -3161,6 +3185,23 @@ impl Workbench for SketchWorkbench {
 }
 
 impl SketchWorkbench {
+    /// The constraint glyphs of the layer shown, in viewport pixels.
+    fn glyphs(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+        proj: &SketchProjector,
+    ) -> Vec<glyphs::Glyph> {
+        glyphs::build(
+            sketch,
+            proj,
+            &self.selected_constraints,
+            &self.bound_dimensions(ctx),
+            &ctx.sketch_palette,
+            self.parked_layer,
+        )
+    }
+
     /// The geometry, previews and markers of one frame.
     fn build_overlays(
         &self,
@@ -3437,13 +3478,12 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
-    /// Apply `edit` to every selected constraint and re-solve.
-    /// Flip the selected constraints' driving flag (`driving`) or active
-    /// flag, each for itself, through `sketch.set_constraint`'s code.
+    /// Flip one flag of the selected constraints, each for itself, through
+    /// `sketch.set_constraint`'s code.
     fn toggle_constraint_flag(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        driving: bool,
+        which: ConstraintFlag,
     ) -> InputResult {
         let (Some(mut feature), Some(id)) = (self.get_active_sketch(ctx), self.active_sketch_id)
         else {
@@ -3453,7 +3493,11 @@ impl SketchWorkbench {
         let mut to: [Vec<Uuid>; 2] = [Vec::new(), Vec::new()];
         for c in &feature.sketch.constraints {
             if self.selected_constraints.contains(&c.id) {
-                let now = if driving { c.driving } else { c.active };
+                let now = match which {
+                    ConstraintFlag::Driving => c.driving,
+                    ConstraintFlag::Active => c.active,
+                    ConstraintFlag::Parked => c.parked,
+                };
                 to[usize::from(!now)].push(c.id);
             }
         }
@@ -3465,17 +3509,27 @@ impl SketchWorkbench {
                 continue;
             }
             items.sort();
-            let (d, a) = if driving {
-                (Some(flag), None)
-            } else {
-                (None, Some(flag))
+            let mut flags = commands::ConstraintFlags::default();
+            let name = match which {
+                ConstraintFlag::Driving => {
+                    flags.driving = Some(flag);
+                    "driving"
+                }
+                ConstraintFlag::Active => {
+                    flags.active = Some(flag);
+                    "active"
+                }
+                ConstraintFlag::Parked => {
+                    flags.parked = Some(flag);
+                    "parked"
+                }
             };
-            commands::set_constraints(&mut feature.sketch, &items, d, a);
+            commands::set_constraints(&mut feature.sketch, &items, flags);
             let mut args = serde_json::json!({
                 "sketch": id.0.to_string(),
                 "items": ids_json(&items),
             });
-            args[if driving { "driving" } else { "active" }] = serde_json::json!(flag);
+            args[name] = serde_json::json!(flag);
             ctx.record(
                 "sketch.set_constraint",
                 commands::args(args),
