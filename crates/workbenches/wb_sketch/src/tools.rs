@@ -10,6 +10,7 @@
 //! (translate/rotate/scale/mirror over the current selection).
 
 mod draw;
+mod join;
 mod modify;
 mod transform;
 
@@ -17,11 +18,15 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
-pub use draw::{arc_slot_shape, polygon_vertices, slot_corners};
-pub use modify::trim_preview;
+pub use draw::{
+    arc_slot_shape, bspline_preview, frame_inner_corners, polygon_vertices, rect_center3_corners,
+    rect3_corners, slot_corners,
+};
+pub use join::{JOIN_TOLERANCE, join};
+pub use modify::{next_stroke_crossing, trim_preview};
 pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
 
-use crate::sketch::{ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
+use crate::sketch::{ConicKind, ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::{self, SnapTarget};
 
 /// In-progress state of the active drawing tool.
@@ -36,6 +41,18 @@ pub enum ToolState {
     RectFrom { corner: SnapTarget },
     /// Centered-rectangle tool: center picked.
     RectCenterAt { center: Vec2D },
+    /// Three-corner rectangle: first corner picked.
+    Rect3A { a: SnapTarget },
+    /// Three-corner rectangle: one edge picked, waiting for the width.
+    Rect3B { a: SnapTarget, b: SnapTarget },
+    /// Rectangle from its centre and two corners: centre picked.
+    RectCenter3At { center: SnapTarget },
+    /// Rectangle from its centre and two corners: centre and a corner
+    /// picked, waiting for the direction of the next corner.
+    RectCenter3Corner {
+        center: SnapTarget,
+        corner: SnapTarget,
+    },
     /// Circle tool: center picked, waiting for a rim point.
     CircleFrom { center: SnapTarget },
     /// 3-point circle: first rim point picked.
@@ -92,6 +109,26 @@ pub enum ToolState {
         ratio: f32,
         start: Vec2D,
     },
+    /// Arc of parabola or hyperbola: the parabola's vertex or the
+    /// hyperbola's centre picked.
+    ConicAt { kind: ConicKind, center: SnapTarget },
+    /// Arc of parabola or hyperbola: the axis picked (the focus, or the
+    /// branch's vertex), waiting for the arc's start, which on a hyperbola
+    /// also sets how wide it opens.
+    ConicAxis {
+        kind: ConicKind,
+        center: SnapTarget,
+        axis: Vec2D,
+    },
+    /// Arc of parabola or hyperbola: the curve and the arc's start set,
+    /// waiting for its end.
+    ConicStart {
+        kind: ConicKind,
+        center: SnapTarget,
+        axis: Vec2D,
+        minor: f32,
+        start: Vec2D,
+    },
     /// Polyline: waiting for the next segment's end. `first` is the chain's
     /// first point (a click back on it closes the shape), `heading` the
     /// direction the last segment left `from` in, `prev` that segment, and
@@ -136,6 +173,11 @@ pub struct ToolParams {
     pub copies: u32,
     /// Whether new B-splines close on themselves.
     pub bspline_periodic: bool,
+    /// The degree of new B-splines (2 to 5).
+    pub bspline_degree: u32,
+    /// New B-splines pass through the clicks rather than use them as
+    /// control points.
+    pub bspline_interpolate: bool,
     /// Whether the line tool adds horizontal/vertical constraints to
     /// axis-snapped segments.
     pub auto_constraints: bool,
@@ -156,6 +198,8 @@ impl Default for ToolParams {
             offset_distance: 2.0,
             copies: 0,
             bspline_periodic: false,
+            bspline_degree: 3,
+            bspline_interpolate: false,
             auto_constraints: true,
             array_rows: 2,
             array_cols: 2,
@@ -186,6 +230,10 @@ impl ToolState {
             }
             ToolState::RectFrom { .. } => Some("Rectangle: click the opposite corner"),
             ToolState::RectCenterAt { .. } => Some("Rectangle: click a corner"),
+            ToolState::Rect3A { .. } => Some("Rectangle: click the second corner"),
+            ToolState::Rect3B { .. } => Some("Rectangle: click to set the width"),
+            ToolState::RectCenter3At { .. } => Some("Rectangle: click a corner"),
+            ToolState::RectCenter3Corner { .. } => Some("Rectangle: click toward the next corner"),
             ToolState::CircleFrom { .. } => Some("Circle: click a point on the rim"),
             ToolState::Circle3One { .. } => Some("Circle: click a second rim point"),
             ToolState::Circle3Two { .. } => Some("Circle: click a third rim point"),
@@ -212,6 +260,30 @@ impl ToolState {
             ToolState::EllipseArcStart { .. } => {
                 Some("Arc of ellipse: click the arc's end (counter-clockwise)")
             }
+            ToolState::ConicAt {
+                kind: ConicKind::Parabola,
+                ..
+            } => Some("Arc of parabola: click the focus"),
+            ToolState::ConicAt {
+                kind: ConicKind::Hyperbola,
+                ..
+            } => Some("Arc of hyperbola: click the vertex of the branch"),
+            ToolState::ConicAxis {
+                kind: ConicKind::Parabola,
+                ..
+            } => Some("Arc of parabola: click the arc's start"),
+            ToolState::ConicAxis {
+                kind: ConicKind::Hyperbola,
+                ..
+            } => Some("Arc of hyperbola: click the arc's start beyond the vertex"),
+            ToolState::ConicStart {
+                kind: ConicKind::Parabola,
+                ..
+            } => Some("Arc of parabola: click the arc's end"),
+            ToolState::ConicStart {
+                kind: ConicKind::Hyperbola,
+                ..
+            } => Some("Arc of hyperbola: click the arc's end"),
             ToolState::PolylineFrom { arc: false, .. } => {
                 Some("Polyline: click the next point; M for arcs, right-click or Esc to finish")
             }
@@ -219,7 +291,7 @@ impl ToolState {
                 Some("Polyline: click where the tangent arc ends; M for lines")
             }
             ToolState::BSplineDraw { .. } => Some(
-                "Spline: click control points; Enter/right-click finishes (periodic: tool settings)",
+                "Spline: click its points; Enter/right-click finishes (degree, closed: tool settings)",
             ),
             ToolState::TranslateFrom { .. } => Some("Move: click the destination"),
             ToolState::RotateCenter { .. } => Some("Rotate: click the angle reference"),
@@ -404,6 +476,11 @@ pub fn handle_click(
             draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
         }
         "sketch.rect_center" => draw::rect_center(state, sketch, cursor, snap_tol),
+        "sketch.rect3" => draw::rect3(state, sketch, cursor, snap_tol),
+        "sketch.rect_center3" => draw::rect_center3(state, sketch, cursor, snap_tol),
+        "sketch.rect_frame" => {
+            draw::rect_frame(state, sketch, cursor, snap_tol, params.offset_distance)
+        }
         "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
         "sketch.circle3" => draw::circle3(state, sketch, cursor, snap_tol),
         "sketch.arc" => draw::arc(state, sketch, cursor, snap_tol),
@@ -412,6 +489,8 @@ pub fn handle_click(
         "sketch.ellipse3" => draw::ellipse3(state, sketch, cursor, snap_tol),
         "sketch.ellipse_arc" => draw::ellipse_arc(state, sketch, cursor, snap_tol),
         "sketch.bspline" => draw::bspline(state, sketch, cursor, snap_tol),
+        "sketch.parabola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Parabola),
+        "sketch.hyperbola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Hyperbola),
         "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params.polygon_sides),
         "sketch.slot" => draw::slot(state, sketch, cursor, snap_tol, params.slot_width),
         "sketch.arc_slot" => draw::arc_slot(state, sketch, cursor, snap_tol, params.slot_width),
@@ -455,9 +534,7 @@ pub fn finish_click_sequence(
     params: &ToolParams,
 ) -> ToolEffect {
     match state {
-        ToolState::BSplineDraw { .. } => {
-            draw::bspline_finish(state, sketch, params.bspline_periodic)
-        }
+        ToolState::BSplineDraw { .. } => draw::bspline_finish(state, sketch, params),
         _ => {
             *state = ToolState::Idle;
             ToolEffect::none()

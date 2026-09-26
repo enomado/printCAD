@@ -1389,6 +1389,171 @@ fn bodies_that_take_each_other_as_tools_fail_once() {
     );
 }
 
+/// A quartic drawn through points and closed by a line pads: the solid
+/// reaches every point the curve was drawn through, and no further along x.
+#[test]
+fn a_spline_through_points_closed_by_a_line_pads() {
+    use wb_sketch::sketch::BSpline;
+    let clicks = [[0.0, 0.0], [4.0, 6.0], [9.0, 7.0], [14.0, 3.0], [18.0, 0.0]];
+    let fit = wb_sketch::spline::interpolate(&clicks, 4, false).expect("a fit");
+    let mut sketch = Sketch::new("spline");
+    let fit_points: Vec<_> = clicks
+        .iter()
+        .map(|p| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
+                p[0] as f32,
+                p[1] as f32,
+            ))))
+        })
+        .collect();
+    let control: Vec<_> = fit
+        .control
+        .iter()
+        .enumerate()
+        .map(|(i, p)| match i {
+            0 => fit_points[0],
+            4 => fit_points[4],
+            _ => sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
+                p[0] as f32,
+                p[1] as f32,
+            )))),
+        })
+        .collect();
+    sketch.add_geometry(GeometryElement::BSpline(BSpline {
+        degree: fit.degree,
+        knots: fit.knots.clone(),
+        fit_points: fit_points.clone(),
+        fit_params: fit.params.clone(),
+        ..BSpline::new(control, false)
+    }));
+    sketch.add_geometry(GeometryElement::Line(Line::new(
+        fit_points[4],
+        fit_points[0],
+    )));
+    let plane = sketch.plane;
+
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch, plane),
+            "sketch".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(sketch_id, 3.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the spline pads");
+    let (lo, hi) = mesh_bounds(&result.mesh);
+    assert!(
+        lo[0].abs() < 1e-3 && (hi[0] - 18.0).abs() < 1e-2,
+        "{lo:?}..{hi:?}"
+    );
+    assert!(hi[1] >= 7.0 - 1e-2 && hi[1] < 8.0, "reaches (9, 7): {hi:?}");
+    assert!((hi[2] - lo[2] - 3.0).abs() < 1e-3);
+}
+
+/// A sketch of one conic arc from `start` to `end`, closed by a line, padded
+/// `height`: the solid's volume.
+fn padded_conic_volume(
+    kind: wb_sketch::sketch::ConicKind,
+    center: Vec2D,
+    axis: Vec2D,
+    minor: f32,
+    start: Vec2D,
+    end: Vec2D,
+    height: f32,
+) -> f64 {
+    use wb_sketch::sketch::Conic;
+    let mut sketch = Sketch::new("conic");
+    let c = sketch.add_geometry(GeometryElement::Point(Point::new(center)));
+    let s = sketch.add_geometry(GeometryElement::Point(Point::new(start)));
+    let e = sketch.add_geometry(GeometryElement::Point(Point::new(end)));
+    sketch.add_geometry(GeometryElement::Conic(Conic::new(
+        kind, c, axis, minor, s, e,
+    )));
+    sketch.add_geometry(GeometryElement::Line(Line::new(e, s)));
+    let plane = sketch.plane;
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch, plane),
+            "sketch".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(sketch_id, height, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the conic pads");
+    kernel
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a closed solid")
+}
+
+/// A parabolic segment is two thirds of the rectangle round it, and a
+/// hyperbolic one what its integral says: the arcs pad exactly.
+#[test]
+fn arcs_of_parabola_and_hyperbola_closed_by_a_line_pad_to_their_areas() {
+    use wb_sketch::sketch::ConicKind;
+    // y = x² / 8 from x = -4 to 4, cut off at y = 2.
+    let volume = padded_conic_volume(
+        ConicKind::Parabola,
+        Vec2D::new(0.0, 0.0),
+        Vec2D::new(0.0, 2.0),
+        0.0,
+        Vec2D::new(4.0, 2.0),
+        Vec2D::new(-4.0, 2.0),
+        3.0,
+    );
+    let expected = 2.0 / 3.0 * 8.0 * 2.0 * 3.0;
+    assert!(
+        (volume - expected).abs() < 1e-3 * expected,
+        "volume {volume} vs {expected}"
+    );
+
+    // x = 3·sqrt(1 + y² / 1.5²), cut off at x = 5 (y = ±2).
+    let volume = padded_conic_volume(
+        ConicKind::Hyperbola,
+        Vec2D::new(0.0, 0.0),
+        Vec2D::new(3.0, 0.0),
+        1.5,
+        Vec2D::new(5.0, -2.0),
+        Vec2D::new(5.0, 2.0),
+        2.0,
+    );
+    let steps = 2000;
+    let area: f64 = (0..steps)
+        .map(|i| {
+            let y = -2.0 + 4.0 * (i as f64 + 0.5) / steps as f64;
+            (5.0 - 3.0 * (1.0 + y * y / 2.25).sqrt()) * 4.0 / steps as f64
+        })
+        .sum();
+    let expected = area * 2.0;
+    assert!(
+        (volume - expected).abs() < 1e-3 * expected,
+        "volume {volume} vs {expected}"
+    );
+}
+
 /// A `size`×`size`×`height` block with one hole position at the middle of
 /// its top face, and the hole `hole` makes from that sketch: the block's
 /// volume and properties once drilled.

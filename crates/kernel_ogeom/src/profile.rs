@@ -17,7 +17,7 @@ use ogeom::geom::{
     BSplineCurve, CircleCurve, Curve, Curve3d, EllipseCurve, LineCurve, PlaneSurface,
     SurfaceGeometry,
 };
-use ogeom::math::{Circle, Direction, Ellipse, Frame, KnotVector, Plane, Point, Vector};
+use ogeom::math::{Circle, Direction, Ellipse, Frame, KnotVector, Plane, Point, Vector, Weighted};
 use ogeom::mesh::Deflection;
 use ogeom::topo::{Model, Shape, VertexData};
 
@@ -131,7 +131,8 @@ fn uv_bounds(wires: &[ProfileWire]) -> (f64, f64, f64, f64) {
                 | ProfileSegment::EllipseArc { center, major, .. } => {
                     push(*center, major[0].hypot(major[1]));
                 }
-                ProfileSegment::BSpline { control_points, .. } => {
+                ProfileSegment::BSpline { control_points, .. }
+                | ProfileSegment::Nurbs { control_points, .. } => {
                     for p in control_points {
                         push(*p, 0.0);
                     }
@@ -290,6 +291,58 @@ fn segment_curve(
             };
             Ok((Curve::BSpline(curve), range))
         }
+        ProfileSegment::Nurbs {
+            degree,
+            knots,
+            control_points,
+            weights,
+            periodic,
+        } => {
+            let n = control_points.len();
+            let degree = *degree as usize;
+            if degree == 0 || n <= degree {
+                return Err(seg_err(
+                    "a spline needs more control points than its degree",
+                ));
+            }
+            if !weights.is_empty() && (weights.len() != n || *periodic) {
+                return Err(seg_err(
+                    "a rational spline needs one weight per control point, and is not periodic",
+                ));
+            }
+            let poles: Vec<Point> = control_points
+                .iter()
+                .map(|p| world_point(plane, p[0], p[1]))
+                .collect();
+            let (kv, poles, range) = if *periodic {
+                // An unclamped uniform spline over the wrapped control
+                // polygon, as for the cubic ring above.
+                let mut wrapped = poles.clone();
+                wrapped.extend_from_slice(&poles[..degree]);
+                let knots: Vec<f64> = (0..wrapped.len() + degree + 1).map(|i| i as f64).collect();
+                let kv = KnotVector::new(knots, degree)
+                    .map_err(|e| seg_err(&format!("periodic spline knots: {e}")))?;
+                (kv, wrapped, (degree as f64, (n + degree) as f64))
+            } else {
+                let kv = KnotVector::new(knots.clone(), degree)
+                    .map_err(|e| seg_err(&format!("spline knots: {e}")))?;
+                let range = kv.domain();
+                (kv, poles, range)
+            };
+            let curve = if weights.is_empty() {
+                BSplineCurve::new(kv, poles, tol)
+            } else {
+                let weighted = poles
+                    .into_iter()
+                    .zip(weights)
+                    .map(|(p, w)| Weighted::new(p, *w, tol))
+                    .collect::<OgeomResult<Vec<_>>>()
+                    .map_err(|e| seg_err(&format!("spline weights: {e}")))?;
+                BSplineCurve::rational(kv, weighted)
+            }
+            .map_err(|e| seg_err(&format!("spline: {e}")))?;
+            Ok((Curve::BSpline(curve), range))
+        }
     }
 }
 
@@ -321,6 +374,11 @@ fn segment_endpoints(seg: &ProfileSegment) -> Option<([f64; 2], [f64; 2])> {
         ProfileSegment::BSpline {
             control_points,
             periodic,
+        }
+        | ProfileSegment::Nurbs {
+            control_points,
+            periodic,
+            ..
         } => {
             if *periodic {
                 None
@@ -652,7 +710,8 @@ pub fn signed_area(wire: &ProfileWire) -> f64 {
                     ]);
                 }
             }
-            ProfileSegment::BSpline { control_points, .. } => {
+            ProfileSegment::BSpline { control_points, .. }
+            | ProfileSegment::Nurbs { control_points, .. } => {
                 polygon.extend(control_points.iter().copied());
             }
         }
@@ -709,7 +768,8 @@ fn first_point(plane: &ProfilePlane, wire: &ProfileWire) -> Result<Point, String
                 center[1] + major[1] * c + minor[1] * s,
             ]
         }
-        ProfileSegment::BSpline { control_points, .. } => *control_points
+        ProfileSegment::BSpline { control_points, .. }
+        | ProfileSegment::Nurbs { control_points, .. } => *control_points
             .first()
             .ok_or_else(|| "B-spline has no control points".to_string())?,
     };

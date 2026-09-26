@@ -381,17 +381,29 @@ fn push_element(
                 );
             }
         }
+        GeometryElement::Conic(c) => {
+            if let Some(points) = c.points(sketch, CIRCLE_SEGMENTS) {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    points.into_iter(),
+                    color,
+                    thickness,
+                    dashed,
+                );
+            }
+        }
         GeometryElement::BSpline(b) => {
             let ctrl: Option<Vec<Vec2D>> = b
                 .control_points
                 .iter()
                 .map(|id| sketch.point_position(*id))
                 .collect();
-            if let Some(ctrl) = ctrl {
+            if let (Some(ctrl), Some(curve)) = (ctrl, b.points(sketch, 64)) {
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    geom2d::bspline_points(&ctrl, b.periodic, 64).into_iter(),
+                    curve.into_iter(),
                     color,
                     thickness,
                     dashed,
@@ -538,13 +550,24 @@ fn push_ghost(
                     );
                 }
             }
-            GeometryElement::BSpline(b) => {
-                let ctrl: Option<Vec<Vec2D>> = b.control_points.iter().map(|id| pt(*id)).collect();
-                if let Some(ctrl) = ctrl {
+            GeometryElement::Conic(c) => {
+                if let Some(points) = c.points(sketch, CIRCLE_SEGMENTS) {
                     push_polyline(
                         &mut out.lines,
                         proj,
-                        geom2d::bspline_points(&ctrl, b.periodic, 48).into_iter(),
+                        points.into_iter().map(|p| xf.apply(p)),
+                        pal.preview,
+                        1.5,
+                        false,
+                    );
+                }
+            }
+            GeometryElement::BSpline(b) => {
+                if let Some(points) = b.points(sketch, 48) {
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        points.into_iter().map(|p| xf.apply(p)),
                         pal.preview,
                         1.5,
                         false,
@@ -662,6 +685,71 @@ fn push_preview(
                     1.5,
                     false,
                 );
+                if active_tool == Some("sketch.rect_frame")
+                    && let Some(inner) =
+                        crate::tools::frame_inner_corners(a, cursor, params.offset_distance)
+                {
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        inner.into_iter().chain([inner[0]]),
+                        pal.preview,
+                        1.5,
+                        false,
+                    );
+                }
+            }
+        }
+        ToolState::Rect3A { a } | ToolState::RectCenter3At { center: a } => {
+            if let Some(a) = pos(a) {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [a, cursor].into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                push_point_marker(out, proj, a, pal.preview);
+            }
+        }
+        ToolState::Rect3B { a, b } => {
+            if let (Some(a), Some(b)) = (pos(a), pos(b)) {
+                let outline = match crate::tools::rect3_corners(a, b, cursor) {
+                    Some((c, d)) => vec![a, b, c, d, a],
+                    None => vec![a, b],
+                };
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    outline.into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+            }
+        }
+        ToolState::RectCenter3Corner { center, corner } => {
+            if let (Some(c), Some(k)) = (pos(center), pos(corner)) {
+                match crate::tools::rect_center3_corners(c, k, cursor) {
+                    Some(corners) => push_polyline(
+                        &mut out.lines,
+                        proj,
+                        corners.into_iter().chain([corners[0]]),
+                        pal.preview,
+                        1.5,
+                        false,
+                    ),
+                    None => push_polyline(
+                        &mut out.lines,
+                        proj,
+                        [c, k].into_iter(),
+                        pal.preview,
+                        1.0,
+                        true,
+                    ),
+                }
+                push_point_marker(out, proj, c, pal.preview);
             }
         }
         ToolState::CircleFrom { center } => {
@@ -1079,10 +1167,92 @@ fn push_preview(
                 push_point_marker(out, proj, on_rim, pal.preview);
             }
         }
+        ToolState::ConicAt { center, .. } => {
+            if let Some(c) = pos(center) {
+                push_point_marker(out, proj, c, pal.preview);
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [c, cursor].into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+            }
+        }
+        ToolState::ConicAxis { kind, center, axis } => {
+            if let Some(c) = pos(center) {
+                let minor = match kind {
+                    crate::sketch::ConicKind::Parabola => Some(0.0),
+                    crate::sketch::ConicKind::Hyperbola => {
+                        crate::conic::hyperbola_minor(c, c + *axis, cursor)
+                    }
+                };
+                if let Some(shape) =
+                    minor.and_then(|m| crate::conic::Shape::new(*kind, c, *axis, m))
+                {
+                    let t = shape.param([f64::from(cursor.x), f64::from(cursor.y)]);
+                    let reach = t.abs().max(1.0) * 1.5;
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        shape.sample(-reach, reach, CIRCLE_SEGMENTS).into_iter(),
+                        pal.preview,
+                        1.0,
+                        true,
+                    );
+                    let [x, y] = shape.point(t);
+                    push_point_marker(out, proj, Vec2D::new(x as f32, y as f32), pal.preview);
+                }
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [c, c + *axis].into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+                push_point_marker(out, proj, c, pal.preview);
+            }
+        }
+        ToolState::ConicStart {
+            kind,
+            center,
+            axis,
+            minor,
+            start,
+        } => {
+            if let Some(shape) =
+                pos(center).and_then(|c| crate::conic::Shape::new(*kind, c, *axis, *minor))
+            {
+                let param = |p: Vec2D| shape.param([f64::from(p.x), f64::from(p.y)]);
+                let (t0, t1) = (param(*start), param(cursor));
+                let reach = t0.abs().max(t1.abs()).max(1.0) * 1.5;
+                // The whole curve faintly, the arc it will keep firmly.
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    shape.sample(-reach, reach, CIRCLE_SEGMENTS).into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    shape.sample(t0, t1, CIRCLE_SEGMENTS).into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                push_point_marker(out, proj, *start, pal.preview);
+            }
+        }
         ToolState::BSplineDraw { points } => {
             let mut ctrl: Vec<Vec2D> = points.iter().filter_map(pos).collect();
             ctrl.push(cursor);
-            // Dashed control polygon + the spline it would produce.
+            // Dashed polygon through the clicks + the spline they would
+            // produce, as the finished spline will be.
             push_polyline(
                 &mut out.lines,
                 proj,
@@ -1091,14 +1261,16 @@ fn push_preview(
                 1.0,
                 true,
             );
-            push_polyline(
-                &mut out.lines,
-                proj,
-                geom2d::bspline_points(&ctrl, params.bspline_periodic, 48).into_iter(),
-                pal.preview,
-                1.5,
-                false,
-            );
+            if let Some(curve) = crate::tools::bspline_preview(&ctrl, params) {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    curve.into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+            }
         }
         ToolState::TranslateFrom { base } => {
             push_polyline(

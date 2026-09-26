@@ -383,14 +383,8 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
         // Sampled curves: distance to the tessellated polyline is accurate
         // to well under any click tolerance.
         GeometryElement::Ellipse(e) => polyline_distance(&e.points(sketch, 48)?, p),
-        GeometryElement::BSpline(b) => {
-            let ctrl: Option<Vec<Vec2D>> = b
-                .control_points
-                .iter()
-                .map(|id| sketch.point_position(*id))
-                .collect();
-            polyline_distance(&crate::geom2d::bspline_points(&ctrl?, b.periodic, 64), p)
-        }
+        GeometryElement::BSpline(b) => polyline_distance(&b.points(sketch, 64)?, p),
+        GeometryElement::Conic(c) => polyline_distance(&c.points(sketch, 64)?, p),
     }
 }
 

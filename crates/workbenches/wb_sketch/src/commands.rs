@@ -166,8 +166,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .param(
             "tool",
             ParamKind::String,
-            "line, polyline, rect, rect_center, rect_rounded, circle, circle3, arc, arc3, \
-             ellipse, ellipse3, ellipse_arc, bspline, polygon, slot, arc_slot, point, fillet, \
+            "line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, \
+             circle, circle3, arc, arc3, \
+             ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, \
              chamfer, trim, extend, split, offset, translate, rotate, scale or mirror",
         )
         .param(
@@ -186,7 +187,8 @@ pub fn register(context: &mut WorkbenchContext) {
             "params",
             ParamKind::Any,
             "Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, \
-             offset_distance, copies, bspline_periodic, auto_constraints, array_rows, \
+             offset_distance, copies, bspline_periodic, bspline_degree, bspline_interpolate, \
+             auto_constraints, array_rows, \
              array_cols, array_dx, array_dy",
         )
         .optional(
@@ -237,6 +239,23 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("cols", ParamKind::Integer, "")
         .param("dx", ParamKind::Number, "The step between columns, mm")
         .param("dy", ParamKind::Number, "The step between rows, mm")
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.join",
+            "Merge curves that meet end to end into one B-spline following them",
+        ))
+        .param(
+            "items",
+            ParamKind::List,
+            "The lines, arcs, arcs of ellipses, parabolas and hyperbolas, and open splines to merge",
+        )
+        .optional(
+            "tolerance",
+            ParamKind::Number,
+            "How far the spline may stray from the curves, mm (0.01)",
+        )
         .returns("{elements}: what it made"),
     );
     context.register_command(
@@ -560,6 +579,25 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             if !effect.changed {
                 return Err(CommandError::failed(
                     "an array needs elements and at least two rows or columns",
+                ));
+            }
+            made_since(sketch, &before)
+        }
+        "sketch.join" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            let tolerance = a
+                .opt_number("tolerance")?
+                .map_or(crate::tools::JOIN_TOLERANCE, |t| t as f32);
+            if tolerance <= 0.0 {
+                return Err(CommandError::bad("tolerance", "must be more than 0"));
+            }
+            let before = ids_of(sketch);
+            let effect = crate::tools::join(sketch, &items, tolerance);
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    effect.log.unwrap_or_else(|| "nothing to join".to_string()),
                 ));
             }
             made_since(sketch, &before)
@@ -1301,6 +1339,9 @@ const DRAW_TOOLS: &[&str] = &[
     "rect",
     "rect_rounded",
     "rect_center",
+    "rect3",
+    "rect_center3",
+    "rect_frame",
     "circle",
     "circle3",
     "arc",
@@ -1308,6 +1349,8 @@ const DRAW_TOOLS: &[&str] = &[
     "ellipse",
     "ellipse3",
     "ellipse_arc",
+    "parabola",
+    "hyperbola",
     "bspline",
     "polygon",
     "slot",

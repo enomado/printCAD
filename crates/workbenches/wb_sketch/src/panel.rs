@@ -336,6 +336,7 @@ impl SketchWorkbench {
                     | "sketch.rotate"
                     | "sketch.bspline"
                     | "sketch.rect_rounded"
+                    | "sketch.rect_frame"
             )
         );
         if !has_settings {
@@ -378,6 +379,11 @@ impl SketchWorkbench {
                         QtyField::mm(&mut params.chamfer_length).show(ui);
                         ui.end_row();
                     }
+                    Some("sketch.rect_frame") => {
+                        ui_kit::widgets::field_label(ui, "Wall");
+                        QtyField::mm(&mut params.offset_distance).show(ui);
+                        ui.end_row();
+                    }
                     Some("sketch.offset") => {
                         ui_kit::widgets::field_label(ui, "Distance");
                         QtyField::mm(&mut params.offset_distance).show(ui);
@@ -399,6 +405,20 @@ impl SketchWorkbench {
                     Some("sketch.bspline") => {
                         ui_kit::widgets::field_label(ui, "Closed");
                         check_row(ui, &mut params.bspline_periodic, "Periodic");
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Clicks");
+                        check_row(ui, &mut params.bspline_interpolate, "Through points");
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Degree");
+                        let mut degree = params.bspline_degree as f32;
+                        if QtyField::new(&mut degree)
+                            .decimals(0)
+                            .speed(0.05)
+                            .range(2.0..=f64::from(crate::spline::MAX_DEGREE))
+                            .show(ui)
+                        {
+                            params.bspline_degree = degree.round() as u32;
+                        }
                         ui.end_row();
                     }
                     _ => {}

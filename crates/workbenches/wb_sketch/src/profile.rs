@@ -165,6 +165,34 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     }
                 }
             }
+            // An arc of a parabola or a hyperbola joins the curves at its
+            // ends, as a circular arc does, drawn exactly as the rational
+            // quadratic it is.
+            GeometryElement::Conic(c) => {
+                let at = |id: Uuid| {
+                    sketch
+                        .point_position(id)
+                        .map(v2)
+                        .ok_or(ProfileError::MissingPoint(id))
+                };
+                let (start, end) = (at(c.start)?, at(c.end)?);
+                let (shape, t0, t1) = c.params(sketch).ok_or(ProfileError::MissingPoint(c.id))?;
+                let ([_, middle, _], weight) = shape.quadratic(t0, t1);
+                let weights = match c.kind {
+                    crate::sketch::ConicKind::Parabola => Vec::new(),
+                    crate::sketch::ConicKind::Hyperbola => vec![1.0, weight, 1.0],
+                };
+                edges.push(EdgeCurve {
+                    ends: (c.start, c.end),
+                    segment: ProfileSegment::Nurbs {
+                        degree: 2,
+                        knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                        control_points: vec![start, middle, end],
+                        weights,
+                        periodic: false,
+                    },
+                });
+            }
             // Periodic B-splines close on themselves; open ones connect via
             // their first/last control point like any other curve.
             GeometryElement::BSpline(b) => {
@@ -181,10 +209,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                             .ok_or(ProfileError::MissingPoint(*id))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let segment = ProfileSegment::BSpline {
-                    control_points,
-                    periodic: b.periodic,
-                };
+                let segment = spline_segment(b, control_points);
                 if b.periodic {
                     wires.push(ProfileWire {
                         segments: vec![segment],
@@ -266,6 +291,35 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
     Ok(wires)
 }
 
+/// The profile segment of spline `b` over its control point positions: the
+/// cubic over even knots as it always was, anything else with its degree
+/// and knots spelt out.
+fn spline_segment(b: &crate::sketch::BSpline, control_points: Vec<[f64; 2]>) -> ProfileSegment {
+    if b.is_default_cubic() {
+        return ProfileSegment::BSpline {
+            control_points,
+            periodic: b.periodic,
+        };
+    }
+    match crate::spline::Basis::of(b) {
+        Some(basis) => ProfileSegment::Nurbs {
+            degree: basis.degree() as u32,
+            knots: if b.periodic {
+                Vec::new()
+            } else {
+                basis.knots().to_vec()
+            },
+            control_points,
+            weights: Vec::new(),
+            periodic: b.periodic,
+        },
+        None => ProfileSegment::BSpline {
+            control_points,
+            periodic: b.periodic,
+        },
+    }
+}
+
 /// `segment` run from its end to its start. An arc of an ellipse only runs
 /// counter-clockwise, so it stays as it is.
 fn reversed(segment: &ProfileSegment) -> ProfileSegment {
@@ -286,6 +340,27 @@ fn reversed(segment: &ProfileSegment) -> ProfileSegment {
             control_points: control_points.iter().rev().copied().collect(),
             periodic: *periodic,
         },
+        // A spline turned about: its control points and weights in the
+        // other order, its knots mirrored across its domain.
+        ProfileSegment::Nurbs {
+            degree,
+            knots,
+            control_points,
+            weights,
+            periodic,
+        } => {
+            let (first, last) = (
+                knots.first().copied().unwrap_or(0.0),
+                knots.last().copied().unwrap_or(0.0),
+            );
+            ProfileSegment::Nurbs {
+                degree: *degree,
+                knots: knots.iter().rev().map(|k| first + last - k).collect(),
+                control_points: control_points.iter().rev().copied().collect(),
+                weights: weights.iter().rev().copied().collect(),
+                periodic: *periodic,
+            }
+        }
         other => other.clone(),
     }
 }
@@ -522,6 +597,60 @@ mod tests {
         for (i, segment) in segments.iter().enumerate() {
             let next = &segments[(i + 1) % segments.len()];
             assert_eq!(ends(segment).1, ends(next).0, "segment {i}");
+        }
+    }
+
+    #[test]
+    fn a_spline_or_a_conic_walked_backwards_is_turned_about() {
+        use crate::sketch::{BSpline, Conic, ConicKind};
+        // A parabola's arc from (4, 2) back to (-4, 2), a quadratic spline
+        // drawn from (-4, -3) up to (-4, 2), and lines: the walk meets the
+        // spline end first.
+        let mut sketch = Sketch::new("t");
+        let vertex = pt(&mut sketch, 0.0, 0.0);
+        let right = pt(&mut sketch, 4.0, 2.0);
+        let left = pt(&mut sketch, -4.0, 2.0);
+        let low_left = pt(&mut sketch, -4.0, -3.0);
+        let bulge = pt(&mut sketch, -6.0, -0.5);
+        let low_right = pt(&mut sketch, 4.0, -3.0);
+        sketch.add_geometry(GeometryElement::Conic(Conic::new(
+            ConicKind::Parabola,
+            vertex,
+            Vec2D::new(0.0, 2.0),
+            0.0,
+            right,
+            left,
+        )));
+        sketch.add_geometry(GeometryElement::BSpline(BSpline {
+            degree: 2,
+            ..BSpline::new(vec![low_left, bulge, left], false)
+        }));
+        line(&mut sketch, low_left, low_right);
+        line(&mut sketch, right, low_right);
+        let wires = extract_wires(&sketch).unwrap();
+        let ends = |s: &ProfileSegment| match s {
+            ProfileSegment::Line { start, end } => (*start, *end),
+            ProfileSegment::Nurbs { control_points, .. } => (
+                control_points[0],
+                *control_points.last().expect("control points"),
+            ),
+            _ => unreachable!(),
+        };
+        let segments = &wires[0].segments;
+        assert_eq!(segments.len(), 4);
+        for (i, segment) in segments.iter().enumerate() {
+            let next = &segments[(i + 1) % segments.len()];
+            let (at, from) = (ends(segment).1, ends(next).0);
+            assert!(
+                (at[0] - from[0]).hypot(at[1] - from[1]) < 1e-9,
+                "segment {i} ends at {at:?}, the next starts at {from:?}"
+            );
+        }
+        // The knots of a turned spline still run upward from where they did.
+        for segment in segments {
+            if let ProfileSegment::Nurbs { knots, .. } = segment {
+                assert!(knots.windows(2).all(|w| w[0] <= w[1]), "{knots:?}");
+            }
         }
     }
 }

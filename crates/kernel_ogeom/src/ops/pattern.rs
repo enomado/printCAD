@@ -222,6 +222,19 @@ fn flip_v_wire(wire: &kernel_api::ProfileWire) -> kernel_api::ProfileWire {
                 control_points: control_points.iter().map(|p| flip_v(*p)).collect(),
                 periodic: *periodic,
             },
+            S::Nurbs {
+                degree,
+                knots,
+                control_points,
+                weights,
+                periodic,
+            } => S::Nurbs {
+                degree: *degree,
+                knots: knots.clone(),
+                control_points: control_points.iter().map(|p| flip_v(*p)).collect(),
+                weights: weights.clone(),
+                periodic: *periodic,
+            },
         })
         .collect();
     kernel_api::ProfileWire { segments }

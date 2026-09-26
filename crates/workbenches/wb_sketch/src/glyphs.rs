@@ -146,6 +146,10 @@ fn element_anchor(sketch: &Sketch, id: Uuid) -> Option<Vec2D> {
             Some(Vec2D::new(center.x, center.y + c.radius))
         }
         GeometryElement::Ellipse(e) => sketch.point_position(e.center),
+        GeometryElement::Conic(c) => {
+            let points = c.points(sketch, 2)?;
+            Some(points[1])
+        }
         GeometryElement::BSpline(b) => {
             let pts: Option<Vec<Vec2D>> = b
                 .control_points

@@ -3563,3 +3563,195 @@ mod curve_constraints {
         );
     }
 }
+
+#[test]
+fn rectangle_variants_draw_turned_rectangles_and_frames() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    for (x, y) in [(1.0, 1.0), (9.0, 7.0), (0.0, 6.5)] {
+        h.click(x, y, "sketch.rect:3pt");
+    }
+    assert_eq!(h.counts(), (4, 4, 0, 0));
+    for (x, y) in [(-10.0, 1.0), (-6.0, 4.0), (-16.0, 9.0)] {
+        h.click(x, y, "sketch.rect:center3pt");
+    }
+    assert_eq!(h.counts(), (9, 8, 0, 0), "a construction centre as well");
+    for (x, y) in [(2.0, -12.0), (14.0, -3.0)] {
+        h.click(x, y, "sketch.rect:frame");
+    }
+    assert_eq!(h.counts(), (17, 16, 0, 0));
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(
+        wires.len(),
+        4,
+        "two turned rectangles and a frame's two outlines"
+    );
+    // The turned rectangle's first edge runs where it was clicked.
+    assert!(h.point_at(1.0, 1.0) && h.point_at(9.0, 7.0));
+}
+
+#[test]
+fn dragging_the_trim_tool_trims_every_span_it_crosses() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // A horizontal wall and three posts through it.
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(20.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    for x in [5.0, 10.0, 15.0] {
+        h.click(x, -5.0, "sketch.line");
+        h.click(x, 5.0, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+    }
+    // Pressed on empty space, dragged across the posts above the wall.
+    h.click(2.0, 3.0, "sketch.trim");
+    h.mouse_move(8.0, 3.0, "sketch.trim");
+    h.mouse_move(18.0, 3.0, "sketch.trim");
+    h.release(18.0, 3.0, "sketch.trim");
+    let sketch = h.sketch();
+    let tops: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => {
+                let a = sketch.point_position(l.start)?;
+                let b = sketch.point_position(l.end)?;
+                ((a.x - b.x).abs() < 1e-4).then_some(a.y.max(b.y))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tops.len(), 3, "each post keeps its lower part");
+    assert!(tops.iter().all(|y| y.abs() < 1e-3), "{tops:?}");
+    // Moving with the button up trims nothing.
+    let lines = h.counts().1;
+    h.mouse_move(2.0, -3.0, "sketch.trim");
+    h.mouse_move(18.0, -3.0, "sketch.trim");
+    assert_eq!(h.counts().1, lines);
+}
+
+#[test]
+fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    let tool = "sketch.bspline:through";
+    for (x, y) in [(1.0, 1.0), (5.0, 6.0), (10.0, 4.0), (14.0, 8.0)] {
+        h.click(x, y, tool);
+    }
+    h.key(KeyCode::Enter, Some(tool));
+    let sketch = h.sketch();
+    let spline = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .expect("a spline");
+    assert_eq!(spline.fit_points.len(), 4);
+    let near = |sketch: &Sketch, b: &wb_sketch::sketch::BSpline, x: f32, y: f32| {
+        b.points(sketch, 2000)
+            .unwrap()
+            .iter()
+            .any(|p| (p.x - x).abs() < 0.03 && (p.y - y).abs() < 0.03)
+    };
+    assert!(near(&sketch, &spline, 5.0, 6.0) && near(&sketch, &spline, 10.0, 4.0));
+
+    // Dragging a point it passes through, the curve follows.
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.click(10.0, 4.0, "sketch.select");
+    h.mouse_move(10.0, 1.0, "sketch.select");
+    h.release(10.0, 1.0, "sketch.select");
+    let sketch = h.sketch();
+    let spline = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        near(&sketch, &spline, 10.0, 1.0),
+        "follows the dragged point"
+    );
+    assert!(near(&sketch, &spline, 5.0, 6.0), "keeps the others");
+}
+
+#[test]
+fn join_lights_up_for_two_curves_and_leaves_a_kink_alone() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(1.0, 1.0, "sketch.line");
+    h.click(9.0, 1.0, "sketch.line");
+    h.click(15.0, 3.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.click(5.0, 1.0, "sketch.select");
+    h.release(5.0, 1.0, "sketch.select");
+    assert!(!h.tool_enabled("sketch.join"), "one curve joins nothing");
+    h.click(12.0, 2.0, "sketch.select");
+    h.release(12.0, 2.0, "sketch.select");
+    assert!(h.tool_enabled("sketch.join"));
+    // Two lines meeting at a kink: no smooth spline keeps within the
+    // tolerance there, and the curves are left as they are.
+    h.key(KeyCode::A, Some("sketch.join"));
+    let sketch = h.sketch();
+    let splines = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::BSpline(_)))
+        .count();
+    assert_eq!((h.counts().1, splines), (2, 0));
+    assert!(h.point_at(1.0, 1.0) && h.point_at(15.0, 3.0));
+}
+
+#[test]
+fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
+        h.click(x, y, "sketch.ellipse:parabola");
+    }
+    // Its ends at (-3, 3) and (5, 3): a line snapped to both closes it.
+    h.click(5.0, 3.0, "sketch.line");
+    h.click(-3.0, 3.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    for (x, y) in [(10.0, 1.0), (13.0, 1.0), (15.0, 3.0), (18.0, -1.0)] {
+        h.click(x, y, "sketch.ellipse:hyperbola");
+    }
+    let sketch = h.sketch();
+    let conics = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Conic(_)))
+        .count();
+    assert_eq!(conics, 2);
+    assert!(h.point_at(15.0, 3.0) && h.point_at(15.0, -1.0));
+    let wires = wb_sketch::profile::extract_wires(&sketch);
+    assert!(
+        matches!(wires, Err(wb_sketch::profile::ProfileError::OpenAt(_))),
+        "the hyperbola's arc is still open"
+    );
+    h.click(15.0, 3.0, "sketch.line");
+    h.click(15.0, -1.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 2);
+
+    // Dragging an end slides it along its curve.
+    h.click(15.0, 3.0, "sketch.select");
+    h.mouse_move(16.0, 5.0, "sketch.select");
+    h.release(16.0, 5.0, "sketch.select");
+    let sketch = h.sketch();
+    for g in &sketch.geometry {
+        if let GeometryElement::Conic(c) = g {
+            let shape = wb_sketch::conic::Shape::of(c, &sketch).unwrap();
+            for id in [c.start, c.end] {
+                let p = sketch.point_position(id).unwrap();
+                let miss = shape.distance([f64::from(p.x), f64::from(p.y)]).abs();
+                assert!(miss < 1e-3, "an end is {miss} off its curve");
+            }
+        }
+    }
+}

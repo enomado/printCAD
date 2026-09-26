@@ -568,10 +568,10 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.sketch.draw`: Run a drawing or editing tool over points of the sketch, as clicks there would.
 
 - `sketch` (id): The sketch to draw in
-- `tool` (string): line, polyline, rect, rect_center, rect_rounded, circle, circle3, arc, arc3, ellipse, ellipse3, ellipse_arc, bspline, polygon, slot, arc_slot, point, fillet, chamfer, trim, extend, split, offset, translate, rotate, scale or mirror
+- `tool` (string): line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, circle, circle3, arc, arc3, ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, chamfer, trim, extend, split, offset, translate, rotate, scale or mirror
 - `points` (list): The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} with values typed at it; "arc" and "line" switch a polyline, "finish" ends a spline
 - `tolerance` (number, optional): How close a click snaps onto points and curves, mm (0.001)
-- `params` (any, optional): Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, offset_distance, copies, bspline_periodic, auto_constraints, array_rows, array_cols, array_dx, array_dy
+- `params` (any, optional): Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, offset_distance, copies, bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, array_rows, array_cols, array_dx, array_dy
 - `construction` (boolean, optional): What it makes is construction geometry
 - `avoid_redundant` (boolean, optional): Drop auto constraints that add nothing (true)
 - `selection` (list, optional): The elements offset, translate, rotate, scale and mirror act on
@@ -598,6 +598,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `cols` (integer)
 - `dx` (number): The step between columns, mm
 - `dy` (number): The step between rows, mm
+- Returns {elements}: what it made
+
+`pc.sketch.join`: Merge curves that meet end to end into one B-spline following them.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The lines, arcs, arcs of ellipses, parabolas and hyperbolas, and open splines to merge
+- `tolerance` (number, optional): How far the spline may stray from the curves, mm (0.01)
 - Returns {elements}: what it made
 
 `pc.sketch.set_constraint`: Make constraints driving or reference, active or not.

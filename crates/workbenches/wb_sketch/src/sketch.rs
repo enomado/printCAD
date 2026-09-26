@@ -181,7 +181,8 @@ impl Sketch {
                 Some(arc) => vec![e.center, arc.start, arc.end],
                 None => vec![e.center],
             },
-            GeometryElement::BSpline(b) => b.control_points.clone(),
+            GeometryElement::BSpline(b) => b.point_ids(),
+            GeometryElement::Conic(c) => vec![c.center, c.start, c.end],
         }
     }
 
@@ -664,6 +665,7 @@ pub enum GeometryElement {
     Circle(Circle),
     Ellipse(Ellipse),
     BSpline(BSpline),
+    Conic(Conic),
 }
 
 impl GeometryElement {
@@ -675,6 +677,7 @@ impl GeometryElement {
             GeometryElement::Circle(c) => c.id,
             GeometryElement::Ellipse(e) => e.id,
             GeometryElement::BSpline(b) => b.id,
+            GeometryElement::Conic(c) => c.id,
         }
     }
 }
@@ -849,8 +852,11 @@ impl Ellipse {
     }
 }
 
-/// A cubic B-spline over point-element control points. An open spline runs
+/// A B-spline over point-element control points. An open spline runs
 /// first → last control point; a periodic one closes smoothly on itself.
+/// A spline drawn through points keeps them, and the solver holds it
+/// through each at the parameter it was drawn at, so moving one reshapes
+/// the curve.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BSpline {
     pub id: Uuid,
@@ -859,14 +865,119 @@ pub struct BSpline {
     /// Whether the spline closes on itself.
     #[serde(default)]
     pub periodic: bool,
+    /// The polynomial degree, at most one less than the control points;
+    /// cubic for splines stored without one.
+    #[serde(default = "cubic", skip_serializing_if = "is_cubic")]
+    pub degree: u32,
+    /// An open spline's clamped knot vector, `control points + degree + 1`
+    /// of them; empty for evenly spaced knots. A periodic spline's knots
+    /// are always evenly spaced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knots: Vec<f64>,
+    /// The points it passes through, in order, when it was drawn through
+    /// points: point elements of the sketch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fit_points: Vec<Uuid>,
+    /// The parameter each fit point sits at.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fit_params: Vec<f64>,
+}
+
+fn cubic() -> u32 {
+    3
+}
+
+fn is_cubic(degree: &u32) -> bool {
+    *degree == 3
 }
 
 impl BSpline {
+    /// A cubic over evenly spaced knots.
     pub fn new(control_points: Vec<Uuid>, periodic: bool) -> Self {
         Self {
             id: Uuid::new_v4(),
             control_points,
             periodic,
+            degree: 3,
+            knots: Vec::new(),
+            fit_points: Vec::new(),
+            fit_params: Vec::new(),
+        }
+    }
+
+    /// This spline with `other`'s degree, knots and fit parameters: a copy
+    /// of `other` over points of its own.
+    pub fn with_shape_of(self, other: &BSpline) -> Self {
+        Self {
+            degree: other.degree,
+            knots: other.knots.clone(),
+            fit_params: other.fit_params.clone(),
+            ..self
+        }
+    }
+
+    /// Every point it is drawn through: its control points, and the points
+    /// it passes through when it was drawn through points.
+    pub fn point_ids(&self) -> Vec<Uuid> {
+        let mut ids = self.control_points.clone();
+        for id in &self.fit_points {
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+        ids
+    }
+}
+
+/// Which curve a conic arc is an arc of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConicKind {
+    Parabola,
+    Hyperbola,
+}
+
+/// An arc of a parabola, or of one branch of a hyperbola, between two
+/// points held on it. In the curve's own frame, `axis` along x and its
+/// left-hand perpendicular along y, the parabola is `(t²/4f, t)` from its
+/// vertex, `f` the focal distance, and the hyperbola's branch
+/// `(a·cosh t, b·sinh t)` from its centre. The shape (`axis`, `minor`)
+/// holds still in the solver; the centre and the end points move.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conic {
+    pub id: Uuid,
+    pub kind: ConicKind,
+    /// The parabola's vertex; the hyperbola's centre.
+    pub center: Uuid,
+    /// Along the axis, the way the curve opens: for a parabola from the
+    /// vertex to the focus (its length the focal distance), for a
+    /// hyperbola from the centre to the vertex of the branch (its length
+    /// the semi-major axis).
+    pub axis: Vec2D,
+    /// The hyperbola's semi-minor axis; a parabola has none.
+    #[serde(default)]
+    pub minor: f32,
+    /// Where the arc starts and ends: points on the curve.
+    pub start: Uuid,
+    pub end: Uuid,
+}
+
+impl Conic {
+    pub fn new(
+        kind: ConicKind,
+        center: Uuid,
+        axis: Vec2D,
+        minor: f32,
+        start: Uuid,
+        end: Uuid,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            kind,
+            center,
+            axis,
+            minor,
+            start,
+            end,
         }
     }
 }

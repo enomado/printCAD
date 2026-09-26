@@ -157,6 +157,7 @@ fn summary(sketch: &Sketch) -> (Vec<(i64, i64)>, Vec<&'static str>, Vec<String>)
             GeometryElement::Arc(_) => Some("arc"),
             GeometryElement::Ellipse(_) => Some("ellipse"),
             GeometryElement::BSpline(_) => Some("bspline"),
+            GeometryElement::Conic(_) => Some("conic"),
         })
         .collect();
     curves.sort();
@@ -416,4 +417,129 @@ fn arrays_clipboard_mirrors_planes_and_clearing_replay_too() {
     let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
     assert_eq!(out.error, None, "{script}");
     assert_eq!(all_sketches(&replay.doc), done, "{script}");
+}
+
+#[test]
+fn turned_rectangles_and_a_frame_replay_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    for (x, y) in [(1.0, 1.0), (9.0, 7.0), (0.0, 6.5)] {
+        s.click(x, y, "sketch.rect:3pt");
+    }
+    for (x, y) in [(-10.0, 1.0), (-6.0, 4.0), (-16.0, 9.0)] {
+        s.click(x, y, "sketch.rect:center3pt");
+    }
+    for (x, y) in [(2.0, -12.0), (14.0, -3.0)] {
+        s.click(x, y, "sketch.rect:frame");
+    }
+    s.key(KeyCode::A, None);
+
+    let done = summary(&s.sketch(id));
+    assert_eq!(
+        done.1.iter().filter(|c| **c == "line").count(),
+        16,
+        "{done:?}"
+    );
+    assert_eq!(
+        s.recorded.iter().filter(|r| r.id == "sketch.draw").count(),
+        3
+    );
+    assert_replays(&s.recorded, before, id, &done);
+}
+
+#[test]
+fn a_trim_stroke_replays_as_one_call() {
+    let (mut s, id, before) = session_on_a_sketch();
+    s.click(0.0, 0.0, "sketch.line");
+    s.click(20.0, 0.0, "sketch.line");
+    s.key(KeyCode::Escape, Some("sketch.line"));
+    for x in [5.0, 10.0, 15.0] {
+        s.click(x, -5.0, "sketch.line");
+        s.click(x, 5.0, "sketch.line");
+        s.key(KeyCode::Escape, Some("sketch.line"));
+    }
+    s.press(2.0, 3.0, "sketch.trim");
+    s.move_to(18.0, 3.0, "sketch.trim");
+    s.release(18.0, 3.0, "sketch.trim");
+    s.key(KeyCode::A, None);
+    let done = summary(&s.sketch(id));
+    let draws = s.recorded.iter().filter(|r| r.id == "sketch.draw").count();
+    assert_eq!(draws, 5, "four lines and one stroke: {:#?}", s.recorded);
+    assert_replays(&s.recorded, before, id, &done);
+}
+
+#[test]
+fn a_spline_through_points_replays_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    for (x, y) in [(1.0, 1.0), (5.0, 6.0), (10.0, 4.0), (14.0, 8.0)] {
+        s.click(x, y, "sketch.bspline:through");
+    }
+    s.key(KeyCode::Enter, Some("sketch.bspline:through"));
+    for (x, y) in [(-12.0, -2.0), (-6.0, -8.0), (-2.0, -3.0)] {
+        s.click(x, y, "sketch.bspline:through_periodic");
+    }
+    s.key(KeyCode::Enter, Some("sketch.bspline:through_periodic"));
+    s.key(KeyCode::A, None);
+    let sketch = s.sketch(id);
+    let fitted = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::BSpline(b) if !b.fit_points.is_empty()))
+        .count();
+    assert_eq!(fitted, 2);
+    let done = summary(&sketch);
+    assert_replays(&s.recorded, before, id, &done);
+}
+
+#[test]
+fn joining_a_polyline_leaves_one_spline_and_replays() {
+    let (mut s, id, before) = session_on_a_sketch();
+    s.click(1.0, 1.0, "sketch.polyline");
+    s.click(11.0, 1.0, "sketch.polyline");
+    s.event(
+        WorkbenchInputEvent::Action {
+            id: "sketch.polyline_arc".into(),
+        },
+        Some("sketch.polyline"),
+    );
+    s.click(16.0, 6.0, "sketch.polyline");
+    s.event(
+        WorkbenchInputEvent::Action {
+            id: "sketch.polyline_arc".into(),
+        },
+        Some("sketch.polyline"),
+    );
+    s.click(16.0, 16.0, "sketch.polyline");
+    s.key(KeyCode::Escape, Some("sketch.polyline"));
+    s.key(KeyCode::Escape, Some("sketch.select"));
+    let arc_middle = (
+        11.0 + 5.0 * std::f32::consts::FRAC_1_SQRT_2,
+        6.0 - 5.0 * std::f32::consts::FRAC_1_SQRT_2,
+    );
+    for (x, y) in [(6.0, 1.0), arc_middle, (16.0, 11.0)] {
+        s.click(x, y, "sketch.select");
+    }
+    s.key(KeyCode::A, Some("sketch.join"));
+    s.key(KeyCode::A, None);
+
+    let sketch = s.sketch(id);
+    let done = summary(&sketch);
+    assert_eq!(done.1, ["bspline"], "{done:?}");
+    assert!(s.recorded.iter().any(|r| r.id == "sketch.join"));
+    assert_replays(&s.recorded, before, id, &done);
+}
+
+#[test]
+fn conic_arcs_replay_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
+        s.click(x, y, "sketch.ellipse:parabola");
+    }
+    for (x, y) in [(10.0, 1.0), (13.0, 1.0), (15.0, 3.0), (18.0, -1.0)] {
+        s.click(x, y, "sketch.ellipse:hyperbola");
+    }
+    s.click(1.0, 1.05, "sketch.split");
+    s.key(KeyCode::A, None);
+    let done = summary(&s.sketch(id));
+    assert_eq!(done.1, ["conic", "conic", "conic"], "{done:?}");
+    assert_replays(&s.recorded, before, id, &done);
 }

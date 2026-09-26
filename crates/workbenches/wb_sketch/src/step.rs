@@ -231,6 +231,16 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         json!(d.bspline_periodic),
     );
     put(
+        "bspline_degree",
+        json!(params.bspline_degree),
+        json!(d.bspline_degree),
+    );
+    put(
+        "bspline_interpolate",
+        json!(params.bspline_interpolate),
+        json!(d.bspline_interpolate),
+    );
+    put(
         "auto_constraints",
         json!(params.auto_constraints),
         json!(d.auto_constraints),
@@ -265,6 +275,10 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             "offset_distance" => p.offset_distance = number()? as f32,
             "copies" => p.copies = number()? as u32,
             "bspline_periodic" => p.bspline_periodic = flag()?,
+            "bspline_degree" => {
+                p.bspline_degree = (number()? as u32).clamp(1, crate::spline::MAX_DEGREE)
+            }
+            "bspline_interpolate" => p.bspline_interpolate = flag()?,
             "auto_constraints" => p.auto_constraints = flag()?,
             "array_rows" => p.array_rows = number()? as u32,
             "array_cols" => p.array_cols = number()? as u32,

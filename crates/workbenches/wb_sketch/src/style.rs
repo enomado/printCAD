@@ -51,6 +51,10 @@ pub fn element_icon(element: &GeometryElement) -> &'static str {
         GeometryElement::Circle(_) => "circle",
         GeometryElement::Ellipse(_) => "ellipse",
         GeometryElement::BSpline(_) => "bspline",
+        GeometryElement::Conic(c) => match c.kind {
+            crate::sketch::ConicKind::Parabola => "arc-of-parabola",
+            crate::sketch::ConicKind::Hyperbola => "arc-of-hyperbola",
+        },
     }
 }
 
@@ -63,6 +67,10 @@ pub fn element_kind(element: &GeometryElement) -> &'static str {
         GeometryElement::Circle(_) => "Circle",
         GeometryElement::Ellipse(_) => "Ellipse",
         GeometryElement::BSpline(_) => "B-spline",
+        GeometryElement::Conic(c) => match c.kind {
+            crate::sketch::ConicKind::Parabola => "Arc of parabola",
+            crate::sketch::ConicKind::Hyperbola => "Arc of hyperbola",
+        },
     }
 }
 

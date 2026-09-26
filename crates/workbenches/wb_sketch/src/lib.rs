@@ -3,6 +3,7 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
 mod commands;
+pub mod conic;
 mod constrain;
 mod dxf;
 mod external;
@@ -21,6 +22,7 @@ pub mod render;
 pub mod sketch;
 pub mod snap;
 mod solver;
+pub mod spline;
 mod step;
 pub mod style;
 mod tools;
@@ -243,6 +245,9 @@ pub struct SketchWorkbench {
     dragging: Option<DragState>,
     /// Box selection in progress (select mode).
     box_select: Option<BoxSelect>,
+    /// While the trim tool's button is held: where the pointer was last,
+    /// the start of the path whose crossings trim next.
+    trim_stroke: Option<Vec2D>,
     /// Viewport position of a right press the camera is free to pan with.
     right_press: Option<(f32, f32)>,
     /// In-progress drawing-tool state.
@@ -368,6 +373,9 @@ const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
     ("sketch.mirror", "Symmetry", "symmetry-geometry"),
 ];
 
+/// The most curves one pointer move of a trim stroke trims.
+const MAX_STROKE_TRIMS: usize = 64;
+
 /// The polyline's switch between a straight and a tangent-arc segment.
 const POLYLINE_ARC_ACTION: &str = "sketch.polyline_arc";
 
@@ -456,7 +464,11 @@ fn tool_icon(tool: &str) -> &'static str {
         "sketch.ellipse3" => "ellipse-3pt",
         "sketch.polyline" => "polyline",
         "sketch.ellipse_arc" => "arc-of-ellipse",
-        "sketch.rect_center" => "rectangle-centered",
+        "sketch.parabola" => "arc-of-parabola",
+        "sketch.hyperbola" => "arc-of-hyperbola",
+        "sketch.rect_center" | "sketch.rect_center3" => "rectangle-centered",
+        "sketch.rect3" => "rectangle",
+        "sketch.rect_frame" => "offset-geometry",
         "sketch.arc_slot" => "arc-slot",
         "sketch.chamfer" => "sketch-chamfer",
         _ => GEOMETRY_TOOLS
@@ -480,15 +492,19 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.ellipse" => ("Ellipse", "Click the center"),
         "sketch.ellipse3" => ("Ellipse", "Click one end of the major axis"),
         "sketch.ellipse_arc" => ("Arc of ellipse", "Click the center"),
-        "sketch.bspline" => ("B-spline", "Click the first control point"),
+        "sketch.parabola" => ("Arc of parabola", "Click the vertex"),
+        "sketch.hyperbola" => ("Arc of hyperbola", "Click the center"),
+        "sketch.bspline" => ("B-spline", "Click its first point"),
         "sketch.rect" => ("Rectangle", "Click the first corner"),
-        "sketch.rect_center" => ("Rectangle", "Click the center"),
+        "sketch.rect_center" | "sketch.rect_center3" => ("Rectangle", "Click the center"),
+        "sketch.rect3" => ("Rectangle", "Click the first corner"),
+        "sketch.rect_frame" => ("Frame", "Click the first corner"),
         "sketch.polygon" => ("Polygon", "Click the center"),
         "sketch.slot" => ("Slot", "Click the centerline start"),
         "sketch.arc_slot" => ("Arc slot", "Click the arc center"),
         "sketch.fillet" => ("Fillet", "Click a corner point"),
         "sketch.chamfer" => ("Chamfer", "Click a corner point"),
-        "sketch.trim" => ("Trim", "Click the span to remove"),
+        "sketch.trim" => ("Trim", "Click the span to remove, or drag across spans"),
         "sketch.external" => (
             "External geometry",
             "Click edges of a solid to bring them in; Ctrl picks more",
@@ -646,6 +662,7 @@ impl SketchWorkbench {
         self.cursor = None;
         self.dragging = None;
         self.box_select = None;
+        self.trim_stroke = None;
         self.right_press = None;
         self.last_diagnosis = None;
         self.pending_focus = None;
@@ -942,8 +959,13 @@ impl SketchWorkbench {
         let Some(sketch_id) = self.active_sketch_id else {
             return;
         };
+        // A trim stroke's clicks are one call, as a shape's are.
         let fresh = match &self.draw_record {
-            Some(r) => r.tool != tool || r.sketch != sketch_id || self.tool_state.is_idle(),
+            Some(r) => {
+                r.tool != tool
+                    || r.sketch != sketch_id
+                    || (self.tool_state.is_idle() && self.trim_stroke.is_none())
+            }
             None => true,
         };
         if fresh {
@@ -1055,6 +1077,19 @@ impl SketchWorkbench {
         self.box_select = None;
 
         match tool {
+            // A press trims what it lands on and starts a stroke: dragging
+            // on trims whatever the pointer crosses.
+            Some("sketch.trim") => {
+                self.trim_stroke = None;
+                self.flush_draw_record(ctx);
+                let result = if tools::trim_preview(&feature.sketch, cursor, tol).is_some() {
+                    self.apply_tool_click(ctx, "sketch.trim", cursor, false)
+                } else {
+                    InputResult::consumed()
+                };
+                self.trim_stroke = Some(cursor);
+                result
+            }
             Some(t) if t != "sketch.select" => self.apply_tool_click(ctx, t, cursor, false),
             _ => {
                 // Select mode. Constraint glyphs sit on top of geometry, so
@@ -1224,6 +1259,29 @@ impl SketchWorkbench {
             self.store_sketch(ctx, feature);
             return InputResult::consumed();
         }
+        // A trim stroke: every curve the pointer crossed since the last
+        // move is trimmed where it was crossed, first crossed first.
+        if let Some(mut from) = self.trim_stroke
+            && tool == Some("sketch.trim")
+        {
+            let Some(to) = self.cursor else {
+                return InputResult::consumed();
+            };
+            // Each trim can leave new pieces in the way; the bound only
+            // guards against a curve that never stops being crossed.
+            for _ in 0..MAX_STROKE_TRIMS {
+                let Some(sketch) = self.get_active_sketch(ctx) else {
+                    break;
+                };
+                let Some(at) = tools::next_stroke_crossing(&sketch.sketch, from, to) else {
+                    break;
+                };
+                self.apply_tool_click(ctx, "sketch.trim", at, false);
+                from = at;
+            }
+            self.trim_stroke = Some(to);
+            return InputResult::consumed();
+        }
         // Box selection in progress: track the moving corner. Consumed so
         // the camera doesn't move underneath the box.
         if let Some(bs) = self.box_select.as_mut() {
@@ -1245,6 +1303,9 @@ impl SketchWorkbench {
     }
 
     fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if self.trim_stroke.take().is_some() {
+            return InputResult::consumed();
+        }
         if let Some(ld) = &self.label_drag {
             // The label lands: one write for the whole drag.
             let landed = ld.current.is_some();
@@ -2027,15 +2088,22 @@ impl Workbench for SketchWorkbench {
                     ToolVariant::new("center", "Center and axes", "ellipse"),
                     ToolVariant::new("3pt", "Three points", "ellipse-3pt"),
                     ToolVariant::new("arc", "Arc of ellipse", "arc-of-ellipse"),
+                    ToolVariant::new("parabola", "Arc of parabola", "arc-of-parabola"),
+                    ToolVariant::new("hyperbola", "Arc of hyperbola", "arc-of-hyperbola"),
                 ],
                 "sketch.bspline" => vec![
                     ToolVariant::new("open", "Open", "bspline"),
                     ToolVariant::new("periodic", "Periodic", "periodic-bspline"),
+                    ToolVariant::new("through", "Through points", "bspline-knot"),
+                    ToolVariant::new("through_periodic", "Closed through points", "bspline-knot"),
                 ],
                 "sketch.rect" => vec![
                     ToolVariant::new("corners", "Two corners", "rectangle"),
                     ToolVariant::new("center", "Center and corner", "rectangle-centered"),
                     ToolVariant::new("rounded", "Rounded", "rounded-rectangle"),
+                    ToolVariant::new("3pt", "Three corners", "rectangle"),
+                    ToolVariant::new("center3pt", "Center and two corners", "rectangle-centered"),
+                    ToolVariant::new("frame", "Frame", "offset-geometry"),
                 ],
                 "sketch.polygon" => vec![
                     ToolVariant::new("3", "Triangle", "triangle"),
@@ -2127,6 +2195,11 @@ impl Workbench for SketchWorkbench {
             )
             .icon("rectangular-array")
             .row(1),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.join", "Join curves", Some("geometry.modify"))
+                .icon("bspline-degree")
+                .row(1),
         );
         for (id, label, icon) in [
             (
@@ -2437,6 +2510,7 @@ impl Workbench for SketchWorkbench {
                 }
                 "sketch.attach" => return self.attach_to_face(ctx),
                 "sketch.array" => return self.array_selection(ctx),
+                "sketch.join" => return self.join_selection(ctx),
                 "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
                 "sketch.carbon_copy" => {
                     return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
@@ -2699,6 +2773,9 @@ impl Workbench for SketchWorkbench {
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.array" => editing && !self.selected.is_empty(),
+            "sketch.join" => {
+                editing && self.selection_shape.all.len() - self.selection_shape.points.len() >= 2
+            }
             "sketch.toggle_driving" | "sketch.toggle_active" => {
                 editing && !self.selected_constraints.is_empty()
             }
@@ -3131,7 +3208,10 @@ impl SketchWorkbench {
                 }
             }
             ("sketch.bspline", Some(variant)) => {
-                self.tool_params.bspline_periodic = variant == "periodic";
+                self.tool_params.bspline_periodic =
+                    matches!(variant, "periodic" | "through_periodic");
+                self.tool_params.bspline_interpolate =
+                    matches!(variant, "through" | "through_periodic");
             }
             _ => {}
         }
@@ -3149,8 +3229,13 @@ fn canonical_tool(tool: &str) -> Option<String> {
         ("sketch.circle", Some("3pt")) => "sketch.circle3".to_string(),
         ("sketch.ellipse", Some("3pt")) => "sketch.ellipse3".to_string(),
         ("sketch.ellipse", Some("arc")) => "sketch.ellipse_arc".to_string(),
+        ("sketch.ellipse", Some("parabola")) => "sketch.parabola".to_string(),
+        ("sketch.ellipse", Some("hyperbola")) => "sketch.hyperbola".to_string(),
         ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
         ("sketch.rect", Some("rounded")) => "sketch.rect_rounded".to_string(),
+        ("sketch.rect", Some("3pt")) => "sketch.rect3".to_string(),
+        ("sketch.rect", Some("center3pt")) => "sketch.rect_center3".to_string(),
+        ("sketch.rect", Some("frame")) => "sketch.rect_frame".to_string(),
         ("sketch.slot", Some("arc")) => "sketch.arc_slot".to_string(),
         ("sketch.fillet", Some("chamfer")) => "sketch.chamfer".to_string(),
         ("sketch.polygon", Some(_)) => "sketch.polygon".to_string(),
@@ -3410,8 +3495,9 @@ impl SketchWorkbench {
                 GeometryElement::Line(l) => vec![l.start, l.end],
                 GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                 GeometryElement::Circle(c) => vec![c.center],
-                ellipse @ GeometryElement::Ellipse(_) => Sketch::curve_point_ids(ellipse),
-                GeometryElement::BSpline(b) => b.control_points.clone(),
+                curve @ (GeometryElement::Ellipse(_)
+                | GeometryElement::BSpline(_)
+                | GeometryElement::Conic(_)) => Sketch::curve_point_ids(curve),
             })
             .collect();
         self.selected.clear();
@@ -3616,8 +3702,9 @@ impl SketchWorkbench {
                     GeometryElement::Line(l) => vec![l.start, l.end],
                     GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                     GeometryElement::Circle(c) => vec![c.center],
-                    ellipse @ GeometryElement::Ellipse(_) => Sketch::curve_point_ids(ellipse),
-                    GeometryElement::BSpline(b) => b.control_points.clone(),
+                    curve @ (GeometryElement::Ellipse(_)
+                    | GeometryElement::BSpline(_)
+                    | GeometryElement::Conic(_)) => Sketch::curve_point_ids(curve),
                 };
                 if refs.iter().any(|r| free.contains(r)) {
                     self.selected.insert(g.id());
@@ -3750,6 +3837,54 @@ impl SketchWorkbench {
         } else {
             ctx.log_warn("Select geometry and give the array at least two rows or columns");
         }
+        InputResult::consumed()
+    }
+
+    /// Merge the selected curves into one spline, recorded as `sketch.join`.
+    fn join_selection(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let before = (
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect(),
+            feature.sketch.constraints.iter().map(|c| c.id).collect(),
+        );
+        let effect = tools::join(&mut feature.sketch, &self.selected, tools::JOIN_TOLERANCE);
+        if !effect.changed {
+            if let Some(why) = effect.log {
+                ctx.log_warn(why);
+            }
+            return InputResult::consumed();
+        }
+        if let Some(log) = effect.log {
+            ctx.log_info(log);
+        }
+        if let Some(id) = self.active_sketch_id {
+            let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+            items.sort();
+            ctx.record(
+                "sketch.join",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "items": ids_json(&items),
+                })),
+                commands::made_since(&feature.sketch, &before),
+            );
+        }
+        let alive: HashSet<Uuid> = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(GeometryElement::id)
+            .collect();
+        self.selected.retain(|id| alive.contains(id));
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
         InputResult::consumed()
     }
 
@@ -4221,9 +4356,14 @@ pub(crate) fn is_draw_tool(tool: &str) -> bool {
             | "sketch.ellipse"
             | "sketch.ellipse3"
             | "sketch.ellipse_arc"
+            | "sketch.parabola"
+            | "sketch.hyperbola"
             | "sketch.bspline"
             | "sketch.rect"
             | "sketch.rect_center"
+            | "sketch.rect3"
+            | "sketch.rect_center3"
+            | "sketch.rect_frame"
             | "sketch.polygon"
             | "sketch.slot"
             | "sketch.arc_slot"
@@ -4278,10 +4418,14 @@ fn element_fully_inside(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max
         GeometryElement::Ellipse(e) => e
             .points(sketch, 32)
             .is_some_and(|points| points.into_iter().all(inside)),
+        GeometryElement::Conic(c) => c
+            .points(sketch, 32)
+            .is_some_and(|points| points.into_iter().all(inside)),
         // The spline lies in its control polygon's convex hull, so all
-        // control points inside implies the curve is inside.
+        // control points inside implies the curve is inside; the points it
+        // is drawn through lie on it.
         GeometryElement::BSpline(b) => b
-            .control_points
+            .point_ids()
             .iter()
             .map(|id| sketch.point_position(*id))
             .all(|p| p.is_some_and(inside)),

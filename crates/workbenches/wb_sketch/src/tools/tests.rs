@@ -2292,3 +2292,696 @@ fn shape_tools_constrain_their_shapes_cleanly() {
         );
     }
 }
+
+/// Every line's direction, by id.
+fn line_dirs(sketch: &Sketch) -> Vec<glam::Vec2> {
+    sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => {
+                Some((sketch.point_position(l.end)? - sketch.point_position(l.start)?).to_glam())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The four edges, in order, make a rectangle: every corner square and
+/// the loop closed.
+fn assert_rectangle(sketch: &Sketch) {
+    let dirs = line_dirs(sketch);
+    assert_eq!(dirs.len(), 4);
+    for i in 0..4 {
+        let (d0, d1) = (dirs[i], dirs[(i + 1) % 4]);
+        assert!(
+            d0.normalize().dot(d1.normalize()).abs() < 1e-3,
+            "corner {i} is square: {d0:?} {d1:?}"
+        );
+    }
+    assert!(point_use_counts(sketch).values().all(|&n| n == 2));
+}
+
+#[test]
+fn a_rectangle_from_three_corners_turns_with_its_first_edge() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for p in [(1.0, 1.0), (9.0, 7.0)] {
+        let fx = handle_click(
+            &mut state,
+            "sketch.rect3",
+            &mut sketch,
+            Vec2D::new(p.0, p.1),
+            0.1,
+        );
+        assert!(!fx.changed, "nothing before the third click");
+    }
+    // The third click only says how wide: 5 to the left of the edge.
+    let fx = handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(1.0 - 3.0 + 2.0, 1.0 + 4.0 + 1.5),
+        0.1,
+    );
+    assert!(fx.changed && state.is_idle());
+    assert_eq!((points(&sketch), lines(&sketch)), (4, 4));
+    assert_eq!(sketch.constraints.len(), 3, "2 parallel + 1 perpendicular");
+    assert_rectangle(&sketch);
+    let dirs = line_dirs(&sketch);
+    assert!((dirs[0].length() - 10.0).abs() < 1e-4);
+    assert!((dirs[1].length() - 5.0).abs() < 1e-4);
+
+    // Pulling one corner out of square, the constraints put it back.
+    let corner = match &sketch.geometry[2] {
+        GeometryElement::Point(p) => p.id,
+        _ => unreachable!(),
+    };
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
+        p.position = Vec2D::new(p.position.x + 1.0, p.position.y - 0.5);
+    }
+    crate::solver::solve_holding(&mut sketch, &[corner]);
+    assert_rectangle(&sketch);
+}
+
+#[test]
+fn a_third_click_on_the_first_edge_line_draws_nothing() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(1.0, 1.0),
+        0.1,
+    );
+    handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(5.0, 1.0),
+        0.1,
+    );
+    let fx = handle_click(
+        &mut state,
+        "sketch.rect3",
+        &mut sketch,
+        Vec2D::new(9.0, 1.0),
+        0.1,
+    );
+    assert!(!fx.changed);
+    assert!(sketch.geometry.is_empty());
+}
+
+#[test]
+fn a_rectangle_from_its_centre_and_two_corners() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let tool = "sketch.rect_center3";
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.1);
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(5.0, 4.0), 0.1);
+    // Toward the next corner: it lands as far out as the first.
+    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(-5.0, 9.0), 0.1);
+    assert!(fx.changed && state.is_idle());
+    assert_eq!((points(&sketch), lines(&sketch)), (5, 4));
+    assert_rectangle(&sketch);
+    assert!(
+        sketch.geometry.iter().any(|g| matches!(
+            g,
+            GeometryElement::Point(p)
+                if (p.position.x + 2.0).abs() < 1e-4 && (p.position.y - 5.0).abs() < 1e-4
+        )),
+        "the second corner at (-2, 5)"
+    );
+    // The centre is construction and holds the corners symmetric.
+    let centre = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Point(p) if sketch.is_construction(p.id) => Some(p.id),
+            _ => None,
+        })
+        .expect("construction centre");
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(centre) {
+        p.position = Vec2D::new(3.0, 2.0);
+    }
+    crate::solver::solve_holding(&mut sketch, &[centre]);
+    assert_rectangle(&sketch);
+    let sum = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) if p.id != centre => Some(p.position.to_glam()),
+            _ => None,
+        })
+        .sum::<glam::Vec2>();
+    assert!((sum / 4.0 - glam::Vec2::new(3.0, 2.0)).length() < 1e-3);
+}
+
+#[test]
+fn a_frame_is_two_rectangles_a_dimensioned_wall_apart() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        offset_distance: 1.5,
+        ..ToolParams::default()
+    };
+    click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(1.0, 1.0),
+        0.1,
+        &params,
+    );
+    let fx = click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(11.0, 7.0),
+        0.1,
+        &params,
+    );
+    assert!(fx.changed && state.is_idle());
+    assert_eq!((points(&sketch), lines(&sketch)), (8, 8));
+    assert_eq!(sketch.constraints.len(), 12, "8 H/V + 4 wall distances");
+    let wires = crate::profile::extract_wires(&sketch).expect("two closed outlines");
+    assert_eq!(wires.len(), 2);
+    let inner_at = |sketch: &Sketch, x: f32, y: f32| {
+        sketch.geometry.iter().any(|g| {
+            matches!(g, GeometryElement::Point(p)
+                if (p.position.x - x).abs() < 1e-3 && (p.position.y - y).abs() < 1e-3)
+        })
+    };
+    assert!(inner_at(&sketch, 2.5, 2.5) && inner_at(&sketch, 9.5, 5.5));
+
+    // A thicker wall: every gap follows its dimension.
+    for c in &mut sketch.constraints {
+        if let ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } =
+            &mut c.kind
+        {
+            *value = 2.0;
+        }
+    }
+    assert!(matches!(
+        crate::solver::solve(&mut sketch),
+        crate::solver::SolveOutcome::Converged { .. }
+    ));
+    for c in &sketch.constraints {
+        if let ConstraintKind::DistanceX { a, b: Some(b), .. } = c.kind {
+            let gap = sketch.point_position(b).unwrap() - sketch.point_position(a).unwrap();
+            assert!((gap.x.abs() - 2.0).abs() < 1e-3 && (gap.y.abs() - 2.0).abs() < 1e-3);
+        }
+    }
+    assert_eq!(crate::profile::extract_wires(&sketch).unwrap().len(), 2);
+}
+
+#[test]
+fn a_frame_too_thin_for_its_wall_says_so() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        offset_distance: 3.0,
+        ..ToolParams::default()
+    };
+    click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(1.0, 1.0),
+        0.1,
+        &params,
+    );
+    let fx = click_p(
+        &mut state,
+        "sketch.rect_frame",
+        &mut sketch,
+        Vec2D::new(11.0, 6.0),
+        0.1,
+        &params,
+    );
+    assert!(!fx.changed && fx.log.is_some());
+    assert!(sketch.geometry.is_empty());
+}
+
+#[test]
+fn a_trim_stroke_finds_what_it_crosses_first() {
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, 1.0, -5.0);
+    let b = pt(&mut sketch, 1.0, 5.0);
+    line_between(&mut sketch, a, b);
+    let c = pt(&mut sketch, 4.0, 4.0);
+    sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 1.0)));
+    let from = Vec2D::new(-1.0, 4.0);
+    let to = Vec2D::new(9.0, 4.0);
+    let first = next_stroke_crossing(&sketch, from, to).expect("the line");
+    assert!((first.x - 1.0).abs() < 1e-4 && (first.y - 4.0).abs() < 1e-4);
+    // From there on, the circle's near side, then its far side.
+    let second = next_stroke_crossing(&sketch, first, to).expect("the circle");
+    assert!((second.x - 3.0).abs() < 1e-4, "{second:?}");
+    let third = next_stroke_crossing(&sketch, second, to).expect("the circle again");
+    assert!((third.x - 5.0).abs() < 1e-4, "{third:?}");
+    assert!(next_stroke_crossing(&sketch, third, to).is_none());
+    // A path that stops short crosses nothing.
+    assert!(next_stroke_crossing(&sketch, from, Vec2D::new(0.5, 4.0)).is_none());
+}
+
+fn spline_of(sketch: &Sketch) -> crate::sketch::BSpline {
+    sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .expect("a spline")
+}
+
+/// The spline passes within `tol` of `p`.
+fn passes_through(sketch: &Sketch, spline: &crate::sketch::BSpline, p: Vec2D, tol: f32) -> bool {
+    spline
+        .points(sketch, 2000)
+        .unwrap()
+        .iter()
+        .any(|q| (*q - p).to_glam().length() < tol)
+}
+
+#[test]
+fn a_spline_through_points_passes_through_every_click_and_follows_them() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        bspline_interpolate: true,
+        bspline_degree: 4,
+        ..ToolParams::default()
+    };
+    let clicks = [(1.0, 1.0), (4.0, 5.0), (8.0, 6.0), (12.0, 2.0), (15.0, 4.0)];
+    for (x, y) in clicks {
+        click_p(
+            &mut state,
+            "sketch.bspline",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+            &params,
+        );
+    }
+    let fx = finish_click_sequence(&mut state, &mut sketch, &params);
+    assert!(fx.changed);
+    let spline = spline_of(&sketch);
+    assert_eq!(spline.degree, 4);
+    assert_eq!(spline.fit_points.len(), 5);
+    assert_eq!(spline.control_points.len(), 5);
+    assert_eq!(
+        (spline.control_points[0], spline.control_points[4]),
+        (spline.fit_points[0], spline.fit_points[4]),
+        "the ends are one point each"
+    );
+    assert_eq!(
+        points(&sketch),
+        5 + 3,
+        "five clicks and three inner controls"
+    );
+    for (x, y) in clicks {
+        assert!(passes_through(&sketch, &spline, Vec2D::new(x, y), 0.02));
+    }
+    // The profile carries its degree and knots.
+    let b = pt(&mut sketch, 1.0, -3.0);
+    let a = spline.fit_points[0];
+    let e = spline.fit_points[4];
+    let c = pt(&mut sketch, 15.0, -3.0);
+    line_between(&mut sketch, e, c);
+    line_between(&mut sketch, c, b);
+    line_between(&mut sketch, b, a);
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(wires[0].segments.iter().any(|s| matches!(
+        s,
+        kernel_api::ProfileSegment::Nurbs { degree: 4, knots, control_points, .. }
+            if knots.len() == 10 && control_points.len() == 5
+    )));
+
+    // Dragged, a point it passes through takes the curve with it.
+    let middle = spline.fit_points[2];
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(middle) {
+        p.position = Vec2D::new(8.0, 9.0);
+    }
+    crate::solver::solve_holding(&mut sketch, &[middle]);
+    let spline = spline_of(&sketch);
+    assert!(passes_through(&sketch, &spline, Vec2D::new(8.0, 9.0), 0.02));
+    for (x, y) in [clicks[0], clicks[1], clicks[3], clicks[4]] {
+        assert!(passes_through(&sketch, &spline, Vec2D::new(x, y), 0.02));
+    }
+}
+
+#[test]
+fn a_closed_spline_through_points_is_its_own_profile() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        bspline_interpolate: true,
+        bspline_periodic: true,
+        bspline_degree: 2,
+        ..ToolParams::default()
+    };
+    let clicks = [(1.0, 1.0), (9.0, 1.0), (9.0, 7.0), (1.0, 7.0)];
+    for (x, y) in clicks {
+        click_p(
+            &mut state,
+            "sketch.bspline",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+            &params,
+        );
+    }
+    finish_click_sequence(&mut state, &mut sketch, &params);
+    let spline = spline_of(&sketch);
+    assert!(spline.periodic && spline.knots.is_empty());
+    for (x, y) in clicks {
+        assert!(passes_through(&sketch, &spline, Vec2D::new(x, y), 0.02));
+    }
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(matches!(
+        &wires[0].segments[..],
+        [kernel_api::ProfileSegment::Nurbs {
+            degree: 2,
+            periodic: true,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn a_control_point_spline_takes_its_degree_and_a_cubic_stays_as_it_was() {
+    for (degree, nurbs) in [(2, true), (3, false), (5, true)] {
+        let mut sketch = Sketch::new("t");
+        let mut state = ToolState::default();
+        let params = ToolParams {
+            bspline_degree: degree,
+            ..ToolParams::default()
+        };
+        for (x, y) in [
+            (1.0, 1.0),
+            (3.0, 5.0),
+            (6.0, 6.0),
+            (8.0, 2.0),
+            (10.0, 5.0),
+            (12.0, 1.0),
+        ] {
+            click_p(
+                &mut state,
+                "sketch.bspline",
+                &mut sketch,
+                Vec2D::new(x, y),
+                0.1,
+                &params,
+            );
+        }
+        finish_click_sequence(&mut state, &mut sketch, &params);
+        let spline = spline_of(&sketch);
+        assert_eq!(spline.degree, degree);
+        assert!(spline.fit_points.is_empty());
+        // Clamped: it starts and ends on its end control points.
+        let curve = spline.points(&sketch, 10).unwrap();
+        assert!((curve[0] - Vec2D::new(1.0, 1.0)).to_glam().length() < 1e-5);
+        assert!((curve[10] - Vec2D::new(12.0, 1.0)).to_glam().length() < 1e-5);
+        let first = spline.control_points[0];
+        let last = spline.control_points[5];
+        line_between(&mut sketch, last, first);
+        let wires = crate::profile::extract_wires(&sketch).unwrap();
+        let is_nurbs = wires[0]
+            .segments
+            .iter()
+            .any(|s| matches!(s, kernel_api::ProfileSegment::Nurbs { .. }));
+        assert_eq!(is_nurbs, nurbs, "degree {degree}");
+    }
+}
+
+#[test]
+fn a_spline_stored_before_degrees_is_a_cubic() {
+    let json = serde_json::json!({
+        "id": Uuid::new_v4(),
+        "control_points": [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()],
+        "periodic": false,
+    });
+    let spline: crate::sketch::BSpline = serde_json::from_value(json).unwrap();
+    assert_eq!(spline.degree, 3);
+    assert!(spline.is_default_cubic() && spline.fit_points.is_empty());
+    let back = serde_json::to_value(&spline).unwrap();
+    assert!(back.get("degree").is_none() && back.get("knots").is_none());
+}
+
+/// A line, a tangent quarter arc and a line after it: one smooth chain.
+fn smooth_chain(sketch: &mut Sketch) -> (Uuid, Uuid, [Uuid; 3]) {
+    let a = pt(sketch, 0.0, 0.0);
+    let b = pt(sketch, 10.0, 0.0);
+    let c = pt(sketch, 10.0, 5.0);
+    let d = pt(sketch, 15.0, 5.0);
+    let e = pt(sketch, 15.0, 15.0);
+    let first = line_between(sketch, a, b);
+    let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, b, d, 5.0)));
+    let last = line_between(sketch, d, e);
+    (a, e, [first, arc, last])
+}
+
+#[test]
+fn joining_a_chain_makes_one_spline_on_its_ends_that_follows_it() {
+    let mut sketch = Sketch::new("t");
+    let (a, e, curves) = smooth_chain(&mut sketch);
+    // Something meets the chain's end: it keeps meeting it.
+    let f = pt(&mut sketch, 0.0, 15.0);
+    line_between(&mut sketch, e, f);
+    line_between(&mut sketch, f, a);
+    let before = sketch.clone();
+    let selected: HashSet<Uuid> = curves.into_iter().collect();
+    let fx = join(&mut sketch, &selected, 0.01);
+    assert!(fx.changed, "{:?}", fx.log);
+    assert_eq!(arcs(&sketch), 0);
+    assert_eq!(lines(&sketch), 2, "only the two that closed the shape");
+    let spline = spline_of(&sketch);
+    assert_eq!(spline.control_points[0], a);
+    assert_eq!(*spline.control_points.last().unwrap(), e);
+    assert!(sketch.get_geometry(curves[1]).is_none());
+    // The joint points and the arc's centre went with the curves.
+    assert_eq!(
+        points(&sketch),
+        3 + spline.control_points.len() - 2,
+        "a, e, f and the inner control points"
+    );
+    // It follows the old chain: every sample of it lies near the spline.
+    let curve = spline.points(&sketch, 4000).unwrap();
+    for g in &before.geometry {
+        if !selected.contains(&g.id()) {
+            continue;
+        }
+        let samples: Vec<Vec2D> = match g {
+            GeometryElement::Line(l) => {
+                let (p, q) = (
+                    before.point_position(l.start).unwrap(),
+                    before.point_position(l.end).unwrap(),
+                );
+                (0..=20)
+                    .map(|i| Vec2D::from_glam(p.to_glam().lerp(q.to_glam(), i as f32 / 20.0)))
+                    .collect()
+            }
+            _ => (0..=20)
+                .map(|i| {
+                    let t = std::f32::consts::FRAC_PI_2 * i as f32 / 20.0;
+                    Vec2D::new(10.0 + 5.0 * t.sin(), 5.0 - 5.0 * t.cos())
+                })
+                .collect(),
+        };
+        for s in samples {
+            let nearest = curve
+                .iter()
+                .map(|p| (*p - s).to_glam().length())
+                .fold(f32::MAX, f32::min);
+            assert!(nearest < 0.02, "{s:?} is {nearest} from the spline");
+        }
+    }
+    let wires = crate::profile::extract_wires(&sketch).expect("still closed");
+    assert_eq!(wires[0].segments.len(), 3);
+}
+
+#[test]
+fn join_refuses_branches_gaps_and_circles() {
+    let mut sketch = Sketch::new("t");
+    let (_, _, curves) = smooth_chain(&mut sketch);
+    // A gap: the first and last lines alone do not meet.
+    let apart: HashSet<Uuid> = [curves[0], curves[2]].into_iter().collect();
+    let fx = join(&mut sketch, &apart, 0.01);
+    assert!(!fx.changed && fx.log.is_some());
+    // A circle never joins.
+    let c = pt(&mut sketch, 30.0, 30.0);
+    let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
+    let with_circle: HashSet<Uuid> = [curves[0], curves[1], circle].into_iter().collect();
+    assert!(!join(&mut sketch, &with_circle, 0.01).changed);
+    assert_eq!(arcs(&sketch), 1, "nothing was touched");
+}
+
+fn conic_of(sketch: &Sketch) -> crate::sketch::Conic {
+    sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Conic(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("a conic")
+}
+
+/// How far each end of every conic arc is from its curve.
+fn worst_end_miss(sketch: &Sketch) -> f64 {
+    sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Conic(c) => Some(c),
+            _ => None,
+        })
+        .flat_map(|c| {
+            let shape = crate::conic::Shape::of(c, sketch).unwrap();
+            [c.start, c.end].map(|id| {
+                let p = sketch.point_position(id).unwrap();
+                shape.distance([f64::from(p.x), f64::from(p.y)]).abs()
+            })
+        })
+        .fold(0.0, f64::max)
+}
+
+#[test]
+fn an_arc_of_parabola_from_vertex_focus_and_two_ends() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let tool = "sketch.parabola";
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0)] {
+        let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(x, y), 0.1);
+        assert!(!fx.changed);
+    }
+    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(5.0, 7.0), 0.1);
+    assert!(fx.changed && state.is_idle());
+    assert_eq!(points(&sketch), 3, "vertex and two ends");
+    let conic = conic_of(&sketch);
+    assert_eq!(conic.kind, crate::sketch::ConicKind::Parabola);
+    // The ends land on the curve level with the clicks across its axis.
+    let at = |id| sketch.point_position(id).unwrap();
+    assert!((at(conic.start) - Vec2D::new(-3.0, 3.0)).to_glam().length() < 1e-5);
+    assert!((at(conic.end) - Vec2D::new(5.0, 3.0)).to_glam().length() < 1e-5);
+    assert!(worst_end_miss(&sketch) < 1e-6);
+
+    // Closed by a line, it is a profile of an exact rational quadratic.
+    line_between(&mut sketch, conic.end, conic.start);
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(wires[0].segments.iter().any(|s| matches!(
+        s,
+        kernel_api::ProfileSegment::Nurbs { degree: 2, control_points, weights, .. }
+            if control_points.len() == 3 && weights.is_empty()
+    )));
+
+    // Its vertex dragged, the ends stay on the curve.
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(conic.center) {
+        p.position = Vec2D::new(2.0, 0.0);
+    }
+    crate::solver::solve_holding(&mut sketch, &[conic.center]);
+    assert!(
+        worst_end_miss(&sketch) < 1e-4,
+        "{}",
+        worst_end_miss(&sketch)
+    );
+}
+
+#[test]
+fn an_arc_of_hyperbola_opens_as_wide_as_its_start_says() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let tool = "sketch.hyperbola";
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.1);
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(4.0, 1.0), 0.1);
+    // Inside the vertex no branch passes: the click is ignored.
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(3.0, 3.0), 0.1);
+    assert!(matches!(state, ToolState::ConicAxis { .. }));
+    handle_click(&mut state, tool, &mut sketch, Vec2D::new(6.0, 3.0), 0.1);
+    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(9.0, -1.0), 0.1);
+    assert!(fx.changed);
+    let conic = conic_of(&sketch);
+    assert!((conic.minor - 1.5).abs() < 1e-4, "{}", conic.minor);
+    let at = |id| sketch.point_position(id).unwrap();
+    assert!((at(conic.start) - Vec2D::new(6.0, 3.0)).to_glam().length() < 1e-4);
+    assert!((at(conic.end) - Vec2D::new(6.0, -1.0)).to_glam().length() < 1e-4);
+    line_between(&mut sketch, conic.end, conic.start);
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(wires[0].segments.iter().any(|s| matches!(
+        s,
+        kernel_api::ProfileSegment::Nurbs { weights, .. } if weights.len() == 3 && weights[1] > 1.0
+    )));
+}
+
+#[test]
+fn a_conic_arc_splits_into_two_of_the_same_curve() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
+        handle_click(
+            &mut state,
+            "sketch.parabola",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+        );
+    }
+    // At the vertex, right on the curve.
+    let fx = handle_click(
+        &mut state,
+        "sketch.split",
+        &mut sketch,
+        Vec2D::new(1.0, 1.05),
+        0.1,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let halves: Vec<crate::sketch::Conic> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Conic(c) => Some(c.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(halves.len(), 2);
+    assert_eq!(halves[0].center, halves[1].center);
+    assert_eq!(halves[0].end, halves[1].start);
+    let middle = sketch.point_position(halves[0].end).unwrap();
+    assert!((middle - Vec2D::new(1.0, 1.0)).to_glam().length() < 1e-4);
+    assert!(worst_end_miss(&sketch) < 1e-6);
+}
+
+#[test]
+fn a_turned_or_mirrored_conic_keeps_its_ends_on_it() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for (x, y) in [(1.0, 1.0), (4.0, 1.0), (6.0, 3.0), (9.0, -1.0)] {
+        handle_click(
+            &mut state,
+            "sketch.hyperbola",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+        );
+    }
+    let all: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
+    let turn = Similarity::rotation_about(glam::Vec2::new(2.0, 2.0), 0.7);
+    let copies = copy_from(&sketch.clone(), &mut sketch, &all, &turn);
+    assert!(copies > 0);
+    let mirror = Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
+    copy_from(&sketch.clone(), &mut sketch, &all, &mirror);
+    let conics = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Conic(_)))
+        .count();
+    assert_eq!(conics, 3);
+    assert!(
+        worst_end_miss(&sketch) < 1e-4,
+        "{}",
+        worst_end_miss(&sketch)
+    );
+}
