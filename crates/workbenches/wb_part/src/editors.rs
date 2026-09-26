@@ -16,8 +16,9 @@ use ui_kit::widgets::{
 
 use crate::build::part_features_of_body;
 use crate::feature::{
-    ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
-    METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
+    ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode, HoleCut,
+    HoleFit, METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, RevolveMode,
+    TransformStep,
 };
 
 /// The label column of a parameter row.
@@ -50,6 +51,7 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Second depth", "depth2"),
     ("Taper", "taper"),
     ("Offset", "offset"),
+    ("Second offset", "offset2"),
     ("Angle", "angle"),
     ("Angle 2", "angle2"),
     ("Pitch", "pitch"),
@@ -338,11 +340,7 @@ fn extrude_mode_combo(
             .show_ui(ui, |ui| {
                 for candidate in ExtrudeMode::ALL {
                     // Material-relative modes need an earlier solid.
-                    let needs_material = matches!(
-                        candidate,
-                        ExtrudeMode::ThroughAll | ExtrudeMode::ToFirst | ExtrudeMode::ToLast
-                    );
-                    if first_feature && needs_material {
+                    if first_feature && candidate.needs_material() {
                         continue;
                     }
                     if ui
@@ -551,30 +549,317 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
     changed
 }
 
-fn revolve_axis_editor(ui: &mut Ui, axis: &mut RevolveAxis, id_salt: impl egui::AsIdSalt) -> bool {
+/// A picked edge, shown by where it was picked, and a button that takes
+/// the edge picked in the viewport.
+fn edge_pick_row(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    pick: &mut Option<EdgePick>,
+    label: &str,
+) -> bool {
     let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        label_cell(ui, label);
+        match pick {
+            Some(p) => {
+                mono_label(
+                    ui,
+                    format!("({:.1}, {:.1}, {:.1})", p.point[0], p.point[1], p.point[2]),
+                    FONT_XS,
+                    TEXT1,
+                );
+            }
+            None => {
+                mono_label(ui, "(none)", FONT_XS, TEXT3);
+            }
+        }
+        let has_selection = !ctx.selected_edges.is_empty();
+        if ui
+            .add_enabled_ui(has_selection, |ui| {
+                accent_outline_button(ui, "Use selected edge")
+            })
+            .inner
+            .on_hover_text("Click a straight edge in the viewport first, then press this")
+            .clicked()
+            && let Some(edge) = picked_edges(ctx).first()
+        {
+            *pick = Some(EdgePick {
+                point: edge.point,
+                direction: edge.direction,
+            });
+            changed = true;
+        }
+    });
+    changed
+}
+
+/// Which way a pad or pocket runs: the profile's normal, a vector typed
+/// in, or a picked edge.
+fn extrude_direction_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    direction: &mut ExtrudeDirection,
+    id_salt: impl egui::AsIdSalt,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        label_cell(ui, "Direction");
+        egui::ComboBox::from_id_salt(id_salt)
+            .selected_text(direction.label())
+            .show_ui(ui, |ui| {
+                for candidate in [
+                    ExtrudeDirection::Normal,
+                    ExtrudeDirection::Custom([0.0, 0.0, 1.0]),
+                    ExtrudeDirection::Edge(EdgePick {
+                        point: [0.0; 3],
+                        direction: [0.0, 0.0, 1.0],
+                    }),
+                ] {
+                    let is_current =
+                        std::mem::discriminant(direction) == std::mem::discriminant(&candidate);
+                    if ui.selectable_label(is_current, candidate.label()).clicked() && !is_current {
+                        // A picked edge starts from the one picked now.
+                        *direction = match candidate {
+                            ExtrudeDirection::Edge(_) => match picked_edges(ctx).first() {
+                                Some(edge) => ExtrudeDirection::Edge(EdgePick {
+                                    point: edge.point,
+                                    direction: edge.direction,
+                                }),
+                                None => candidate,
+                            },
+                            other => other,
+                        };
+                        changed = true;
+                    }
+                }
+            });
+    });
+    match direction {
+        ExtrudeDirection::Normal => {}
+        ExtrudeDirection::Custom(v) => {
+            ui.horizontal(|ui| {
+                label_cell(ui, "Vector");
+                for c in v.iter_mut() {
+                    changed |= ui.add(egui::DragValue::new(c).speed(0.05)).changed();
+                }
+            });
+        }
+        ExtrudeDirection::Edge(edge) => {
+            let mut pick = Some(*edge);
+            if edge_pick_row(ui, ctx, &mut pick, "Edge:")
+                && let Some(new) = pick
+            {
+                *edge = new;
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+/// The profile of a pad or pocket: a sketch of the body, or a flat face of
+/// the solid picked in the viewport. Choosing one clears the other.
+fn extrude_profile_rows(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    id_salt: (&'static str, FeatureId),
+    sketch: &mut Option<FeatureId>,
+    profile_face: &mut Option<FacePick>,
+) -> bool {
+    let mut changed = false;
+    if let Some(new) = sketch_combo(ui, ctx, body, id_salt, *sketch, "Profile:") {
+        *sketch = Some(new);
+        *profile_face = None;
+        changed = true;
+    }
+    let mut face = *profile_face;
+    if face_pick_row(ui, ctx, &mut face, "Or face:") {
+        *profile_face = face;
+        *sketch = None;
+        changed = true;
+    }
+    changed
+}
+
+/// The rows of one side's end condition, beyond its mode: the length, the
+/// face or the faces it stops on and their offset.
+#[expect(clippy::too_many_arguments)]
+fn extrude_side_rows(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    fx: &mut Formulas,
+    mode: ExtrudeMode,
+    length: (&mut f32, &str),
+    face: &mut Option<FacePick>,
+    offset: (&mut f32, &str),
+    shape: &mut Vec<FacePick>,
+) -> bool {
+    let mut changed = false;
+    match mode {
+        ExtrudeMode::Dimension | ExtrudeMode::TwoLengths => {
+            changed |= mm_drag(ui, fx, length.0, length.1);
+        }
+        ExtrudeMode::UpToFace => {
+            changed |= face_pick_row(ui, ctx, face, "Target face:");
+            changed |= mm_drag(ui, fx, offset.0, offset.1);
+        }
+        ExtrudeMode::UpToShape => {
+            changed |= face_list_editor(ui, ctx, shape, "Stop faces:");
+            changed |= mm_drag(ui, fx, offset.0, offset.1);
+        }
+        _ => {}
+    }
+    changed
+}
+
+/// The second side of a two-sided extrusion: none, or how it ends. Two
+/// lengths always has one.
+fn second_side_combo(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    first: ExtrudeMode,
+    mode2: &mut Option<ExtrudeMode>,
+    first_feature: bool,
+) -> bool {
+    let mut changed = false;
+    let required = first == ExtrudeMode::TwoLengths;
+    let shown = match *mode2 {
+        None if required => ExtrudeMode::Dimension.label(),
+        None => "None",
+        Some(mode) => mode.label(),
+    };
+    ui.horizontal(|ui| {
+        label_cell(ui, "Second side");
+        egui::ComboBox::from_id_salt(id_salt)
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if !required && ui.selectable_label(mode2.is_none(), "None").clicked() {
+                    changed |= mode2.take().is_some();
+                }
+                for candidate in ExtrudeMode::SECOND_SIDE {
+                    if first_feature && candidate.needs_material() {
+                        continue;
+                    }
+                    let current = *mode2 == Some(candidate)
+                        || (required && mode2.is_none() && candidate == ExtrudeMode::Dimension);
+                    if ui.selectable_label(current, candidate.label()).clicked() && !current {
+                        *mode2 = Some(candidate);
+                        changed = true;
+                    }
+                }
+            });
+    });
+    changed
+}
+
+/// The lines of a sketch and the datum lines of a body, as axis choices.
+fn axis_choices(
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    sketch: FeatureId,
+) -> Vec<(RevolveAxis, String)> {
+    let mut choices = Vec::new();
+    if let Some(sketch) = ctx.document.feature_values(sketch).and_then(|data| {
+        <wb_sketch::SketchFeature as core_document::WorkbenchFeature>::from_json(data).ok()
+    }) {
+        let mut n = 0;
+        for element in &sketch.sketch.geometry {
+            if let wb_sketch::sketch::GeometryElement::Line(line) = element {
+                n += 1;
+                let kind = if sketch.sketch.is_construction(line.id) {
+                    "construction line"
+                } else {
+                    "line"
+                };
+                choices.push((
+                    RevolveAxis::SketchLine(line.id),
+                    format!("Sketch {kind} {n}"),
+                ));
+            }
+        }
+    }
+    for (id, name, datum) in core_document::datums_of_body(ctx.document, body) {
+        if matches!(datum.shape, core_document::DatumShape::Line { .. }) {
+            choices.push((RevolveAxis::Datum(id), name));
+        }
+    }
+    choices
+}
+
+/// What a revolution or helix spins about: the sketch's axes, a custom
+/// axis, a line of the sketch, a datum line or a picked edge.
+fn revolve_axis_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    sketch: FeatureId,
+    axis: &mut RevolveAxis,
+    id_salt: impl egui::AsIdSalt,
+) -> bool {
+    let mut changed = false;
+    let references = axis_choices(ctx, body, sketch);
+    let shown = references
+        .iter()
+        .find(|(choice, _)| choice == axis)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| axis.label().to_string());
     ui.horizontal(|ui| {
         label_cell(ui, "Axis");
         egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(axis.label())
+            .selected_text(shown)
             .show_ui(ui, |ui| {
-                for candidate in [
-                    RevolveAxis::SketchY,
-                    RevolveAxis::SketchX,
-                    RevolveAxis::Custom {
-                        origin: [0.0, 0.0],
-                        dir: [1.0, 1.0],
-                    },
-                ] {
-                    let is_current =
-                        std::mem::discriminant(axis) == std::mem::discriminant(&candidate);
-                    if ui.selectable_label(is_current, candidate.label()).clicked() && !is_current {
+                let picked_edge = picked_edges(ctx).first().map(|edge| EdgePick {
+                    point: edge.point,
+                    direction: edge.direction,
+                });
+                let mut candidates = vec![
+                    (
+                        RevolveAxis::SketchY,
+                        RevolveAxis::SketchY.label().to_string(),
+                    ),
+                    (
+                        RevolveAxis::SketchX,
+                        RevolveAxis::SketchX.label().to_string(),
+                    ),
+                    (
+                        RevolveAxis::Custom {
+                            origin: [0.0, 0.0],
+                            dir: [1.0, 1.0],
+                        },
+                        "Custom axis".to_string(),
+                    ),
+                ];
+                candidates.extend(references.iter().cloned());
+                candidates.push((
+                    RevolveAxis::Edge(picked_edge.unwrap_or(EdgePick {
+                        point: [0.0; 3],
+                        direction: [0.0, 0.0, 1.0],
+                    })),
+                    "Picked edge".to_string(),
+                ));
+                for (candidate, name) in candidates {
+                    let is_current = match (&*axis, &candidate) {
+                        (RevolveAxis::SketchLine(_), RevolveAxis::SketchLine(_))
+                        | (RevolveAxis::Datum(_), RevolveAxis::Datum(_)) => *axis == candidate,
+                        _ => std::mem::discriminant(axis) == std::mem::discriminant(&candidate),
+                    };
+                    if ui.selectable_label(is_current, name).clicked() && !is_current {
                         *axis = candidate;
                         changed = true;
                     }
                 }
             });
     });
+    if let RevolveAxis::Edge(edge) = axis {
+        let mut pick = Some(*edge);
+        if edge_pick_row(ui, ctx, &mut pick, "Edge:")
+            && let Some(new) = pick
+        {
+            *edge = new;
+            changed = true;
+        }
+    }
     if let RevolveAxis::Custom { origin, dir } = axis {
         ui.horizontal(|ui| {
             label_cell(ui, "Origin");
@@ -1092,34 +1377,53 @@ pub fn feature_editor(
             taper_deg,
             up_to_face,
             up_to_offset,
+            profile_face,
+            direction,
+            up_to_shape,
+            mode2,
+            up_to_face2,
+            up_to_offset2,
+            up_to_shape2,
         } => {
-            if let Some(new) = sketch_combo(
+            changed |= extrude_profile_rows(
                 ui,
                 ctx,
                 body,
                 ("pad_sketch", feature_id),
-                Some(*sketch),
-                "Profile:",
-            ) {
-                *sketch = new;
-                changed = true;
-            }
+                sketch,
+                profile_face,
+            );
             changed |= extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature);
-            match mode {
-                ExtrudeMode::Dimension => {
-                    changed |= mm_drag(ui, fx, length, "Length:");
-                    changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
-                }
-                ExtrudeMode::TwoLengths => {
-                    changed |= mm_drag(ui, fx, length, "Length:");
-                    changed |= mm_drag(ui, fx, length2, "Second length:");
-                }
-                ExtrudeMode::UpToFace => {
-                    changed |= face_pick_row(ui, ctx, up_to_face, "Target face:");
-                    changed |= mm_drag(ui, fx, up_to_offset, "Offset:");
-                }
-                _ => {}
+            changed |= extrude_side_rows(
+                ui,
+                ctx,
+                fx,
+                *mode,
+                (length, "Length:"),
+                up_to_face,
+                (up_to_offset, "Offset:"),
+                up_to_shape,
+            );
+            if *mode == ExtrudeMode::Dimension && mode2.is_none() {
+                changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
             }
+            if !(*mode == ExtrudeMode::Dimension && *symmetric) {
+                changed |=
+                    second_side_combo(ui, ("pad_mode2", feature_id), *mode, mode2, first_feature);
+                if let (_, Some(second)) = mode.sides(*mode2) {
+                    changed |= extrude_side_rows(
+                        ui,
+                        ctx,
+                        fx,
+                        second,
+                        (length2, "Second length:"),
+                        up_to_face2,
+                        (up_to_offset2, "Second offset:"),
+                        up_to_shape2,
+                    );
+                }
+            }
+            changed |= extrude_direction_editor(ui, ctx, direction, ("pad_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
         }
@@ -1135,18 +1439,22 @@ pub fn feature_editor(
             taper_deg,
             up_to_face,
             up_to_offset,
+            profile_face,
+            direction,
+            up_to_shape,
+            mode2,
+            up_to_face2,
+            up_to_offset2,
+            up_to_shape2,
         } => {
-            if let Some(new) = sketch_combo(
+            changed |= extrude_profile_rows(
                 ui,
                 ctx,
                 body,
                 ("pocket_sketch", feature_id),
-                Some(*sketch),
-                "Profile:",
-            ) {
-                *sketch = new;
-                changed = true;
-            }
+                sketch,
+                profile_face,
+            );
             // The flag and the ThroughAll mode are one setting: a file that
             // has only the flag set opens in that mode, and the flag
             // follows the mode picked.
@@ -1156,21 +1464,41 @@ pub fn feature_editor(
             }
             changed |= extrude_mode_combo(ui, ("pocket_mode", feature_id), mode, first_feature);
             *through_all = *mode == ExtrudeMode::ThroughAll;
-            match mode {
-                ExtrudeMode::Dimension => {
-                    changed |= mm_drag(ui, fx, depth, "Depth:");
-                    changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
-                }
-                ExtrudeMode::TwoLengths => {
-                    changed |= mm_drag(ui, fx, depth, "Depth:");
-                    changed |= mm_drag(ui, fx, depth2, "Second depth:");
-                }
-                ExtrudeMode::UpToFace => {
-                    changed |= face_pick_row(ui, ctx, up_to_face, "Target face:");
-                    changed |= mm_drag(ui, fx, up_to_offset, "Offset:");
-                }
-                _ => {}
+            changed |= extrude_side_rows(
+                ui,
+                ctx,
+                fx,
+                *mode,
+                (depth, "Depth:"),
+                up_to_face,
+                (up_to_offset, "Offset:"),
+                up_to_shape,
+            );
+            if *mode == ExtrudeMode::Dimension && mode2.is_none() {
+                changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
             }
+            if !(*mode == ExtrudeMode::Dimension && *symmetric) {
+                changed |= second_side_combo(
+                    ui,
+                    ("pocket_mode2", feature_id),
+                    *mode,
+                    mode2,
+                    first_feature,
+                );
+                if let (_, Some(second)) = mode.sides(*mode2) {
+                    changed |= extrude_side_rows(
+                        ui,
+                        ctx,
+                        fx,
+                        second,
+                        (depth2, "Second depth:"),
+                        up_to_face2,
+                        (up_to_offset2, "Second offset:"),
+                        up_to_shape2,
+                    );
+                }
+            }
+            changed |= extrude_direction_editor(ui, ctx, direction, ("pocket_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed")
                 .on_hover_text("Cut along the sketch normal instead of against it")
                 .changed();
@@ -1184,6 +1512,8 @@ pub fn feature_editor(
             reversed,
             midplane,
             second_angle_deg,
+            mode,
+            up_to_face,
         }
         | PartFeature::Groove {
             refine: _,
@@ -1193,6 +1523,8 @@ pub fn feature_editor(
             reversed,
             midplane,
             second_angle_deg,
+            mode,
+            up_to_face,
         } => {
             if let Some(new) = sketch_combo(
                 ui,
@@ -1205,16 +1537,47 @@ pub fn feature_editor(
                 *sketch = new;
                 changed = true;
             }
-            changed |= deg_drag(ui, fx, angle_deg, "Angle:", 0.1..=360.0);
-            changed |= revolve_axis_editor(ui, axis, ("rev_axis", feature_id));
-            changed |= check_row(ui, midplane, "Midplane").changed();
-            let mut two_sided = second_angle_deg.is_some();
-            if check_row(ui, &mut two_sided, "Second angle").changed() {
-                *second_angle_deg = two_sided.then_some(90.0);
-                changed = true;
+            ui.horizontal(|ui| {
+                label_cell(ui, "Type");
+                egui::ComboBox::from_id_salt(("rev_mode", feature_id))
+                    .selected_text(mode.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in RevolveMode::ALL {
+                            // Every mode but an angle stops on material.
+                            if first_feature && candidate != RevolveMode::Angle {
+                                continue;
+                            }
+                            if ui
+                                .selectable_label(*mode == candidate, candidate.label())
+                                .clicked()
+                                && *mode != candidate
+                            {
+                                *mode = candidate;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+            match mode {
+                RevolveMode::Angle => {
+                    changed |= deg_drag(ui, fx, angle_deg, "Angle:", 0.1..=360.0);
+                }
+                RevolveMode::UpToFace => {
+                    changed |= face_pick_row(ui, ctx, up_to_face, "Target face:");
+                }
+                RevolveMode::ToFirst | RevolveMode::ToLast => {}
             }
-            if let Some(second) = second_angle_deg {
-                changed |= deg_drag(ui, fx, second, "Angle 2:", 0.1..=360.0);
+            changed |= revolve_axis_editor(ui, ctx, body, *sketch, axis, ("rev_axis", feature_id));
+            if *mode == RevolveMode::Angle {
+                changed |= check_row(ui, midplane, "Midplane").changed();
+                let mut two_sided = second_angle_deg.is_some();
+                if check_row(ui, &mut two_sided, "Second angle").changed() {
+                    *second_angle_deg = two_sided.then_some(90.0);
+                    changed = true;
+                }
+                if let Some(second) = second_angle_deg {
+                    changed |= deg_drag(ui, fx, second, "Angle 2:", 0.1..=360.0);
+                }
             }
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
@@ -1318,7 +1681,8 @@ pub fn feature_editor(
                 *sketch = new;
                 changed = true;
             }
-            changed |= revolve_axis_editor(ui, axis, ("helix_axis", feature_id));
+            changed |=
+                revolve_axis_editor(ui, ctx, body, *sketch, axis, ("helix_axis", feature_id));
             ui.horizontal(|ui| {
                 label_cell(ui, "Mode");
                 egui::ComboBox::from_id_salt(("helix_mode", feature_id))
@@ -1937,6 +2301,15 @@ mod panel_width {
         let features = [
             json!({"Pad": {"sketch": s, "length": 10.0, "reversed": false}}),
             json!({"Pocket": {"sketch": s, "depth": 5.0, "reversed": false}}),
+            json!({"Pad": {"sketch": s, "length": 10.0, "reversed": false, "mode": "UpToShape",
+                "mode2": "UpToFace", "direction": {"Custom": [0.0, 1.0, 1.0]},
+                "up_to_shape": [{"point": [1.0, 2.0, 3.0], "normal": [0.0, 0.0, 1.0]}]}}),
+            json!({"Pocket": {"sketch": null, "depth": 5.0, "reversed": false, "mode": "TwoLengths",
+                "mode2": "UpToShape",
+                "profile_face": {"point": [100.0, 200.0, 300.0], "normal": [0.0, 0.0, 1.0]},
+                "direction": {"Edge": {"point": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]}}}}),
+            json!({"Revolution": {"sketch": s, "angle_deg": 360.0, "mode": "UpToFace",
+                "axis": {"Edge": {"point": [100.0, 200.0, 300.0], "direction": [0.0, 1.0, 0.0]}}}}),
             json!({"Hole": {"sketch": s, "diameter": 5.0, "depth": 8.0, "through_all": false,
                 "cut": {"Counterbore": {"diameter": 9.0, "depth": 2.0}}}}),
             json!({"Chamfer": {"size": 1.0}}),

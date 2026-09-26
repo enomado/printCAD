@@ -8,8 +8,8 @@
 use core_document::{BodyId, Document, FeatureId, RebuildJob, WorkbenchFeature};
 pub use core_document::{BuildError, BuildPlan};
 use kernel_api::{
-    BooleanOp, EdgeSelection, ExtrudeTermination, Profile, ProfileSegment, ProfileWire, SolidOp,
-    SweepKind,
+    BooleanOp, EdgeSelection, ExtrudeTermination, FaceProbe, Profile, ProfileSegment, ProfileWire,
+    RevolveTermination, SolidOp, SweepKind,
 };
 use wb_sketch::SketchFeature;
 use wb_sketch::profile;
@@ -17,7 +17,7 @@ use wb_sketch::sketch::{GeometryElement, Sketch};
 
 use crate::feature::{
     ExtrudeMode, FacePick, HelixMode, HoleCut, METRIC_SIZES, PartFeature, PatternAxis, RevolveAxis,
-    TransformStep,
+    RevolveMode, TransformStep,
 };
 
 /// This body's part features in creation order (the build history).
@@ -322,105 +322,71 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
 
         let start_index = plan.ops.len();
         match &feature {
-            PartFeature::Pad {
-                refine: _,
-                sketch,
-                length,
-                reversed,
-                symmetric,
-                mode,
-                length2,
-                taper_deg,
-                up_to_face,
-                up_to_offset,
-            } => {
-                let profile = sketch_profile(document, *sketch).map_err(&fail)?;
-                let (termination, second_side) = extrude_terminations(
-                    *mode,
-                    *length,
-                    *length2,
-                    up_to_face.as_ref(),
-                    *up_to_offset,
-                )
-                .map_err(&fail)?;
-                plan.ops.push(SolidOp::Sweep {
-                    profile,
-                    kind: SweepKind::Extrude {
-                        termination,
-                        second_side,
-                        // Centred only in the one mode that offers it.
-                        symmetric: *symmetric && *mode == ExtrudeMode::Dimension,
-                        reversed: *reversed,
-                        taper_deg: *taper_deg as f64,
-                        direction: None,
-                    },
-                    op: additive_boolean,
-                });
-            }
-            PartFeature::Pocket {
-                refine: _,
-                sketch,
-                depth,
-                reversed,
-                symmetric,
-                through_all,
-                mode,
-                depth2,
-                taper_deg,
-                up_to_face,
-                up_to_offset,
-            } => {
-                let profile = sketch_profile(document, *sketch).map_err(&fail)?;
-                let effective_mode = if *through_all {
-                    ExtrudeMode::ThroughAll
+            PartFeature::Pad { profile_face, .. } | PartFeature::Pocket { profile_face, .. } => {
+                if profile_face.is_some() && plan.ops.is_empty() {
+                    return Err(fail(
+                        "extruding a face needs a solid to take it from; add a feature first"
+                            .into(),
+                    ));
+                }
+                let boolean = if matches!(feature, PartFeature::Pocket { .. }) {
+                    BooleanOp::Cut
                 } else {
-                    *mode
+                    additive_boolean
                 };
-                let (termination, second_side) = extrude_terminations(
-                    effective_mode,
-                    *depth,
-                    *depth2,
-                    up_to_face.as_ref(),
-                    *up_to_offset,
-                )
-                .map_err(&fail)?;
-                plan.ops.push(SolidOp::Sweep {
-                    profile,
-                    kind: SweepKind::Extrude {
-                        termination,
-                        second_side,
-                        symmetric: *symmetric && effective_mode == ExtrudeMode::Dimension,
-                        // A pocket cuts OPPOSITE the sketch normal — a sketch
-                        // on a solid's face has its normal pointing out of the
-                        // material, so the default digs in.
-                        reversed: !*reversed,
-                        taper_deg: *taper_deg as f64,
-                        direction: None,
-                    },
-                    op: BooleanOp::Cut,
-                });
+                plan.ops
+                    .push(extrude_op(document, &feature, boolean).map_err(&fail)?);
             }
             PartFeature::Revolution {
-                refine: _,
                 sketch,
                 angle_deg,
                 axis,
                 reversed,
                 midplane,
                 second_angle_deg,
+                mode,
+                up_to_face,
+                ..
             }
             | PartFeature::Groove {
-                refine: _,
                 sketch,
                 angle_deg,
                 axis,
                 reversed,
                 midplane,
                 second_angle_deg,
+                mode,
+                up_to_face,
+                ..
             } => {
-                let profile = sketch_profile(document, *sketch).map_err(&fail)?;
-                let kind = revolve_kind(*axis, *angle_deg, *reversed, *midplane, *second_angle_deg)
-                    .map_err(&fail)?;
+                if *mode != RevolveMode::Angle && plan.ops.is_empty() {
+                    return Err(fail(
+                        "stopping on a face needs existing material; add a feature first".into(),
+                    ));
+                }
+                let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
+                let profile = profile_of(&sketch_feature).map_err(&fail)?;
+                let axis_2d = axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
+                let termination = match (mode, up_to_face) {
+                    (RevolveMode::Angle, _) => RevolveTermination::Angle,
+                    (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
+                    (RevolveMode::ToLast, _) => RevolveTermination::ToLast,
+                    (RevolveMode::UpToFace, Some(pick)) => {
+                        RevolveTermination::UpToFace(face_probe(pick))
+                    }
+                    (RevolveMode::UpToFace, None) => {
+                        return Err(fail("pick a target face for the up-to-face mode".into()));
+                    }
+                };
+                let kind = revolve_kind(
+                    axis_2d,
+                    *angle_deg,
+                    *reversed,
+                    *midplane,
+                    *second_angle_deg,
+                    termination,
+                )
+                .map_err(&fail)?;
                 let op = if matches!(feature, PartFeature::Groove { .. }) {
                     BooleanOp::Cut
                 } else {
@@ -478,14 +444,17 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 reversed,
                 subtractive,
             } => {
-                let profile = sketch_profile(document, *sketch).map_err(&fail)?;
+                let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
+                let profile = profile_of(&sketch_feature).map_err(&fail)?;
+                let (axis_origin, axis_dir) =
+                    axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
                 let (pitch, height) =
                     helix_extent(*mode, *pitch, *height, *turns).map_err(&fail)?;
                 plan.ops.push(SolidOp::Sweep {
                     profile,
                     kind: SweepKind::Helix {
-                        axis_origin: axis.origin_2d(),
-                        axis_dir: axis.dir_2d(),
+                        axis_origin,
+                        axis_dir,
                         pitch,
                         height,
                         left_handed: *left_handed,
@@ -747,68 +716,301 @@ fn original_ops(
     Ok(indices)
 }
 
-fn extrude_terminations(
-    mode: ExtrudeMode,
+/// One side of an extrusion as a feature gives it: its length and the
+/// faces it may stop on.
+struct Side<'a> {
     length: f32,
-    length2: f32,
-    up_to_face: Option<&FacePick>,
-    up_to_offset: f32,
-) -> Result<(ExtrudeTermination, Option<ExtrudeTermination>), String> {
-    let blind = |value: f32| -> Result<ExtrudeTermination, String> {
-        if value <= 0.0 {
-            return Err("length must be positive".into());
-        }
-        Ok(ExtrudeTermination::Blind {
-            distance: value as f64,
-        })
-    };
+    face: Option<&'a FacePick>,
+    offset: f32,
+    shape: &'a [FacePick],
+}
+
+/// Where one side of an extrusion ends, in `mode`.
+fn side_termination(mode: ExtrudeMode, side: &Side) -> Result<ExtrudeTermination, String> {
     match mode {
-        ExtrudeMode::Dimension => Ok((blind(length)?, None)),
-        ExtrudeMode::TwoLengths => Ok((blind(length)?, Some(blind(length2)?))),
-        ExtrudeMode::ThroughAll => Ok((ExtrudeTermination::ThroughAll, None)),
-        ExtrudeMode::ToFirst => Ok((ExtrudeTermination::ToFirst, None)),
-        ExtrudeMode::ToLast => Ok((ExtrudeTermination::ToLast, None)),
+        ExtrudeMode::Dimension | ExtrudeMode::TwoLengths => {
+            if side.length <= 0.0 {
+                return Err("length must be positive".into());
+            }
+            Ok(ExtrudeTermination::Blind {
+                distance: side.length as f64,
+            })
+        }
+        ExtrudeMode::ThroughAll => Ok(ExtrudeTermination::ThroughAll),
+        ExtrudeMode::ToFirst => Ok(ExtrudeTermination::ToFirst),
+        ExtrudeMode::ToLast => Ok(ExtrudeTermination::ToLast),
         ExtrudeMode::UpToFace => {
-            let pick = up_to_face.ok_or("pick a target face for the up-to-face mode")?;
+            let pick = side
+                .face
+                .ok_or("pick a target face for the up-to-face mode")?;
             let (point, normal) = face_pick_plane(pick);
-            Ok((
-                ExtrudeTermination::UpToFace {
-                    point,
-                    normal,
-                    offset: up_to_offset as f64,
-                },
-                None,
-            ))
+            Ok(ExtrudeTermination::UpToFace {
+                point,
+                normal,
+                offset: side.offset as f64,
+            })
+        }
+        ExtrudeMode::UpToShape => {
+            if side.shape.is_empty() {
+                return Err("pick the faces the up-to-shape mode stops on".into());
+            }
+            Ok(ExtrudeTermination::UpToShape {
+                faces: side.shape.iter().map(face_probe).collect(),
+                offset: side.offset as f64,
+            })
         }
     }
+}
+
+fn face_probe(pick: &FacePick) -> FaceProbe {
+    let (point, normal) = face_pick_plane(pick);
+    FaceProbe { point, normal }
+}
+
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// The kernel op of a pad or a pocket: its profile (a sketch's, or a face
+/// of the solid), each side's end and the way it runs.
+fn extrude_op(
+    document: &Document,
+    feature: &PartFeature,
+    boolean: BooleanOp,
+) -> Result<SolidOp, String> {
+    let (sketch, profile_face, reversed, symmetric, taper_deg, direction, mode, mode2) =
+        match feature {
+            PartFeature::Pad {
+                sketch,
+                profile_face,
+                reversed,
+                symmetric,
+                taper_deg,
+                direction,
+                mode,
+                mode2,
+                ..
+            } => (
+                *sketch,
+                profile_face.as_ref(),
+                *reversed,
+                *symmetric,
+                *taper_deg,
+                *direction,
+                *mode,
+                *mode2,
+            ),
+            PartFeature::Pocket {
+                sketch,
+                profile_face,
+                reversed,
+                symmetric,
+                through_all,
+                taper_deg,
+                direction,
+                mode,
+                mode2,
+                ..
+            } => (
+                *sketch,
+                profile_face.as_ref(),
+                *reversed,
+                *symmetric,
+                *taper_deg,
+                *direction,
+                if *through_all {
+                    ExtrudeMode::ThroughAll
+                } else {
+                    *mode
+                },
+                *mode2,
+            ),
+            _ => return Err("not a pad or a pocket".into()),
+        };
+    let (first, second) = match feature {
+        PartFeature::Pad {
+            length,
+            length2,
+            up_to_face,
+            up_to_offset,
+            up_to_shape,
+            up_to_face2,
+            up_to_offset2,
+            up_to_shape2,
+            ..
+        }
+        | PartFeature::Pocket {
+            depth: length,
+            depth2: length2,
+            up_to_face,
+            up_to_offset,
+            up_to_shape,
+            up_to_face2,
+            up_to_offset2,
+            up_to_shape2,
+            ..
+        } => (
+            Side {
+                length: *length,
+                face: up_to_face.as_ref(),
+                offset: *up_to_offset,
+                shape: up_to_shape,
+            },
+            Side {
+                length: *length2,
+                face: up_to_face2.as_ref(),
+                offset: *up_to_offset2,
+                shape: up_to_shape2,
+            },
+        ),
+        _ => return Err("not a pad or a pocket".into()),
+    };
+    let (first_mode, second_mode) = mode.sides(mode2);
+    let termination = side_termination(first_mode, &first)?;
+    let second_side = second_mode
+        .map(|mode| side_termination(mode, &second))
+        .transpose()?;
+
+    let normal = match (profile_face, sketch) {
+        (Some(face), _) => face_pick_plane(face).1,
+        (None, Some(sketch)) => profile::plane_of(&load_sketch(document, sketch)?.plane).normal,
+        (None, None) => return Err("pick a sketch or a flat face for the profile".into()),
+    };
+    let custom = direction.vector();
+    if let Some(d) = custom {
+        let d = normalize(d).map_err(|_| "the extrusion direction is zero".to_string())?;
+        let n = normalize(normal).map_err(|_| "the profile has no normal".to_string())?;
+        if dot3(d, n).abs() < 1e-3 {
+            return Err("the extrusion direction lies in the profile's plane".into());
+        }
+    }
+    let kind = SweepKind::Extrude {
+        termination,
+        second_side,
+        // Centred only in the one mode that offers it.
+        symmetric: symmetric && first_mode == ExtrudeMode::Dimension && second_mode.is_none(),
+        // A pocket along the normal cuts against it: a sketch on a solid's
+        // face has its normal pointing out of the material, so the default
+        // digs in. A direction set is the way the cut runs.
+        reversed: if boolean == BooleanOp::Cut && custom.is_none() {
+            !reversed
+        } else {
+            reversed
+        },
+        taper_deg: taper_deg as f64,
+        direction: custom,
+    };
+    Ok(match (profile_face, sketch) {
+        (Some(face), _) => SolidOp::SweepFace {
+            face: face_probe(face),
+            kind,
+            op: boolean,
+        },
+        (None, Some(sketch)) => SolidOp::Sweep {
+            profile: sketch_profile(document, sketch)?,
+            kind,
+            op: boolean,
+        },
+        (None, None) => unreachable!("a profile was required above"),
+    })
+}
+
+/// Where a revolution's (or helix's) axis lies in its sketch: a point and a
+/// direction in the sketch's own coordinates. A picked edge or a datum line
+/// must run along the sketch plane, and is taken where it falls on it.
+pub(crate) fn axis_in_sketch(
+    document: &Document,
+    sketch: &SketchFeature,
+    axis: &RevolveAxis,
+) -> Result<([f64; 2], [f64; 2]), String> {
+    let plane = profile::plane_of(&sketch.plane);
+    let onto_plane = |point: [f64; 3], dir: [f64; 3], what: &str| {
+        let d = normalize(dir).map_err(|_| format!("the {what} has no direction"))?;
+        let n = normalize(plane.normal).map_err(|_| "the sketch has no normal".to_string())?;
+        if dot3(d, n).abs() > 1e-3 {
+            return Err(format!(
+                "the {what} does not run along the sketch plane, so it cannot be the axis"
+            ));
+        }
+        let rel = [
+            point[0] - plane.origin[0],
+            point[1] - plane.origin[1],
+            point[2] - plane.origin[2],
+        ];
+        Ok((
+            [dot3(rel, plane.x_axis), dot3(rel, plane.y_axis)],
+            [dot3(d, plane.x_axis), dot3(d, plane.y_axis)],
+        ))
+    };
+    let (origin, dir) = match axis {
+        RevolveAxis::SketchY => ([0.0, 0.0], [0.0, 1.0]),
+        RevolveAxis::SketchX => ([0.0, 0.0], [1.0, 0.0]),
+        RevolveAxis::Custom { origin, dir } => (origin.map(f64::from), dir.map(f64::from)),
+        RevolveAxis::Edge(edge) => onto_plane(
+            edge.point.map(f64::from),
+            edge.direction.map(f64::from),
+            "picked edge",
+        )?,
+        RevolveAxis::Datum(id) => {
+            let data = document
+                .feature_values(*id)
+                .ok_or("the axis's datum line is missing")?;
+            let datum = core_document::DatumFeature::from_json(data)
+                .map_err(|_| "the axis is not a datum".to_string())?;
+            if !matches!(datum.shape, core_document::DatumShape::Line { .. }) {
+                return Err("the axis's datum is not a line".into());
+            }
+            let frame = datum.frame();
+            onto_plane(
+                frame.origin.map(f64::from),
+                frame.x_axis.map(f64::from),
+                "datum line",
+            )?
+        }
+        RevolveAxis::SketchLine(id) => {
+            let Some(GeometryElement::Line(line)) = sketch.sketch.get_geometry(*id) else {
+                return Err("the axis line is not a line of the sketch".into());
+            };
+            let at = |point| {
+                sketch
+                    .sketch
+                    .point_position(point)
+                    .map(|p| [f64::from(p.x), f64::from(p.y)])
+                    .ok_or_else(|| "the axis line has lost an end".to_string())
+            };
+            let (a, b) = (at(line.start)?, at(line.end)?);
+            (a, [b[0] - a[0], b[1] - a[1]])
+        }
+    };
+    if dir[0].hypot(dir[1]) < 1e-12 {
+        return Err("revolution axis direction is zero".into());
+    }
+    Ok((origin, dir))
 }
 
 /// Build the revolve sweep for a feature. `reversed` flips the axis so the
 /// sweep runs the other way around.
 fn revolve_kind(
-    axis: RevolveAxis,
+    (axis_origin, axis_dir): ([f64; 2], [f64; 2]),
     angle_deg: f32,
     reversed: bool,
     midplane: bool,
     second_angle_deg: Option<f32>,
+    termination: RevolveTermination,
 ) -> Result<SweepKind, String> {
-    if angle_deg <= 0.0 || angle_deg > 360.0 {
+    if termination == RevolveTermination::Angle && (angle_deg <= 0.0 || angle_deg > 360.0) {
         return Err(format!(
             "revolution angle must be in (0, 360], got {angle_deg}"
         ));
     }
-    let dir = axis.dir_2d();
-    if dir[0].abs() < 1e-12 && dir[1].abs() < 1e-12 {
-        return Err("revolution axis direction is zero".into());
-    }
     Ok(SweepKind::Revolve {
-        axis_origin: axis.origin_2d(),
-        axis_dir: dir,
+        axis_origin,
+        axis_dir,
         angle_deg: f64::from(angle_deg),
         second_angle_deg: second_angle_deg.map(f64::from),
         midplane,
         reversed,
-        termination: kernel_api::RevolveTermination::Angle,
+        termination,
     })
 }
 
@@ -1112,7 +1314,10 @@ fn load_sketch(document: &Document, sketch_id: FeatureId) -> Result<SketchFeatur
 }
 
 fn sketch_profile(document: &Document, sketch_id: FeatureId) -> Result<Profile, String> {
-    let sketch_feature = load_sketch(document, sketch_id)?;
+    profile_of(&load_sketch(document, sketch_id)?)
+}
+
+fn profile_of(sketch_feature: &SketchFeature) -> Result<Profile, String> {
     let wires = profile::extract_wires(&sketch_feature.sketch).map_err(|e| e.to_string())?;
     Ok(Profile {
         plane: profile::plane_of(&sketch_feature.plane),
@@ -1508,9 +1713,10 @@ pub fn retarget_feature_sketch(
         return Ok(());
     }
     match &mut feature {
-        PartFeature::Pad { sketch, .. }
-        | PartFeature::Pocket { sketch, .. }
-        | PartFeature::Revolution { sketch, .. }
+        PartFeature::Pad { sketch, .. } | PartFeature::Pocket { sketch, .. } => {
+            *sketch = Some(new_sketch)
+        }
+        PartFeature::Revolution { sketch, .. }
         | PartFeature::Groove { sketch, .. }
         | PartFeature::Helix { sketch, .. }
         | PartFeature::Hole { sketch, .. } => *sketch = new_sketch,
@@ -1521,18 +1727,19 @@ pub fn retarget_feature_sketch(
         .update_feature_data(feature_id, feature.to_json())
         .map_err(|e| e.to_string())?;
     document.set_feature_dependencies(feature_id, feature.dependencies());
-    swap_consumed_sketch(document, feature_id, old_sketch, new_sketch);
+    swap_consumed_sketch(document, feature_id, Some(old_sketch), Some(new_sketch));
     Ok(())
 }
 
-/// `feature_id` now consumes `new_sketch` instead of `old_sketch`: the new
-/// one hides, the old one shows again when no other part feature consumes
-/// it. Each sketch whose visibility changed, with what it was before.
+/// `feature_id` now consumes `new_sketch` instead of `old_sketch` (either
+/// none when the profile is a face of the solid): the new one hides, the
+/// old one shows again when no other part feature consumes it. Each sketch
+/// whose visibility changed, with what it was before.
 pub fn swap_consumed_sketch(
     document: &mut Document,
     feature_id: FeatureId,
-    old_sketch: FeatureId,
-    new_sketch: FeatureId,
+    old_sketch: Option<FeatureId>,
+    new_sketch: Option<FeatureId>,
 ) -> Vec<(FeatureId, bool)> {
     let mut changed = Vec::new();
     let mut set = |document: &mut Document, id: FeatureId, visible: bool| {
@@ -1542,7 +1749,12 @@ pub fn swap_consumed_sketch(
             document.set_feature_visible(id, visible);
         }
     };
-    set(document, new_sketch, false);
+    if let Some(new_sketch) = new_sketch {
+        set(document, new_sketch, false);
+    }
+    let Some(old_sketch) = old_sketch else {
+        return changed;
+    };
     let still_consumed = document
         .feature_tree()
         .all_nodes()
@@ -1619,7 +1831,7 @@ mod tests {
     fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         PartFeature::Pad {
             refine: false,
-            sketch,
+            sketch: Some(sketch),
             length,
             reversed: false,
             symmetric: false,
@@ -1628,13 +1840,20 @@ mod tests {
             taper_deg: 0.0,
             up_to_face: None,
             up_to_offset: 0.0,
+            profile_face: None,
+            direction: Default::default(),
+            up_to_shape: Vec::new(),
+            mode2: None,
+            up_to_face2: None,
+            up_to_offset2: 0.0,
+            up_to_shape2: Vec::new(),
         }
     }
 
     fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> PartFeature {
         PartFeature::Pocket {
             refine: false,
-            sketch,
+            sketch: Some(sketch),
             depth,
             reversed,
             symmetric: false,
@@ -1644,6 +1863,13 @@ mod tests {
             taper_deg: 0.0,
             up_to_face: None,
             up_to_offset: 0.0,
+            profile_face: None,
+            direction: Default::default(),
+            up_to_shape: Vec::new(),
+            mode2: None,
+            up_to_face2: None,
+            up_to_offset2: 0.0,
+            up_to_shape2: Vec::new(),
         }
     }
 
@@ -2005,6 +2231,8 @@ mod tests {
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
+                mode: Default::default(),
+                up_to_face: None,
             },
             "Revolution".into(),
             Some(body),
@@ -2019,6 +2247,8 @@ mod tests {
                 reversed: true,
                 midplane: false,
                 second_angle_deg: None,
+                mode: Default::default(),
+                up_to_face: None,
             },
             "Groove".into(),
             Some(body),
@@ -2448,7 +2678,7 @@ mod tests {
             .add_feature_in_body(
                 PartFeature::Pocket {
                     refine: false,
-                    sketch: cut_sketch,
+                    sketch: Some(cut_sketch),
                     depth: 2.0,
                     reversed: false,
                     symmetric: false,
@@ -2458,6 +2688,13 @@ mod tests {
                     taper_deg: 0.0,
                     up_to_face: None,
                     up_to_offset: 0.0,
+                    profile_face: None,
+                    direction: Default::default(),
+                    up_to_shape: Vec::new(),
+                    mode2: None,
+                    up_to_face2: None,
+                    up_to_offset2: 0.0,
+                    up_to_shape2: Vec::new(),
                 },
                 "Pocket".into(),
                 Some(body),
@@ -2520,7 +2757,7 @@ mod tests {
             let mut feature = feature;
             match &mut feature {
                 PartFeature::Pad { sketch: s, .. } | PartFeature::Pocket { sketch: s, .. } => {
-                    *s = sketch
+                    *s = Some(sketch)
                 }
                 _ => unreachable!(),
             }
@@ -2631,5 +2868,339 @@ mod tests {
         assert_eq!(err.feature, Some(bad));
         // The feature names itself wherever the error shows.
         assert!(!err.message.contains("BadPad"), "{}", err.message);
+    }
+
+    /// The one extrude op a pad or pocket, `edit`ed from its defaults,
+    /// builds on a pad of the rectangle.
+    fn extrude_of(
+        feature: PartFeature,
+        edit: impl FnOnce(&mut PartFeature),
+    ) -> Result<SolidOp, String> {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 5.0), "Base".into(), Some(body))
+            .unwrap();
+        let mut feature = feature;
+        if let PartFeature::Pad { sketch, .. } | PartFeature::Pocket { sketch, .. } = &mut feature {
+            *sketch = Some(sketch_id);
+        }
+        edit(&mut feature);
+        doc.add_feature_in_body(feature, "Feature".into(), Some(body))
+            .unwrap();
+        body_build_ops(&doc, body)
+            .map(|plan| plan.ops[1].clone())
+            .map_err(|e| e.message)
+    }
+
+    fn extrude_kind(op: &SolidOp) -> &SweepKind {
+        match op {
+            SolidOp::Sweep { kind, .. } | SolidOp::SweepFace { kind, .. } => kind,
+            _ => panic!("not a sweep: {op:?}"),
+        }
+    }
+
+    /// A direction set runs the way it points, a pocket's included; one in
+    /// the sketch plane is refused.
+    #[test]
+    fn a_direction_set_is_the_way_a_pad_or_a_pocket_runs() {
+        let sketch = FeatureId::new();
+        for feature in [pad(sketch, 5.0), pocket(sketch, 5.0, false, false)] {
+            let op = extrude_of(feature.clone(), |f| {
+                if let PartFeature::Pad { direction, .. } | PartFeature::Pocket { direction, .. } =
+                    f
+                {
+                    *direction = crate::ExtrudeDirection::Custom([0.0, 1.0, 1.0]);
+                }
+            })
+            .unwrap();
+            assert!(matches!(
+                extrude_kind(&op),
+                SweepKind::Extrude {
+                    direction: Some([x, y, z]),
+                    reversed: false,
+                    ..
+                } if *x == 0.0 && *y == 1.0 && *z == 1.0
+            ));
+            let edge = extrude_of(feature.clone(), |f| {
+                if let PartFeature::Pad { direction, .. } | PartFeature::Pocket { direction, .. } =
+                    f
+                {
+                    *direction = crate::ExtrudeDirection::Edge(crate::EdgePick {
+                        point: [0.0; 3],
+                        direction: [1.0, 0.0, 1.0],
+                    });
+                }
+            })
+            .unwrap();
+            assert!(matches!(
+                extrude_kind(&edge),
+                SweepKind::Extrude { direction: Some([x, _, z]), .. } if *x == 1.0 && *z == 1.0
+            ));
+            let flat = extrude_of(feature, |f| {
+                if let PartFeature::Pad { direction, .. } | PartFeature::Pocket { direction, .. } =
+                    f
+                {
+                    *direction = crate::ExtrudeDirection::Custom([1.0, 1.0, 0.0]);
+                }
+            });
+            assert!(flat.unwrap_err().contains("plane"));
+        }
+    }
+
+    /// The second side ends as `mode2` says, with its own face, faces and
+    /// offset; two lengths without it is a dimension each way.
+    #[test]
+    fn each_side_takes_its_own_end() {
+        let sketch = FeatureId::new();
+        let face = FacePick {
+            point: [1.0, 2.0, 3.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let op = extrude_of(pad(sketch, 5.0), |f| {
+            if let PartFeature::Pad {
+                mode2,
+                up_to_face2,
+                up_to_offset2,
+                ..
+            } = f
+            {
+                *mode2 = Some(ExtrudeMode::UpToFace);
+                *up_to_face2 = Some(face);
+                *up_to_offset2 = 1.5;
+            }
+        })
+        .unwrap();
+        assert!(matches!(
+            extrude_kind(&op),
+            SweepKind::Extrude {
+                termination: ExtrudeTermination::Blind { distance },
+                second_side: Some(ExtrudeTermination::UpToFace { point, offset, .. }),
+                ..
+            } if *distance == 5.0 && point[2] == 3.0 && *offset == 1.5
+        ));
+        let op = extrude_of(pad(sketch, 5.0), |f| {
+            if let PartFeature::Pad {
+                mode,
+                length2,
+                up_to_shape,
+                ..
+            } = f
+            {
+                *mode = ExtrudeMode::TwoLengths;
+                *length2 = 2.0;
+                up_to_shape.push(face);
+            }
+        })
+        .unwrap();
+        assert!(matches!(
+            extrude_kind(&op),
+            SweepKind::Extrude {
+                second_side: Some(ExtrudeTermination::Blind { distance }),
+                ..
+            } if *distance == 2.0
+        ));
+        let op = extrude_of(pad(sketch, 5.0), |f| {
+            if let PartFeature::Pad {
+                mode, up_to_shape, ..
+            } = f
+            {
+                *mode = ExtrudeMode::UpToShape;
+                up_to_shape.push(face);
+                up_to_shape.push(face);
+            }
+        })
+        .unwrap();
+        assert!(matches!(
+            extrude_kind(&op),
+            SweepKind::Extrude {
+                termination: ExtrudeTermination::UpToShape { faces, .. },
+                second_side: None,
+                ..
+            } if faces.len() == 2
+        ));
+        let none = extrude_of(pad(sketch, 5.0), |f| {
+            if let PartFeature::Pad { mode, .. } = f {
+                *mode = ExtrudeMode::UpToShape;
+            }
+        });
+        assert!(none.unwrap_err().contains("faces"));
+    }
+
+    /// A face profile extrudes that face of the solid, a pocket's into it;
+    /// with neither a face nor a sketch there is nothing to extrude.
+    #[test]
+    fn a_face_profile_sweeps_the_face() {
+        let face = FacePick {
+            point: [5.0, 2.5, 5.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let sketch = FeatureId::new();
+        let op = extrude_of(pocket(sketch, 2.0, false, false), |f| {
+            if let PartFeature::Pocket {
+                sketch,
+                profile_face,
+                ..
+            } = f
+            {
+                *sketch = None;
+                *profile_face = Some(face);
+            }
+        })
+        .unwrap();
+        assert!(matches!(
+            &op,
+            SolidOp::SweepFace {
+                face: FaceProbe { point, .. },
+                kind: SweepKind::Extrude { reversed: true, .. },
+                op: BooleanOp::Cut,
+            } if point[2] == 5.0
+        ));
+        let nothing = extrude_of(pad(sketch, 2.0), |f| {
+            if let PartFeature::Pad { sketch, .. } = f {
+                *sketch = None;
+            }
+        });
+        assert!(nothing.unwrap_err().contains("profile"));
+
+        // A face needs a solid to come from.
+        let (mut doc, body, _) = doc_with_body_sketch();
+        let mut first = pad(sketch, 2.0);
+        if let PartFeature::Pad {
+            sketch,
+            profile_face,
+            ..
+        } = &mut first
+        {
+            *sketch = None;
+            *profile_face = Some(face);
+        }
+        doc.add_feature_in_body(first, "Pad".into(), Some(body))
+            .unwrap();
+        assert!(body_build_ops(&doc, body).is_err());
+    }
+
+    /// A revolution's end mode reaches the kernel as its termination, and
+    /// a stop on a face needs material before it.
+    #[test]
+    fn a_revolution_takes_its_end_mode() {
+        let revolution =
+            |mode: RevolveMode, up_to_face: Option<FacePick>, sketch| PartFeature::Revolution {
+                refine: false,
+                sketch,
+                angle_deg: 360.0,
+                axis: RevolveAxis::SketchY,
+                reversed: false,
+                midplane: false,
+                second_angle_deg: None,
+                mode,
+                up_to_face,
+            };
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(
+            revolution(RevolveMode::ToLast, None, sketch_id),
+            "Rev".into(),
+            Some(body),
+        )
+        .unwrap();
+        assert!(body_build_ops(&doc, body).is_err(), "nothing to stop on");
+
+        let face = FacePick {
+            point: [0.0, 1.0, 2.0],
+            normal: [1.0, 0.0, 0.0],
+        };
+        for (mode, want) in [
+            (RevolveMode::ToFirst, RevolveTermination::ToFirst),
+            (RevolveMode::ToLast, RevolveTermination::ToLast),
+            (
+                RevolveMode::UpToFace,
+                RevolveTermination::UpToFace(FaceProbe {
+                    point: [0.0, 1.0, 2.0],
+                    normal: [1.0, 0.0, 0.0],
+                }),
+            ),
+        ] {
+            let (mut doc, body, sketch_id) = doc_with_body_sketch();
+            doc.add_feature_in_body(pad(sketch_id, 1.0), "Base".into(), Some(body))
+                .unwrap();
+            doc.add_feature_in_body(
+                revolution(mode, Some(face), sketch_id),
+                "Rev".into(),
+                Some(body),
+            )
+            .unwrap();
+            let plan = body_build_ops(&doc, body).unwrap();
+            assert!(matches!(
+                &plan.ops[1],
+                SolidOp::Sweep { kind: SweepKind::Revolve { termination, .. }, .. }
+                    if *termination == want
+            ));
+        }
+    }
+
+    /// Each kind of axis lands in the sketch's own coordinates: a line of
+    /// the sketch as drawn, a datum line or an edge where it falls on the
+    /// plane; one across the plane is refused.
+    #[test]
+    fn every_axis_lands_in_the_sketch() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut feature = rect_sketch();
+        let a = feature
+            .sketch
+            .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-1.0, 0.0))));
+        let b = feature
+            .sketch
+            .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-1.0, 3.0))));
+        let line = feature
+            .sketch
+            .add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let datum = doc
+            .add_feature_in_body(
+                core_document::DatumFeature {
+                    shape: core_document::DatumShape::Line { length: 10.0 },
+                    attachment: core_document::DatumAttachment::BasePlane(
+                        core_document::BasePlane::YZ,
+                    ),
+                    offset: core_document::AttachmentOffset {
+                        translation: [0.0, 0.0, -4.0],
+                        ..Default::default()
+                    },
+                },
+                "Line".into(),
+                Some(body),
+            )
+            .unwrap();
+        let near = |got: ([f64; 2], [f64; 2]), want: ([f64; 2], [f64; 2])| {
+            let close = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-5;
+            let unit = |v: [f64; 2]| {
+                let l = v[0].hypot(v[1]);
+                [v[0] / l, v[1] / l]
+            };
+            close(got.0, want.0) && close(unit(got.1), unit(want.1))
+        };
+        let line_axis = axis_in_sketch(&doc, &feature, &RevolveAxis::SketchLine(line)).unwrap();
+        assert!(near(line_axis, ([-1.0, 0.0], [0.0, 3.0])), "{line_axis:?}");
+        // The YZ plane pushed back 4 along its normal (world X): a line
+        // along world Y through x = -4.
+        let datum_axis = axis_in_sketch(&doc, &feature, &RevolveAxis::Datum(datum)).unwrap();
+        assert!(
+            near(datum_axis, ([-4.0, 0.0], [0.0, 1.0])),
+            "{datum_axis:?}"
+        );
+        let edge = |direction| {
+            RevolveAxis::Edge(crate::EdgePick {
+                point: [2.0, 7.0, 5.0],
+                direction,
+            })
+        };
+        let edge_axis = axis_in_sketch(&doc, &feature, &edge([1.0, 0.0, 0.0])).unwrap();
+        assert!(near(edge_axis, ([2.0, 7.0], [1.0, 0.0])), "{edge_axis:?}");
+        let across = axis_in_sketch(&doc, &feature, &edge([0.0, 0.0, 1.0]));
+        assert!(across.unwrap_err().contains("sketch plane"));
+        let missing = axis_in_sketch(
+            &doc,
+            &feature,
+            &RevolveAxis::SketchLine(uuid::Uuid::new_v4()),
+        );
+        assert!(missing.is_err());
     }
 }

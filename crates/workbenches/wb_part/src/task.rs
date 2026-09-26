@@ -451,11 +451,13 @@ impl PartDesignWorkbench {
             }
             // A new profile is consumed like the first: it hides, and
             // the one it replaced shows again.
-            if let (Some(old), Some(new)) = (sketch_before, feature.sketch())
-                && old != new
-            {
-                let swapped =
-                    crate::build::swap_consumed_sketch(ctx.document, feature_id, old, new);
+            if sketch_before != feature.sketch() {
+                let swapped = crate::build::swap_consumed_sketch(
+                    ctx.document,
+                    feature_id,
+                    sketch_before,
+                    feature.sketch(),
+                );
                 if let Some(task) = self.task.as_mut() {
                     for (id, was) in swapped {
                         // The first change of a sketch is what it was.
@@ -544,7 +546,7 @@ mod tests {
     fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         PartFeature::Pad {
             refine: false,
-            sketch,
+            sketch: Some(sketch),
             length,
             reversed: false,
             symmetric: false,
@@ -553,6 +555,13 @@ mod tests {
             taper_deg: 0.0,
             up_to_face: None,
             up_to_offset: 0.0,
+            profile_face: None,
+            direction: Default::default(),
+            up_to_shape: Vec::new(),
+            mode2: None,
+            up_to_face2: None,
+            up_to_offset2: 0.0,
+            up_to_shape2: Vec::new(),
         }
     }
 

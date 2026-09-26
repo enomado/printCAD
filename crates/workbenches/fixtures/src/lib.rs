@@ -93,7 +93,7 @@ pub fn open_sketch_scene(
 
     let pad = PartFeature::Pad {
         refine: false,
-        sketch: sketch_id,
+        sketch: Some(sketch_id),
         length: 20.0,
         reversed: false,
         symmetric: false,
@@ -102,6 +102,13 @@ pub fn open_sketch_scene(
         taper_deg: 0.0,
         up_to_face: None,
         up_to_offset: 0.0,
+        profile_face: None,
+        direction: Default::default(),
+        up_to_shape: Vec::new(),
+        mode2: None,
+        up_to_face2: None,
+        up_to_offset2: 0.0,
+        up_to_shape2: Vec::new(),
     };
     let pad_id = document
         .add_feature_in_body(pad, "Pad".into(), body)
@@ -125,7 +132,7 @@ pub fn open_sketch_scene(
         .map_err(|err| format!("face sketch: {err}"))?;
     let pocket = PartFeature::Pocket {
         refine: false,
-        sketch: top_id,
+        sketch: Some(top_id),
         depth: 5.0,
         reversed: false,
         symmetric: false,
@@ -135,6 +142,13 @@ pub fn open_sketch_scene(
         taper_deg: 0.0,
         up_to_face: None,
         up_to_offset: 0.0,
+        profile_face: None,
+        direction: Default::default(),
+        up_to_shape: Vec::new(),
+        mode2: None,
+        up_to_face2: None,
+        up_to_offset2: 0.0,
+        up_to_shape2: Vec::new(),
     };
     let pocket_id = document
         .add_feature_in_body(pocket, "Pocket".into(), body)

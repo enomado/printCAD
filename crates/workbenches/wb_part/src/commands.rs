@@ -80,8 +80,8 @@ pub fn register(context: &mut WorkbenchContext) {
                 "face_point",
                 ParamKind::List,
                 "A face it takes as the viewport's picked face (a thickness's \
-                 opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, \
-                 in the body's own frame",
+                 opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a \
+                 pocket given no sketch): a point of it, {x, y, z}, in the body's own frame",
             )
             .optional(
                 "face_normal",
@@ -446,10 +446,24 @@ pub(crate) fn record_task(
                 .and_then(Value::as_str)
                 .and_then(|s| uuid::Uuid::parse_str(s).ok())
                 .map(FeatureId);
-            let default = default_feature(bench, ctx, tool, *body, sketch);
+            // A profile face goes as the face the command takes for one.
+            let profile_face = fields
+                .get("profile_face")
+                .and_then(|v| serde_json::from_value::<crate::FacePick>(v.clone()).ok());
+            let placement = ctx.document.body_placement(*body);
+            let picked = profile_face.map(|face| core_document::FaceRef {
+                point: placement.point(face.point),
+                normal: placement.direction(face.normal),
+                surface: None,
+            });
+            let default = default_feature(bench, ctx, tool, *body, sketch, picked);
             let mut args = Map::new();
             if let Some(sketch) = sketch {
                 args.insert("sketch".into(), json!(sketch.0.to_string()));
+            }
+            if let Some(face) = profile_face {
+                args.insert("face_point".into(), json!(face.point));
+                args.insert("face_normal".into(), json!(face.normal));
             }
             args.insert("body".into(), json!(body.0.to_string()));
             args.insert("name".into(), json!(node.name));
@@ -458,7 +472,8 @@ pub(crate) fn record_task(
             }
             let default_fields = default.as_ref().map(inner).unwrap_or_default();
             for (name, value) in fields {
-                if name != "sketch" && default_fields.get(&name) != Some(&value) {
+                let own_arg = name == "sketch" || (name == "profile_face" && picked.is_some());
+                if !own_arg && default_fields.get(&name) != Some(&value) {
                     args.insert(name, value);
                 }
             }
@@ -541,8 +556,9 @@ pub(crate) fn object(value: Value) -> Map<String, Value> {
     }
 }
 
-/// The feature `tool` makes for `body` from `sketch` alone, nothing else
-/// selected: what the command makes before any field is named.
+/// The feature `tool` makes for `body` from `sketch` (or the world-space
+/// `face` picked) alone, nothing else selected: what the command makes
+/// before any field is named.
 #[cfg(feature = "egui")]
 fn default_feature(
     bench: &PartDesignWorkbench,
@@ -550,10 +566,11 @@ fn default_feature(
     tool: &str,
     body: BodyId,
     sketch: Option<FeatureId>,
+    face: Option<core_document::FaceRef>,
 ) -> Option<Value> {
     let saved = (
         ctx.active_document_object,
-        ctx.selected_face.take(),
+        std::mem::replace(&mut ctx.selected_face, face),
         std::mem::take(&mut ctx.selected_edges),
         ctx.selected_body_id.take(),
     );
@@ -1026,6 +1043,75 @@ mod tests {
     fn call_on(doc: &mut Document, id: &str, args: Value) -> CommandResult {
         let mut bench = PartDesignWorkbench::default();
         call(&mut bench, doc, id, args)
+    }
+
+    /// A pad with no sketch takes the face given as its profile, and a pad
+    /// the tool made of a picked face records as the call that gives it.
+    #[cfg(feature = "egui")]
+    #[test]
+    fn a_face_profile_pad_is_made_and_recorded_with_its_face() {
+        let mut doc = Document::new("t");
+        let (body, sketch) = sketch_in(&mut doc);
+        let mut bench = PartDesignWorkbench::default();
+        call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"sketch": sketch.0.to_string(), "length": 10.0}),
+        )
+        .unwrap();
+        let before = doc.clone();
+        let made = call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"body": body.0.to_string(), "face_point": [5.0, 2.5, 10.0],
+                "face_normal": [0.0, 0.0, 1.0], "length": 4.0}),
+        )
+        .unwrap();
+        let data = fields(&doc, &made);
+        assert_eq!(data["Pad"]["sketch"], Value::Null);
+        assert_eq!(
+            data["Pad"]["profile_face"]["point"],
+            json!([5.0, 2.5, 10.0])
+        );
+
+        let mut doc = before.clone();
+        let pad = {
+            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.selected_body_id = Some(body.0);
+            ctx.selected_face = Some(core_document::FaceRef {
+                point: [5.0, 2.5, 10.0],
+                normal: [0.0, 0.0, 1.0],
+                surface: None,
+            });
+            bench.on_input(
+                &core_document::WorkbenchInputEvent::KeyPress {
+                    key: core_document::KeyCode::A,
+                },
+                Some("part.pad"),
+                &mut ctx,
+            );
+            ctx.active_document_object.unwrap()
+        };
+        task_frame(&mut bench, &mut doc, pad, Default::default());
+        let recorded = task_frame(
+            &mut bench,
+            &mut doc,
+            pad,
+            core_document::TaskRequest {
+                accept: true,
+                cancel: false,
+            },
+        );
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        let call = &recorded[0];
+        assert_eq!(call.args["face_point"], json!([5.0, 2.5, 10.0]));
+        assert!(!call.args.contains_key("profile_face"), "{:?}", call.args);
+        let mut replay = before;
+        let made = call_on(&mut replay, &call.id, Value::Object(call.args.clone())).unwrap();
+        let made = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
+        assert_eq!(replay.get_feature_data(made), doc.get_feature_data(pad));
     }
 
     #[test]
