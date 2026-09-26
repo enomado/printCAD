@@ -70,6 +70,83 @@ impl ElementFilter {
     }
 }
 
+/// How the constraint list names the constraint at `idx`: its own name, or
+/// its place and kind.
+pub(crate) fn constraint_row_label(idx: usize, c: &Constraint) -> String {
+    c.name.clone().unwrap_or_else(|| {
+        format!(
+            "Constraint{} · {}",
+            idx + 1,
+            sketch::constraint_label(&c.kind)
+        )
+    })
+}
+
+/// Constraint-list filter: which constraints the panel lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConstraintFilter {
+    #[default]
+    All,
+    /// Relations with no value: coincident, parallel, tangent and the like.
+    Geometric,
+    /// Those with a value, driving or not.
+    Dimensional,
+    /// Those the user named.
+    Named,
+    /// Dimensions that measure without driving.
+    Reference,
+    /// The selected constraints.
+    Selected,
+    /// Those on the selected geometry, a curve's own points included.
+    Related,
+    /// Those on the parked layer.
+    Parked,
+}
+
+impl ConstraintFilter {
+    pub const ALL: [(ConstraintFilter, &'static str); 8] = [
+        (ConstraintFilter::All, "All"),
+        (ConstraintFilter::Geometric, "Geometric"),
+        (ConstraintFilter::Dimensional, "Dimensional"),
+        (ConstraintFilter::Named, "Named"),
+        (ConstraintFilter::Reference, "Reference"),
+        (ConstraintFilter::Selected, "Selected"),
+        (ConstraintFilter::Related, "Related to selection"),
+        (ConstraintFilter::Parked, "Parked"),
+    ];
+
+    /// Whether `c` is listed, with `selected` the selected geometry and
+    /// `selected_constraints` the selected constraints.
+    pub(crate) fn accepts(
+        self,
+        sketch: &Sketch,
+        c: &Constraint,
+        selected: &HashSet<Uuid>,
+        selected_constraints: &HashSet<Uuid>,
+    ) -> bool {
+        match self {
+            ConstraintFilter::All => true,
+            ConstraintFilter::Geometric => !c.kind.is_dimensional(),
+            ConstraintFilter::Dimensional => c.kind.is_dimensional(),
+            ConstraintFilter::Named => c.name.as_deref().is_some_and(|n| !n.trim().is_empty()),
+            ConstraintFilter::Reference => c.kind.is_dimensional() && !c.driving,
+            ConstraintFilter::Selected => selected_constraints.contains(&c.id),
+            ConstraintFilter::Related => {
+                let mut reach: HashSet<Uuid> = selected.clone();
+                for id in selected {
+                    if let Some(element) = sketch.get_geometry(*id) {
+                        reach.extend(Sketch::curve_point_ids(element));
+                    }
+                }
+                sketch::constraint_refs(&c.kind)
+                    .iter()
+                    .any(|id| reach.contains(id))
+            }
+            ConstraintFilter::Parked => c.parked,
+        }
+    }
+}
+
 /// A "create sketch" request waiting for the user to pick a plane.
 struct PendingCreation {
     body: Option<BodyId>,
@@ -313,6 +390,8 @@ pub struct SketchWorkbench {
     renaming_constraint: Option<Uuid>,
     /// Substring filter over the constraint list.
     constraint_filter: String,
+    /// Which kind of constraint the list shows.
+    constraint_kind_filter: ConstraintFilter,
     /// The glyphs drawn are the parked constraints', not the others'.
     parked_layer: bool,
     /// The shape being drawn, until it is recorded.
@@ -1619,6 +1698,33 @@ impl SketchWorkbench {
         InputResult::ignored()
     }
 
+    /// The constraint list's kind filter (the panel's dropdown; also set by
+    /// integration tests).
+    pub fn constraint_filter_mut(&mut self) -> &mut ConstraintFilter {
+        &mut self.constraint_kind_filter
+    }
+
+    /// The constraints the panel's list shows, in sketch order, as its text
+    /// and kind filters and the selection leave it.
+    pub fn listed_constraints(&self, sketch: &Sketch) -> Vec<Uuid> {
+        let text = self.constraint_filter.trim().to_lowercase();
+        sketch
+            .constraints
+            .iter()
+            .enumerate()
+            .filter(|(idx, c)| {
+                (text.is_empty() || constraint_row_label(*idx, c).to_lowercase().contains(&text))
+                    && self.constraint_kind_filter.accepts(
+                        sketch,
+                        c,
+                        &self.selected,
+                        &self.selected_constraints,
+                    )
+            })
+            .map(|(_, c)| c.id)
+            .collect()
+    }
+
     /// Panel-editable tool parameters (also used by integration tests to
     /// set copy counts, offset distances, …).
     pub fn tool_params_mut(&mut self) -> &mut ToolParams {
@@ -1873,6 +1979,26 @@ impl SketchWorkbench {
                     "value": value,
                     "driving": constraint.driving,
                 })),
+                serde_json::Value::Null,
+            );
+        }
+        // Its active and parked flags, as `sketch.set_constraint` sets them.
+        if (constraint.active != slot.active || constraint.parked != slot.parked)
+            && let Some(sketch_id) = self.active_sketch_id
+        {
+            let mut args = serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": ids_json(&[constraint.id]),
+            });
+            if constraint.active != slot.active {
+                args["active"] = serde_json::json!(constraint.active);
+            }
+            if constraint.parked != slot.parked {
+                args["parked"] = serde_json::json!(constraint.parked);
+            }
+            ctx.record(
+                "sketch.set_constraint",
+                commands::args(args),
                 serde_json::Value::Null,
             );
         }
@@ -4752,6 +4878,73 @@ pub(crate) fn carbon_copy_log(
             "Carbon copy of {name}: {count} elements; its constraints stay behind, as its \
              axes are turned against this sketch's"
         )
+    }
+}
+
+#[cfg(test)]
+mod constraint_filter {
+    use super::*;
+    use sketch::{ConstraintKind, Line, Point};
+
+    #[test]
+    fn each_filter_lists_its_own() {
+        let mut sketch = Sketch::new("t");
+        let point = |sketch: &mut Sketch, x: f32| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))))
+        };
+        let (a, b, c) = (
+            point(&mut sketch, 0.0),
+            point(&mut sketch, 5.0),
+            point(&mut sketch, 9.0),
+        );
+        let first = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let second = sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        let level = sketch.add_constraint(ConstraintKind::Horizontal { element: second });
+        let width = sketch.add_constraint(ConstraintKind::Length {
+            line: first,
+            length: 5.0,
+        });
+        let measured = sketch.add_constraint(ConstraintKind::Distance {
+            point1: a,
+            point2: c,
+            distance: 9.0,
+        });
+        for constraint in &mut sketch.constraints {
+            if constraint.id == width {
+                constraint.name = Some("width".into());
+            }
+            if constraint.id == measured {
+                constraint.driving = false;
+                constraint.parked = true;
+            }
+        }
+        let listed = |filter: ConstraintFilter, selected: &[Uuid], chosen: &[Uuid]| {
+            let selected: HashSet<Uuid> = selected.iter().copied().collect();
+            let chosen: HashSet<Uuid> = chosen.iter().copied().collect();
+            sketch
+                .constraints
+                .iter()
+                .filter(|c| filter.accepts(&sketch, c, &selected, &chosen))
+                .map(|c| c.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(listed(ConstraintFilter::All, &[], &[]).len(), 3);
+        assert_eq!(listed(ConstraintFilter::Geometric, &[], &[]), [level]);
+        assert_eq!(
+            listed(ConstraintFilter::Dimensional, &[], &[]),
+            [width, measured]
+        );
+        assert_eq!(listed(ConstraintFilter::Named, &[], &[]), [width]);
+        assert_eq!(listed(ConstraintFilter::Reference, &[], &[]), [measured]);
+        assert_eq!(listed(ConstraintFilter::Parked, &[], &[]), [measured]);
+        assert_eq!(listed(ConstraintFilter::Selected, &[], &[level]), [level]);
+        // The first line reaches its length, and through its end at `a` the
+        // distance; the second line's constraint is not its.
+        assert_eq!(
+            listed(ConstraintFilter::Related, &[first], &[]),
+            [width, measured]
+        );
+        assert_eq!(listed(ConstraintFilter::Related, &[c], &[]), [measured]);
     }
 }
 

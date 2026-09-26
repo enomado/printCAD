@@ -3883,3 +3883,53 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
             .any(|m| is_icon(m, "constraint-horizontal"))
     );
 }
+
+#[test]
+fn the_constraint_list_filters_by_kind_and_by_the_selection() {
+    use wb_sketch::ConstraintFilter;
+    use wb_sketch::sketch::ConstraintKind;
+    let mut h = Harness::new();
+    h.create_sketch();
+    // A rectangle: four axis constraints. A free line beside it, sized.
+    h.click(2.0, 2.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.rect");
+    h.click(20.0, 2.0, "sketch.line");
+    h.click(24.0, 9.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(22.0, 5.5, "sketch.select");
+    h.release(22.0, 5.5, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+    let sketch = h.sketch();
+    let length = sketch
+        .constraints
+        .iter()
+        .find(|c| matches!(c.kind, ConstraintKind::Length { .. }))
+        .map(|c| c.id)
+        .expect("the line is sized");
+    let listed = |h: &mut Harness, filter: ConstraintFilter| {
+        *h.wb.constraint_filter_mut() = filter;
+        h.wb.listed_constraints(&h.sketch())
+    };
+    assert_eq!(listed(&mut h, ConstraintFilter::All).len(), 5);
+    assert_eq!(listed(&mut h, ConstraintFilter::Dimensional), [length]);
+    assert_eq!(listed(&mut h, ConstraintFilter::Geometric).len(), 4);
+    assert!(listed(&mut h, ConstraintFilter::Reference).is_empty());
+    // The line is still selected: only its own constraint relates to it.
+    assert_eq!(listed(&mut h, ConstraintFilter::Related), [length]);
+    // The rectangle's bottom edge: its own axis constraint, not its
+    // neighbours'.
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.click(7.0, 2.0, "sketch.select");
+    h.release(7.0, 2.0, "sketch.select");
+    let related = listed(&mut h, ConstraintFilter::Related);
+    let sketch = h.sketch();
+    assert_eq!(related.len(), 1);
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| c.id == related[0] && matches!(c.kind, ConstraintKind::Horizontal { .. }))
+    );
+    // Selected picks out the selected constraints alone.
+    assert!(listed(&mut h, ConstraintFilter::Selected).is_empty());
+}
