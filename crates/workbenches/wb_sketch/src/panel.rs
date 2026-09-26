@@ -858,19 +858,25 @@ impl SketchWorkbench {
     /// In-viewport dimension editor (opened by double-clicking a
     /// dimensional glyph), drawn as a floating card near the label.
     pub(crate) fn dim_edit_window(&mut self, ui: &egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        let self_angular = self
-            .dim_edit
-            .as_ref()
-            .and_then(|edit| {
-                let sketch = self.get_active_sketch(ctx)?;
-                let c = sketch
-                    .sketch
-                    .constraints
-                    .iter()
-                    .find(|c| c.id == edit.constraint)?;
-                Some(sketch::is_angular(&c.kind))
-            })
-            .unwrap_or(false);
+        let edited_kind = self.dim_edit.as_ref().and_then(|edit| {
+            let sketch = self.get_active_sketch(ctx)?;
+            let c = sketch
+                .sketch
+                .constraints
+                .iter()
+                .find(|c| c.id == edit.constraint)?;
+            Some(c.kind.clone())
+        });
+        let (unit, dim) = match &edited_kind {
+            Some(kind) => (
+                sketch::dimension_unit(kind),
+                crate::params::formula_dim(kind),
+            ),
+            None => (
+                sketch::DimensionUnit::Length,
+                core_document::expr::Dim::LENGTH,
+            ),
+        };
         let Some(edit) = self.dim_edit.as_mut() else {
             return;
         };
@@ -913,24 +919,13 @@ impl SketchWorkbench {
                             response.request_focus();
                         }
                         // What it comes to, as typed: a value, or a formula.
-                        let angular = self_angular;
-                        let preview = ctx.document.evaluate_formula(
-                            &edit.text,
-                            Some(if angular {
-                                core_document::expr::Dim::ANGLE
-                            } else {
-                                core_document::expr::Dim::LENGTH
-                            }),
-                        );
+                        let preview = ctx.document.evaluate_formula(&edit.text, Some(dim));
+                        let suffix = unit_suffix(unit);
                         let (line, color) = match preview {
-                            Ok(q) if core_document::expr::is_constant(&edit.text) => (
-                                format!("{:.3}{}", q.value, if angular { "°" } else { " mm" }),
-                                TEXT3,
-                            ),
-                            Ok(q) => (
-                                format!("ƒ = {:.3}{}", q.value, if angular { "°" } else { " mm" }),
-                                SKETCH_FORMULA,
-                            ),
+                            Ok(q) if core_document::expr::is_constant(&edit.text) => {
+                                (format!("{:.3}{suffix}", q.value), TEXT3)
+                            }
+                            Ok(q) => (format!("ƒ = {:.3}{suffix}", q.value), SKETCH_FORMULA),
                             Err(why) => (why, DANGER),
                         };
                         ui.label(RichText::new(line).font(sans(FONT_XS)).color(color));
@@ -962,6 +957,15 @@ impl SketchWorkbench {
         } else if cancel {
             self.dim_edit = None;
         }
+    }
+}
+
+/// What follows a dimension's value when it is written out.
+fn unit_suffix(unit: sketch::DimensionUnit) -> &'static str {
+    match unit {
+        sketch::DimensionUnit::Length => " mm",
+        sketch::DimensionUnit::Angle => "°",
+        sketch::DimensionUnit::Ratio => "",
     }
 }
 
@@ -1007,7 +1011,8 @@ fn dimension_value_cell(
     let Some(value) = sketch::dimension_value(&constraint.kind) else {
         return;
     };
-    let angular = sketch::is_angular(&constraint.kind);
+    let unit = sketch::dimension_unit(&constraint.kind);
+    let angular = unit == sketch::DimensionUnit::Angle;
     if constraint.driving && constraint.active {
         let key = constraint.id.to_string();
         let formula = cell
@@ -1023,11 +1028,7 @@ fn dimension_value_cell(
         });
         let host = core_document::DocumentFormulas {
             document: cell.document,
-            dim: if angular {
-                core_document::expr::Dim::ANGLE
-            } else {
-                core_document::expr::Dim::LENGTH
-            },
+            dim: crate::params::formula_dim(&constraint.kind),
         };
         let field = ui_kit::widgets::FormulaField::new(
             egui::Id::new(("dimension", constraint.id)),
@@ -1036,9 +1037,17 @@ fn dimension_value_cell(
         )
         .formula(formula)
         .error(error)
-        .unit(if angular { "°" } else { "mm" })
-        .speed(if angular { 1.0 } else { 0.1 })
-        .decimals(if angular { 1 } else { 2 })
+        .unit(unit_suffix(unit).trim_start())
+        .speed(match unit {
+            sketch::DimensionUnit::Angle => 1.0,
+            sketch::DimensionUnit::Length => 0.1,
+            sketch::DimensionUnit::Ratio => 0.01,
+        })
+        .decimals(match unit {
+            sketch::DimensionUnit::Angle => 1,
+            sketch::DimensionUnit::Length => 2,
+            sketch::DimensionUnit::Ratio => 3,
+        })
         .width(96.0);
         if focus {
             ui.ctx()

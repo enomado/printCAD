@@ -11,7 +11,7 @@ use core_document::{FeatureNode, Parameter, WorkbenchFeature};
 use serde_json::Value;
 
 use crate::feature::SketchFeature;
-use crate::sketch::{ConstraintKind, constraint_label, dimension_value};
+use crate::sketch::{ConstraintKind, DimensionUnit, constraint_label, dimension_value};
 
 /// The field of a dimensional kind that holds its value, and its variant.
 fn value_field(kind: &ConstraintKind) -> Option<(&'static str, &'static str)> {
@@ -24,8 +24,22 @@ fn value_field(kind: &ConstraintKind) -> Option<(&'static str, &'static str)> {
         ConstraintKind::DistanceY { .. } => ("DistanceY", "value"),
         ConstraintKind::Angle { .. } => ("Angle", "angle_rad"),
         ConstraintKind::AngleToAxis { .. } => ("AngleToAxis", "angle_rad"),
+        ConstraintKind::ArcLength { .. } => ("ArcLength", "length"),
+        ConstraintKind::Gap { .. } => ("Gap", "distance"),
+        ConstraintKind::AngleAtPoint { .. } => ("AngleAtPoint", "angle_rad"),
+        ConstraintKind::Refraction { .. } => ("Refraction", "ratio"),
         _ => return None,
     })
+}
+
+/// What a formula setting this dimension must come to: a length, an
+/// angle, or a plain number for a ratio.
+pub(crate) fn formula_dim(kind: &ConstraintKind) -> Dim {
+    match crate::sketch::dimension_unit(kind) {
+        DimensionUnit::Length => Dim::LENGTH,
+        DimensionUnit::Angle => Dim::ANGLE,
+        DimensionUnit::Ratio => Dim::NUMBER,
+    }
 }
 
 /// The sketch's driving dimensions.
@@ -51,7 +65,7 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
             .map(str::to_string)
             .unwrap_or_else(|| constraint_label(&c.kind));
         let pointer = format!("/sketch/constraints/{i}/kind/{variant}/{field}");
-        let dim = if angular { Dim::ANGLE } else { Dim::LENGTH };
+        let dim = formula_dim(&c.kind);
         let mut p =
             Parameter::new(name.unwrap_or(""), &label, dim, pointer).keyed(c.id.to_string());
         if name.is_none() {

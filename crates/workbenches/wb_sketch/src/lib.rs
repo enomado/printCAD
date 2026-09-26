@@ -10,6 +10,7 @@ mod feature;
 pub mod generator;
 mod geom2d;
 mod glyphs;
+mod measure;
 mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
@@ -168,7 +169,8 @@ pub struct SketchOptions {
     pub auto_constraints: bool,
     /// An auto constraint the solver reports redundant is dropped again.
     pub avoid_redundant_auto: bool,
-    /// After every solve, redundant constraints are removed.
+    /// A constraint a constraint tool adds takes away the older ones it
+    /// made redundant.
     pub auto_remove_redundant: bool,
     /// The solver runs after every edit; off, it runs on request.
     pub auto_update: bool,
@@ -598,8 +600,7 @@ impl SketchWorkbench {
         self.solve_now(ctx, feature);
     }
 
-    /// Run the solver whatever the auto-update switch says, and drop the
-    /// redundant constraints when that switch is on.
+    /// Run the solver whatever the auto-update switch says.
     fn solve_now(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
         let outcome = solver::solve(&mut feature.sketch);
         self.last_solve = Some(outcome);
@@ -608,21 +609,6 @@ impl SketchWorkbench {
             ctx.log_warn(format!(
                 "Constraints did not converge (residual {residual:.2e}); check for contradictions"
             ));
-        }
-        if self.options.auto_remove_redundant {
-            let diagnosis = solver::diagnose(&feature.sketch);
-            if !diagnosis.redundant.is_empty() {
-                let before = feature.sketch.constraints.len();
-                feature
-                    .sketch
-                    .constraints
-                    .retain(|c| !diagnosis.redundant.contains(&c.id));
-                let dropped = before - feature.sketch.constraints.len();
-                ctx.log_info(format!("Removed {dropped} redundant constraint(s)"));
-                self.selected_constraints
-                    .retain(|id| !diagnosis.redundant.contains(id));
-            }
-            self.last_diagnosis = Some(solver::diagnose(&feature.sketch));
         }
     }
 
@@ -1656,11 +1642,7 @@ impl SketchWorkbench {
             return;
         };
         let text = text.trim();
-        let dim = if sketch::is_angular(&c.kind) {
-            core_document::expr::Dim::ANGLE
-        } else {
-            core_document::expr::Dim::LENGTH
-        };
+        let dim = params::formula_dim(&c.kind);
         let key = constraint.to_string();
         let evaluated = ctx.document.evaluate_formula(text, Some(dim));
         if !core_document::expr::is_constant(text) {
@@ -2215,17 +2197,43 @@ impl Workbench for SketchWorkbench {
             ("distance_x", "Horizontal distance", "constraint-distance-x"),
             ("distance_y", "Vertical distance", "constraint-distance-y"),
             ("distance", "Distance", "constraint-distance"),
+            ("arc_length", "Arc length", "constraint-arc-length"),
             ("radius", "Radius", "constraint-radius"),
             ("diameter", "Diameter", "constraint-diameter"),
             ("angle", "Angle", "constraint-angle"),
+            ("refraction", "Refraction", "constraint-refraction"),
         ] {
             let mut tool = constraint(id, label, icon, "constraints.dimensional");
-            if id == "angle" {
-                tool = tool.variants(vec![
-                    ToolVariant::new("angle", "Between two lines", "constraint-angle"),
-                    ToolVariant::new("angle_x", "To the X axis", "constraint-angle"),
-                    ToolVariant::new("angle_y", "To the Y axis", "constraint-angle"),
-                ]);
+            match id {
+                "distance" => {
+                    tool = tool.variants(vec![
+                        ToolVariant::new("distance", "Distance", "constraint-distance"),
+                        ToolVariant::new("gap", "Gap between curves", "constraint-distance"),
+                    ]);
+                }
+                "radius" => {
+                    tool = tool.variants(vec![
+                        ToolVariant::new("radius", "Radius", "constraint-radius"),
+                        ToolVariant::new(
+                            "radius_diameter",
+                            "Radius or diameter by kind",
+                            "constraint-diameter",
+                        ),
+                    ]);
+                }
+                "angle" => {
+                    tool = tool.variants(vec![
+                        ToolVariant::new("angle", "Between two lines", "constraint-angle"),
+                        ToolVariant::new("angle_x", "To the X axis", "constraint-angle"),
+                        ToolVariant::new("angle_y", "To the Y axis", "constraint-angle"),
+                        ToolVariant::new(
+                            "angle_at_point",
+                            "Where two curves meet",
+                            "constraint-angle",
+                        ),
+                    ]);
+                }
+                _ => {}
             }
             context.register_tool(tool);
         }
@@ -2554,7 +2562,7 @@ impl Workbench for SketchWorkbench {
                     "Auto remove redundants",
                     &mut self.options.auto_remove_redundant,
                 )
-                .hint("Redundant constraints go after every solve"),
+                .hint("A new constraint takes away the older ones it makes redundant"),
                 PrefRow::toggle("Snap to objects", &mut snap)
                     .hint("Endpoints, midpoints and intersections attract the cursor"),
             ],
@@ -3169,7 +3177,7 @@ impl SketchWorkbench {
             match dimension_for(&shape) {
                 Some(tool) => tool,
                 None => {
-                    ctx.log_warn("Select a line, two points, a circle or two lines to dimension");
+                    ctx.log_warn("Select a line, circles, or two items to dimension");
                     self.selection_shape = shape;
                     return InputResult::consumed();
                 }
@@ -3182,16 +3190,33 @@ impl SketchWorkbench {
         let mut feature = feature;
         match commands::constrain(&mut feature.sketch, which, &items, None) {
             Ok(made) => {
+                let remove_redundant = self.options.auto_remove_redundant;
+                let removed = if remove_redundant {
+                    commands::remove_superseded(&mut feature.sketch, &made)
+                } else {
+                    0
+                };
                 if let Some(sketch_id) = self.active_sketch_id {
+                    let mut args = serde_json::json!({
+                        "sketch": sketch_id.0.to_string(),
+                        "kind": which,
+                        "items": ids_json(&items),
+                    });
+                    if remove_redundant {
+                        args["remove_redundant"] = serde_json::json!(true);
+                    }
                     ctx.record(
                         "sketch.constrain",
-                        commands::args(serde_json::json!({
-                            "sketch": sketch_id.0.to_string(),
-                            "kind": which,
-                            "items": ids_json(&items),
-                        })),
+                        commands::args(args),
                         serde_json::json!(made),
                     );
+                }
+                if removed > 0 {
+                    ctx.log_info(format!(
+                        "Removed {removed} constraint(s) the new one made redundant"
+                    ));
+                    self.selected_constraints
+                        .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
                 }
                 for id in &made {
                     if let Some(c) = feature
@@ -4170,12 +4195,9 @@ impl SketchWorkbench {
 
 /// Tools that create geometry from clicks, for which object snapping can
 /// be switched off.
-/// The dimensional constraint tool a selection takes, if any: a radius
-/// for one circle or arc, an angle for two lines, a distance otherwise.
+/// The dimensional constraint tool a selection takes, if any.
 pub(crate) fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'static str> {
-    ["radius", "angle", "distance", "distance_x", "distance_y"]
-        .into_iter()
-        .find(|tool| constrain::fits(tool, shape))
+    constrain::dimension_for(shape)
 }
 
 /// The tools that move, turn, scale or mirror the selection.
@@ -4508,9 +4530,12 @@ mod dimension_tool {
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
         let shape =
             |ids: &[Uuid]| constrain::SelectionShape::of(&sketch, &ids.iter().copied().collect());
-        assert_eq!(dimension_for(&shape(&[circle])), Some("radius"));
+        assert_eq!(dimension_for(&shape(&[circle])), Some("radius_diameter"));
         assert_eq!(dimension_for(&shape(&[line, other])), Some("angle"));
+        assert_eq!(dimension_for(&shape(&[a, line, other])), Some("angle"));
         assert_eq!(dimension_for(&shape(&[a, b])), Some("distance"));
+        assert_eq!(dimension_for(&shape(&[line, circle])), Some("distance"));
+        assert_eq!(dimension_for(&shape(&[b, circle])), Some("distance"));
         assert_eq!(dimension_for(&shape(&[])), None);
     }
 

@@ -124,7 +124,8 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::String,
             "coincident, point_on_object, midpoint, horizontal, vertical, parallel, \
              perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, \
-             distance_x, distance_y, radius, diameter, angle, angle_x or angle_y",
+             distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, \
+             angle, angle_x, angle_y, angle_at_point or refraction",
         )
         .param(
             "items",
@@ -134,7 +135,13 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional(
             "value",
             ParamKind::Number,
-            "A dimension's value (mm, or degrees for an angle); the measured one when left out",
+            "A dimension's value (mm, degrees for an angle, the ratio of indices for a \
+             refraction); the measured one when left out",
+        )
+        .optional(
+            "remove_redundant",
+            ParamKind::Bool,
+            "Take away the older constraints the new ones make redundant",
         )
         .returns("the new constraints' ids"),
     );
@@ -496,7 +503,12 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let kind = a.string("kind")?;
             let items = ids(args.get("items"), "items", sketch)?;
             let value = a.opt_number("value")?;
-            json!(constrain(sketch, kind, &items, value)?)
+            let remove_redundant = a.opt_bool("remove_redundant")?.unwrap_or(false);
+            let made = constrain(sketch, kind, &items, value)?;
+            if remove_redundant {
+                remove_superseded(sketch, &made);
+            }
+            json!(made)
         }
         "sketch.set_value" => {
             let id = a.id("constraint")?;
@@ -1351,26 +1363,42 @@ pub(crate) fn constrain(
     let selected: std::collections::HashSet<Uuid> = items.iter().copied().collect();
     let shape = crate::constrain::SelectionShape::of(sketch, &selected);
     let tool = if kind == "dimension" {
-        crate::dimension_for(&shape).ok_or_else(|| {
-            CommandError::failed("dimension takes a line, two points, a circle or two lines")
-        })?
+        crate::dimension_for(&shape)
+            .ok_or_else(|| CommandError::failed("dimension takes a line, circles, or two items"))?
     } else {
         kind
     };
     let kinds = crate::constrain::kinds_for(tool, &shape, sketch).ok_or_else(|| {
         CommandError::failed(format!("the {tool} constraint does not fit these items"))
     })?;
+    // A value goes to the dimension among them; the constraints that come
+    // with it (a point kept on a curve, the equal radii) take none.
+    if value.is_some()
+        && !kinds
+            .iter()
+            .any(|k| crate::sketch::dimension_value(k).is_some())
+    {
+        return Err(CommandError::bad("value", format!("{tool} takes no value")));
+    }
     let mut made = Vec::new();
     for mut k in kinds {
-        if let Some(value) = value {
-            if crate::sketch::dimension_value(&k).is_none() {
-                return Err(CommandError::bad("value", format!("{tool} takes no value")));
-            }
+        if let Some(value) = value
+            && crate::sketch::dimension_value(&k).is_some()
+        {
             k = crate::sketch::with_dimension_value(&k, value as f32);
         }
         made.push(sketch.add_constraint(k).to_string());
     }
     Ok(made)
+}
+
+/// Take away the older constraints the constraints `made` (their ids, as
+/// [`constrain`] returns them) made redundant; returns how many went.
+pub(crate) fn remove_superseded(sketch: &mut Sketch, made: &[String]) -> usize {
+    let new: Vec<Uuid> = made.iter().filter_map(|id| id.parse().ok()).collect();
+    let gone = crate::solver::superseded(sketch, &new);
+    sketch.constraints.retain(|c| !gone.contains(&c.id));
+    gone.len()
 }
 
 /// The name of a constraint kind, as it is stored.

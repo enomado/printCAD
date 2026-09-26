@@ -24,7 +24,7 @@ const table = join(root, "crates", "ui_kit", "src", "icon_table.rs");
 const DOCUMENT_ICON = "file-document";
 const SKIP = new Set([
   "migrate", "shape-binder", "sub-shape-binder",
-  "constraint-refraction", "switch-virtual-space", "tree-spreadsheet",
+  "switch-virtual-space", "tree-spreadsheet",
   "workbench-spreadsheet",
   // The source draws this one with a text glyph, which needs a font the
   // rasterizer does not carry; the local copy is pure geometry.
@@ -40,6 +40,7 @@ const LOCAL = new Set([
   "joint-align",
   "script",
   "console",
+  "constraint-arc-length",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

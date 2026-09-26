@@ -99,6 +99,10 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/constraint-angle.svg"),
     ),
     (
+        "constraint-arc-length",
+        include_str!("../icons/constraint-arc-length.svg"),
+    ),
+    (
         "constraint-auto",
         include_str!("../icons/constraint-auto.svg"),
     ),
@@ -153,6 +157,10 @@ pub const ICONS: &[(&str, &str)] = &[
     (
         "constraint-radius",
         include_str!("../icons/constraint-radius.svg"),
+    ),
+    (
+        "constraint-refraction",
+        include_str!("../icons/constraint-refraction.svg"),
     ),
     (
         "constraint-symmetric",
