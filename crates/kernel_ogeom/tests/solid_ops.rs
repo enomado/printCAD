@@ -300,6 +300,97 @@ fn ellipse_and_bspline_profiles_pad() {
     );
 }
 
+/// A spline of its own degree and knots pads, and a rational one draws an
+/// exact conic: a quarter disc bounded by a rational quadratic has a
+/// quarter of the disc's area.
+#[test]
+fn nurbs_profiles_pad_exactly() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let quarter = ProfileWire {
+        segments: vec![
+            ProfileSegment::Line {
+                start: [0.0, 0.0],
+                end: [10.0, 0.0],
+            },
+            ProfileSegment::Nurbs {
+                degree: 2,
+                knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                control_points: vec![[10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+                weights: vec![1.0, w, 1.0],
+                periodic: false,
+            },
+            ProfileSegment::Line {
+                start: [0.0, 10.0],
+                end: [0.0, 0.0],
+            },
+        ],
+    };
+    let result = kernel
+        .execute_solid_chain(
+            &[blind_pad(vec![quarter], 2.0, BooleanOp::NewSolid)],
+            &detail,
+        )
+        .expect("quarter disc pad");
+    let props = kernel
+        .physical_properties(&result.brep_blob)
+        .expect("the pad measures");
+    let volume = props.volume_mm3.expect("a closed solid");
+    let exact = std::f64::consts::PI * 100.0 / 4.0 * 2.0;
+    assert!(
+        (volume - exact).abs() < 1e-3 * exact,
+        "volume {volume} vs {exact}"
+    );
+
+    // A quintic over knots of its own, closed with a line, and a
+    // quadratic ring.
+    let open = ProfileWire {
+        segments: vec![
+            ProfileSegment::Nurbs {
+                degree: 5,
+                knots: vec![
+                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                ],
+                control_points: vec![
+                    [0.0, 0.0],
+                    [3.0, 6.0],
+                    [7.0, 8.0],
+                    [11.0, 7.0],
+                    [15.0, 5.0],
+                    [18.0, 2.0],
+                    [20.0, 0.0],
+                ],
+                weights: Vec::new(),
+                periodic: false,
+            },
+            ProfileSegment::Line {
+                start: [20.0, 0.0],
+                end: [0.0, 0.0],
+            },
+        ],
+    };
+    let ring = ProfileWire {
+        segments: vec![ProfileSegment::Nurbs {
+            degree: 2,
+            knots: Vec::new(),
+            control_points: vec![[30.0, 0.0], [40.0, 0.0], [40.0, 10.0], [30.0, 10.0]],
+            weights: Vec::new(),
+            periodic: true,
+        }],
+    };
+    let result = kernel
+        .execute_solid_chain(
+            &[blind_pad(vec![open, ring], 3.0, BooleanOp::NewSolid)],
+            &detail,
+        )
+        .expect("spline pads");
+    let (min, max) = result.bounds_mm.expect("bounds");
+    assert_close(min[0], 0.0, 1e-3, "the open spline's start");
+    assert!(max[0] > 35.0 && max[0] <= 40.001, "the ring: {max:?}");
+    assert_close(max[2], 3.0, 1e-3, "pad height");
+}
+
 #[test]
 fn loft_skins_between_two_rectangles() {
     let mut kernel = new_kernel();

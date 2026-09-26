@@ -465,3 +465,26 @@ fn a_trim_stroke_replays_as_one_call() {
     assert_eq!(draws, 5, "four lines and one stroke: {:#?}", s.recorded);
     assert_replays(&s.recorded, before, id, &done);
 }
+
+#[test]
+fn a_spline_through_points_replays_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    for (x, y) in [(1.0, 1.0), (5.0, 6.0), (10.0, 4.0), (14.0, 8.0)] {
+        s.click(x, y, "sketch.bspline:through");
+    }
+    s.key(KeyCode::Enter, Some("sketch.bspline:through"));
+    for (x, y) in [(-12.0, -2.0), (-6.0, -8.0), (-2.0, -3.0)] {
+        s.click(x, y, "sketch.bspline:through_periodic");
+    }
+    s.key(KeyCode::Enter, Some("sketch.bspline:through_periodic"));
+    s.key(KeyCode::A, None);
+    let sketch = s.sketch(id);
+    let fitted = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::BSpline(b) if !b.fit_points.is_empty()))
+        .count();
+    assert_eq!(fitted, 2);
+    let done = summary(&sketch);
+    assert_replays(&s.recorded, before, id, &done);
+}

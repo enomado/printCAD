@@ -387,11 +387,11 @@ fn push_element(
                 .iter()
                 .map(|id| sketch.point_position(*id))
                 .collect();
-            if let Some(ctrl) = ctrl {
+            if let (Some(ctrl), Some(curve)) = (ctrl, b.points(sketch, 64)) {
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    geom2d::bspline_points(&ctrl, b.periodic, 64).into_iter(),
+                    curve.into_iter(),
                     color,
                     thickness,
                     dashed,
@@ -539,12 +539,11 @@ fn push_ghost(
                 }
             }
             GeometryElement::BSpline(b) => {
-                let ctrl: Option<Vec<Vec2D>> = b.control_points.iter().map(|id| pt(*id)).collect();
-                if let Some(ctrl) = ctrl {
+                if let Some(points) = b.points(sketch, 48) {
                     push_polyline(
                         &mut out.lines,
                         proj,
-                        geom2d::bspline_points(&ctrl, b.periodic, 48).into_iter(),
+                        points.into_iter().map(|p| xf.apply(p)),
                         pal.preview,
                         1.5,
                         false,
@@ -1147,7 +1146,8 @@ fn push_preview(
         ToolState::BSplineDraw { points } => {
             let mut ctrl: Vec<Vec2D> = points.iter().filter_map(pos).collect();
             ctrl.push(cursor);
-            // Dashed control polygon + the spline it would produce.
+            // Dashed polygon through the clicks + the spline they would
+            // produce, as the finished spline will be.
             push_polyline(
                 &mut out.lines,
                 proj,
@@ -1156,14 +1156,16 @@ fn push_preview(
                 1.0,
                 true,
             );
-            push_polyline(
-                &mut out.lines,
-                proj,
-                geom2d::bspline_points(&ctrl, params.bspline_periodic, 48).into_iter(),
-                pal.preview,
-                1.5,
-                false,
-            );
+            if let Some(curve) = crate::tools::bspline_preview(&ctrl, params) {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    curve.into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+            }
         }
         ToolState::TranslateFrom { base } => {
             push_polyline(

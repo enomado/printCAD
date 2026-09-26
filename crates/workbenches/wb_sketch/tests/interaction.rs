@@ -3260,3 +3260,51 @@ fn dragging_the_trim_tool_trims_every_span_it_crosses() {
     h.mouse_move(18.0, -3.0, "sketch.trim");
     assert_eq!(h.counts().1, lines);
 }
+
+#[test]
+fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    let tool = "sketch.bspline:through";
+    for (x, y) in [(1.0, 1.0), (5.0, 6.0), (10.0, 4.0), (14.0, 8.0)] {
+        h.click(x, y, tool);
+    }
+    h.key(KeyCode::Enter, Some(tool));
+    let sketch = h.sketch();
+    let spline = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .expect("a spline");
+    assert_eq!(spline.fit_points.len(), 4);
+    let near = |sketch: &Sketch, b: &wb_sketch::sketch::BSpline, x: f32, y: f32| {
+        b.points(sketch, 2000)
+            .unwrap()
+            .iter()
+            .any(|p| (p.x - x).abs() < 0.03 && (p.y - y).abs() < 0.03)
+    };
+    assert!(near(&sketch, &spline, 5.0, 6.0) && near(&sketch, &spline, 10.0, 4.0));
+
+    // Dragging a point it passes through, the curve follows.
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.click(10.0, 4.0, "sketch.select");
+    h.mouse_move(10.0, 1.0, "sketch.select");
+    h.release(10.0, 1.0, "sketch.select");
+    let sketch = h.sketch();
+    let spline = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        near(&sketch, &spline, 10.0, 1.0),
+        "follows the dragged point"
+    );
+    assert!(near(&sketch, &spline, 5.0, 6.0), "keeps the others");
+}

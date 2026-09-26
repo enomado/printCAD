@@ -181,10 +181,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                             .ok_or(ProfileError::MissingPoint(*id))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let segment = ProfileSegment::BSpline {
-                    control_points,
-                    periodic: b.periodic,
-                };
+                let segment = spline_segment(b, control_points);
                 if b.periodic {
                     wires.push(ProfileWire {
                         segments: vec![segment],
@@ -257,6 +254,35 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
     }
 
     Ok(wires)
+}
+
+/// The profile segment of spline `b` over its control point positions: the
+/// cubic over even knots as it always was, anything else with its degree
+/// and knots spelt out.
+fn spline_segment(b: &crate::sketch::BSpline, control_points: Vec<[f64; 2]>) -> ProfileSegment {
+    if b.is_default_cubic() {
+        return ProfileSegment::BSpline {
+            control_points,
+            periodic: b.periodic,
+        };
+    }
+    match crate::spline::Basis::of(b) {
+        Some(basis) => ProfileSegment::Nurbs {
+            degree: basis.degree() as u32,
+            knots: if b.periodic {
+                Vec::new()
+            } else {
+                basis.knots().to_vec()
+            },
+            control_points,
+            weights: Vec::new(),
+            periodic: b.periodic,
+        },
+        None => ProfileSegment::BSpline {
+            control_points,
+            periodic: b.periodic,
+        },
+    }
 }
 
 /// An arc of an ellipse's parameter span, `(t0, t1)` with `t1 > t0`, worked

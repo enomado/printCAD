@@ -1,5 +1,5 @@
 //! 2D curve math shared by the editing tools: segment/arc/circle
-//! intersections plus ellipse and B-spline sampling.
+//! intersections plus ellipse sampling.
 
 use glam::Vec2;
 
@@ -200,68 +200,6 @@ pub fn ellipse_arc_points(
         .collect()
 }
 
-/// Polyline sampling of a cubic B-spline over `ctrl`. Open splines are
-/// clamped (they pass through the first and last control point); periodic
-/// splines close smoothly (first == last sample). Fewer than 2 control
-/// points yield an empty polyline.
-pub fn bspline_points(ctrl: &[Vec2D], periodic: bool, samples: usize) -> Vec<Vec2D> {
-    let n = ctrl.len();
-    if n < 2 {
-        return Vec::new();
-    }
-    let degree = 3.min(n - 1);
-    // Periodic splines wrap `degree` extra control points; the knot vector
-    // is uniform. Open splines use a clamped uniform knot vector.
-    let (points, knots): (Vec<Vec2>, Vec<f32>) = if periodic {
-        let pts: Vec<Vec2> = ctrl
-            .iter()
-            .chain(ctrl.iter().take(degree))
-            .map(|p| p.to_glam())
-            .collect();
-        let knots = (0..pts.len() + degree + 1).map(|i| i as f32).collect();
-        (pts, knots)
-    } else {
-        let pts: Vec<Vec2> = ctrl.iter().map(|p| p.to_glam()).collect();
-        let m = pts.len() + degree + 1;
-        let inner = m - 2 * (degree + 1);
-        let mut knots = vec![0.0; degree + 1];
-        knots.extend((1..=inner).map(|i| i as f32 / (inner + 1) as f32));
-        knots.extend(std::iter::repeat_n(1.0, degree + 1));
-        (pts, knots)
-    };
-    let (t0, t1) = (knots[degree], knots[points.len()]);
-    (0..=samples)
-        .map(|i| {
-            let t = t0 + (t1 - t0) * (i as f32) / (samples as f32);
-            Vec2D::from_glam(de_boor(&points, &knots, degree, t))
-        })
-        .collect()
-}
-
-/// De Boor evaluation of a degree-`p` B-spline at parameter `t`.
-fn de_boor(points: &[Vec2], knots: &[f32], p: usize, t: f32) -> Vec2 {
-    // Knot span index k with knots[k] <= t < knots[k+1], clamped to the
-    // valid range so t == t1 evaluates the last span.
-    let k = knots[p..points.len()]
-        .iter()
-        .rposition(|&u| u <= t)
-        .map_or(p, |i| i + p)
-        .min(points.len() - 1);
-    let mut d: Vec<Vec2> = (0..=p).map(|j| points[k - p + j]).collect();
-    for r in 1..=p {
-        for j in (r..=p).rev() {
-            let (lo, hi) = (knots[j + k - p], knots[j + 1 + k - r]);
-            let alpha = if (hi - lo).abs() < f32::EPSILON {
-                0.0
-            } else {
-                (t - lo) / (hi - lo)
-            };
-            d[j] = d[j - 1] * (1.0 - alpha) + d[j] * alpha;
-        }
-    }
-    d[p]
-}
-
 // ---------------------------------------------------------- intersections
 
 /// A trim/extend-capable curve resolved to positions.
@@ -421,37 +359,5 @@ mod tests {
             let r = (dx / 4.0).powi(2) + (dy / 2.0).powi(2);
             assert!((r - 1.0).abs() < 1e-4, "off-ellipse point {p:?}");
         }
-    }
-
-    #[test]
-    fn open_bspline_hits_first_and_last_control_point() {
-        let ctrl = [
-            Vec2D::new(0.0, 0.0),
-            Vec2D::new(5.0, 8.0),
-            Vec2D::new(10.0, -3.0),
-            Vec2D::new(15.0, 2.0),
-        ];
-        let pts = bspline_points(&ctrl, false, 24);
-        let first = pts.first().unwrap();
-        let last = pts.last().unwrap();
-        assert!((*first - ctrl[0]).to_glam().length() < 1e-4);
-        assert!((*last - ctrl[3]).to_glam().length() < 1e-4);
-    }
-
-    #[test]
-    fn periodic_bspline_closes() {
-        let ctrl = [
-            Vec2D::new(0.0, 0.0),
-            Vec2D::new(10.0, 0.0),
-            Vec2D::new(10.0, 10.0),
-            Vec2D::new(0.0, 10.0),
-        ];
-        let pts = bspline_points(&ctrl, true, 32);
-        let first = pts.first().unwrap();
-        let last = pts.last().unwrap();
-        assert!(
-            (*first - *last).to_glam().length() < 1e-3,
-            "periodic spline sample loop closes: {first:?} vs {last:?}"
-        );
     }
 }

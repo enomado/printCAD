@@ -96,13 +96,7 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
                 }
             }
             GeometryElement::BSpline(spline) => {
-                let ctrl: Option<Vec<Vec2D>> = spline
-                    .control_points
-                    .iter()
-                    .map(|id| sketch.point_position(*id))
-                    .collect();
-                if let Some(ctrl) = ctrl {
-                    let pts = crate::geom2d::bspline_points(&ctrl, spline.periodic, 64);
+                if let Some(pts) = spline.points(sketch, 64) {
                     out.push(pts.iter().map(|p| to_world(*p)).collect());
                 }
             }

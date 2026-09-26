@@ -19,6 +19,7 @@ pub mod render;
 pub mod sketch;
 pub mod snap;
 mod solver;
+pub mod spline;
 mod step;
 pub mod style;
 mod tools;
@@ -485,7 +486,7 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.ellipse" => ("Ellipse", "Click the center"),
         "sketch.ellipse3" => ("Ellipse", "Click one end of the major axis"),
         "sketch.ellipse_arc" => ("Arc of ellipse", "Click the center"),
-        "sketch.bspline" => ("B-spline", "Click the first control point"),
+        "sketch.bspline" => ("B-spline", "Click its first point"),
         "sketch.rect" => ("Rectangle", "Click the first corner"),
         "sketch.rect_center" | "sketch.rect_center3" => ("Rectangle", "Click the center"),
         "sketch.rect3" => ("Rectangle", "Click the first corner"),
@@ -2091,6 +2092,8 @@ impl Workbench for SketchWorkbench {
                 "sketch.bspline" => vec![
                     ToolVariant::new("open", "Open", "bspline"),
                     ToolVariant::new("periodic", "Periodic", "periodic-bspline"),
+                    ToolVariant::new("through", "Through points", "bspline-knot"),
+                    ToolVariant::new("through_periodic", "Closed through points", "bspline-knot"),
                 ],
                 "sketch.rect" => vec![
                     ToolVariant::new("corners", "Two corners", "rectangle"),
@@ -3159,7 +3162,10 @@ impl SketchWorkbench {
                 }
             }
             ("sketch.bspline", Some(variant)) => {
-                self.tool_params.bspline_periodic = variant == "periodic";
+                self.tool_params.bspline_periodic =
+                    matches!(variant, "periodic" | "through_periodic");
+                self.tool_params.bspline_interpolate =
+                    matches!(variant, "through" | "through_periodic");
             }
             _ => {}
         }
@@ -3424,8 +3430,9 @@ impl SketchWorkbench {
                 GeometryElement::Line(l) => vec![l.start, l.end],
                 GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                 GeometryElement::Circle(c) => vec![c.center],
-                ellipse @ GeometryElement::Ellipse(_) => Sketch::curve_point_ids(ellipse),
-                GeometryElement::BSpline(b) => b.control_points.clone(),
+                curve @ (GeometryElement::Ellipse(_) | GeometryElement::BSpline(_)) => {
+                    Sketch::curve_point_ids(curve)
+                }
             })
             .collect();
         self.selected.clear();
@@ -3630,8 +3637,9 @@ impl SketchWorkbench {
                     GeometryElement::Line(l) => vec![l.start, l.end],
                     GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                     GeometryElement::Circle(c) => vec![c.center],
-                    ellipse @ GeometryElement::Ellipse(_) => Sketch::curve_point_ids(ellipse),
-                    GeometryElement::BSpline(b) => b.control_points.clone(),
+                    curve @ (GeometryElement::Ellipse(_) | GeometryElement::BSpline(_)) => {
+                        Sketch::curve_point_ids(curve)
+                    }
                 };
                 if refs.iter().any(|r| free.contains(r)) {
                     self.selected.insert(g.id());
@@ -4299,9 +4307,10 @@ fn element_fully_inside(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max
             .points(sketch, 32)
             .is_some_and(|points| points.into_iter().all(inside)),
         // The spline lies in its control polygon's convex hull, so all
-        // control points inside implies the curve is inside.
+        // control points inside implies the curve is inside; the points it
+        // is drawn through lie on it.
         GeometryElement::BSpline(b) => b
-            .control_points
+            .point_ids()
             .iter()
             .map(|id| sketch.point_position(*id))
             .all(|p| p.is_some_and(inside)),

@@ -180,7 +180,8 @@ pub fn register(context: &mut WorkbenchContext) {
             "params",
             ParamKind::Any,
             "Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, \
-             offset_distance, copies, bspline_periodic, auto_constraints, array_rows, \
+             offset_distance, copies, bspline_periodic, bspline_degree, bspline_interpolate, \
+             auto_constraints, array_rows, \
              array_cols, array_dx, array_dy",
         )
         .optional(

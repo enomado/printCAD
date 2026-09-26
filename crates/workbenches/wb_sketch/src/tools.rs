@@ -18,8 +18,8 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub use draw::{
-    arc_slot_shape, frame_inner_corners, polygon_vertices, rect_center3_corners, rect3_corners,
-    slot_corners,
+    arc_slot_shape, bspline_preview, frame_inner_corners, polygon_vertices, rect_center3_corners,
+    rect3_corners, slot_corners,
 };
 pub use modify::{next_stroke_crossing, trim_preview};
 pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
@@ -151,6 +151,11 @@ pub struct ToolParams {
     pub copies: u32,
     /// Whether new B-splines close on themselves.
     pub bspline_periodic: bool,
+    /// The degree of new B-splines (2 to 5).
+    pub bspline_degree: u32,
+    /// New B-splines pass through the clicks rather than use them as
+    /// control points.
+    pub bspline_interpolate: bool,
     /// Whether the line tool adds horizontal/vertical constraints to
     /// axis-snapped segments.
     pub auto_constraints: bool,
@@ -171,6 +176,8 @@ impl Default for ToolParams {
             offset_distance: 2.0,
             copies: 0,
             bspline_periodic: false,
+            bspline_degree: 3,
+            bspline_interpolate: false,
             auto_constraints: true,
             array_rows: 2,
             array_cols: 2,
@@ -238,7 +245,7 @@ impl ToolState {
                 Some("Polyline: click where the tangent arc ends; M for lines")
             }
             ToolState::BSplineDraw { .. } => Some(
-                "Spline: click control points; Enter/right-click finishes (periodic: tool settings)",
+                "Spline: click its points; Enter/right-click finishes (degree, closed: tool settings)",
             ),
             ToolState::TranslateFrom { .. } => Some("Move: click the destination"),
             ToolState::RotateCenter { .. } => Some("Rotate: click the angle reference"),
@@ -479,9 +486,7 @@ pub fn finish_click_sequence(
     params: &ToolParams,
 ) -> ToolEffect {
     match state {
-        ToolState::BSplineDraw { .. } => {
-            draw::bspline_finish(state, sketch, params.bspline_periodic)
-        }
+        ToolState::BSplineDraw { .. } => draw::bspline_finish(state, sketch, params),
         _ => {
             *state = ToolState::Idle;
             ToolEffect::none()

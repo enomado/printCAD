@@ -58,7 +58,9 @@ pub enum SolveOutcome {
 /// still written back. Also updates `sketch.is_fully_constrained`.
 pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
     let sys = build_system(sketch);
-    solve_system(sketch, sys)
+    let outcome = solve_system(sketch, sys);
+    crate::spline::refit_splines(sketch);
+    outcome
 }
 
 /// [`solve`], with the points `held` staying where they are (points being
@@ -76,7 +78,10 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
             sketch.geometry = before;
             solve(sketch)
         }
-        outcome => outcome,
+        outcome => {
+            crate::spline::refit_splines(sketch);
+            outcome
+        }
     }
 }
 
@@ -623,6 +628,13 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
     }
     for id in held {
         if let Some(&v) = point_vars.get(id) {
+            pinned.extend([v, v + 1]);
+        }
+    }
+    // A spline drawn through points has its control points worked out from
+    // them after the solve: the solver leaves them be.
+    for id in crate::spline::derived_points(sketch) {
+        if let Some(&v) = point_vars.get(&id) {
             pinned.extend([v, v + 1]);
         }
     }

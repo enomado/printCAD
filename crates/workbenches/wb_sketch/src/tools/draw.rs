@@ -3,12 +3,14 @@
 
 use uuid::Uuid;
 
+use super::ToolParams;
 use super::{ToolEffect, ToolState, materialize, materialize_on_curve, short};
 use crate::geom2d;
 use crate::sketch::{
     Arc, BSpline, Circle, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
 };
 use crate::snap::{self, AxisSnap, SnapTarget, arc_angles};
+use crate::spline;
 
 /// Point snap first (id reuse — never a coincident duplicate); otherwise a
 /// curve within tolerance captures the click, projecting the position onto
@@ -1066,12 +1068,32 @@ pub(super) fn bspline(
     ToolEffect::none()
 }
 
+/// The spline the tool's clicks so far make with `params`: over them as
+/// control points, or through them.
+pub fn bspline_preview(clicks: &[Vec2D], params: &ToolParams) -> Option<Vec<Vec2D>> {
+    let points: Vec<[f64; 2]> = clicks
+        .iter()
+        .map(|p| [f64::from(p.x), f64::from(p.y)])
+        .collect();
+    let periodic = params.bspline_periodic;
+    let (degree, knots, control) = if params.bspline_interpolate {
+        let fit = spline::interpolate(&points, params.bspline_degree, periodic)?;
+        (fit.degree, fit.knots, fit.control)
+    } else {
+        (params.bspline_degree, Vec::new(), points)
+    };
+    let basis = spline::Basis::new(degree, control.len(), &knots, periodic)?;
+    Some(basis.sample(&control, 48))
+}
+
 /// Complete the in-progress B-spline (right-click/Enter). Fewer than 3
-/// control points cancels without creating geometry.
+/// points cancels without creating geometry. Through points, the clicks
+/// become the points it passes through and its control points are worked
+/// out from them.
 pub(super) fn bspline_finish(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    periodic: bool,
+    params: &ToolParams,
 ) -> ToolEffect {
     let ToolState::BSplineDraw { points } = std::mem::take(state) else {
         return ToolEffect::none();
@@ -1079,12 +1101,64 @@ pub(super) fn bspline_finish(
     if points.len() < 3 {
         return ToolEffect::none();
     }
+    let periodic = params.bspline_periodic;
+    let kind = if periodic { "Periodic" } else { "Open" };
+    let n = points.len();
+    if params.bspline_interpolate {
+        let Some(at) = points
+            .iter()
+            .map(|t| t.position(sketch))
+            .collect::<Option<Vec<Vec2D>>>()
+        else {
+            return ToolEffect::none();
+        };
+        let at: Vec<[f64; 2]> = at
+            .iter()
+            .map(|p| [f64::from(p.x), f64::from(p.y)])
+            .collect();
+        let Some(fit) = spline::interpolate(&at, params.bspline_degree, periodic) else {
+            return ToolEffect::log("No spline goes through the same point twice in a row");
+        };
+        let fit_points: Vec<Uuid> = points.iter().map(|t| materialize(sketch, *t)).collect();
+        // An open spline starts and ends on its first and last points: they
+        // are its end control points too, one point each, so the curves
+        // drawn to them close profiles through them.
+        let last = fit.control.len() - 1;
+        let control: Vec<Uuid> = fit
+            .control
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match i {
+                0 if !periodic => fit_points[0],
+                i if i == last && !periodic => fit_points[n - 1],
+                _ => {
+                    let at = Vec2D::new(p[0] as f32, p[1] as f32);
+                    sketch.add_geometry(GeometryElement::Point(Point::new(at)))
+                }
+            })
+            .collect();
+        let degree = fit.degree;
+        sketch.add_geometry(GeometryElement::BSpline(BSpline {
+            degree,
+            knots: fit.knots,
+            fit_points,
+            fit_params: fit.params,
+            ..BSpline::new(control, periodic)
+        }));
+        return ToolEffect::changed(format!(
+            "{kind} B-spline of degree {degree} through {n} points"
+        ));
+    }
     let ids: Vec<Uuid> = points.iter().map(|t| materialize(sketch, *t)).collect();
-    let n = ids.len();
-    sketch.add_geometry(GeometryElement::BSpline(BSpline::new(ids, periodic)));
+    // The degree asked for; with too few control points for it the curve
+    // takes the highest they allow.
+    let degree = params.bspline_degree.clamp(1, spline::MAX_DEGREE);
+    sketch.add_geometry(GeometryElement::BSpline(BSpline {
+        degree,
+        ..BSpline::new(ids, periodic)
+    }));
     ToolEffect::changed(format!(
-        "{} B-spline with {n} control points",
-        if periodic { "Periodic" } else { "Open" }
+        "{kind} B-spline of degree {degree} with {n} control points"
     ))
 }
 

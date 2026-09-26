@@ -645,6 +645,22 @@ pub enum ProfileSegment {
         control_points: Vec<[f64; 2]>,
         periodic: bool,
     },
+    /// A B-spline of any degree over its own knots, rational when it has
+    /// weights: an exact conic arc, a spline drawn through points. An open
+    /// one's knots are clamped (`control points + degree + 1` of them), so
+    /// it runs first → last control point; a periodic one is a uniform ring
+    /// over its control points closing smoothly on itself, and its knots
+    /// are not used.
+    Nurbs {
+        degree: u32,
+        knots: Vec<f64>,
+        control_points: Vec<[f64; 2]>,
+        /// One per control point; empty when every weight is one.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        weights: Vec<f64>,
+        #[serde(default)]
+        periodic: bool,
+    },
 }
 
 /// A closed loop of profile segments. Consecutive segments share endpoints;

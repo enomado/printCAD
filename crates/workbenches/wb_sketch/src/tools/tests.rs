@@ -2545,3 +2545,188 @@ fn a_trim_stroke_finds_what_it_crosses_first() {
     // A path that stops short crosses nothing.
     assert!(next_stroke_crossing(&sketch, from, Vec2D::new(0.5, 4.0)).is_none());
 }
+
+fn spline_of(sketch: &Sketch) -> crate::sketch::BSpline {
+    sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .expect("a spline")
+}
+
+/// The spline passes within `tol` of `p`.
+fn passes_through(sketch: &Sketch, spline: &crate::sketch::BSpline, p: Vec2D, tol: f32) -> bool {
+    spline
+        .points(sketch, 2000)
+        .unwrap()
+        .iter()
+        .any(|q| (*q - p).to_glam().length() < tol)
+}
+
+#[test]
+fn a_spline_through_points_passes_through_every_click_and_follows_them() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        bspline_interpolate: true,
+        bspline_degree: 4,
+        ..ToolParams::default()
+    };
+    let clicks = [(1.0, 1.0), (4.0, 5.0), (8.0, 6.0), (12.0, 2.0), (15.0, 4.0)];
+    for (x, y) in clicks {
+        click_p(
+            &mut state,
+            "sketch.bspline",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+            &params,
+        );
+    }
+    let fx = finish_click_sequence(&mut state, &mut sketch, &params);
+    assert!(fx.changed);
+    let spline = spline_of(&sketch);
+    assert_eq!(spline.degree, 4);
+    assert_eq!(spline.fit_points.len(), 5);
+    assert_eq!(spline.control_points.len(), 5);
+    assert_eq!(
+        (spline.control_points[0], spline.control_points[4]),
+        (spline.fit_points[0], spline.fit_points[4]),
+        "the ends are one point each"
+    );
+    assert_eq!(
+        points(&sketch),
+        5 + 3,
+        "five clicks and three inner controls"
+    );
+    for (x, y) in clicks {
+        assert!(passes_through(&sketch, &spline, Vec2D::new(x, y), 0.02));
+    }
+    // The profile carries its degree and knots.
+    let b = pt(&mut sketch, 1.0, -3.0);
+    let a = spline.fit_points[0];
+    let e = spline.fit_points[4];
+    let c = pt(&mut sketch, 15.0, -3.0);
+    line_between(&mut sketch, e, c);
+    line_between(&mut sketch, c, b);
+    line_between(&mut sketch, b, a);
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(wires[0].segments.iter().any(|s| matches!(
+        s,
+        kernel_api::ProfileSegment::Nurbs { degree: 4, knots, control_points, .. }
+            if knots.len() == 10 && control_points.len() == 5
+    )));
+
+    // Dragged, a point it passes through takes the curve with it.
+    let middle = spline.fit_points[2];
+    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(middle) {
+        p.position = Vec2D::new(8.0, 9.0);
+    }
+    crate::solver::solve_holding(&mut sketch, &[middle]);
+    let spline = spline_of(&sketch);
+    assert!(passes_through(&sketch, &spline, Vec2D::new(8.0, 9.0), 0.02));
+    for (x, y) in [clicks[0], clicks[1], clicks[3], clicks[4]] {
+        assert!(passes_through(&sketch, &spline, Vec2D::new(x, y), 0.02));
+    }
+}
+
+#[test]
+fn a_closed_spline_through_points_is_its_own_profile() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let params = ToolParams {
+        bspline_interpolate: true,
+        bspline_periodic: true,
+        bspline_degree: 2,
+        ..ToolParams::default()
+    };
+    let clicks = [(1.0, 1.0), (9.0, 1.0), (9.0, 7.0), (1.0, 7.0)];
+    for (x, y) in clicks {
+        click_p(
+            &mut state,
+            "sketch.bspline",
+            &mut sketch,
+            Vec2D::new(x, y),
+            0.1,
+            &params,
+        );
+    }
+    finish_click_sequence(&mut state, &mut sketch, &params);
+    let spline = spline_of(&sketch);
+    assert!(spline.periodic && spline.knots.is_empty());
+    for (x, y) in clicks {
+        assert!(passes_through(&sketch, &spline, Vec2D::new(x, y), 0.02));
+    }
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert!(matches!(
+        &wires[0].segments[..],
+        [kernel_api::ProfileSegment::Nurbs {
+            degree: 2,
+            periodic: true,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn a_control_point_spline_takes_its_degree_and_a_cubic_stays_as_it_was() {
+    for (degree, nurbs) in [(2, true), (3, false), (5, true)] {
+        let mut sketch = Sketch::new("t");
+        let mut state = ToolState::default();
+        let params = ToolParams {
+            bspline_degree: degree,
+            ..ToolParams::default()
+        };
+        for (x, y) in [
+            (1.0, 1.0),
+            (3.0, 5.0),
+            (6.0, 6.0),
+            (8.0, 2.0),
+            (10.0, 5.0),
+            (12.0, 1.0),
+        ] {
+            click_p(
+                &mut state,
+                "sketch.bspline",
+                &mut sketch,
+                Vec2D::new(x, y),
+                0.1,
+                &params,
+            );
+        }
+        finish_click_sequence(&mut state, &mut sketch, &params);
+        let spline = spline_of(&sketch);
+        assert_eq!(spline.degree, degree);
+        assert!(spline.fit_points.is_empty());
+        // Clamped: it starts and ends on its end control points.
+        let curve = spline.points(&sketch, 10).unwrap();
+        assert!((curve[0] - Vec2D::new(1.0, 1.0)).to_glam().length() < 1e-5);
+        assert!((curve[10] - Vec2D::new(12.0, 1.0)).to_glam().length() < 1e-5);
+        let first = spline.control_points[0];
+        let last = spline.control_points[5];
+        line_between(&mut sketch, last, first);
+        let wires = crate::profile::extract_wires(&sketch).unwrap();
+        let is_nurbs = wires[0]
+            .segments
+            .iter()
+            .any(|s| matches!(s, kernel_api::ProfileSegment::Nurbs { .. }));
+        assert_eq!(is_nurbs, nurbs, "degree {degree}");
+    }
+}
+
+#[test]
+fn a_spline_stored_before_degrees_is_a_cubic() {
+    let json = serde_json::json!({
+        "id": Uuid::new_v4(),
+        "control_points": [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()],
+        "periodic": false,
+    });
+    let spline: crate::sketch::BSpline = serde_json::from_value(json).unwrap();
+    assert_eq!(spline.degree, 3);
+    assert!(spline.is_default_cubic() && spline.fit_points.is_empty());
+    let back = serde_json::to_value(&spline).unwrap();
+    assert!(back.get("degree").is_none() && back.get("knots").is_none());
+}

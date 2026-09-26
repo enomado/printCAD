@@ -372,10 +372,16 @@ pub fn copy_mapped(
                 });
                 GeometryElement::Ellipse(copy)
             }
-            GeometryElement::BSpline(b) => GeometryElement::BSpline(BSpline::new(
-                b.control_points.iter().map(|pid| map[pid]).collect(),
-                b.periodic,
-            )),
+            // A similarity keeps a spline's parameters: its degree, knots
+            // and the parameters of the points it passes through carry over.
+            GeometryElement::BSpline(b) => GeometryElement::BSpline(
+                BSpline {
+                    control_points: b.control_points.iter().map(|pid| map[pid]).collect(),
+                    fit_points: b.fit_points.iter().map(|pid| map[pid]).collect(),
+                    ..BSpline::new(Vec::new(), b.periodic)
+                }
+                .with_shape_of(b),
+            ),
             GeometryElement::Point(_) => continue,
         };
         let flag = source.is_construction(geom.id());
