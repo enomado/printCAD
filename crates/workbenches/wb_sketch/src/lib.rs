@@ -168,7 +168,8 @@ pub struct SketchOptions {
     pub auto_constraints: bool,
     /// An auto constraint the solver reports redundant is dropped again.
     pub avoid_redundant_auto: bool,
-    /// After every solve, redundant constraints are removed.
+    /// A constraint a constraint tool adds takes away the older ones it
+    /// made redundant.
     pub auto_remove_redundant: bool,
     /// The solver runs after every edit; off, it runs on request.
     pub auto_update: bool,
@@ -598,8 +599,7 @@ impl SketchWorkbench {
         self.solve_now(ctx, feature);
     }
 
-    /// Run the solver whatever the auto-update switch says, and drop the
-    /// redundant constraints when that switch is on.
+    /// Run the solver whatever the auto-update switch says.
     fn solve_now(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
         let outcome = solver::solve(&mut feature.sketch);
         self.last_solve = Some(outcome);
@@ -608,21 +608,6 @@ impl SketchWorkbench {
             ctx.log_warn(format!(
                 "Constraints did not converge (residual {residual:.2e}); check for contradictions"
             ));
-        }
-        if self.options.auto_remove_redundant {
-            let diagnosis = solver::diagnose(&feature.sketch);
-            if !diagnosis.redundant.is_empty() {
-                let before = feature.sketch.constraints.len();
-                feature
-                    .sketch
-                    .constraints
-                    .retain(|c| !diagnosis.redundant.contains(&c.id));
-                let dropped = before - feature.sketch.constraints.len();
-                ctx.log_info(format!("Removed {dropped} redundant constraint(s)"));
-                self.selected_constraints
-                    .retain(|id| !diagnosis.redundant.contains(id));
-            }
-            self.last_diagnosis = Some(solver::diagnose(&feature.sketch));
         }
     }
 
@@ -2558,7 +2543,7 @@ impl Workbench for SketchWorkbench {
                     "Auto remove redundants",
                     &mut self.options.auto_remove_redundant,
                 )
-                .hint("Redundant constraints go after every solve"),
+                .hint("A new constraint takes away the older ones it makes redundant"),
                 PrefRow::toggle("Snap to objects", &mut snap)
                     .hint("Endpoints, midpoints and intersections attract the cursor"),
             ],
@@ -3183,16 +3168,33 @@ impl SketchWorkbench {
         let mut feature = feature;
         match commands::constrain(&mut feature.sketch, which, &items, None) {
             Ok(made) => {
+                let remove_redundant = self.options.auto_remove_redundant;
+                let removed = if remove_redundant {
+                    commands::remove_superseded(&mut feature.sketch, &made)
+                } else {
+                    0
+                };
                 if let Some(sketch_id) = self.active_sketch_id {
+                    let mut args = serde_json::json!({
+                        "sketch": sketch_id.0.to_string(),
+                        "kind": which,
+                        "items": ids_json(&items),
+                    });
+                    if remove_redundant {
+                        args["remove_redundant"] = serde_json::json!(true);
+                    }
                     ctx.record(
                         "sketch.constrain",
-                        commands::args(serde_json::json!({
-                            "sketch": sketch_id.0.to_string(),
-                            "kind": which,
-                            "items": ids_json(&items),
-                        })),
+                        commands::args(args),
                         serde_json::json!(made),
                     );
+                }
+                if removed > 0 {
+                    ctx.log_info(format!(
+                        "Removed {removed} constraint(s) the new one made redundant"
+                    ));
+                    self.selected_constraints
+                        .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
                 }
                 for id in &made {
                     if let Some(c) = feature

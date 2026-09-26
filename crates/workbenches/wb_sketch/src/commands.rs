@@ -138,6 +138,11 @@ pub fn register(context: &mut WorkbenchContext) {
             "A dimension's value (mm, degrees for an angle, the ratio of indices for a \
              refraction); the measured one when left out",
         )
+        .optional(
+            "remove_redundant",
+            ParamKind::Bool,
+            "Take away the older constraints the new ones make redundant",
+        )
         .returns("the new constraints' ids"),
     );
     context.register_command(
@@ -498,7 +503,12 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let kind = a.string("kind")?;
             let items = ids(args.get("items"), "items", sketch)?;
             let value = a.opt_number("value")?;
-            json!(constrain(sketch, kind, &items, value)?)
+            let remove_redundant = a.opt_bool("remove_redundant")?.unwrap_or(false);
+            let made = constrain(sketch, kind, &items, value)?;
+            if remove_redundant {
+                remove_superseded(sketch, &made);
+            }
+            json!(made)
         }
         "sketch.set_value" => {
             let id = a.id("constraint")?;
@@ -1380,6 +1390,15 @@ pub(crate) fn constrain(
         made.push(sketch.add_constraint(k).to_string());
     }
     Ok(made)
+}
+
+/// Take away the older constraints the constraints `made` (their ids, as
+/// [`constrain`] returns them) made redundant; returns how many went.
+pub(crate) fn remove_superseded(sketch: &mut Sketch, made: &[String]) -> usize {
+    let new: Vec<Uuid> = made.iter().filter_map(|id| id.parse().ok()).collect();
+    let gone = crate::solver::superseded(sketch, &new);
+    sketch.constraints.retain(|c| !gone.contains(&c.id));
+    gone.len()
 }
 
 /// The name of a constraint kind, as it is stored.

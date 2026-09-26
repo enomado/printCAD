@@ -3199,7 +3199,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
 /// from the toolbar the way a user makes them.
 mod curve_constraints {
     use super::*;
-    use wb_sketch::sketch::ConstraintKind;
+    use wb_sketch::sketch::{ConstraintKind, X_AXIS_ID};
 
     /// Press and release at a sketch point in select mode.
     fn pick(h: &mut Harness, x: f32, y: f32) {
@@ -3499,6 +3499,67 @@ mod curve_constraints {
             (sin_in / sin_out - 1.5).abs() < 1e-3,
             "the rays bend to the new ratio: {}",
             sin_in / sin_out
+        );
+    }
+
+    /// A level line and the X axis: the line's horizontal constraint and a
+    /// parallel to the axis say the same thing.
+    fn level_line_against_the_axis(h: &mut Harness) {
+        h.create_sketch();
+        h.click(4.0, 4.0, "sketch.line");
+        h.click(12.0, 4.02, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        assert!(
+            h.sketch()
+                .constraints
+                .iter()
+                .any(|c| matches!(c.kind, ConstraintKind::Horizontal { .. })),
+            "the line was drawn level"
+        );
+        pick(h, 8.0, 4.0);
+        pick(h, 20.0, 0.0);
+    }
+
+    #[test]
+    fn with_the_preference_on_a_new_constraint_takes_the_one_it_repeats() {
+        let mut h = Harness::new();
+        h.wb.options.auto_remove_redundant = true;
+        level_line_against_the_axis(&mut h);
+        h.key(KeyCode::A, Some("sketch.constrain.parallel"));
+        let kinds: Vec<ConstraintKind> =
+            h.sketch().constraints.into_iter().map(|c| c.kind).collect();
+        assert!(
+            kinds.iter().any(|k| matches!(
+                k,
+                ConstraintKind::Parallel { line2, .. } if *line2 == X_AXIS_ID
+            )),
+            "the new one stays: {kinds:?}"
+        );
+        assert!(
+            !kinds
+                .iter()
+                .any(|k| matches!(k, ConstraintKind::Horizontal { .. })),
+            "the older one it repeated went: {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn with_the_preference_off_both_stay() {
+        let mut h = Harness::new();
+        h.wb.options.auto_remove_redundant = false;
+        level_line_against_the_axis(&mut h);
+        h.key(KeyCode::A, Some("sketch.constrain.parallel"));
+        let kinds: Vec<ConstraintKind> =
+            h.sketch().constraints.into_iter().map(|c| c.kind).collect();
+        assert!(
+            kinds
+                .iter()
+                .any(|k| matches!(k, ConstraintKind::Horizontal { .. }))
+                && kinds
+                    .iter()
+                    .any(|k| matches!(k, ConstraintKind::Parallel { .. })),
+            "{kinds:?}"
         );
     }
 }

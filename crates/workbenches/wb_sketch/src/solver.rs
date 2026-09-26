@@ -258,6 +258,37 @@ pub fn diagnose(sketch: &Sketch) -> Diagnosis {
     diagnosis
 }
 
+/// The older constraints the constraints `new` (already in the sketch)
+/// made redundant: those to take away so the new ones say something of
+/// their own. One is taken at a time, the most recently added first, until
+/// no new constraint is redundant; an older constraint that was redundant
+/// before the new ones came is never one of them. Empty when the sketch is
+/// too large to diagnose or the new constraints conflict instead.
+pub fn superseded(sketch: &Sketch, new: &[Uuid]) -> Vec<Uuid> {
+    let mut before = sketch.clone();
+    before.constraints.retain(|c| !new.contains(&c.id));
+    let already = diagnose(&before);
+    if !already.analyzed {
+        return Vec::new();
+    }
+    let mut work = sketch.clone();
+    let mut removed = Vec::new();
+    loop {
+        let diagnosis = diagnose(&work);
+        if !diagnosis.analyzed || !new.iter().any(|id| diagnosis.redundant.contains(id)) {
+            break;
+        }
+        let Some(older) = work.constraints.iter().rev().map(|c| c.id).find(|id| {
+            !new.contains(id) && diagnosis.redundant.contains(id) && !already.redundant.contains(id)
+        }) else {
+            break;
+        };
+        work.constraints.retain(|c| c.id != older);
+        removed.push(older);
+    }
+    removed
+}
+
 /// One resolved constraint residual, expressed in variable indices.
 enum ResidualSpec {
     /// p - pos (2 residuals).
@@ -2765,5 +2796,37 @@ mod curve_constraints {
         let out = sketch.point_position(exit).unwrap().to_glam();
         near(out.x / out.length(), 45f32.to_radians().sin() / 1.5);
         assert!(out.y < 0.0, "refracted, not reflected: {out:?}");
+    }
+
+    #[test]
+    fn a_new_constraint_supersedes_the_older_one_it_repeats() {
+        let mut sketch = Sketch::new("t");
+        let a = point(&mut sketch, 0.0, 0.0);
+        let b = point(&mut sketch, 10.0, 0.0);
+        let level = line(&mut sketch, a, b);
+        let horizontal = sketch.add_constraint(ConstraintKind::Horizontal { element: level });
+        let length = sketch.add_constraint(ConstraintKind::Length {
+            line: level,
+            length: 10.0,
+        });
+        let parallel = sketch.add_constraint(ConstraintKind::Parallel {
+            line1: level,
+            line2: crate::sketch::X_AXIS_ID,
+        });
+        assert_eq!(superseded(&sketch, &[parallel]), vec![horizontal]);
+        assert!(superseded(&sketch, &[length]).is_empty(), "nothing to take");
+
+        // Redundancy the sketch had already is none of the new one's doing.
+        let mut sketch = Sketch::new("t");
+        let a = point(&mut sketch, 0.0, 0.0);
+        let b = point(&mut sketch, 10.0, 0.0);
+        let level = line(&mut sketch, a, b);
+        sketch.add_constraint(ConstraintKind::Horizontal { element: level });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: level });
+        let length = sketch.add_constraint(ConstraintKind::Length {
+            line: level,
+            length: 10.0,
+        });
+        assert!(superseded(&sketch, &[length]).is_empty());
     }
 }
