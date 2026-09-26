@@ -234,7 +234,14 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
         loop {
             used[current_idx] = true;
             let edge = &edges[current_idx];
-            segments.push(edge.segment.clone());
+            // Each segment runs the way the walk goes: a curve drawn from
+            // its other end (an arc turning clockwise round the loop) is
+            // turned about.
+            segments.push(if edge.ends.0 == current_point {
+                edge.segment.clone()
+            } else {
+                reversed(&edge.segment)
+            });
             // Advance to the far end of this edge.
             current_point = if edge.ends.0 == current_point {
                 edge.ends.1
@@ -257,6 +264,30 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
     }
 
     Ok(wires)
+}
+
+/// `segment` run from its end to its start. An arc of an ellipse only runs
+/// counter-clockwise, so it stays as it is.
+fn reversed(segment: &ProfileSegment) -> ProfileSegment {
+    match segment {
+        ProfileSegment::Line { start, end } => ProfileSegment::Line {
+            start: *end,
+            end: *start,
+        },
+        ProfileSegment::Arc { start, mid, end } => ProfileSegment::Arc {
+            start: *end,
+            mid: *mid,
+            end: *start,
+        },
+        ProfileSegment::BSpline {
+            control_points,
+            periodic,
+        } => ProfileSegment::BSpline {
+            control_points: control_points.iter().rev().copied().collect(),
+            periodic: *periodic,
+        },
+        other => other.clone(),
+    }
 }
 
 /// An arc of an ellipse's parameter span, `(t0, t1)` with `t1 > t0`, worked
@@ -458,5 +489,39 @@ mod tests {
         let on_right = (mid[0] - 12.0).abs() < 1e-4 && (mid[1] - 2.0).abs() < 1e-4;
         let on_left = (mid[0] + 2.0).abs() < 1e-4 && (mid[1] - 2.0).abs() < 1e-4;
         assert!(on_right || on_left, "arc mid off-curve: {mid:?}");
+    }
+
+    #[test]
+    fn every_segment_runs_on_from_where_the_last_one_ended() {
+        // A notch cut into a square by a clockwise arc, and one side drawn
+        // backwards: the wire still runs one way round.
+        let mut sketch = Sketch::new("t");
+        let a = pt(&mut sketch, 0.0, 0.0);
+        let b = pt(&mut sketch, 4.0, 0.0);
+        let c = pt(&mut sketch, 6.0, 0.0);
+        let d = pt(&mut sketch, 10.0, 0.0);
+        let e = pt(&mut sketch, 10.0, 10.0);
+        let f = pt(&mut sketch, 0.0, 10.0);
+        let notch = pt(&mut sketch, 5.0, 0.0);
+        line(&mut sketch, a, b);
+        // Counter-clockwise from c to b about (5, 0): over the top, into
+        // the square.
+        sketch.add_geometry(GeometryElement::Arc(Arc::new(notch, c, b, 1.0)));
+        line(&mut sketch, c, d);
+        line(&mut sketch, e, d);
+        line(&mut sketch, e, f);
+        line(&mut sketch, f, a);
+        let wires = extract_wires(&sketch).unwrap();
+        let ends = |s: &ProfileSegment| match s {
+            ProfileSegment::Line { start, end } | ProfileSegment::Arc { start, end, .. } => {
+                (*start, *end)
+            }
+            _ => unreachable!(),
+        };
+        let segments = &wires[0].segments;
+        for (i, segment) in segments.iter().enumerate() {
+            let next = &segments[(i + 1) % segments.len()];
+            assert_eq!(ends(segment).1, ends(next).0, "segment {i}");
+        }
     }
 }
