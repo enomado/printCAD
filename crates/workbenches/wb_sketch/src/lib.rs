@@ -7,6 +7,7 @@ mod constrain;
 mod dxf;
 mod external;
 mod feature;
+pub mod generator;
 mod geom2d;
 mod glyphs;
 mod overlay;
@@ -1779,7 +1780,15 @@ impl Workbench for SketchWorkbench {
         .modal()
     }
 
-    fn feature_info(&self, _node: &core_document::FeatureNode) -> FeatureInfo {
+    fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
+        if let Some(generator) = generator::generator_of(node) {
+            return FeatureInfo {
+                icon: generator.icon(),
+                kind_label: format!("{} profile", generator.label()),
+                family_label: "Sketch".to_string(),
+                builds_solid: false,
+            };
+        }
         FeatureInfo {
             icon: "tree-sketch",
             kind_label: "Sketch".to_string(),
@@ -1848,6 +1857,9 @@ impl Workbench for SketchWorkbench {
     ) -> core_document::CommandResult {
         if id == "sketch.wall_thickness" {
             return self.wall_thickness_command(args, ctx);
+        }
+        if id == "sketch.generator" {
+            return generator::command(args, ctx);
         }
         commands::run(id, args, ctx)
     }
@@ -1963,6 +1975,7 @@ impl Workbench for SketchWorkbench {
 
     fn configure(&self, context: &mut WorkbenchContext) {
         commands::register(context);
+        generator::register(context);
         context.register_action(
             core_document::ActionDescriptor::new(
                 POLYLINE_ARC_ACTION,
@@ -2370,6 +2383,12 @@ impl Workbench for SketchWorkbench {
             return InputResult::ignored();
         }
 
+        // A generated sketch is made from its numbers, in its panel; the
+        // viewport leaves its curves alone.
+        if self.editing_generated(ctx) {
+            return InputResult::ignored();
+        }
+
         // Action tools that act on the selection or the whole sketch.
         if let (Some(tool), Some(base)) = (active_tool, base) {
             if let Some(rest) = base.strip_prefix("sketch.constrain.") {
@@ -2651,6 +2670,9 @@ impl Workbench for SketchWorkbench {
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        if self.editing_generated(ctx) {
+            return tool_id == "sketch.finish";
+        }
         let editing = self.active_sketch_id.is_some();
         if let Some(rest) = tool_id.strip_prefix("sketch.constrain.") {
             let which = tool_variant(tool_id).unwrap_or(rest);
