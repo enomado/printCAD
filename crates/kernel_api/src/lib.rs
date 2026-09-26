@@ -688,6 +688,8 @@ pub enum BooleanOp {
     Fuse,
     /// Subtract from the existing solid (Pocket).
     Cut,
+    /// Keep only what the existing solid and the tool share.
+    Common,
 }
 
 /// A set of closed wires on one plane. The largest-area wire is the outer
@@ -794,7 +796,8 @@ pub enum SweepKind {
         termination: RevolveTermination,
     },
     /// Sweep the profile along a helix whose axis lies in the sketch plane.
-    /// `height == 0` produces a flat spiral driven by `cone_angle_deg`.
+    /// A cone angle moves every point away from the axis by tan(angle) of
+    /// every pitch it climbs.
     Helix {
         axis_origin: [f64; 2],
         axis_dir: [f64; 2],
@@ -803,6 +806,15 @@ pub enum SweepKind {
         left_handed: bool,
         cone_angle_deg: f64,
         reversed: bool,
+        /// How many turns, when given: the pitch is then `height / turns`
+        /// and `pitch` is not read. A height of 0 with turns and growth is
+        /// a flat spiral.
+        #[serde(default)]
+        turns: Option<f64>,
+        /// How far every point moves away from the axis per turn, when
+        /// given, in place of `cone_angle_deg`.
+        #[serde(default)]
+        growth: Option<f64>,
     },
 }
 

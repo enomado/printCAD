@@ -296,6 +296,8 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
                     left_handed,
                     cone_angle_deg,
                     reversed,
+                    turns,
+                    growth,
                 } if reflects(m) => SweepKind::Helix {
                     axis_origin: flip_v(*axis_origin),
                     axis_dir: flip_v(*axis_dir),
@@ -304,6 +306,8 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
                     left_handed: !left_handed,
                     cone_angle_deg: *cone_angle_deg,
                     reversed: *reversed,
+                    turns: *turns,
+                    growth: *growth,
                 },
                 other => other.clone(),
             },

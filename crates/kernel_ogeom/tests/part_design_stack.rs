@@ -2689,3 +2689,248 @@ fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
         "the chain followed {followed}, picked edge by edge {all}"
     );
 }
+
+/// The volume and bounds of a body built from its features.
+fn built_body(doc: &Document, body: BodyId) -> Result<(f64, [f32; 3], [f32; 3]), String> {
+    let ops = wb_part::body_build_ops(doc, body)
+        .map_err(|e| e.message)?
+        .ops;
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .map_err(|e| e.to_string())?;
+    let volume = kernel
+        .physical_properties(&built.brep_blob)
+        .map_err(|e| e.to_string())?
+        .volume_mm3
+        .ok_or("no closed volume")?;
+    let (min, max) = built.bounds_mm.ok_or("no bounds")?;
+    Ok((volume, min, max))
+}
+
+fn assert_near(got: f64, want: f64, rel: f64, what: &str) {
+    assert!(
+        (got - want).abs() <= want * rel,
+        "{what}: {got}, want {want}"
+    );
+}
+
+/// A sketch of one open chain of lines through `points`, on `plane`.
+fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f32; 2]]) -> SketchFeature {
+    let mut sketch = Sketch::new("path");
+    sketch.plane = plane;
+    let ids: Vec<_> = points
+        .iter()
+        .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1])))))
+        .collect();
+    for pair in ids.windows(2) {
+        sketch.add_geometry(GeometryElement::Line(Line::new(pair[0], pair[1])));
+    }
+    SketchFeature::new(sketch, plane)
+}
+
+/// A 1 × 1 square 5 to 6 mm from the sketch's Y axis.
+fn coil_section() -> SketchFeature {
+    let mut sketch = Sketch::new("coil");
+    let corners = [[5.0, 0.0], [6.0, 0.0], [6.0, 1.0], [5.0, 1.0]];
+    let ids: Vec<_> = corners
+        .iter()
+        .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1])))))
+        .collect();
+    for i in 0..4 {
+        sketch.add_geometry(GeometryElement::Line(Line::new(ids[i], ids[(i + 1) % 4])));
+    }
+    let plane = sketch.plane;
+    SketchFeature::new(sketch, plane)
+}
+
+fn growing_helix(sketch: FeatureId, height: f32, turns: f32, growth: f32) -> PartFeature {
+    PartFeature::Helix {
+        refine: false,
+        sketch,
+        axis: wb_part::RevolveAxis::SketchY,
+        mode: wb_part::HelixMode::HeightTurnsGrowth,
+        pitch: 0.0,
+        height,
+        turns,
+        left_handed: false,
+        cone_angle_deg: 0.0,
+        reversed: false,
+        subtractive: false,
+        growth,
+        keep_inside: false,
+    }
+}
+
+/// The volume the unit-area coil section sweeps turning `turns` times about
+/// an axis in its plane, its centroid starting 5.5 mm out and moving
+/// `growth` further out each turn: the area times the arc its centroid
+/// turns through, however it climbs.
+fn coil_volume(turns: f64, growth: f64) -> f64 {
+    let pi = std::f64::consts::PI;
+    2.0 * pi * turns * 5.5 + pi * growth * turns * turns
+}
+
+/// A helix given by height, turns and growth per turn widens as it climbs.
+#[test]
+fn a_helix_grows_by_its_growth_per_turn() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch = doc
+        .add_feature_in_body(coil_section(), "coil".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        growing_helix(sketch, 12.0, 4.0, 1.0),
+        "Helix".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, min, max) = built_body(&doc, body).unwrap();
+    assert_near(volume, coil_volume(4.0, 1.0), 5e-3, "conical coil");
+    // Four turns out by a millimetre each: the outer edge ends 6 + 4 out.
+    assert!(max[0] > 9.9 && max[0] < 10.1, "x to {}", max[0]);
+    assert!((max[1] - min[1] - 13.0).abs() < 0.05, "climbs 12 + 1");
+}
+
+/// A helix of no height is a flat spiral, each turn 2 mm further out than
+/// the last.
+#[test]
+#[ignore = "kernel: make_helical_sweep refuses a pitch of 0, so a flat spiral cannot be swept (ogeom-rs#79)"]
+fn a_helix_of_no_height_is_a_flat_spiral() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch = doc
+        .add_feature_in_body(coil_section(), "coil".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        growing_helix(sketch, 0.0, 3.0, 2.0),
+        "Spiral".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, min, max) = built_body(&doc, body).unwrap();
+    assert_near(volume, coil_volume(3.0, 2.0), 5e-3, "flat spiral");
+    assert!(
+        (max[1] - min[1] - 1.0).abs() < 0.01,
+        "stays one section high"
+    );
+}
+
+/// A 40 mm thick block from `x0` to 20 in X and -5 to 25 in Y, clear of the
+/// coil's ends, and four turns of the coil 12 mm high cut from it, or kept
+/// inside it.
+fn block_and_coil(x0: f32, keep_inside: bool) -> (Document, BodyId) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let mut block = polyline_sketch(
+        wb_sketch::sketch::SketchPlane::xy(),
+        &[[x0, -5.0], [20.0, -5.0], [20.0, 25.0], [x0, 25.0]],
+    );
+    let corners: Vec<_> = block
+        .sketch
+        .geometry
+        .iter()
+        .filter_map(|e| match e {
+            GeometryElement::Point(p) => Some(p.id),
+            _ => None,
+        })
+        .collect();
+    block
+        .sketch
+        .add_geometry(GeometryElement::Line(Line::new(corners[3], corners[0])));
+    let block = doc
+        .add_feature_in_body(block, "block".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(block, 40.0, false, true),
+        "Block".into(),
+        Some(body),
+    )
+    .unwrap();
+    let coil = doc
+        .add_feature_in_body(coil_section(), "coil".into(), Some(body))
+        .unwrap();
+    let mut helix = growing_helix(coil, 12.0, 4.0, 0.0);
+    if let PartFeature::Helix {
+        subtractive,
+        keep_inside: keep,
+        ..
+    } = &mut helix
+    {
+        *subtractive = true;
+        *keep = keep_inside;
+    }
+    doc.add_feature_in_body(helix, "Helix".into(), Some(body))
+        .unwrap();
+    (doc, body)
+}
+
+/// A body's volume read off a fine mesh of it, by the divergence theorem.
+fn fine_mesh_volume(doc: &Document, body: BodyId) -> (f64, [f32; 3]) {
+    let ops = wb_part::body_build_ops(doc, body).unwrap().ops;
+    let fine = TessellationSettings {
+        linear_deflection_mode: kernel_api::LinearDeflectionMode::AbsoluteMm,
+        chord_tolerance: 0.002,
+        angular_tolerance_deg: 2.0,
+        ..TessellationSettings::default()
+    };
+    let built = OgeomKernel::new().execute_solid_chain(&ops, &fine).unwrap();
+    let mesh = &built.mesh;
+    let mut volume = 0.0;
+    for t in mesh.indices.chunks(3) {
+        let [a, b, c] = [t[0], t[1], t[2]].map(|i| mesh.positions[i as usize].map(f64::from));
+        volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+            + a[2] * (b[0] * c[1] - b[1] * c[0]))
+            / 6.0;
+    }
+    (volume, built.bounds_mm.unwrap().0)
+}
+
+/// What of the coil lies at X of at least `x0`: each point of the section,
+/// `r` out, spends acos(x0 / r) of every half turn there, over four turns.
+fn coil_beyond(x0: f64) -> f64 {
+    let steps = 2000;
+    (0..steps)
+        .map(|i| {
+            let r = 5.0 + (i as f64 + 0.5) / steps as f64;
+            8.0 * r * (x0 / r).clamp(-1.0, 1.0).acos() / steps as f64
+        })
+        .sum()
+}
+
+/// A subtractive helix kept inside leaves only what it shares with the
+/// body; not kept inside, it cuts that away.
+#[test]
+fn a_subtractive_helix_kept_inside_leaves_what_it_shares() {
+    let shared = coil_beyond(-3.0);
+    let (doc, body) = block_and_coil(-3.0, true);
+    let (volume, min) = fine_mesh_volume(&doc, body);
+    assert_near(volume, shared, 2e-3, "kept inside");
+    assert!(min[0] > -3.01, "nothing past the block: {}", min[0]);
+
+    let (doc, body) = block_and_coil(-3.0, false);
+    let (volume, _) = fine_mesh_volume(&doc, body);
+    assert_near(volume, 23.0 * 30.0 * 40.0 - shared, 1e-5, "cut away");
+}
+
+/// The measured volume of what a helix keeps inside a body.
+#[test]
+#[ignore = "kernel: volume_properties reads a helical sweep's walls trimmed by a boolean about 3% out (ogeom-rs#80)"]
+fn the_measured_volume_of_a_helix_kept_inside_is_its_own() {
+    let (doc, body) = block_and_coil(-3.0, true);
+    assert_near(
+        built_body(&doc, body).unwrap().0,
+        coil_beyond(-3.0),
+        2e-3,
+        "measured",
+    );
+}
+
+/// A block whose face holds the helix's axis keeps half of every turn.
+#[test]
+#[ignore = "kernel: a boolean of a helical sweep with a solid whose face holds the helix axis does not close its shell (ogeom-rs#81)"]
+fn a_helix_kept_inside_a_block_on_its_axis_keeps_half_of_it() {
+    let (doc, body) = block_and_coil(0.0, true);
+    let (volume, _) = fine_mesh_volume(&doc, body);
+    assert_near(volume, coil_volume(4.0, 0.0) / 2.0, 2e-3, "half the coil");
+}

@@ -483,6 +483,8 @@ fn helix_sweep_builds_a_spring() {
             left_handed: false,
             cone_angle_deg: 0.0,
             reversed: false,
+            turns: None,
+            growth: None,
         },
         op: BooleanOp::NewSolid,
     }];
@@ -1743,6 +1745,8 @@ fn helix_of(profile: ProfileWire, cone_angle_deg: f64, pitch: f64, height: f64) 
             left_handed: false,
             cone_angle_deg,
             reversed: false,
+            turns: None,
+            growth: None,
         },
         op: BooleanOp::NewSolid,
     }
@@ -2557,6 +2561,8 @@ fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
             left_handed: false,
             cone_angle_deg: 0.0,
             reversed: false,
+            turns: None,
+            growth: None,
         },
         op: BooleanOp::Cut,
     };

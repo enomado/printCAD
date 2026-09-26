@@ -70,18 +70,21 @@ pub fn build_tool(
             left_handed,
             cone_angle_deg,
             reversed,
-        } => helix(
-            model,
-            prof,
-            &built,
-            *axis_origin,
-            *axis_dir,
-            *pitch,
-            *height,
-            *left_handed,
-            *cone_angle_deg,
-            *reversed,
-        ),
+            turns,
+            growth,
+        } => {
+            let extent = HelixExtent::of(*pitch, *height, *turns, *cone_angle_deg, *growth)?;
+            helix(
+                model,
+                prof,
+                &built,
+                *axis_origin,
+                *axis_dir,
+                extent,
+                *left_handed,
+                *reversed,
+            )
+        }
     }
 }
 
@@ -922,6 +925,59 @@ fn axis_reversed(axis: &Axis) -> Axis {
     Axis::new(axis.location, axis.direction.reversed())
 }
 
+/// How far a helix runs: its advance per turn, how many turns, and how far
+/// every point moves off the axis per turn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct HelixExtent {
+    pitch: f64,
+    turns: f64,
+    growth: f64,
+}
+
+impl HelixExtent {
+    /// The extent a helix's numbers give. A given turn count sets the pitch
+    /// from the height; a height of 0 is a flat spiral, which must grow.
+    fn of(
+        pitch: f64,
+        height: f64,
+        turns: Option<f64>,
+        cone_angle_deg: f64,
+        growth: Option<f64>,
+    ) -> Result<Self, String> {
+        let (pitch, turns) = match turns {
+            Some(turns) => {
+                if !(turns.is_finite() && turns > 1e-9) {
+                    return Err("helix turns must be positive".into());
+                }
+                if !(height.is_finite() && height >= 0.0) {
+                    return Err("helix height must not be negative".into());
+                }
+                (height / turns, turns)
+            }
+            None => {
+                if pitch <= 1e-9 || height <= 1e-9 {
+                    return Err("helix pitch and height must be positive".into());
+                }
+                (pitch, height / pitch)
+            }
+        };
+        // A cone moves each point off the axis by tan(angle) of every
+        // pitch it climbs.
+        let growth = growth.unwrap_or_else(|| pitch * cone_angle_deg.to_radians().tan());
+        if !growth.is_finite() {
+            return Err("helix growth per turn is not a length".into());
+        }
+        if pitch <= 1e-9 && growth.abs() <= 1e-9 {
+            return Err("a flat spiral needs a growth per turn".into());
+        }
+        Ok(Self {
+            pitch,
+            turns,
+            growth,
+        })
+    }
+}
+
 #[expect(clippy::too_many_arguments)]
 fn helix(
     model: &mut Model,
@@ -929,15 +985,10 @@ fn helix(
     built: &BuiltProfile,
     axis_origin: [f64; 2],
     axis_dir: [f64; 2],
-    pitch: f64,
-    height: f64,
+    extent: HelixExtent,
     left_handed: bool,
-    cone_angle_deg: f64,
     reversed: bool,
 ) -> Result<Shape, String> {
-    if pitch <= 1e-9 || height <= 1e-9 {
-        return Err("helix pitch and height must be positive".into());
-    }
     let axis = sketch_plane_axis(&prof.plane, axis_origin, axis_dir)?;
     let centroid = profile::profile_centroid(model, built)?;
     let to_start = centroid - axis.location;
@@ -952,24 +1003,51 @@ fn helix(
     };
     let axis = Axis::new(axis.location, direction);
     // The profile lies in a plane through the axis, as a screw sweep takes
-    // it: every point of it runs its own helix, and a cone moves each one
-    // off the axis by tan(angle) of every pitch it climbs.
-    let turns = height / pitch;
-    let taper = pitch * cone_angle_deg.to_radians().tan();
+    // it: every point of it runs its own helix.
     let mut parts = Vec::with_capacity(built.faces.len());
     for face in &built.faces {
         let part = ogeom::offset::make_helical_sweep(
             model,
             face,
             axis,
-            pitch,
-            turns,
+            extent.pitch,
+            extent.turns,
             left_handed,
-            taper,
+            extent.growth,
             tol(),
         )
         .map_err(|e| format!("helix sweep failed: {e}"))?;
         parts.push(part.shape);
     }
     fuse_all(model, parts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HelixExtent;
+
+    #[test]
+    fn a_helix_extent_reads_its_numbers_the_way_they_were_given() {
+        let by_pitch = HelixExtent::of(2.0, 10.0, None, 0.0, None).unwrap();
+        assert_eq!((by_pitch.pitch, by_pitch.turns), (2.0, 5.0));
+        assert!(by_pitch.growth.abs() < 1e-12);
+
+        let by_turns = HelixExtent::of(99.0, 12.0, Some(4.0), 0.0, Some(1.5)).unwrap();
+        assert_eq!(
+            (by_turns.pitch, by_turns.turns, by_turns.growth),
+            (3.0, 4.0, 1.5)
+        );
+
+        let cone = HelixExtent::of(2.0, 10.0, None, 45.0, None).unwrap();
+        assert!((cone.growth - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_flat_spiral_has_no_pitch_and_must_grow() {
+        let flat = HelixExtent::of(0.0, 0.0, Some(3.0), 0.0, Some(2.0)).unwrap();
+        assert_eq!((flat.pitch, flat.turns, flat.growth), (0.0, 3.0, 2.0));
+        assert!(HelixExtent::of(0.0, 0.0, Some(3.0), 0.0, None).is_err());
+        assert!(HelixExtent::of(0.0, 0.0, Some(3.0), 0.0, Some(0.0)).is_err());
+        assert!(HelixExtent::of(2.0, 0.0, None, 0.0, None).is_err());
+    }
 }

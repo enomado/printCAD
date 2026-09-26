@@ -20,6 +20,19 @@ struct ToolSnapshot {
     solid: Option<Shape>,
 }
 
+impl ToolSnapshot {
+    /// The tool a pattern can repeat: one that adds or cuts. A tool that
+    /// keeps only what it shares with the body has none, since each copy
+    /// would keep less of what the one before left.
+    fn of(op: &SolidOp, boolean: BooleanOp, solid: Option<Shape>) -> Option<Self> {
+        (boolean != BooleanOp::Common).then(|| ToolSnapshot {
+            op: op.clone(),
+            subtractive: boolean == BooleanOp::Cut,
+            solid,
+        })
+    }
+}
+
 pub fn execute(
     ops_list: &[SolidOp],
     detail: &TessellationSettings,
@@ -124,7 +137,7 @@ pub fn execute_probing(
         let mut keep = |tool: &Shape, op: BooleanOp| {
             if previewing(index) {
                 preview_tools.push(tool.clone());
-                preview_cuts |= op == BooleanOp::Cut;
+                preview_cuts |= matches!(op, BooleanOp::Cut | BooleanOp::Common);
             }
         };
 
@@ -133,11 +146,7 @@ pub fn execute_probing(
             SolidOp::Sweep { profile, kind, op } => {
                 let tool = ops::sweep::build_tool(&mut model, base.as_ref(), profile, kind)
                     .map_err(&err)?;
-                tool_snapshot = Some(ToolSnapshot {
-                    op: solid_op.clone(),
-                    subtractive: *op == BooleanOp::Cut,
-                    solid: None,
-                });
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
@@ -145,11 +154,7 @@ pub fn execute_probing(
             SolidOp::SweepFace { face, kind, op } => {
                 let tool = ops::sweep::build_face_tool(&mut model, base.as_ref(), face, kind)
                     .map_err(&err)?;
-                tool_snapshot = Some(ToolSnapshot {
-                    op: solid_op.clone(),
-                    subtractive: *op == BooleanOp::Cut,
-                    solid: Some(tool.clone()),
-                });
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
@@ -160,11 +165,7 @@ pub fn execute_probing(
                 op,
             } => {
                 let tool = ops::primitive::build_tool(&mut model, kind, placement).map_err(&err)?;
-                tool_snapshot = Some(ToolSnapshot {
-                    op: solid_op.clone(),
-                    subtractive: *op == BooleanOp::Cut,
-                    solid: None,
-                });
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
@@ -177,11 +178,7 @@ pub fn execute_probing(
             } => {
                 let tool = ops::loft_pipe::loft_tool(&mut model, sections, *ruled, *closed)
                     .map_err(&err)?;
-                tool_snapshot = Some(ToolSnapshot {
-                    op: solid_op.clone(),
-                    subtractive: *op == BooleanOp::Cut,
-                    solid: None,
-                });
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
@@ -431,6 +428,12 @@ fn combine(
             let base =
                 base.ok_or_else(|| "cut requires existing material in the body".to_string())?;
             ops::combine_solids(model, base, &tool, BoolKind::Cut)
+        }
+        BooleanOp::Common => {
+            let base = base.ok_or_else(|| {
+                "keeping the intersection requires existing material in the body".to_string()
+            })?;
+            ops::combine_solids(model, base, &tool, BoolKind::Common)
         }
     }
 }

@@ -60,6 +60,7 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Pitch", "pitch"),
     ("Height", "height"),
     ("Cone angle", "cone_angle"),
+    ("Growth", "growth"),
     ("Diameter", "diameter"),
     ("Bore Ø", "counterbore_diameter"),
     ("Bore depth", "counterbore_depth"),
@@ -1882,6 +1883,8 @@ pub fn feature_editor(
             cone_angle_deg,
             reversed,
             subtractive,
+            growth,
+            keep_inside,
         } => {
             if let Some(new) = sketch_combo(
                 ui,
@@ -1926,11 +1929,27 @@ pub fn feature_editor(
                     changed |= mm_drag(ui, fx, height, "Height:");
                     changed |= turns_field(ui, fx, turns);
                 }
+                HelixMode::HeightTurnsGrowth => {
+                    // A height of 0 is a flat spiral; below it is nothing.
+                    if mm_drag(ui, fx, height, "Height:") {
+                        *height = height.max(0.0);
+                        changed = true;
+                    }
+                    changed |= turns_field(ui, fx, turns);
+                    changed |= mm_drag(ui, fx, growth, "Growth:");
+                }
             }
-            changed |= deg_drag(ui, fx, cone_angle_deg, "Cone angle:", -85.0..=85.0);
+            if *mode != HelixMode::HeightTurnsGrowth {
+                changed |= deg_drag(ui, fx, cone_angle_deg, "Cone angle:", -85.0..=85.0);
+            }
             changed |= check_row(ui, left_handed, "Left handed").changed();
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= check_row(ui, subtractive, "Subtractive").changed();
+            if *subtractive {
+                changed |= check_row(ui, keep_inside, "Keep inside")
+                    .on_hover_text("Keep what the helix shares with the body instead of cutting it")
+                    .changed();
+            }
         }
         PartFeature::Primitive {
             refine: _,

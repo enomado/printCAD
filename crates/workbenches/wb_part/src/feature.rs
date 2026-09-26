@@ -209,13 +209,17 @@ pub enum HelixMode {
     PitchHeight,
     PitchTurns,
     HeightTurns,
+    /// Height, turns and a growth per turn in place of the cone angle; a
+    /// height of 0 is a flat spiral.
+    HeightTurnsGrowth,
 }
 
 impl HelixMode {
-    pub const ALL: [HelixMode; 3] = [
+    pub const ALL: [HelixMode; 4] = [
         HelixMode::PitchHeight,
         HelixMode::PitchTurns,
         HelixMode::HeightTurns,
+        HelixMode::HeightTurnsGrowth,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -223,6 +227,7 @@ impl HelixMode {
             HelixMode::PitchHeight => "Pitch + height",
             HelixMode::PitchTurns => "Pitch + turns",
             HelixMode::HeightTurns => "Height + turns",
+            HelixMode::HeightTurnsGrowth => "Height + turns + growth",
         }
     }
 }
@@ -871,6 +876,14 @@ pub enum PartFeature {
         cone_angle_deg: f32,
         reversed: bool,
         subtractive: bool,
+        /// How far every point moves away from the axis per turn, in
+        /// [`HelixMode::HeightTurnsGrowth`].
+        #[serde(default)]
+        growth: f32,
+        /// A subtractive helix keeps what it shares with the body instead
+        /// of cutting it away.
+        #[serde(default)]
+        keep_inside: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
@@ -1571,6 +1584,26 @@ mod tests {
                 second_angle_deg: None,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn an_old_helix_neither_grows_nor_keeps_inside() {
+        let old = serde_json::json!({
+            "Helix": {
+                "sketch": FeatureId::new(), "axis": "SketchY", "mode": "PitchHeight",
+                "pitch": 2.0, "height": 10.0, "turns": 5.0, "left_handed": false,
+                "cone_angle_deg": 0.0, "reversed": false, "subtractive": true
+            }
+        });
+        let feature = PartFeature::from_json(&old).unwrap();
+        assert!(matches!(
+            feature,
+            PartFeature::Helix {
+                keep_inside: false,
+                growth,
+                ..
+            } if growth == 0.0
         ));
     }
 

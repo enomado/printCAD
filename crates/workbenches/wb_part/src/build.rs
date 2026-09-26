@@ -581,25 +581,33 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 cone_angle_deg,
                 reversed,
                 subtractive,
+                growth,
+                keep_inside,
             } => {
                 let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
                 let profile = profile_of(&sketch_feature).map_err(&fail)?;
                 let (axis_origin, axis_dir) =
                     axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
-                let (pitch, height) =
-                    helix_extent(*mode, *pitch, *height, *turns).map_err(&fail)?;
+                let extent =
+                    helix_extent(*mode, *pitch, *height, *turns, *growth).map_err(&fail)?;
                 plan.ops.push(SolidOp::Sweep {
                     profile,
                     kind: SweepKind::Helix {
                         axis_origin,
                         axis_dir,
-                        pitch,
-                        height,
+                        pitch: extent.pitch,
+                        height: extent.height,
                         left_handed: *left_handed,
                         cone_angle_deg: *cone_angle_deg as f64,
                         reversed: *reversed,
+                        turns: extent.turns,
+                        growth: extent.growth,
                     },
-                    op: shape_boolean(*subtractive),
+                    op: if *subtractive && *keep_inside {
+                        BooleanOp::Common
+                    } else {
+                        shape_boolean(*subtractive)
+                    },
                 });
             }
             PartFeature::Primitive {
@@ -1207,12 +1215,23 @@ fn revolve_kind(
     })
 }
 
+/// A helix's extent as the kernel reads it: pitch and height, and in the
+/// growth mode the turn count and growth per turn as given.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct HelixExtent {
+    pitch: f64,
+    height: f64,
+    turns: Option<f64>,
+    growth: Option<f64>,
+}
+
 fn helix_extent(
     mode: HelixMode,
     pitch: f32,
     height: f32,
     turns: f32,
-) -> Result<(f64, f64), String> {
+    growth: f32,
+) -> Result<HelixExtent, String> {
     let (pitch, height) = match mode {
         HelixMode::PitchHeight => (pitch, height),
         HelixMode::PitchTurns => (pitch, pitch * turns),
@@ -1222,11 +1241,33 @@ fn helix_extent(
             }
             (height / turns, height)
         }
+        HelixMode::HeightTurnsGrowth => {
+            if turns <= 0.0 {
+                return Err("helix turns must be positive".into());
+            }
+            if height < 0.0 {
+                return Err("helix height must not be negative".into());
+            }
+            if height == 0.0 && growth == 0.0 {
+                return Err("a flat spiral needs a growth per turn".into());
+            }
+            return Ok(HelixExtent {
+                pitch: f64::from(height) / f64::from(turns),
+                height: f64::from(height),
+                turns: Some(f64::from(turns)),
+                growth: Some(f64::from(growth)),
+            });
+        }
     };
     if pitch <= 0.0 || height <= 0.0 {
         return Err("helix pitch and height must be positive".into());
     }
-    Ok((f64::from(pitch), f64::from(height)))
+    Ok(HelixExtent {
+        pitch: f64::from(pitch),
+        height: f64::from(height),
+        turns: None,
+        growth: None,
+    })
 }
 
 /// A hole's drill diameter where it opens, from its thread when it is
@@ -1662,6 +1703,8 @@ fn thread_cut(
             left_handed: form.left_handed,
             cone_angle_deg: -form.taper_deg,
             reversed: false,
+            turns: None,
+            growth: None,
         },
         op: BooleanOp::Cut,
     }
@@ -4138,5 +4181,121 @@ mod tests {
             &RevolveAxis::SketchLine(uuid::Uuid::new_v4()),
         );
         assert!(missing.is_err());
+    }
+
+    fn helix(sketch: FeatureId, mode: HelixMode, height: f32, growth: f32) -> PartFeature {
+        PartFeature::Helix {
+            refine: false,
+            sketch,
+            axis: RevolveAxis::SketchY,
+            mode,
+            pitch: 2.0,
+            height,
+            turns: 4.0,
+            left_handed: false,
+            cone_angle_deg: 10.0,
+            reversed: false,
+            subtractive: false,
+            growth,
+            keep_inside: false,
+        }
+    }
+
+    /// The helix sweep of a body that is one helix.
+    fn helix_kind(mode: HelixMode, height: f32, growth: f32) -> Result<SweepKind, BuildError> {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let feature = helix(sketch_id, mode, height, growth);
+        doc.add_feature_in_body(feature, "Helix".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body)?;
+        match plan.ops.into_iter().next() {
+            Some(SolidOp::Sweep { kind, .. }) => Ok(kind),
+            other => panic!("not a sweep: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_helix_in_the_growth_mode_gives_its_turns_and_growth() {
+        let SweepKind::Helix {
+            pitch,
+            height,
+            turns,
+            growth,
+            ..
+        } = helix_kind(HelixMode::HeightTurnsGrowth, 12.0, 1.5).unwrap()
+        else {
+            panic!("not a helix")
+        };
+        assert_eq!((pitch, height), (3.0, 12.0));
+        assert_eq!((turns, growth), (Some(4.0), Some(1.5)));
+
+        // A height of 0 is a flat spiral, handed on to the kernel whole.
+        let SweepKind::Helix {
+            pitch,
+            height,
+            turns,
+            growth,
+            ..
+        } = helix_kind(HelixMode::HeightTurnsGrowth, 0.0, 2.0).unwrap()
+        else {
+            panic!("not a helix")
+        };
+        assert_eq!((pitch, height), (0.0, 0.0));
+        assert_eq!((turns, growth), (Some(4.0), Some(2.0)));
+
+        // One that neither climbs nor grows is nothing.
+        let flat = helix_kind(HelixMode::HeightTurnsGrowth, 0.0, 0.0).unwrap_err();
+        assert!(flat.message.contains("growth"), "{}", flat.message);
+
+        // The other modes leave the cone angle to say how it grows.
+        let SweepKind::Helix {
+            turns,
+            growth,
+            cone_angle_deg,
+            ..
+        } = helix_kind(HelixMode::PitchHeight, 12.0, 1.5).unwrap()
+        else {
+            panic!("not a helix")
+        };
+        assert_eq!((turns, growth, cone_angle_deg), (None, None, 10.0));
+    }
+
+    #[test]
+    fn a_subtractive_helix_kept_inside_keeps_the_common() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut cut = helix(sketch_id, HelixMode::PitchHeight, 8.0, 0.0);
+        if let PartFeature::Helix {
+            subtractive,
+            keep_inside,
+            ..
+        } = &mut cut
+        {
+            *subtractive = true;
+            *keep_inside = true;
+        }
+        doc.add_feature_in_body(cut.clone(), "Helix".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Common);
+
+        // Kept inside means nothing on an adding helix.
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+        if let PartFeature::Helix {
+            sketch,
+            subtractive,
+            ..
+        } = &mut cut
+        {
+            *sketch = sketch_id;
+            *subtractive = false;
+        }
+        doc.add_feature_in_body(cut, "Helix".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Fuse);
     }
 }

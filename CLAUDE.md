@@ -843,7 +843,11 @@ on the start page (`Screen::Start`); the recent list lives in
   pick), to first and to last trim a long prism by the half-space of the
   target face's whole surface, pushed out by the offset along an offset
   surface, so flat and curved targets alike stop exactly on the face.
-- Helix with height 0 (flat spiral) is rejected; use a small pitch instead.
+- Helix: the height + turns + growth mode sends `SweepKind::Helix` its
+  turns and growth per turn (in place of the cone angle); at height 0 it
+  asks for a flat spiral, which the kernel's helical sweep refuses (a pitch
+  of 0), so the feature carries that error. A subtractive helix with
+  "keep inside" is `BooleanOp::Common` (a pattern cannot repeat it).
 - Hole threads: `wb_part/src/hole_tables.rs` holds the thread standards
   (ISO metric coarse and fine, UNC/UNF/UNEF, BSW/BSF, BSP G and Rc, NPT),
   their classes, the ISO 4762/10642 seats and the user's `hole_cuts.json`

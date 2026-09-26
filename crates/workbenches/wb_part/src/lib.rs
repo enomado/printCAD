@@ -421,6 +421,8 @@ impl PartDesignWorkbench {
                         cone_angle_deg: 0.0,
                         reversed: false,
                         subtractive,
+                        growth: 0.0,
+                        keep_inside: false,
                     },
                     "Helix",
                 )

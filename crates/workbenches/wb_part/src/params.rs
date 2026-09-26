@@ -44,6 +44,7 @@ fn fields(variant: &str) -> &'static [Field] {
             ("height", "height", "Height", Some(LENGTH)),
             ("turns", "turns", "Turns", Some(NUMBER)),
             ("cone_angle_deg", "cone_angle", "Cone angle", Some(ANGLE)),
+            ("growth", "growth", "Growth per turn", Some(LENGTH)),
         ],
         "Hole" => &[
             ("diameter", "diameter", "Diameter", Some(LENGTH)),
