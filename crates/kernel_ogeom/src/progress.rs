@@ -76,6 +76,8 @@ pub fn op_label(op: &SolidOp) -> &'static str {
             SweepKind::Revolve { .. } => "Revolution",
             SweepKind::Helix { .. } => "Helix",
         },
+        SolidOp::SweepFace { .. } if subtractive => "Pocket",
+        SolidOp::SweepFace { .. } => "Pad",
         SolidOp::Loft { .. } => "Loft",
         SolidOp::Pipe { .. } => "Pipe",
         SolidOp::Primitive { .. } => "Primitive",
@@ -130,6 +132,7 @@ mod tests {
             second_angle_deg: None,
             midplane: false,
             reversed: false,
+            termination: Default::default(),
         }
     }
 

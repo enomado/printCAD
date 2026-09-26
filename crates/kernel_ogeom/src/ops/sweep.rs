@@ -1,13 +1,16 @@
-//! Extrude / revolve / helix tools from a sketch profile.
+//! Extrude / revolve / helix tools from a sketch profile, or from a flat
+//! face of the solid.
 //!
 //! Terminations: blind prisms, through-all lengths derived from the base
 //! bounding box, and stops on a plane or on a face of the base (picked, or
 //! the first or last a ray from the profile meets), each a long prism
 //! trimmed by the half-space of the target's surface: a plane's, or a
 //! curved face's whole surface, so a prism stops exactly on a cylinder, a
-//! sphere or a spline.
+//! sphere or a spline. A stop on several faces takes from a long prism what
+//! lies beyond each face along the sweep. A revolution stops on a flat face
+//! whose plane holds its axis, turning exactly as far as that plane.
 
-use kernel_api::{ExtrudeTermination, Profile, SweepKind};
+use kernel_api::{ExtrudeTermination, FaceProbe, Profile, RevolveTermination, SweepKind};
 use ogeom::algo::{make_natural_face, make_prism, make_prism_tapered, make_revolution};
 use ogeom::geom::{PlaneSurface, SurfaceGeometry, Transformable};
 use ogeom::math::{Axis, Direction, Plane, Point, Transform, Vector};
@@ -20,6 +23,10 @@ use crate::tess;
 
 const TAU: f64 = std::f64::consts::TAU;
 
+fn point3(p: [f64; 3]) -> Point {
+    Point::new(p[0], p[1], p[2])
+}
+
 pub fn build_tool(
     model: &mut Model,
     base: Option<&Shape>,
@@ -28,25 +35,11 @@ pub fn build_tool(
 ) -> Result<Shape, String> {
     let built = profile::build_profile(model, prof)?;
     match kind {
-        SweepKind::Extrude {
-            termination,
-            second_side,
-            symmetric,
-            reversed,
-            taper_deg,
-            direction,
-        } => extrude(
-            model,
-            base,
-            prof,
-            &built,
-            termination,
-            second_side.as_ref(),
-            *symmetric,
-            *reversed,
-            *taper_deg,
-            direction.as_ref(),
-        ),
+        SweepKind::Extrude { .. } => {
+            let normal =
+                profile::plane_normal(&prof.plane).map_err(|e| format!("profile plane: {e}"))?;
+            extrude(model, base, &built, normal, kind)
+        }
         SweepKind::Revolve {
             axis_origin,
             axis_dir,
@@ -54,8 +47,10 @@ pub fn build_tool(
             second_angle_deg,
             midplane,
             reversed,
+            termination,
         } => revolve(
             model,
+            base,
             prof,
             &built,
             *axis_origin,
@@ -64,6 +59,7 @@ pub fn build_tool(
             *second_angle_deg,
             *midplane,
             *reversed,
+            termination,
         ),
         SweepKind::Helix {
             axis_origin,
@@ -88,20 +84,57 @@ pub fn build_tool(
     }
 }
 
-#[expect(clippy::too_many_arguments)]
+/// The tool a flat face of `base` sweeps: the face, copied out of the
+/// solid with its outer and inner boundaries, extruded as a sketch on its
+/// plane with its outward normal would be.
+pub fn build_face_tool(
+    model: &mut Model,
+    base: Option<&Shape>,
+    face: &FaceProbe,
+    kind: &SweepKind,
+) -> Result<Shape, String> {
+    let base = base.ok_or("extruding a face needs a solid to take the face from")?;
+    if !matches!(kind, SweepKind::Extrude { .. }) {
+        return Err("a face of the solid is only ever extruded".into());
+    }
+    let found = face_at(model, base, point3(face.point))?
+        .ok_or("no face of the solid lies where the face was picked")?;
+    let (_, normal) = face_plane(model, &found).ok_or("the picked face is not flat")?;
+    let outward = if found.orientation() == ogeom::topo::Orientation::Reversed {
+        normal.reversed()
+    } else {
+        normal
+    };
+    let copy = ogeom::algo::copied(model, &found)
+        .map_err(|e| format!("copying the picked face failed: {e}"))?
+        .shape;
+    let built = BuiltProfile {
+        faces: vec![copy],
+        groups: Vec::new(),
+    };
+    extrude(model, Some(base), &built, outward, kind)
+}
+
 fn extrude(
     model: &mut Model,
     base: Option<&Shape>,
-    prof: &Profile,
     built: &BuiltProfile,
-    termination: &ExtrudeTermination,
-    second_side: Option<&ExtrudeTermination>,
-    symmetric: bool,
-    reversed: bool,
-    taper_deg: f64,
-    direction: Option<&[f64; 3]>,
+    normal: Direction,
+    kind: &SweepKind,
 ) -> Result<Shape, String> {
-    let normal = profile::plane_normal(&prof.plane).map_err(|e| format!("profile plane: {e}"))?;
+    let SweepKind::Extrude {
+        termination,
+        second_side,
+        symmetric,
+        reversed,
+        taper_deg,
+        direction,
+    } = kind
+    else {
+        return Err("not an extrusion".into());
+    };
+    let (symmetric, taper_deg) = (*symmetric, *taper_deg);
+    let second_side = second_side.as_ref();
     let mut dir = match direction {
         None => normal,
         Some(custom) => {
@@ -114,7 +147,7 @@ fn extrude(
             d
         }
     };
-    if reversed {
+    if *reversed {
         dir = dir.reversed();
     }
 
@@ -245,7 +278,111 @@ fn extrude_one_side(
                 None => up_to_face(model, built, base, dir, &hit.face, 0.0, taper_deg),
             }
         }
+        ExtrudeTermination::UpToShape { faces, offset } => {
+            let base = base.ok_or_else(|| {
+                "an up-to-shape extrusion needs existing material to stop at".to_string()
+            })?;
+            up_to_shape(model, built, base, dir, faces, *offset, taper_deg)
+        }
     }
+}
+
+/// A prism from the profile in which every line of the sweep ends on the
+/// first of `faces` it meets: a prism long enough to pass them all, less
+/// each face's shadow (the face swept on along the sweep), kept where it
+/// starts at the profile.
+fn up_to_shape(
+    model: &mut Model,
+    built: &BuiltProfile,
+    base: &Shape,
+    dir: Direction,
+    faces: &[FaceProbe],
+    offset: f64,
+    taper_deg: f64,
+) -> Result<Shape, String> {
+    if faces.is_empty() {
+        return Err("pick the faces the extrusion stops at".into());
+    }
+    let centroid = profile::profile_centroid(model, built)?;
+    let reach = through_all_length(model, base, centroid, dir)? + offset.abs();
+    let mut tool = prism_solid(model, built, dir, reach, taper_deg)?;
+    for probe in faces {
+        let at = point3(probe.point);
+        let face = face_at(model, base, at)?.ok_or_else(|| {
+            format!(
+                "no face of the solid lies at ({:.1}, {:.1}, {:.1}), where a stop face was picked",
+                at.x, at.y, at.z
+            )
+        })?;
+        // A flat face the sweep runs along stops none of it.
+        if face_plane(model, &face).is_some_and(|(_, n)| n.dot(dir).abs() <= 1e-9) {
+            continue;
+        }
+        let ahead = tess::robust_bounds(model, &face).is_some_and(|(lo, hi)| {
+            [lo.x, hi.x].iter().any(|&x| {
+                [lo.y, hi.y].iter().any(|&y| {
+                    [lo.z, hi.z]
+                        .iter()
+                        .any(|&z| (Point::new(x, y, z) - centroid).dot(dir.vector()) > 1e-6)
+                })
+            })
+        });
+        if !ahead {
+            return Err(format!(
+                "the stop face at ({:.1}, {:.1}, {:.1}) lies behind the profile",
+                at.x, at.y, at.z
+            ));
+        }
+        let mut stop = ogeom::algo::copied(model, &face)
+            .map_err(|e| format!("copying a stop face failed: {e}"))?
+            .shape;
+        if offset != 0.0 {
+            let shift = Transform::translation(dir.vector() * offset);
+            stop = ogeom::algo::transformed(model, &stop, shift)
+                .map_err(|e| format!("moving a stop face by its offset failed: {e}"))?
+                .shape;
+        }
+        let shadow = make_prism(model, &stop, dir.vector() * (2.0 * reach), tol())
+            .map_err(|e| format!("sweeping a stop face on failed: {e}"))?
+            .shape;
+        tool = ogeom::boolean::cut(model, &tool, &shadow, tol())
+            .map_err(|e| format!("stopping the sweep at a stop face failed: {e}"))?
+            .shape;
+        tool = super::normalized(model, tool);
+    }
+    starting_at_profile(model, tool, centroid, dir)
+}
+
+/// The pieces of `trimmed` the profile starts: a curved stop can leave a
+/// long prism coming back out beyond it.
+fn starting_at_profile(
+    model: &mut Model,
+    trimmed: Shape,
+    centroid: Point,
+    dir: Direction,
+) -> Result<Shape, String> {
+    let trimmed = super::normalized(model, trimmed);
+    let starting: Vec<Shape> = super::solids_of(model, &trimmed)
+        .into_iter()
+        .filter(|piece| {
+            tess::robust_bounds(model, piece).is_some_and(|(lo, hi)| {
+                // The piece's nearest corner along the sweep: at the profile
+                // for a piece the profile starts.
+                let mut nearest = f64::MAX;
+                for &x in &[lo.x, hi.x] {
+                    for &y in &[lo.y, hi.y] {
+                        for &z in &[lo.z, hi.z] {
+                            nearest =
+                                nearest.min((Point::new(x, y, z) - centroid).dot(dir.vector()));
+                        }
+                    }
+                }
+                nearest <= 1e-3
+            })
+        })
+        .collect();
+    super::wrap_pieces(model, starting)
+        .map_err(|_| "the sweep does not reach the target face".to_string())
 }
 
 fn up_to_plane(
@@ -362,28 +499,7 @@ fn up_to_face(
     let trimmed = ogeom::boolean::common(model, &long_prism, &half, tol())
         .map_err(|e| format!("trimming the sweep at the target face failed: {e}"))?
         .shape;
-    let trimmed = super::normalized(model, trimmed);
-    let starting: Vec<Shape> = super::solids_of(model, &trimmed)
-        .into_iter()
-        .filter(|piece| {
-            tess::robust_bounds(model, piece).is_some_and(|(lo, hi)| {
-                // The piece's nearest corner along the sweep: at the profile
-                // for a piece the profile starts.
-                let mut nearest = f64::MAX;
-                for &x in &[lo.x, hi.x] {
-                    for &y in &[lo.y, hi.y] {
-                        for &z in &[lo.z, hi.z] {
-                            nearest =
-                                nearest.min((Point::new(x, y, z) - centroid).dot(dir.vector()));
-                        }
-                    }
-                }
-                nearest <= 1e-3
-            })
-        })
-        .collect();
-    super::wrap_pieces(model, starting)
-        .map_err(|_| "the sweep does not reach the target face".to_string())
+    starting_at_profile(model, trimmed, centroid, dir)
 }
 
 /// Keep only the material on `keep_point`'s side of the plane.
@@ -566,6 +682,7 @@ fn ray_triangle(origin: Point, dir: Direction, a: Point, b: Point, c: Point) -> 
 #[expect(clippy::too_many_arguments)]
 fn revolve(
     model: &mut Model,
+    base: Option<&Shape>,
     prof: &Profile,
     built: &BuiltProfile,
     axis_origin: [f64; 2],
@@ -574,15 +691,22 @@ fn revolve(
     second_angle_deg: Option<f64>,
     midplane: bool,
     reversed: bool,
+    termination: &RevolveTermination,
 ) -> Result<Shape, String> {
     let axis = sketch_plane_axis(&prof.plane, axis_origin, axis_dir)?;
     let axis = if reversed { axis_reversed(&axis) } else { axis };
 
-    let (mut forward, mut backward) = (angle_deg, second_angle_deg.unwrap_or(0.0));
-    if midplane {
-        forward = angle_deg * 0.5;
-        backward = angle_deg * 0.5;
-    }
+    let (forward, backward) = match termination {
+        RevolveTermination::Angle if midplane => (angle_deg * 0.5, angle_deg * 0.5),
+        RevolveTermination::Angle => (angle_deg, second_angle_deg.unwrap_or(0.0)),
+        stop => {
+            let base = base.ok_or_else(|| {
+                "a revolution that stops on a face needs existing material".to_string()
+            })?;
+            let angle = revolve_stop_angle(model, base, built, &axis, stop)?;
+            (angle.to_degrees(), 0.0)
+        }
+    };
     let total = forward + backward;
     if total <= 0.0 || total > 360.0 + 1e-6 {
         return Err(format!(
@@ -617,6 +741,141 @@ fn revolve(
         parts.push(part.shape);
     }
     fuse_all(model, parts)
+}
+
+/// How far the profile turns about `axis` before it reaches the target of
+/// `stop`, in radians: a flat face whose plane holds the axis, which every
+/// point of the profile meets at the same angle.
+fn revolve_stop_angle(
+    model: &mut Model,
+    base: &Shape,
+    built: &BuiltProfile,
+    axis: &Axis,
+    stop: &RevolveTermination,
+) -> Result<f64, String> {
+    let a = axis.direction.vector();
+    let from_axis = |p: Point| {
+        let v = p - axis.location;
+        v - a * v.dot(a)
+    };
+    let centroid = profile::profile_centroid(model, built)?;
+    let start = from_axis(centroid);
+    if start.magnitude() <= 1e-9 {
+        return Err("the profile's centre lies on the revolution axis".into());
+    }
+    let (face, met_at) = match stop {
+        RevolveTermination::UpToFace(probe) => {
+            let at = point3(probe.point);
+            let face = face_at(model, base, at)?
+                .ok_or("no face of the solid lies where the target face was picked")?;
+            (face, at)
+        }
+        RevolveTermination::ToFirst | RevolveTermination::ToLast => {
+            let first = matches!(stop, RevolveTermination::ToFirst);
+            let hit = circle_hit(model, base, axis, centroid, first)?
+                .ok_or("turning, the profile meets no face of the existing material")?;
+            (hit.face, hit.point)
+        }
+        RevolveTermination::Angle => return Err("a revolution by its angle has no stop".into()),
+    };
+    let holds_axis = face_plane(model, &face).is_some_and(|(p, n)| {
+        n.dot(axis.direction).abs() <= 1e-6 && (axis.location - p).dot(n.vector()).abs() <= 1e-4
+    });
+    if !holds_axis {
+        return Err(
+            "a revolution stops only on a flat face whose plane holds its axis; the kernel \
+             cannot turn a profile up to any other surface"
+                .into(),
+        );
+    }
+    let end = from_axis(met_at);
+    if end.magnitude() <= 1e-9 {
+        return Err("the target face is met on the revolution axis".into());
+    }
+    let mut angle = start.cross(end).dot(a).atan2(start.dot(end));
+    if angle <= 1e-9 {
+        angle += TAU;
+    }
+    if angle >= TAU - 1e-9 {
+        return Err("the profile already lies on the target face".into());
+    }
+    Ok(angle)
+}
+
+/// Where a point turning about an axis first meets a face.
+struct CircleHit {
+    face: Shape,
+    point: Point,
+}
+
+/// The first (or last) face of `base` the circle `from` runs about `axis`
+/// meets, turning the right-handed way about it, via each face's
+/// triangulation.
+fn circle_hit(
+    model: &Model,
+    base: &Shape,
+    axis: &Axis,
+    from: Point,
+    first: bool,
+) -> Result<Option<CircleHit>, String> {
+    let a = axis.direction.vector();
+    let centre = axis.location + a * (from - axis.location).dot(a);
+    let radial = from - centre;
+    let radius = radial.magnitude();
+    if radius <= 1e-9 {
+        return Ok(None);
+    }
+    let u = radial * (1.0 / radius);
+    let w = a.cross(u);
+    let on_circle = |angle: f64| centre + u * (radius * angle.cos()) + w * (radius * angle.sin());
+    let faces = explore(model, base, Filter::OfType(ShapeType::Face))
+        .map_err(|e| format!("exploring base faces: {e}"))?;
+    let mut best: Option<(f64, usize, Point)> = None;
+    for (i, face) in faces.iter().enumerate() {
+        let Ok(tri) = triangulate_face(model, face, Deflection::default(), tol()) else {
+            continue;
+        };
+        for t in &tri.triangles {
+            let [p0, p1, p2] = t.map(|i| tri.positions[i as usize]);
+            let n = (p1 - p0).cross(p2 - p0);
+            if n.magnitude() <= 1e-12 {
+                continue;
+            }
+            // n · (circle(θ) − p0) = 0 is A cos θ + B sin θ = D.
+            let (ca, cb) = (radius * n.dot(u), radius * n.dot(w));
+            let d = n.dot(p0 - centre);
+            let m = ca.hypot(cb);
+            if m <= 1e-12 || d.abs() > m {
+                continue;
+            }
+            let phase = cb.atan2(ca);
+            let spread = (d / m).clamp(-1.0, 1.0).acos();
+            for angle in [phase - spread, phase + spread] {
+                let angle = angle.rem_euclid(TAU);
+                if !(1e-6..=TAU - 1e-6).contains(&angle) {
+                    continue;
+                }
+                let q = on_circle(angle);
+                if !in_triangle(q, p0, p1, p2, n) {
+                    continue;
+                }
+                let better = best.is_none_or(|(b, ..)| if first { angle < b } else { angle > b });
+                if better {
+                    best = Some((angle, i, q));
+                }
+            }
+        }
+    }
+    Ok(best.map(|(_, i, point)| CircleHit {
+        face: faces[i].clone(),
+        point,
+    }))
+}
+
+/// Whether `q`, on the plane of triangle `a b c` (normal `n`), lies in it.
+fn in_triangle(q: Point, a: Point, b: Point, c: Point, n: Vector) -> bool {
+    let inside = |p: Point, s: Point| (s - p).cross(q - p).dot(n) >= -1e-9 * n.dot(n);
+    inside(a, b) && inside(b, c) && inside(c, a)
 }
 
 /// World-space axis from a sketch-plane (uv point, uv direction) pair.

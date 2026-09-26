@@ -110,6 +110,7 @@ fn revolve(
             second_angle_deg: None,
             midplane: false,
             reversed: false,
+            termination: Default::default(),
         },
         op,
     }

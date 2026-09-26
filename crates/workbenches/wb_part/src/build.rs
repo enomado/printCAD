@@ -808,6 +808,7 @@ fn revolve_kind(
         second_angle_deg: second_angle_deg.map(f64::from),
         midplane,
         reversed,
+        termination: kernel_api::RevolveTermination::Angle,
     })
 }
 

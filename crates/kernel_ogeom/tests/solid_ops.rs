@@ -2,8 +2,9 @@
 //! pipe, helix, primitives, dress-ups, patterns, and body booleans.
 
 use kernel_api::{
-    BoolKind, BooleanOp, ChamferSpec, EdgeSelection, ExtrudeTermination, Placement, PrimitiveKind,
-    Profile, ProfilePlane, ProfileSegment, ProfileWire, SolidOp, SweepKind, TessellationSettings,
+    BoolKind, BooleanOp, ChamferSpec, EdgeSelection, ExtrudeTermination, FaceProbe, Placement,
+    PrimitiveKind, Profile, ProfilePlane, ProfileSegment, ProfileWire, RevolveTermination, SolidOp,
+    SweepKind, TessellationSettings,
 };
 use kernel_ogeom::OgeomKernel;
 
@@ -1758,6 +1759,7 @@ fn a_partial_revolve_of_a_profile_on_its_axis_builds() {
             second_angle_deg: None,
             midplane: false,
             reversed: false,
+            termination: Default::default(),
         },
         op: BooleanOp::NewSolid,
     };
@@ -1930,6 +1932,7 @@ fn a_revolved_body_measures_its_full_radius() {
                     second_angle_deg: None,
                     midplane: false,
                     reversed: false,
+                    termination: Default::default(),
                 },
                 op: BooleanOp::NewSolid,
             }],
@@ -2139,4 +2142,275 @@ fn a_fillet_wider_than_its_face_is_refused() {
         &TessellationSettings::default(),
     );
     assert!(result.is_err(), "a 12 mm fillet on a 10 mm face is refused");
+}
+
+/// A sweep of `wires` on `plane`, extruded as `termination` says.
+fn extrude_on(
+    plane: ProfilePlane,
+    wires: Vec<ProfileWire>,
+    termination: ExtrudeTermination,
+    reversed: bool,
+    op: BooleanOp,
+) -> SolidOp {
+    SolidOp::Sweep {
+        profile: Profile { plane, wires },
+        kind: SweepKind::Extrude {
+            termination,
+            second_side: None,
+            symmetric: false,
+            reversed,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op,
+    }
+}
+
+fn probe(point: [f64; 3], normal: [f64; 3]) -> FaceProbe {
+    FaceProbe { point, normal }
+}
+
+/// A 20 × 20 × 10 block with a 10 × 20 step, 5 high, over its x < 10 half.
+fn stepped_block() -> Vec<SolidOp> {
+    vec![
+        blind_pad(
+            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+            10.0,
+            BooleanOp::NewSolid,
+        ),
+        extrude_on(
+            plane_at_z(10.0),
+            vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
+            ExtrudeTermination::Blind { distance: 5.0 },
+            false,
+            BooleanOp::Fuse,
+        ),
+    ]
+}
+
+/// Up to shape: every line of a pad run down over the step's edge ends on
+/// the first picked face it meets, the step's top over the step and the
+/// block's top beside it.
+#[test]
+fn an_up_to_shape_pad_stops_on_the_first_picked_face_each_line_meets() {
+    let mut ops = stepped_block();
+    ops.push(extrude_on(
+        plane_at_z(20.0),
+        vec![rect_wire(4.0, 5.0, 16.0, 15.0)],
+        ExtrudeTermination::UpToShape {
+            faces: vec![
+                probe([5.0, 10.0, 15.0], [0.0, 0.0, 1.0]),
+                probe([15.0, 10.0, 10.0], [0.0, 0.0, 1.0]),
+            ],
+            offset: 0.0,
+        },
+        true,
+        BooleanOp::Fuse,
+    ));
+    // Block and step, then 6 × 10 down 5 onto the step and 6 × 10 down 10
+    // onto the block.
+    assert_volume(&ops, 4000.0 + 1000.0 + 300.0 + 600.0, "up to shape");
+}
+
+/// An up-to-shape offset moves the stop along the sweep: a pocket down to
+/// the block's floor, 2 short of it.
+#[test]
+fn an_up_to_shape_offset_moves_the_stop_along_the_sweep() {
+    let ops = [
+        blind_pad(
+            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+            10.0,
+            BooleanOp::NewSolid,
+        ),
+        extrude_on(
+            plane_at_z(10.0),
+            vec![rect_wire(5.0, 5.0, 15.0, 15.0)],
+            ExtrudeTermination::UpToShape {
+                faces: vec![probe([10.0, 10.0, 0.0], [0.0, 0.0, -1.0])],
+                offset: -2.0,
+            },
+            true,
+            BooleanOp::Cut,
+        ),
+    ];
+    assert_volume(&ops, 4000.0 - 800.0, "a pocket 8 deep");
+}
+
+/// A flat face of the solid, hole and all, extruded as a profile: out of
+/// the material as a pad, into it as a pocket.
+#[test]
+fn a_flat_face_of_the_solid_is_extruded_as_a_profile() {
+    let base = [
+        blind_pad(
+            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+            10.0,
+            BooleanOp::NewSolid,
+        ),
+        extrude(
+            vec![circle_wire(10.0, 10.0, 3.0)],
+            ExtrudeTermination::ThroughAll,
+            false,
+            BooleanOp::Cut,
+        ),
+    ];
+    let face = |distance: f64, reversed: bool, op: BooleanOp| SolidOp::SweepFace {
+        face: probe([2.0, 2.0, 10.0], [0.0, 0.0, 1.0]),
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::Blind { distance },
+            second_side: None,
+            symmetric: false,
+            reversed,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op,
+    };
+    let area = 400.0 - 9.0 * std::f64::consts::PI;
+    let mut padded = base.to_vec();
+    padded.push(face(5.0, false, BooleanOp::Fuse));
+    assert_volume(&padded, area * 15.0, "the top face padded 5");
+    let mut pocketed = base.to_vec();
+    pocketed.push(face(3.0, true, BooleanOp::Cut));
+    assert_volume(&pocketed, area * 7.0, "the top face pocketed 3");
+}
+
+/// The XZ plane, v up along world Z: a profile on it turns about world Z
+/// taking the sketch's v axis.
+fn xz_turn(termination: RevolveTermination, op: BooleanOp) -> SolidOp {
+    SolidOp::Sweep {
+        profile: Profile {
+            plane: xz_plane(),
+            wires: vec![rect_wire(5.0, 0.0, 10.0, 10.0)],
+        },
+        kind: SweepKind::Revolve {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            angle_deg: 360.0,
+            second_angle_deg: None,
+            midplane: false,
+            reversed: false,
+            termination,
+        },
+        op,
+    }
+}
+
+/// A revolution about world Z from the +X side stops on a face whose plane
+/// holds the axis: the wall's side at x = 0 a quarter turn on, adding
+/// material up to it; its face at y = 0 half a turn on, a groove that far
+/// cutting the quarter through the wall.
+#[test]
+fn a_revolution_stops_on_a_face_whose_plane_holds_its_axis() {
+    // The wall: x in [-20, 0], y in [0, 20], 10 high.
+    let wall = blind_pad(
+        vec![rect_wire(-20.0, 0.0, 0.0, 20.0)],
+        10.0,
+        BooleanOp::NewSolid,
+    );
+    let ring = 75.0 * std::f64::consts::PI * 10.0;
+    let cases = [
+        ("to first", RevolveTermination::ToFirst, ring / 4.0),
+        (
+            "up to face",
+            RevolveTermination::UpToFace(probe([0.0, 7.0, 5.0], [1.0, 0.0, 0.0])),
+            ring / 4.0,
+        ),
+        ("to last, cut", RevolveTermination::ToLast, -ring / 4.0),
+        (
+            "up to the far face, cut",
+            RevolveTermination::UpToFace(probe([-10.0, 0.0, 5.0], [0.0, -1.0, 0.0])),
+            -ring / 4.0,
+        ),
+    ];
+    for (name, termination, change) in cases {
+        let op = if change < 0.0 {
+            BooleanOp::Cut
+        } else {
+            BooleanOp::Fuse
+        };
+        assert_volume(
+            &[wall.clone(), xz_turn(termination, op)],
+            4000.0 + change,
+            name,
+        );
+    }
+}
+
+/// A revolution up to a wall beside its axis: every point of the profile
+/// turns until its circle meets the wall's plane, x = -2, at
+/// acos(-2 / r). The kernel has no sweep bounded that way.
+#[test]
+#[ignore = "kernel: no revolution bounded by a surface that does not hold its axis (ogeom-rs#73)"]
+fn a_revolution_stops_on_a_wall_beside_its_axis() {
+    let wall = blind_pad(
+        vec![rect_wire(-20.0, 0.0, -2.0, 20.0)],
+        10.0,
+        BooleanOp::NewSolid,
+    );
+    // 10 × ∫ acos(-2 / r) r dr over r in [5, 10], by Simpson's rule.
+    let n = 1000;
+    let f = |r: f64| (-2.0 / r).acos() * r;
+    let h = 5.0 / n as f64;
+    let mut sum = f(5.0) + f(10.0);
+    for i in 1..n {
+        sum += f(5.0 + i as f64 * h) * if i % 2 == 1 { 4.0 } else { 2.0 };
+    }
+    let turned = 10.0 * sum * h / 3.0;
+    assert_volume(
+        &[
+            wall,
+            xz_turn(
+                RevolveTermination::UpToFace(probe([-2.0, 5.0, 5.0], [1.0, 0.0, 0.0])),
+                BooleanOp::Fuse,
+            ),
+        ],
+        3600.0 + turned,
+        "up to the wall",
+    );
+}
+
+/// A pattern repeats a face swept off the solid as the tool it built there:
+/// a boss, lengthened by padding its top face, repeated twice along x.
+#[test]
+fn a_pattern_repeats_a_face_swept_off_the_solid() {
+    let translate = |d: f64| -> [[f64; 4]; 4] {
+        [
+            [1.0, 0.0, 0.0, d],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+    let ops = [
+        blind_pad(
+            vec![rect_wire(0.0, 0.0, 50.0, 20.0)],
+            3.0,
+            BooleanOp::NewSolid,
+        ),
+        extrude_on(
+            plane_at_z(3.0),
+            vec![rect_wire(7.0, 7.0, 13.0, 13.0)],
+            ExtrudeTermination::Blind { distance: 5.0 },
+            false,
+            BooleanOp::Fuse,
+        ),
+        SolidOp::SweepFace {
+            face: probe([10.0, 10.0, 8.0], [0.0, 0.0, 1.0]),
+            kind: SweepKind::Extrude {
+                termination: ExtrudeTermination::Blind { distance: 2.0 },
+                second_side: None,
+                symmetric: false,
+                reversed: false,
+                taper_deg: 0.0,
+                direction: None,
+            },
+            op: BooleanOp::Fuse,
+        },
+        SolidOp::Transform {
+            transforms: vec![translate(15.0), translate(30.0)],
+            originals: vec![1, 2],
+        },
+    ];
+    // The plate, and three bosses 6 × 6 × 7.
+    assert_volume(&ops, 3000.0 + 3.0 * 36.0 * 7.0, "three whole bosses");
 }

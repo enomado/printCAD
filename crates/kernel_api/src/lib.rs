@@ -683,7 +683,7 @@ pub struct Profile {
 }
 
 /// Where a one-directional extrusion stops.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExtrudeTermination {
     /// Fixed length in millimetres.
     Blind { distance: f64 },
@@ -711,6 +711,26 @@ pub enum ExtrudeTermination {
     /// Stop at the last face of the base solid hit along the extrusion
     /// direction, on its surface.
     ToLast,
+    /// Stop on a set of the base solid's faces: every line of the sweep
+    /// ends at the first of them it meets, moved `offset` further along the
+    /// sweep (a negative offset stops short).
+    UpToShape { faces: Vec<FaceProbe>, offset: f64 },
+}
+
+/// Where a revolution stops turning.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum RevolveTermination {
+    /// Through the sweep's own angles.
+    #[default]
+    Angle,
+    /// On the first face of the base solid the profile's centre meets as it
+    /// turns.
+    ToFirst,
+    /// On the last face of the base solid the profile's centre meets as it
+    /// turns.
+    ToLast,
+    /// On the base solid's face nearest the probe.
+    UpToFace(FaceProbe),
 }
 
 /// How a profile is swept into a solid.
@@ -742,6 +762,10 @@ pub enum SweepKind {
         /// Center the sweep on the sketch plane (half the angle each way).
         midplane: bool,
         reversed: bool,
+        /// Where the turn stops; anything but `Angle` takes the angle from
+        /// what the profile meets and leaves the angles above unused.
+        #[serde(default)]
+        termination: RevolveTermination,
     },
     /// Sweep the profile along a helix whose axis lies in the sketch plane.
     /// `height == 0` produces a flat spiral driven by `cone_angle_deg`.
@@ -885,6 +909,14 @@ pub enum SolidOp {
         kind: SweepKind,
         op: BooleanOp,
     },
+    /// Extrude a flat face of the running solid: its outer and inner
+    /// boundaries are the profile and its outward normal the sketch
+    /// normal. `kind` is an `Extrude`.
+    SweepFace {
+        face: FaceProbe,
+        kind: SweepKind,
+        op: BooleanOp,
+    },
     /// Skin through two or more section profiles (in order).
     Loft {
         sections: Vec<Profile>,
@@ -957,6 +989,7 @@ impl SolidOp {
     pub fn boolean_op(&self) -> Option<BooleanOp> {
         match self {
             SolidOp::Sweep { op, .. }
+            | SolidOp::SweepFace { op, .. }
             | SolidOp::Loft { op, .. }
             | SolidOp::Pipe { op, .. }
             | SolidOp::Primitive { op, .. } => Some(*op),
