@@ -16,8 +16,8 @@ use wb_sketch::profile;
 use wb_sketch::sketch::{GeometryElement, Sketch};
 
 use crate::feature::{
-    ExtrudeMode, FacePick, HelixMode, HoleCut, METRIC_SIZES, PartFeature, PatternAxis, RevolveAxis,
-    TransformStep,
+    DrillPoint, ExtrudeMode, FacePick, HelixMode, HoleCut, PartFeature, PatternAxis, RevolveAxis,
+    ThreadSpec, TransformStep,
 };
 
 /// This body's part features in creation order (the build history).
@@ -833,29 +833,55 @@ fn helix_extent(
     Ok((f64::from(pitch), f64::from(height)))
 }
 
-/// A hole's effective drill diameter, from the metric table when the hole is
-/// standards-driven.
+/// A hole's drill diameter where it opens, from its thread when it is
+/// standards-driven: the tap drill, moved out by the class's allowance (a
+/// tapered thread's minor diameter at the face, which its taper narrows
+/// from), or else the clearance of its fit (the major diameter where the
+/// standard names no clearance).
 pub fn hole_diameter(feature: &PartFeature) -> f32 {
-    if let PartFeature::Hole {
+    let PartFeature::Hole {
         diameter,
-        metric_index,
+        thread,
         threaded,
         fit,
         ..
     } = feature
-    {
-        if let Some(index) = metric_index
-            && let Some((_, _, tap_drill, clearance)) = METRIC_SIZES.get(*index)
-        {
-            return if *threaded {
-                *tap_drill
-            } else {
-                clearance[*fit as usize]
-            };
-        }
+    else {
+        return 0.0;
+    };
+    let Some((spec, Ok(size))) = thread.as_ref().map(|t| (t, t.resolve())) else {
         return *diameter;
+    };
+    if *threaded {
+        let drill = if spec.standard.is_tapered() {
+            size.minor
+        } else {
+            size.tap_drill
+        };
+        (drill + spec.allowance(&size)) as f32
+    } else {
+        size.clearance.map_or(size.major, |c| c[*fit as usize]) as f32
     }
-    0.0
+}
+
+/// The angle a hole's wall leans in by toward its bottom, degrees: a
+/// tapped tapered thread's own, else the hole's.
+pub fn hole_taper_deg(feature: &PartFeature) -> f64 {
+    let PartFeature::Hole {
+        thread,
+        threaded,
+        taper_deg,
+        ..
+    } = feature
+    else {
+        return 0.0;
+    };
+    match thread {
+        Some(spec) if *threaded && spec.standard.is_tapered() => {
+            crate::hole_tables::pipe_taper_deg()
+        }
+        _ => f64::from(*taper_deg),
+    }
 }
 
 /// Circle centers + standalone points of a sketch (hole positions).
@@ -885,8 +911,8 @@ fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
     centers
 }
 
-/// Translate a hole feature into cut ops: main drill, plus a counterbore or
-/// countersink cut per the hole-cut option.
+/// Translate a hole feature into cut ops: the drill (and its point), then
+/// what the hole cut makes of its mouth, then a modeled thread's groove.
 fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, String> {
     let PartFeature::Hole {
         sketch,
@@ -894,23 +920,18 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
         through_all,
         cut,
         reversed,
-        metric_index,
+        thread,
         threaded,
         modeled_thread,
         thread_depth,
+        drill_point,
+        point_in_depth,
         ..
     } = feature
     else {
         return Err("not a hole feature".into());
     };
-    if let Some(index) = metric_index
-        && METRIC_SIZES.get(*index).is_none()
-    {
-        return Err(format!(
-            "there is no standard size number {index}; the sizes run from 0 to {}",
-            METRIC_SIZES.len() - 1
-        ));
-    }
+    let size = thread.as_ref().map(ThreadSpec::resolve).transpose()?;
     let sketch_feature = load_sketch(document, *sketch)?;
     let plane = profile::plane_of(&sketch_feature.plane);
     let centers = hole_centers(&sketch_feature.sketch);
@@ -921,6 +942,20 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
     if diameter <= 0.0 {
         return Err("hole diameter must be positive".into());
     }
+    let radius = f64::from(diameter) * 0.5;
+    let taper = hole_taper_deg(feature);
+    if taper.is_nan() || taper.abs() >= 45.0 {
+        return Err("hole taper must lie within ±45°".into());
+    }
+    let tan_taper = taper.to_radians().tan();
+    // The drill's radius `down` into the material.
+    let radius_at = |down: f64| radius - down * tan_taper;
+    // Into the material: against the sketch normal unless reversed.
+    let into = if *reversed {
+        plane.normal
+    } else {
+        plane.normal.map(|c| -c)
+    };
 
     let circles_profile = |radius: f64| Profile {
         plane,
@@ -950,109 +985,237 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
             op: BooleanOp::Cut,
         }
     };
+    // A cone at every center, `down` into the material, from `wide` there
+    // to `narrow` `height` further in.
+    let cones = |down: f64, wide: f64, narrow: f64, height: f64| {
+        centers
+            .iter()
+            .map(|center| cone_cut(&plane, *center, into, down, wide, narrow, height))
+            .collect::<Vec<_>>()
+    };
 
-    let main_termination = if *through_all {
-        ExtrudeTermination::ThroughAll
+    let mut ops = Vec::new();
+    if *through_all {
+        ops.push(cut_extrude(ExtrudeTermination::ThroughAll, -taper, radius));
     } else {
         if *depth <= 0.0 {
             return Err("hole depth must be positive".into());
         }
-        ExtrudeTermination::Blind {
-            distance: f64::from(*depth),
+        let depth = f64::from(*depth);
+        match drill_point {
+            DrillPoint::Flat => {
+                if radius_at(depth) <= 0.0 {
+                    return Err("the taper closes the hole before its bottom".into());
+                }
+                ops.push(cut_extrude(
+                    ExtrudeTermination::Blind { distance: depth },
+                    -taper,
+                    radius,
+                ));
+            }
+            DrillPoint::Angled { angle_deg } => {
+                if *angle_deg <= 0.0 || *angle_deg >= 180.0 {
+                    return Err("the drill point angle must be in (0, 180) degrees".into());
+                }
+                let tan_half = (f64::from(*angle_deg) * 0.5).to_radians().tan();
+                // The point below a wall ending at radius ρ is ρ / tan(half)
+                // tall; within the depth, wall and point share it.
+                let wall = if *point_in_depth {
+                    (depth - radius / tan_half) / (1.0 - tan_taper / tan_half)
+                } else {
+                    depth
+                };
+                if wall <= 0.0 {
+                    return Err(
+                        "the drill point is deeper than the hole; deepen it or put the point \
+                         below the depth"
+                            .into(),
+                    );
+                }
+                let bottom = radius_at(wall);
+                if bottom <= 0.0 {
+                    return Err("the taper closes the hole before its bottom".into());
+                }
+                ops.push(cut_extrude(
+                    ExtrudeTermination::Blind { distance: wall },
+                    -taper,
+                    radius,
+                ));
+                ops.extend(cones(wall, bottom, 0.0, bottom / tan_half));
+            }
         }
-    };
-    let mut ops = vec![cut_extrude(
-        main_termination,
-        0.0,
-        f64::from(diameter) * 0.5,
-    )];
+    }
 
+    let cut = match cut {
+        HoleCut::Seat { seat } => {
+            let (spec, size) = thread
+                .as_ref()
+                .zip(size.as_ref())
+                .filter(|(spec, _)| spec.standard.is_metric())
+                .ok_or("a screw seat needs the hole sized from an ISO metric thread")?;
+            seat.cut(size.major)
+                .ok_or_else(|| format!("there is no {} for {}", seat.label(), spec.size))?
+        }
+        other => *other,
+    };
     match cut {
-        HoleCut::None => {}
+        HoleCut::None | HoleCut::Seat { .. } => {}
         HoleCut::Counterbore {
             diameter: cb_diameter,
             depth: cb_depth,
+        }
+        | HoleCut::Spotface {
+            diameter: cb_diameter,
+            depth: cb_depth,
         } => {
-            if *cb_diameter <= diameter {
-                return Err("counterbore diameter must exceed the hole diameter".into());
+            let name = if matches!(cut, HoleCut::Spotface { .. }) {
+                "spotface"
+            } else {
+                "counterbore"
+            };
+            if cb_diameter <= diameter {
+                return Err(format!("{name} diameter must exceed the hole diameter"));
             }
-            if *cb_depth <= 0.0 {
-                return Err("counterbore depth must be positive".into());
+            if cb_depth <= 0.0 {
+                return Err(format!("{name} depth must be positive"));
             }
             ops.push(cut_extrude(
                 ExtrudeTermination::Blind {
-                    distance: f64::from(*cb_depth),
+                    distance: f64::from(cb_depth),
                 },
                 0.0,
-                f64::from(*cb_diameter) * 0.5,
+                f64::from(cb_diameter) * 0.5,
             ));
         }
         HoleCut::Countersink {
             diameter: cs_diameter,
             angle_deg,
         } => {
-            if *cs_diameter <= diameter {
+            if cs_diameter <= diameter {
                 return Err("countersink diameter must exceed the hole diameter".into());
             }
-            if *angle_deg <= 0.0 || *angle_deg >= 180.0 {
+            if angle_deg <= 0.0 || angle_deg >= 180.0 {
                 return Err("countersink angle must be in (0, 180) degrees".into());
             }
             // The cone runs from the countersink diameter at the surface down
             // to the hole diameter; its depth follows from the angle.
-            let half_angle = f64::from(*angle_deg) * 0.5;
-            let cs_depth = (f64::from(*cs_diameter) - f64::from(diameter)) * 0.5
+            let half_angle = f64::from(angle_deg) * 0.5;
+            let cs_depth = (f64::from(cs_diameter) - f64::from(diameter)) * 0.5
                 / half_angle.to_radians().tan();
             ops.push(cut_extrude(
                 ExtrudeTermination::Blind { distance: cs_depth },
                 -half_angle,
-                f64::from(*cs_diameter) * 0.5,
+                f64::from(cs_diameter) * 0.5,
             ));
+        }
+        HoleCut::Counterdrill {
+            diameter: cd_diameter,
+            depth: cd_depth,
+            angle_deg,
+        } => {
+            if cd_depth <= 0.0 {
+                return Err("counterdrill depth must be positive".into());
+            }
+            if angle_deg <= 0.0 || angle_deg >= 180.0 {
+                return Err("counterdrill angle must be in (0, 180) degrees".into());
+            }
+            let wide = f64::from(cd_diameter) * 0.5;
+            let cd_depth = f64::from(cd_depth);
+            let narrow = radius_at(cd_depth);
+            if wide <= narrow || cd_diameter <= diameter {
+                return Err("counterdrill diameter must exceed the hole diameter".into());
+            }
+            let tan_half = (f64::from(angle_deg) * 0.5).to_radians().tan();
+            ops.push(cut_extrude(
+                ExtrudeTermination::Blind { distance: cd_depth },
+                0.0,
+                wide,
+            ));
+            ops.extend(cones(cd_depth, wide, narrow, (wide - narrow) / tan_half));
         }
     }
     if *threaded && *modeled_thread {
-        let index = metric_index.ok_or("a modeled thread needs a standard size")?;
-        let (_, pitch, ..) = *METRIC_SIZES
-            .get(index)
-            .ok_or_else(|| format!("there is no standard size number {index}"))?;
-        let nominal = crate::feature::metric_nominal(index).ok_or("the size names no diameter")?;
+        let (spec, size) = thread
+            .as_ref()
+            .zip(size)
+            .ok_or("a modeled thread needs a standard size")?;
         if *thread_depth <= 0.0 {
             return Err("give the modeled thread a depth".into());
         }
-        // Into the material: against the sketch normal unless reversed.
-        let into = if *reversed {
-            plane.normal
-        } else {
-            plane.normal.map(|c| -c)
+        let form = ThreadForm {
+            wall: radius,
+            major: (size.major + spec.allowance(&size)) * 0.5,
+            pitch: size.pitch,
+            depth: f64::from(*thread_depth),
+            flank_deg: spec.standard.flank_angle_deg(),
+            taper_deg: taper,
+            left_handed: spec.left_handed,
         };
         for center in &centers {
-            ops.push(thread_cut(
-                &plane,
-                *center,
-                into,
-                f64::from(diameter) * 0.5,
-                f64::from(nominal) * 0.5,
-                f64::from(pitch),
-                f64::from(*thread_depth),
-            ));
+            ops.push(thread_cut(&plane, *center, into, &form));
         }
     }
     Ok(ops)
 }
 
-/// The groove of an internal metric thread, cut into a hole's wall: a 60°
-/// tooth space from inside the drilled wall (`wall` radius) out to the
+/// A cone cut `down` along `into` below a hole center: `wide` in radius
+/// there, `narrow` `height` further in.
+fn cone_cut(
+    plane: &kernel_api::ProfilePlane,
+    center: [f64; 2],
+    into: [f64; 3],
+    down: f64,
+    wide: f64,
+    narrow: f64,
+    height: f64,
+) -> SolidOp {
+    let at = |k: usize| {
+        plane.origin[k] + plane.x_axis[k] * center[0] + plane.y_axis[k] * center[1] + into[k] * down
+    };
+    SolidOp::Primitive {
+        kind: kernel_api::PrimitiveKind::Cone {
+            radius1: wide,
+            radius2: narrow,
+            height,
+            angle_deg: 360.0,
+        },
+        placement: kernel_api::Placement {
+            origin: [at(0), at(1), at(2)],
+            x_axis: plane.x_axis,
+            z_axis: into,
+        },
+        op: BooleanOp::Cut,
+    }
+}
+
+/// The internal thread a hole's wall takes.
+struct ThreadForm {
+    /// The drilled wall's radius at the face.
+    wall: f64,
+    /// The thread's major radius at the face.
+    major: f64,
+    pitch: f64,
+    /// How far into the material it runs.
+    depth: f64,
+    /// The included angle between its flanks, degrees.
+    flank_deg: f64,
+    /// How far its diameters lean in toward the bottom, degrees.
+    taper_deg: f64,
+    left_handed: bool,
+}
+
+/// The groove of an internal thread, cut into a hole's wall: a tooth
+/// space of the form's flank angle from inside the drilled wall out to the
 /// thread's major radius, flat-topped a pitch's eighth wide there, swept
-/// right-handed along a helix at `pitch` from a pitch above the surface to
-/// `depth` into the material.
+/// along a helix at the pitch (narrowing along a cone as the wall tapers)
+/// from a pitch above the surface to the form's depth into the material.
 fn thread_cut(
     plane: &kernel_api::ProfilePlane,
     center: [f64; 2],
     into: [f64; 3],
-    wall: f64,
-    major: f64,
-    pitch: f64,
-    depth: f64,
+    form: &ThreadForm,
 ) -> SolidOp {
+    let pitch = form.pitch;
     let at = |k: usize| plane.origin[k] + plane.x_axis[k] * center[0] + plane.y_axis[k] * center[1];
     let x = plane.x_axis;
     let normal = [
@@ -1068,9 +1231,15 @@ fn thread_cut(
         y_axis: into,
         normal,
     };
+    // The sweep starts a pitch above the face, where a taper leaves every
+    // radius wider by a pitch's worth of it.
+    let widen = pitch * form.taper_deg.to_radians().tan();
+    let wall = form.wall + widen;
+    let major = form.major + widen;
     let inner = (wall - 0.1 * pitch).max(0.1 * wall);
     let crest = pitch / 16.0;
-    let root = (crest + (major - inner) * 30f64.to_radians().tan()).min(0.45 * pitch);
+    let root =
+        (crest + (major - inner) * (form.flank_deg * 0.5).to_radians().tan()).min(0.45 * pitch);
     let start = -pitch;
     let corners = [
         [inner, start - root],
@@ -1093,9 +1262,9 @@ fn thread_cut(
             axis_origin: [0.0, 0.0],
             axis_dir: [0.0, 1.0],
             pitch,
-            height: depth + pitch,
-            left_handed: false,
-            cone_angle_deg: 0.0,
+            height: form.depth + pitch,
+            left_handed: form.left_handed,
+            cone_angle_deg: -form.taper_deg,
             reversed: false,
         },
         op: BooleanOp::Cut,
@@ -1600,6 +1769,7 @@ pub fn mark_all_part_features_dirty(document: &mut Document) {
 mod tests {
     use super::*;
     use crate::feature::MirrorPlane;
+    use crate::hole_tables::{ScrewSeat, ThreadStandard};
     use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
     fn rect_sketch() -> SketchFeature {
@@ -2098,11 +2268,14 @@ mod tests {
                     diameter: 6.0,
                     depth: 1.5,
                 },
-                metric_index: None,
+                thread: None,
                 threaded: false,
                 modeled_thread: false,
                 thread_depth: 0.0,
                 fit: crate::feature::HoleFit::Normal,
+                drill_point: DrillPoint::Flat,
+                point_in_depth: false,
+                taper_deg: 0.0,
                 reversed: false,
             },
             "Hole".into(),
@@ -2170,11 +2343,17 @@ mod tests {
                     depth: 4.0,
                     through_all: false,
                     cut: HoleCut::None,
-                    metric_index: Some(999),
+                    thread: Some(crate::feature::ThreadSpec::new(
+                        crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                        "M999",
+                    )),
                     threaded,
                     modeled_thread,
                     thread_depth: 3.0,
                     fit: crate::feature::HoleFit::Normal,
+                    drill_point: DrillPoint::Flat,
+                    point_in_depth: false,
+                    taper_deg: 0.0,
                     reversed: false,
                 },
                 "Hole".into(),
@@ -2183,11 +2362,367 @@ mod tests {
             .unwrap();
             let error = body_build_ops(&doc, body).unwrap_err();
             assert!(
-                error.message.contains("no standard size number 999"),
+                error.message.contains("no ISO metric coarse size \"M999\""),
                 "{}",
                 error.message
             );
         }
+    }
+
+    /// A padded body with one hole position and `hole` drilled there: the
+    /// hole's ops, or its build error.
+    fn hole_plan(edit: impl FnOnce(&mut PartFeature)) -> Result<Vec<SolidOp>, String> {
+        let (mut doc, body, base_sketch) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(base_sketch, 10.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut hole_sketch = Sketch::new("holes");
+        hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 2.5))));
+        let plane = hole_sketch.plane;
+        let hole_sketch_id = doc
+            .add_feature_in_body(
+                SketchFeature::new(hole_sketch, plane),
+                "holes".into(),
+                Some(body),
+            )
+            .unwrap();
+        let mut hole = PartFeature::Hole {
+            refine: false,
+            sketch: hole_sketch_id,
+            diameter: 3.0,
+            depth: 6.0,
+            through_all: false,
+            cut: HoleCut::None,
+            thread: None,
+            threaded: false,
+            modeled_thread: false,
+            thread_depth: 0.0,
+            fit: crate::feature::HoleFit::Normal,
+            drill_point: DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
+            reversed: false,
+        };
+        edit(&mut hole);
+        doc.add_feature_in_body(hole, "Hole".into(), Some(body))
+            .unwrap();
+        body_build_ops(&doc, body)
+            .map(|plan| plan.ops[1..].to_vec())
+            .map_err(|e| e.message)
+    }
+
+    fn set_hole(f: &mut PartFeature, edit: impl FnOnce(&mut HoleFields)) {
+        let PartFeature::Hole {
+            thread,
+            threaded,
+            modeled_thread,
+            thread_depth,
+            cut,
+            drill_point,
+            point_in_depth,
+            taper_deg,
+            through_all,
+            ..
+        } = f
+        else {
+            unreachable!()
+        };
+        edit(&mut HoleFields {
+            thread,
+            threaded,
+            modeled_thread,
+            thread_depth,
+            cut,
+            drill_point,
+            point_in_depth,
+            taper_deg,
+            through_all,
+        });
+    }
+
+    struct HoleFields<'a> {
+        thread: &'a mut Option<ThreadSpec>,
+        threaded: &'a mut bool,
+        modeled_thread: &'a mut bool,
+        thread_depth: &'a mut f32,
+        cut: &'a mut HoleCut,
+        drill_point: &'a mut DrillPoint,
+        point_in_depth: &'a mut bool,
+        taper_deg: &'a mut f32,
+        through_all: &'a mut bool,
+    }
+
+    fn blind_distance(op: &SolidOp) -> (f64, f64) {
+        let SolidOp::Sweep {
+            kind:
+                SweepKind::Extrude {
+                    termination: ExtrudeTermination::Blind { distance },
+                    taper_deg,
+                    ..
+                },
+            ..
+        } = op
+        else {
+            panic!("a blind extrude: {op:?}");
+        };
+        (*distance, *taper_deg)
+    }
+
+    fn cone_of(op: &SolidOp) -> (f64, f64, f64, [f64; 3]) {
+        let SolidOp::Primitive {
+            kind:
+                kernel_api::PrimitiveKind::Cone {
+                    radius1,
+                    radius2,
+                    height,
+                    ..
+                },
+            placement,
+            op,
+        } = op
+        else {
+            panic!("a cone: {op:?}");
+        };
+        assert_eq!(*op, BooleanOp::Cut);
+        (*radius1, *radius2, *height, placement.origin)
+    }
+
+    #[test]
+    fn an_angled_point_adds_a_cone_below_the_wall_or_within_the_depth() {
+        let point = |in_depth: bool| {
+            hole_plan(|f| {
+                set_hole(f, |h| {
+                    *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
+                    *h.point_in_depth = in_depth;
+                })
+            })
+            .unwrap()
+        };
+        let tip = 1.5 / 59f64.to_radians().tan();
+        let below = point(false);
+        assert_eq!(below.len(), 2);
+        assert!((blind_distance(&below[0]).0 - 6.0).abs() < 1e-9);
+        let (r1, r2, h, origin) = cone_of(&below[1]);
+        assert!((r1 - 1.5).abs() < 1e-9 && r2 == 0.0 && (h - tip).abs() < 1e-9);
+        assert!(
+            (origin[2] + 6.0).abs() < 1e-9,
+            "at the wall's end: {origin:?}"
+        );
+        let within = point(true);
+        assert!((blind_distance(&within[0]).0 - (6.0 - tip)).abs() < 1e-9);
+        let (.., origin) = cone_of(&within[1]);
+        assert!((origin[2] + 6.0 - tip).abs() < 1e-9);
+        // Through all has no bottom to point.
+        let through = hole_plan(|f| {
+            set_hole(f, |h| {
+                *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
+                *h.through_all = true;
+            })
+        })
+        .unwrap();
+        assert_eq!(through.len(), 1);
+    }
+
+    #[test]
+    fn a_point_deeper_than_the_hole_is_an_error() {
+        let error = hole_plan(|f| {
+            if let PartFeature::Hole { depth, .. } = f {
+                *depth = 0.5;
+            }
+            set_hole(f, |h| {
+                *h.drill_point = DrillPoint::Angled { angle_deg: 135.0 };
+                *h.point_in_depth = true;
+            })
+        })
+        .unwrap_err();
+        assert!(error.contains("drill point is deeper"), "{error}");
+    }
+
+    #[test]
+    fn a_tapered_hole_narrows_its_extrude_and_its_point() {
+        let ops = hole_plan(|f| {
+            set_hole(f, |h| {
+                *h.taper_deg = 3.0;
+                *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
+            })
+        })
+        .unwrap();
+        let (distance, taper) = blind_distance(&ops[0]);
+        assert!((distance - 6.0).abs() < 1e-9 && (taper + 3.0).abs() < 1e-9);
+        let (r1, ..) = cone_of(&ops[1]);
+        assert!((r1 - (1.5 - 6.0 * 3f64.to_radians().tan())).abs() < 1e-9);
+        let closed = hole_plan(|f| set_hole(f, |h| *h.taper_deg = 40.0)).unwrap_err();
+        assert!(closed.contains("taper closes"), "{closed}");
+    }
+
+    #[test]
+    fn spotface_and_counterdrill_cut_their_mouths() {
+        let spot = hole_plan(|f| {
+            set_hole(f, |h| {
+                *h.cut = HoleCut::Spotface {
+                    diameter: 6.0,
+                    depth: 0.5,
+                }
+            })
+        })
+        .unwrap();
+        assert_eq!(spot.len(), 2);
+        assert!((blind_distance(&spot[1]).0 - 0.5).abs() < 1e-9);
+        let drill = hole_plan(|f| {
+            set_hole(f, |h| {
+                *h.cut = HoleCut::Counterdrill {
+                    diameter: 5.0,
+                    depth: 2.0,
+                    angle_deg: 90.0,
+                }
+            })
+        })
+        .unwrap();
+        assert_eq!(drill.len(), 3, "drill, bore, cone");
+        assert!((blind_distance(&drill[1]).0 - 2.0).abs() < 1e-9);
+        let (r1, r2, h, origin) = cone_of(&drill[2]);
+        assert!((r1 - 2.5).abs() < 1e-9 && (r2 - 1.5).abs() < 1e-9 && (h - 1.0).abs() < 1e-9);
+        assert!((origin[2] + 2.0).abs() < 1e-9);
+        let narrow = hole_plan(|f| {
+            set_hole(f, |h| {
+                *h.cut = HoleCut::Spotface {
+                    diameter: 2.0,
+                    depth: 0.5,
+                }
+            })
+        })
+        .unwrap_err();
+        assert!(narrow.contains("spotface diameter"), "{narrow}");
+    }
+
+    #[test]
+    fn a_screw_seat_takes_its_size_from_the_metric_thread() {
+        let seat = |standard: ThreadStandard, size: &str, seat: ScrewSeat| {
+            hole_plan(|f| {
+                set_hole(f, |h| {
+                    *h.thread = Some(ThreadSpec::new(standard, size));
+                    *h.cut = HoleCut::Seat { seat };
+                })
+            })
+        };
+        let bore = seat(ThreadStandard::IsoMetricCoarse, "M6", ScrewSeat::SocketHead).unwrap();
+        assert!((blind_distance(&bore[1]).0 - 6.4).abs() < 1e-6);
+        let SolidOp::Sweep { profile, .. } = &bore[1] else {
+            panic!()
+        };
+        let ProfileSegment::Circle { radius, .. } = profile.wires[0].segments[0] else {
+            panic!()
+        };
+        assert!((radius - 5.5).abs() < 1e-6, "DIN 974-1 Ø11");
+        let sink = seat(
+            ThreadStandard::IsoMetricFine,
+            "M8x1",
+            ScrewSeat::Countersunk,
+        )
+        .unwrap();
+        assert_eq!(sink.len(), 2);
+        let inch = seat(ThreadStandard::Unc, "1/4-20", ScrewSeat::SocketHead).unwrap_err();
+        assert!(inch.contains("ISO metric"), "{inch}");
+        let small = seat(
+            ThreadStandard::IsoMetricCoarse,
+            "M2",
+            ScrewSeat::Countersunk,
+        )
+        .unwrap_err();
+        assert!(small.contains("no ISO 10642 seat for M2"), "{small}");
+    }
+
+    #[test]
+    fn a_modeled_thread_takes_its_standards_form_hand_and_taper() {
+        let thread = |spec: ThreadSpec| {
+            let ops = hole_plan(|f| {
+                set_hole(f, |h| {
+                    *h.thread = Some(spec);
+                    *h.threaded = true;
+                    *h.modeled_thread = true;
+                    *h.thread_depth = 4.0;
+                })
+            })
+            .unwrap();
+            let Some(SolidOp::Sweep {
+                profile,
+                kind:
+                    SweepKind::Helix {
+                        pitch,
+                        left_handed,
+                        cone_angle_deg,
+                        ..
+                    },
+                ..
+            }) = ops.last()
+            else {
+                panic!("a helix last: {ops:?}");
+            };
+            let corners: Vec<[f64; 2]> = profile.wires[0]
+                .segments
+                .iter()
+                .map(|s| match s {
+                    ProfileSegment::Line { start, .. } => *start,
+                    _ => panic!(),
+                })
+                .collect();
+            // The flank's slope: out from the wall to the major radius, and
+            // along the axis from root to crest.
+            let flank = ((corners[1][1] - corners[0][1]) / (corners[1][0] - corners[0][0]))
+                .atan()
+                .to_degrees();
+            (*pitch, *left_handed, *cone_angle_deg, corners[1][0], flank)
+        };
+        let (pitch, left, cone, major, flank) =
+            thread(ThreadSpec::new(ThreadStandard::IsoMetricCoarse, "M6"));
+        assert!((pitch - 1.0).abs() < 1e-9 && !left && cone == 0.0);
+        assert!((major - 3.0).abs() < 1e-9 && (flank - 30.0).abs() < 1e-6);
+
+        let mut lh = ThreadSpec::new(ThreadStandard::Bsw, "1/4");
+        lh.left_handed = true;
+        let (pitch, left, _, _, flank) = thread(lh);
+        assert!((pitch - 25.4 / 20.0).abs() < 1e-9 && left);
+        assert!((flank - 27.5).abs() < 1e-6, "55° Whitworth form: {flank}");
+
+        let (_, _, cone, major, _) = thread(ThreadSpec::new(ThreadStandard::Npt, "1/2"));
+        let taper = crate::hole_tables::pipe_taper_deg();
+        assert!((cone + taper).abs() < 1e-9, "narrows 1:16: {cone}");
+        let npt = ThreadStandard::Npt.size("1/2").unwrap();
+        let pitch = 25.4 / 14.0;
+        assert!(
+            (major - (npt.major * 0.5 + pitch / 32.0)).abs() < 1e-9,
+            "a pitch above the face, a pitch's taper wider"
+        );
+
+        let mut g = ThreadSpec::new(ThreadStandard::IsoMetricCoarse, "M6");
+        g.class = "6G".into();
+        let (.., major, _) = thread(g);
+        assert!((major - (3.0 + 0.026 * 0.5)).abs() < 1e-9, "6G sits EI out");
+    }
+
+    #[test]
+    fn a_thread_the_standard_lacks_fails_cleanly() {
+        let mut spec = ThreadSpec::new(ThreadStandard::Unc, "1/4-20");
+        spec.class = "6H".into();
+        let error = hole_plan(|f| set_hole(f, |h| *h.thread = Some(spec))).unwrap_err();
+        assert!(error.contains("UNC has no class 6H"), "{error}");
+    }
+
+    #[test]
+    fn a_tapered_standard_tapers_the_tapped_drill_only() {
+        let drilled = |threaded: bool| {
+            hole_plan(|f| {
+                set_hole(f, |h| {
+                    *h.thread = Some(ThreadSpec::new(ThreadStandard::BspTaper, "1/4"));
+                    *h.threaded = threaded;
+                    *h.taper_deg = 7.0;
+                })
+            })
+            .unwrap()
+        };
+        let (_, taper) = blind_distance(&drilled(true)[0]);
+        assert!((taper + crate::hole_tables::pipe_taper_deg()).abs() < 1e-9);
+        let (_, taper) = blind_distance(&drilled(false)[0]);
+        assert!((taper + 7.0).abs() < 1e-9, "a clearance hole keeps its own");
     }
 
     #[test]
@@ -2199,11 +2734,17 @@ mod tests {
             depth: 4.0,
             through_all: false,
             cut: HoleCut::None,
-            metric_index: Some(5), // M6
+            thread: Some(crate::feature::ThreadSpec::new(
+                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                "M6",
+            )),
             threaded: true,
             modeled_thread: false,
             thread_depth: 0.0,
             fit: crate::feature::HoleFit::Normal,
+            drill_point: DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
             reversed: false,
         };
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
@@ -2214,11 +2755,17 @@ mod tests {
             depth: 4.0,
             through_all: false,
             cut: HoleCut::None,
-            metric_index: Some(5),
+            thread: Some(crate::feature::ThreadSpec::new(
+                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                "M6",
+            )),
             threaded: false,
             modeled_thread: false,
             thread_depth: 0.0,
             fit: crate::feature::HoleFit::Normal,
+            drill_point: DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
             reversed: false,
         };
         assert!(

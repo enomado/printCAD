@@ -5,6 +5,8 @@ use core_document::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::hole_tables::{ThreadSize, ThreadStandard};
+
 /// Which in-plane sketch axis a revolution/helix spins about.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum RevolveAxis {
@@ -274,7 +276,7 @@ pub enum TransformStep {
     },
 }
 
-/// Counterbore/countersink options for a hole.
+/// What a hole cuts around its mouth, beyond the drill.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum HoleCut {
     #[default]
@@ -287,6 +289,24 @@ pub enum HoleCut {
         diameter: f32,
         angle_deg: f32,
     },
+    /// A shallow counterbore: a flat seat faced into a rough or curved
+    /// surface.
+    Spotface {
+        diameter: f32,
+        depth: f32,
+    },
+    /// A wider bore ending in a cone that narrows to the hole, as a
+    /// stepped drill leaves it: `angle_deg` is the cone's included angle.
+    Counterdrill {
+        diameter: f32,
+        depth: f32,
+        angle_deg: f32,
+    },
+    /// The seat of a standard screw's head, sized from the hole's metric
+    /// thread size.
+    Seat {
+        seat: crate::hole_tables::ScrewSeat,
+    },
 }
 
 impl HoleCut {
@@ -295,6 +315,9 @@ impl HoleCut {
             HoleCut::None => "None",
             HoleCut::Counterbore { .. } => "Counterbore",
             HoleCut::Countersink { .. } => "Countersink",
+            HoleCut::Spotface { .. } => "Spotface",
+            HoleCut::Counterdrill { .. } => "Counterdrill",
+            HoleCut::Seat { seat } => seat.label(),
         }
     }
 }
@@ -320,26 +343,153 @@ impl HoleFit {
     }
 }
 
-/// A metric size's nominal (major) diameter, from its designation: "M2.5"
-/// is 2.5 mm.
-pub fn metric_nominal(index: usize) -> Option<f32> {
-    METRIC_SIZES.get(index)?.0.strip_prefix('M')?.parse().ok()
+/// The thread a standards-driven hole is sized from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ThreadSpecRepr")]
+pub struct ThreadSpec {
+    pub standard: ThreadStandard,
+    /// The size's designation in its standard: "M6", "1/4-20", "1/2".
+    pub size: String,
+    /// The class of fit ("6H", "2B"); empty for the standard's default.
+    #[serde(default)]
+    pub class: String,
+    /// A left-hand thread: a modeled one turns the other way.
+    #[serde(default)]
+    pub left_handed: bool,
 }
 
-/// ISO metric coarse sizes: (designation, thread pitch, tap drill Ø,
-/// clearance Ø close/normal/loose per ISO 273).
-pub const METRIC_SIZES: [(&str, f32, f32, [f32; 3]); 10] = [
-    ("M2", 0.4, 1.6, [2.2, 2.4, 2.6]),
-    ("M2.5", 0.45, 2.05, [2.7, 2.9, 3.1]),
-    ("M3", 0.5, 2.5, [3.2, 3.4, 3.6]),
-    ("M4", 0.7, 3.3, [4.3, 4.5, 4.8]),
-    ("M5", 0.8, 4.2, [5.3, 5.5, 5.8]),
-    ("M6", 1.0, 5.0, [6.4, 6.6, 7.0]),
-    ("M8", 1.25, 6.8, [8.4, 9.0, 10.0]),
-    ("M10", 1.5, 8.5, [10.5, 11.0, 12.0]),
-    ("M12", 1.75, 10.2, [13.0, 13.5, 14.5]),
-    ("M16", 2.0, 14.0, [17.0, 17.5, 18.5]),
+/// The ISO metric coarse sizes in the order a hole's `metric_index`
+/// numbers them.
+const INDEXED_METRIC_SIZES: [&str; 10] = [
+    "M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16",
 ];
+
+/// A thread as a document holds it: whole, or as a `metric_index`, the
+/// place of an ISO metric coarse size in [`INDEXED_METRIC_SIZES`].
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ThreadSpecRepr {
+    Index(usize),
+    Spec {
+        standard: ThreadStandard,
+        size: String,
+        #[serde(default)]
+        class: String,
+        #[serde(default)]
+        left_handed: bool,
+    },
+}
+
+impl From<ThreadSpecRepr> for ThreadSpec {
+    fn from(repr: ThreadSpecRepr) -> Self {
+        match repr {
+            ThreadSpecRepr::Index(index) => ThreadSpec::new(
+                ThreadStandard::IsoMetricCoarse,
+                &INDEXED_METRIC_SIZES
+                    .get(index)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("#{index}")),
+            ),
+            ThreadSpecRepr::Spec {
+                standard,
+                size,
+                class,
+                left_handed,
+            } => ThreadSpec {
+                standard,
+                size,
+                class,
+                left_handed,
+            },
+        }
+    }
+}
+
+impl ThreadSpec {
+    pub fn new(standard: ThreadStandard, size: &str) -> Self {
+        Self {
+            standard,
+            size: size.to_string(),
+            class: String::new(),
+            left_handed: false,
+        }
+    }
+
+    /// The class the thread is cut to: its own, or its standard's default.
+    pub fn class(&self) -> &str {
+        if self.class.is_empty() {
+            self.standard.default_class()
+        } else {
+            &self.class
+        }
+    }
+
+    /// The thread's size, or why the standard has none by its name or
+    /// class.
+    pub fn resolve(&self) -> Result<ThreadSize, String> {
+        let size = self.standard.size(&self.size).ok_or_else(|| {
+            format!(
+                "there is no {} size \"{}\"",
+                self.standard.label(),
+                self.size
+            )
+        })?;
+        let classes = self.standard.classes();
+        if !self.class.is_empty() && !classes.contains(&self.class.as_str()) {
+            return Err(if classes.is_empty() {
+                format!("{} threads have no class to choose", self.standard.label())
+            } else {
+                format!(
+                    "{} has no class {}; it has {}",
+                    self.standard.label(),
+                    self.class,
+                    classes.join(", ")
+                )
+            });
+        }
+        Ok(size)
+    }
+
+    /// How far the class moves the thread's diameters out, mm.
+    pub fn allowance(&self, size: &ThreadSize) -> f64 {
+        self.standard.class_allowance(self.class(), size.pitch)
+    }
+
+    /// The designation as a drawing gives it: "M6-6H", "1/4-20 UNC-2B",
+    /// "G 1/2", "M8x1-6G LH".
+    pub fn designation(&self) -> String {
+        use ThreadStandard as S;
+        let mut text = match self.standard {
+            S::IsoMetricCoarse | S::IsoMetricFine => self.size.clone(),
+            S::Unc | S::Unf | S::Unef | S::Bsw | S::Bsf => {
+                format!("{} {}", self.size, self.standard.label())
+            }
+            S::BspParallel => format!("G {}", self.size),
+            S::BspTaper => format!("Rc {}", self.size),
+            S::Npt => format!("{} NPT", self.size),
+        };
+        let class = self.class();
+        if !class.is_empty() {
+            text.push('-');
+            text.push_str(class);
+        }
+        if self.left_handed {
+            text.push_str(" LH");
+        }
+        text
+    }
+}
+
+/// The bottom of a blind hole.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum DrillPoint {
+    /// Square to the axis, as an end mill leaves it.
+    #[default]
+    Flat,
+    /// A cone of the drill's included point angle (118° and 135° are the
+    /// usual ones).
+    Angled { angle_deg: f32 },
+}
 
 /// A solid-modeling feature in a body's linear history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -475,7 +625,7 @@ pub enum PartFeature {
         #[serde(default)]
         refine: bool,
     },
-    /// Standards-aware cylindrical cuts at every circle center of a sketch.
+    /// Standards-aware drilled cuts at every circle center of a sketch.
     Hole {
         sketch: FeatureId,
         diameter: f32,
@@ -483,10 +633,10 @@ pub enum PartFeature {
         through_all: bool,
         #[serde(default)]
         cut: HoleCut,
-        /// ISO metric designation index into [`METRIC_SIZES`] when the hole
-        /// is standards-driven; the diameter then derives from thread/fit.
-        #[serde(default)]
-        metric_index: Option<usize>,
+        /// The thread the hole is sized from when it is standards-driven;
+        /// the diameter then derives from the thread and the fit.
+        #[serde(default, alias = "metric_index")]
+        thread: Option<ThreadSpec>,
         #[serde(default)]
         threaded: bool,
         /// A threaded hole's thread cut into its wall, not only its tap
@@ -498,6 +648,16 @@ pub enum PartFeature {
         thread_depth: f32,
         #[serde(default)]
         fit: HoleFit,
+        /// The bottom of a blind hole.
+        #[serde(default)]
+        drill_point: DrillPoint,
+        /// The drill point lies within the depth rather than below it.
+        #[serde(default)]
+        point_in_depth: bool,
+        /// The wall leans in toward the bottom by this angle, degrees;
+        /// a tapered thread standard's taper stands in for it.
+        #[serde(default)]
+        taper_deg: f32,
         #[serde(default)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.

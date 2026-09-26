@@ -9,6 +9,7 @@ mod commands;
 #[cfg(feature = "egui")]
 mod editors;
 mod feature;
+mod hole_tables;
 mod params;
 #[cfg(feature = "egui")]
 mod task;
@@ -19,9 +20,13 @@ pub use build::{
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
-    METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
-    primitive_icon, primitive_preset,
+    ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
+    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, ThreadSpec, TransformStep, primitive_icon,
+    primitive_preset,
+};
+pub use hole_tables::{
+    CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
+    user_cut_profiles,
 };
 
 use core_document::{
@@ -374,11 +379,14 @@ impl PartDesignWorkbench {
                         depth: 10.0,
                         through_all: false,
                         cut: HoleCut::None,
-                        metric_index: None,
+                        thread: None,
                         threaded: false,
                         modeled_thread: false,
                         thread_depth: 0.0,
                         fit: HoleFit::Normal,
+                        drill_point: DrillPoint::Flat,
+                        point_in_depth: false,
+                        taper_deg: 0.0,
                         reversed: false,
                     },
                     "Hole",
@@ -755,6 +763,8 @@ impl Workbench for PartDesignWorkbench {
 
     fn configure(&self, context: &mut WorkbenchContext) {
         commands::register(context);
+        // The hole cuts the user keeps, read once as the bench starts.
+        hole_tables::user_cut_profiles();
         let action = |id: &str, label: &str, icon: &'static str, category: &str| {
             ToolDescriptor::new_action(id, label, Some(category)).icon(icon)
         };

@@ -71,6 +71,43 @@ fn fields(variant: &str) -> &'static [Field] {
                 Some(ANGLE),
             ),
             ("thread_depth", "thread_depth", "Thread depth", Some(LENGTH)),
+            ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
+            (
+                "drill_point/Angled/angle_deg",
+                "point_angle",
+                "Drill point angle",
+                Some(ANGLE),
+            ),
+            (
+                "cut/Spotface/diameter",
+                "spotface_diameter",
+                "Spotface diameter",
+                Some(LENGTH),
+            ),
+            (
+                "cut/Spotface/depth",
+                "spotface_depth",
+                "Spotface depth",
+                Some(LENGTH),
+            ),
+            (
+                "cut/Counterdrill/diameter",
+                "counterdrill_diameter",
+                "Counterdrill diameter",
+                Some(LENGTH),
+            ),
+            (
+                "cut/Counterdrill/depth",
+                "counterdrill_depth",
+                "Counterdrill depth",
+                Some(LENGTH),
+            ),
+            (
+                "cut/Counterdrill/angle_deg",
+                "counterdrill_angle",
+                "Counterdrill angle",
+                Some(ANGLE),
+            ),
         ],
         "Fillet" => &[("radius", "radius", "Radius", Some(LENGTH))],
         "Chamfer" => &[
