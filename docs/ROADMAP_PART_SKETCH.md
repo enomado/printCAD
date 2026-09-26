@@ -7,17 +7,11 @@ listed here is built; see the release notes for what is.
 
 ### Pad, Pocket and Revolution
 
-- **Up to shape:** stop at a set of faces, not one.
-- **Direction:** extrude along a custom vector or a reference edge, not
-  only the sketch normal.
-- **Two sides, two end conditions:** each side of a two-sided extrusion
-  with its own mode (one blind, one up to a face), not two lengths only.
-- **Faces as the profile:** pad or pocket a picked planar face of the
-  solid, with no sketch.
-- **Revolution end modes:** to first, to last and up to face, as the
-  extrusions have.
-- **Revolution axis:** a reference edge, a datum line or a construction
-  line of the sketch, beside the sketch axes and a custom axis.
+- **Revolution up to a curved face:** a revolution stops on a flat face
+  whose plane holds its axis; any other target waits on the kernel
+  (ogeom-rs#73).
+- **Direction by formula:** a custom extrusion direction's components
+  are not yet numbers a formula can set.
 
 ### Loft, Pipe and Helix
 
@@ -30,17 +24,6 @@ listed here is built; see the release notes for what is.
   today.
 - **Subtractive helix, keep inside:** keep the intersection instead of
   cutting.
-
-### Hole
-
-- **Thread standards:** only ISO metric today; to add unified inch (UNC,
-  UNF, UNEF), British (BSW, BSF), pipe threads (BSP, NPT) with their
-  taper.
-- **Thread class and hand:** 6H, 2B and the like; left-hand threads.
-- **Cuts:** counterdrill, spotface, and standard screw seats; a user
-  table of cut profiles.
-- **Drill point:** angled (118°, 135°) and whether it counts toward the
-  depth; tapered holes.
 
 ### Patterns
 
@@ -70,34 +53,18 @@ listed here is built; see the release notes for what is.
 
 ### Generators
 
-- **Involute gear, sprocket and shaft:** profiles made from a few
-  numbers, ready to pad.
+- **Ring gears:** internal involute gears.
+- **Undercut:** a small pinion's flank cut back as a cutter leaves it.
+- **Keyways:** a keyway on a shaft or a bore.
+- **Generator task panel:** generators are edited in the sketcher's
+  panel today.
 
 ## Sketcher
 
 ### Drawing
 
-- **Conic arcs:** parabolas and hyperbolas.
-- **B-spline by points:** a spline through the clicked points
-  (interpolation), and a chosen degree; today the clicks are control
-  points of a cubic.
-- **Rectangle modes:** from three corners, and from the centre and two
-  corners; a frame (an offset outline) in one step.
-- **Join:** several edges merged into one B-spline.
-- **Continuous trim:** trimming everything the pointer drags across.
-
-### Constraints
-
-- **Arc length:** a dimension along an arc.
-- **Gap between curves:** a distance between two curves, not only points
-  and lines.
-- **Radius or diameter by kind:** one tool giving arcs a radius and
-  circles a diameter.
-- **Angle at a point:** the angle two curves make where they meet.
-- **Refraction:** two lines meeting an interface at the angles a ratio
-  of indices gives.
-- **Auto remove redundants:** a new constraint taking away the older one
-  it made redundant, as a preference.
+- **Trimming conics:** parabola and hyperbola arcs split and join, but do
+  not trim yet.
 
 ### Editing aids
 

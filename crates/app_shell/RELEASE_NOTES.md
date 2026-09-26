@@ -29,6 +29,10 @@ version first.
 - Clicks that do nothing say why, overlapping constraint icons spread out to be clickable, and every preview matches what the click makes.
 - Snapping works the same in every drawing tool and every click: to endpoints, centres, the origin, crossings, the middles of lines, square to a line or touching a circle from the last point, curves and axes, and level or plumb with the last point. Each has its own marker and name at the cursor, the click lands exactly where the marker is, and the point stays there by a matching constraint.
 - Check wall thickness draws the profile's medial axis, marks where walls are thinner than the minimum set in Preferences › Sketcher, and labels the thinnest one.
+- Rectangles from three corners, or from the centre and two corners, and a frame with its wall in one step.
+- B-splines of degree 2 to 5, drawn through the clicked points or on them; a chain of curves joined into one spline; arcs of parabolas and hyperbolas.
+- Dragging with Trim trims every curve the pointer crosses.
+- Arc length, the gap between two curves, radius or diameter by kind, the angle two curves make where they meet, and refraction; an option to take away the older constraints a new one makes redundant.
 
 ### Part Design
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, additive and subtractive, and booleans between bodies.
@@ -37,6 +41,10 @@ version first.
 - A body's volume, surface area and centre of mass, exact wherever its faces have a closed form.
 - While a feature is edited, what it adds or cuts shows see-through in its own colour over the body without it, set in Preferences › Display.
 - Centre line measures a tube-like solid between two of its faces: the path through the middle of its sections, drawn over the body with its length.
+- Pad and Pocket stop at the first of several faces, run along a custom direction or a picked edge, take their own end condition on each side, and make a picked flat face their profile with no sketch.
+- Revolution and Groove stop to the first, to the last or up to a face, and turn about a sketch line, a datum line or a picked edge.
+- Holes to ISO metric coarse and fine, unified inch, Whitworth and pipe thread standards, with class and hand; spotfaces, counterdrills and screw seats; angled drill points and tapered walls. See the Hole guide.
+- Generators make an involute gear, a chain sprocket or a stepped shaft from their numbers, as a sketch that rebuilds when a number changes.
 
 ### Assembly
 - Bodies can be moved and turned, and keep their own geometry as it was made.
