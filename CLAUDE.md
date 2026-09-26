@@ -330,7 +330,9 @@ cards show it. What's new reads `crates/app_shell/RELEASE_NOTES.md`, and
 a test fails when the running version has no entry there. The Edit menu's Cut/Copy/Paste go to the
 active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
 geometry clipboard); the view toolbar's clipping plane (`camera/section.rs`, per tab, a
-plane square to X, Y or Z) reaches the renderer as
+plane square to X, Y or Z), or while the active bench returns one the
+plane of any direction `Workbench::clip_plane` gives (the sketcher's
+per-sketch section view), reaches the renderer as
 `FrameSubmission.clip_plane`: every scene shader and the pick pass write
 a clip distance, the cut's back faces draw as a flat darker section, and
 CPU edge picking skips what it hides; the toolbar's Measure arms a two-click distance

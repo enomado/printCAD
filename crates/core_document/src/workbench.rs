@@ -721,6 +721,14 @@ pub trait Workbench: Send {
         None
     }
 
+    /// A plane the scene is cut at this frame, in world space: the
+    /// renderer's `[a, b, c, d]`, keeping what has `a·x + b·y + c·z + d >= 0`
+    /// and hiding the rest from drawing and picking alike. While it is
+    /// `Some` it stands in for the view toolbar's clipping plane.
+    fn clip_plane(&self, _ctx: &WorkbenchRuntimeContext) -> Option<[f32; 4]> {
+        None
+    }
+
     /// The feature whose edit session is open, for the tree to badge.
     fn editing_feature(&self) -> Option<FeatureId> {
         None

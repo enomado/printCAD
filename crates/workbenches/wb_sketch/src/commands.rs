@@ -395,6 +395,13 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.section_view",
+            "Cut away everything on the viewer's side of the sketch plane while it is edited",
+        ))
+        .optional("on", ParamKind::Bool, "true (the default) or false"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.remove_axis_alignment",
             "Turn the horizontal and vertical constraints of lines into parallel and \
              perpendicular ones among them, so the group keeps its shape and turns as a whole",
@@ -474,6 +481,14 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     .set_feature_dependencies(sketch_id, feature.dependencies());
             }
             return save(ctx, sketch_id, feature, Value::Null);
+        }
+        // A view setting: nothing built from the sketch changes.
+        "sketch.section_view" => {
+            feature.section_view = a.opt_bool("on")?.unwrap_or(true);
+            ctx.document
+                .update_feature_data(sketch_id, feature.to_json())
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            return Ok(Value::Null);
         }
         "sketch.carbon_copy" => {
             let from = FeatureId(a.id("from")?);

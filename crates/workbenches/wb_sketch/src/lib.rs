@@ -394,6 +394,9 @@ pub struct SketchWorkbench {
     constraint_kind_filter: ConstraintFilter,
     /// The glyphs drawn are the parked constraints', not the others'.
     parked_layer: bool,
+    /// The edited sketch cuts the scene at its plane, refreshed each frame
+    /// for the toolbar.
+    section_view: bool,
     /// The shape being drawn, until it is recorded.
     draw_record: Option<DrawRecord>,
     /// The last wall thickness check, drawn until the sketch changes, the
@@ -1608,6 +1611,33 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// The `sketch.section_view` action: the edited sketch's section view
+    /// switched, through the command's code.
+    fn toggle_section_view(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(mut feature), Some(sketch_id)) =
+            (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return InputResult::ignored();
+        };
+        feature.section_view = !feature.section_view;
+        self.section_view = feature.section_view;
+        ctx.record(
+            "sketch.section_view",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "on": feature.section_view,
+            })),
+            serde_json::Value::Null,
+        );
+        ctx.log_info(if feature.section_view {
+            "Section view: the scene is cut at the sketch plane"
+        } else {
+            "Section view off"
+        });
+        self.store_sketch_data(ctx, feature);
+        InputResult::consumed()
+    }
+
     /// The `sketch.remove_axis_alignment` action: the selected lines'
     /// horizontal and vertical constraints turned into parallel and
     /// perpendicular ones among them, through the command's code.
@@ -2612,6 +2642,15 @@ impl Workbench for SketchWorkbench {
         );
         context.register_tool(
             ToolDescriptor::new_action(
+                "sketch.section_view",
+                "Section view",
+                Some("constraints.view"),
+            )
+            .icon("clipping-plane")
+            .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
                 "sketch.parked_layer",
                 "Show parked constraints",
                 Some("constraints.view"),
@@ -2775,6 +2814,7 @@ impl Workbench for SketchWorkbench {
                     self.selected_constraints.clear();
                     return result;
                 }
+                "sketch.section_view" => return self.toggle_section_view(ctx),
                 "sketch.parked_layer" => {
                     self.parked_layer = !self.parked_layer;
                     ctx.log_info(if self.parked_layer {
@@ -3011,6 +3051,7 @@ impl Workbench for SketchWorkbench {
                     self.last_solve = None;
                     self.last_diagnosis = None;
                 }
+                self.section_view = feature.section_view;
                 let selected: Vec<Uuid> = self.selected.iter().copied().collect();
                 self.internal_target = !internal::curves_of(&feature.sketch, &selected).is_empty();
                 constrain::SelectionShape::of(&feature.sketch, &self.selected)
@@ -3075,6 +3116,7 @@ impl Workbench for SketchWorkbench {
             "sketch.grid" => self.options.grid_on,
             "sketch.rendering_order" => self.options.construction_on_top,
             "sketch.parked_layer" => self.parked_layer,
+            "sketch.section_view" => self.section_view,
             "sketch.carbon_copy" | "sketch.merge" => self.sketch_picker.as_ref().is_some_and(|p| {
                 (p.mode == SketchPickerMode::Merge) == (tool_id == "sketch.merge")
             }),
@@ -3197,6 +3239,17 @@ impl Workbench for SketchWorkbench {
             .collect(),
             ovp,
         })
+    }
+
+    /// A sketch edited in section view cuts the scene at its plane, keeping
+    /// the side away from the viewer, and a hair beyond the plane so a face
+    /// the sketch lies on stays.
+    fn clip_plane(&self, ctx: &WorkbenchRuntimeContext) -> Option<[f32; 4]> {
+        let feature = self.get_active_sketch(ctx)?;
+        if !feature.section_view {
+            return None;
+        }
+        Some(section_equation(&feature.plane, ctx.camera_position))
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
@@ -4735,6 +4788,25 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
     }
 }
 
+/// How far past the sketch plane a section view keeps, in mm: a face the
+/// sketch lies on stays whole.
+const SECTION_MARGIN_MM: f32 = 1e-3;
+
+/// The renderer's clipping equation for a section view at `plane`: it
+/// keeps what lies on the far side from `eye`, and the plane itself.
+pub(crate) fn section_equation(plane: &SketchPlane, eye: [f32; 3]) -> [f32; 4] {
+    let n = glam::Vec3::from_array(plane.normal).normalize_or_zero();
+    let o = glam::Vec3::from_array(plane.origin);
+    // The side the viewer is on is the side cut away.
+    let toward_eye = if n.dot(glam::Vec3::from_array(eye) - o) >= 0.0 {
+        n
+    } else {
+        -n
+    };
+    let keep = -toward_eye;
+    [keep.x, keep.y, keep.z, -keep.dot(o) + SECTION_MARGIN_MM]
+}
+
 /// The edge `source` names, projected onto the sketch plane `plane` (as
 /// the scene has it), in the sketch's own coordinates.
 pub(crate) fn project_source(
@@ -5241,6 +5313,32 @@ mod placed_body {
         let stored = stored_sketch(ctx.document, sketch).unwrap().plane;
         assert!(close(stored.origin, [0.0, 5.0, 0.0]), "{:?}", stored.origin);
         assert!(close(stored.normal, [0.0, 0.0, 1.0]));
+    }
+}
+
+#[cfg(test)]
+mod section_view {
+    use super::*;
+
+    fn keeps([a, b, c, d]: [f32; 4], p: [f32; 3]) -> bool {
+        a * p[0] + b * p[1] + c * p[2] + d >= 0.0
+    }
+
+    #[test]
+    fn the_viewers_side_of_the_plane_is_cut_away_and_the_plane_kept() {
+        let plane = SketchPlane::from_frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+        let from_above = section_equation(&plane, [0.0, 0.0, 50.0]);
+        assert!(keeps(from_above, [3.0, 4.0, 1.0]));
+        assert!(keeps(from_above, [3.0, 4.0, 5.0]), "the plane itself stays");
+        assert!(!keeps(from_above, [3.0, 4.0, 6.0]));
+        // Seen from below, the other side goes.
+        let from_below = section_equation(&plane, [0.0, 0.0, -50.0]);
+        assert!(keeps(from_below, [3.0, 4.0, 6.0]));
+        assert!(!keeps(from_below, [3.0, 4.0, 1.0]));
+        // A slanted plane cuts slanted.
+        let slanted = SketchPlane::from_frame([0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [1.0, 0.0, -1.0]);
+        let eq = section_equation(&slanted, [30.0, 0.0, 30.0]);
+        assert!(keeps(eq, [-1.0, 7.0, -1.0]) && !keeps(eq, [1.0, -7.0, 1.0]));
     }
 }
 

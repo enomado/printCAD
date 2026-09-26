@@ -679,6 +679,11 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `show` (boolean, optional): true makes what is missing, false takes away the pieces nothing else holds; left out, it shows when a piece is missing and hides otherwise
 - Returns {shown, elements}: whether it showed, and what it made or took away
 
+`pc.sketch.section_view`: Cut away everything on the viewer's side of the sketch plane while it is edited.
+
+- `sketch` (id): The sketch to draw in
+- `on` (boolean, optional): true (the default) or false
+
 `pc.sketch.remove_axis_alignment`: Turn the horizontal and vertical constraints of lines into parallel and perpendicular ones among them, so the group keeps its shape and turns as a whole.
 
 - `sketch` (id): The sketch to draw in

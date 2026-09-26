@@ -561,6 +561,7 @@ fn editing_aids_replay_too() {
     s.release(31.0, 7.0, "sketch.select");
     s.key(KeyCode::A, Some("sketch.remove_axis_alignment"));
     s.key(KeyCode::Escape, Some("sketch.select"));
+    s.key(KeyCode::A, Some("sketch.section_view"));
     let done = summary(&s.sketch(id));
     let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(
@@ -569,7 +570,8 @@ fn editing_aids_replay_too() {
             "sketch.draw",
             "sketch.internal_geometry",
             "sketch.draw",
-            "sketch.remove_axis_alignment"
+            "sketch.remove_axis_alignment",
+            "sketch.section_view"
         ],
         "{:#?}",
         s.recorded
