@@ -212,13 +212,46 @@ struct LabelDrag {
 }
 
 /// An in-viewport dimension edit (opened by double-clicking a dimensional
-/// glyph; drawn as an egui window from the left-panel hook).
+/// glyph, or as a tool adds a dimension; drawn from the left-panel hook).
+#[derive(Debug, Clone)]
 pub struct DimEdit {
     pub constraint: Uuid,
     /// Label position at open time, viewport px.
     pub screen_pos: [f32; 2],
     pub text: String,
     pub driving: bool,
+    /// The dimension was just added by a tool: it stands at what it
+    /// measured, whatever the editor ends with.
+    pub new: bool,
+    /// The value goes into a variable the dimension then reads.
+    pub save_as: Option<SaveAs>,
+    /// The text is taken whole by the first key typed; set as the editor
+    /// opens, cleared once the edit has selected it.
+    pub select_all: bool,
+}
+
+impl DimEdit {
+    /// An editor on `constraint` showing `text`, its text selected.
+    pub fn new(constraint: Uuid, screen_pos: [f32; 2], text: String, driving: bool) -> Self {
+        Self {
+            constraint,
+            screen_pos,
+            text,
+            driving,
+            new: false,
+            save_as: None,
+            select_all: true,
+        }
+    }
+}
+
+/// Where a dimension's value goes when it is saved as a variable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SaveAs {
+    /// The variable's name.
+    pub name: String,
+    /// The set it joins; `None` makes a set for it.
+    pub set: Option<FeatureId>,
 }
 
 /// A constraint glyph resolved under a click.
@@ -259,6 +292,8 @@ pub struct SketchOptions {
     pub construction_on_top: bool,
     /// The wall thickness check marks a wall thinner than this, in mm.
     pub min_wall: f32,
+    /// A dimension a tool adds opens its value editor at once.
+    pub ask_dimension_value: bool,
 }
 
 impl Default for SketchOptions {
@@ -275,6 +310,7 @@ impl Default for SketchOptions {
             auto_update: true,
             construction_on_top: false,
             min_wall: walls::DEFAULT_MINIMUM_MM,
+            ask_dimension_value: true,
         }
     }
 }
@@ -1270,16 +1306,16 @@ impl SketchWorkbench {
                         .feature_formula(sketch, &c.id.to_string())
                         .map(str::to_string)
                 });
-                self.dim_edit = Some(DimEdit {
-                    constraint: c.id,
-                    screen_pos: hit.pos,
-                    text: formula.unwrap_or_else(|| {
+                self.dim_edit = Some(DimEdit::new(
+                    c.id,
+                    hit.pos,
+                    formula.unwrap_or_else(|| {
                         sketch::dimension_value(&c.kind)
                             .map(glyphs::fmt_num)
                             .unwrap_or_default()
                     }),
-                    driving: c.driving,
-                });
+                    c.driving,
+                ));
             }
             self.label_drag = None;
             return InputResult::consumed();
@@ -1901,7 +1937,91 @@ impl SketchWorkbench {
         let Some(edit) = self.dim_edit.take() else {
             return;
         };
-        self.set_dimension(ctx, edit.constraint, &edit.text, edit.driving);
+        match &edit.save_as {
+            Some(save) => self.save_dimension_as(ctx, edit.constraint, &edit.text, save),
+            None => self.set_dimension(ctx, edit.constraint, &edit.text, edit.driving),
+        }
+    }
+
+    /// Put what `text` comes to in a variable (`save`) and bind dimension
+    /// `constraint` to it: a typed value becomes the variable's value with
+    /// its unit, a formula the variable's formula.
+    pub(crate) fn save_dimension_as(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        constraint: Uuid,
+        text: &str,
+        save: &SaveAs,
+    ) {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some(c) = feature
+            .sketch
+            .constraints
+            .iter()
+            .find(|c| c.id == constraint)
+        else {
+            return;
+        };
+        let dim = params::formula_dim(&c.kind);
+        let text = text.trim();
+        let value = match ctx.document.evaluate_formula(text, Some(dim)) {
+            Ok(q) => q.value,
+            Err(why) => {
+                ctx.log_warn(format!("{text}: {why}"));
+                return;
+            }
+        };
+        let formula = if core_document::expr::is_constant(text) {
+            core_document::expr::Quantity::new(value, dim).display(ctx.document.display_unit(), 6)
+        } else {
+            text.to_string()
+        };
+        let name = save.name.trim();
+        let (set, set_name) = match save.set {
+            Some(set) => match ctx.document.get_feature_meta(set) {
+                Some(node) => (set, node.name.clone()),
+                None => return,
+            },
+            None => {
+                let set_name = ctx.document.unused_object_name("Variables");
+                match ctx.document.add_variable_set(&set_name) {
+                    Ok(set) => {
+                        ctx.record(
+                            "var.new",
+                            commands::args(serde_json::json!({ "name": set_name })),
+                            serde_json::json!(set.0.to_string()),
+                        );
+                        (set, set_name)
+                    }
+                    Err(why) => {
+                        ctx.log_warn(why);
+                        return;
+                    }
+                }
+            }
+        };
+        if let Err(why) = ctx.document.set_variable(set, name, &formula, None) {
+            ctx.log_warn(why);
+            return;
+        }
+        ctx.record(
+            "var.set",
+            commands::args(serde_json::json!({
+                "set": set_name,
+                "name": name,
+                "formula": formula,
+            })),
+            serde_json::Value::Null,
+        );
+        ctx.log_info(format!("{set_name}.{name} = {formula}"));
+        let reference = format!(
+            "{}.{}",
+            core_document::expr::quote_name(&set_name),
+            core_document::expr::quote_name(name)
+        );
+        self.bind_dimension(ctx, constraint, &reference, value);
     }
 
     /// Set a dimension from typed text: a value (with a unit if typed,
@@ -1937,25 +2057,14 @@ impl SketchWorkbench {
                 ctx.log_warn(format!("{text}: {}", why.message));
                 return;
             }
-            let _ =
-                ctx.document
-                    .set_feature_formula(sketch_id, key.clone(), Some(text.to_string()));
-            ctx.record(
-                "doc.set_formula",
-                commands::args(serde_json::json!({
-                    "id": sketch_id.0.to_string(),
-                    "parameter": key,
-                    "formula": text,
-                })),
-                serde_json::Value::Null,
-            );
             match evaluated {
-                Ok(q) => c.kind = sketch::with_dimension_value(&c.kind, q.value as f32),
-                Err(why) => ctx.log_warn(format!("{text}: {why}")),
+                Ok(q) => self.bind_dimension(ctx, constraint, text, q.value),
+                Err(why) => {
+                    ctx.log_warn(format!("{text}: {why}"));
+                    let value = f64::from(sketch::dimension_value(&c.kind).unwrap_or_default());
+                    self.bind_dimension(ctx, constraint, text, value);
+                }
             }
-            c.driving = true;
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
             return;
         }
         let value = match evaluated {
@@ -1978,6 +2087,48 @@ impl SketchWorkbench {
             })),
             serde_json::Value::Null,
         );
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+    }
+
+    /// Set dimension `constraint` by `formula` from now on, standing at
+    /// `value` (what the formula comes to) until the formulas are worked
+    /// out again; a dimension a formula sets drives.
+    fn bind_dimension(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        constraint: Uuid,
+        formula: &str,
+        value: f64,
+    ) {
+        let (Some(sketch_id), Some(mut feature)) =
+            (self.active_sketch_id, self.get_active_sketch(ctx))
+        else {
+            return;
+        };
+        let Some(c) = feature
+            .sketch
+            .constraints
+            .iter_mut()
+            .find(|c| c.id == constraint)
+        else {
+            return;
+        };
+        let key = constraint.to_string();
+        let _ = ctx
+            .document
+            .set_feature_formula(sketch_id, key.clone(), Some(formula.to_string()));
+        ctx.record(
+            "doc.set_formula",
+            commands::args(serde_json::json!({
+                "id": sketch_id.0.to_string(),
+                "parameter": key,
+                "formula": formula,
+            })),
+            serde_json::Value::Null,
+        );
+        c.kind = sketch::with_dimension_value(&c.kind, value as f32);
+        c.driving = true;
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
     }
@@ -2960,6 +3111,11 @@ impl Workbench for SketchWorkbench {
                     &mut self.options.auto_remove_redundant,
                 )
                 .hint("A new constraint takes away the older ones it makes redundant"),
+                PrefRow::toggle(
+                    "Ask for a dimension's value",
+                    &mut self.options.ask_dimension_value,
+                )
+                .hint("A new dimension opens its value editor, by its label"),
                 PrefRow::toggle("Snap to objects", &mut snap)
                     .hint("Endpoints, midpoints and intersections attract the cursor"),
             ],
@@ -3655,6 +3811,7 @@ impl SketchWorkbench {
                     self.selected_constraints
                         .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
                 }
+                let mut dimension = None;
                 for id in &made {
                     if let Some(c) = feature
                         .sketch
@@ -3666,12 +3823,19 @@ impl SketchWorkbench {
                             "Added constraint: {}",
                             sketch::constraint_label(&c.kind)
                         ));
-                        if c.kind.is_dimensional() {
-                            self.pending_focus = Some(c.id);
+                        if c.kind.is_dimensional() && dimension.is_none() {
+                            dimension = Some(c.id);
                         }
                     }
                 }
                 self.solve(ctx, &mut feature);
+                if let Some(id) = dimension {
+                    if self.options.ask_dimension_value {
+                        self.open_new_dimension(ctx, &feature, id);
+                    } else {
+                        self.pending_focus = Some(id);
+                    }
+                }
                 self.store_sketch(ctx, feature);
             }
             Err(_) => ctx.log_warn(format!(
@@ -3680,6 +3844,35 @@ impl SketchWorkbench {
         }
         self.selection_shape = shape;
         InputResult::consumed()
+    }
+
+    /// Open the value editor on dimension `id`, just added: by its label,
+    /// showing what it measured.
+    fn open_new_dimension(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        id: Uuid,
+    ) {
+        let Some(c) = feature.sketch.constraints.iter().find(|c| c.id == id) else {
+            return;
+        };
+        let proj = SketchProjector::new(ctx, feature.plane);
+        let pos = self
+            .glyphs(ctx, &feature.sketch, &proj)
+            .iter()
+            .find(|g| g.constraint == id)
+            .map(|g| g.pos)
+            .unwrap_or_else(|| {
+                let (_, _, w, h) = ctx.viewport;
+                [w as f32 / 2.0, h as f32 / 2.0]
+            });
+        let text = sketch::dimension_value(&c.kind)
+            .map(glyphs::fmt_num)
+            .unwrap_or_default();
+        let mut edit = DimEdit::new(id, pos, text, c.driving);
+        edit.new = true;
+        self.dim_edit = Some(edit);
     }
 
     /// Flip one flag of the selected constraints, each for itself, through
@@ -5732,6 +5925,94 @@ mod formulas {
         assert_eq!(doc.feature_formula(id, &length.to_string()), None);
         registry.evaluate(&mut doc);
         assert!((line_length(&wb, &mut doc) - 25.4).abs() < 1e-3);
+    }
+
+    #[test]
+    fn saving_a_value_as_a_variable_makes_it_and_binds_the_dimension() {
+        let mut registry = DocumentService::default();
+        registry
+            .register_workbench(Box::new(SketchWorkbench::default()))
+            .unwrap();
+        let (mut doc, mut wb, id, length) = scene();
+        registry.evaluate(&mut doc);
+        // Into a new set: the name is free, the set is made for it.
+        {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut doc,
+                [0.0, 0.0, 50.0],
+                [0.0; 3],
+                (0, 0, 800, 600),
+            );
+            let save = SaveAs {
+                name: "wall".into(),
+                set: None,
+            };
+            wb.save_dimension_as(&mut ctx, length, "12", &save);
+        }
+        let set = doc.object_named("Variables").expect("a set was made");
+        let (_, _, data) = doc
+            .variable_sets()
+            .into_iter()
+            .find(|(s, ..)| *s == set)
+            .unwrap();
+        assert_eq!(data.variable("wall").unwrap().formula, "12 mm");
+        assert_eq!(
+            doc.feature_formula(id, &length.to_string()),
+            Some("Variables.wall")
+        );
+        // The dimension stands at the value at once, and follows the
+        // variable from now on.
+        assert!((line_length(&wb, &mut doc) - 12.0).abs() < 1e-3);
+        doc.set_variable(set, "wall", "20 mm", None).unwrap();
+        registry.evaluate(&mut doc);
+        assert!((line_length(&wb, &mut doc) - 20.0).abs() < 1e-3);
+
+        // Into a set that is there: a formula typed is the variable's.
+        let sizes = doc.object_named("Sizes").unwrap();
+        {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut doc,
+                [0.0, 0.0, 50.0],
+                [0.0; 3],
+                (0, 0, 800, 600),
+            );
+            let save = SaveAs {
+                name: "half".into(),
+                set: Some(sizes),
+            };
+            wb.save_dimension_as(&mut ctx, length, "Sizes.w / 2", &save);
+        }
+        registry.evaluate(&mut doc);
+        assert_eq!(
+            doc.feature_formula(id, &length.to_string()),
+            Some("Sizes.half")
+        );
+        assert!((line_length(&wb, &mut doc) - 15.0).abs() < 1e-3);
+        assert_eq!(doc.variable_sets().len(), 2, "no set was made for it");
+    }
+
+    #[test]
+    fn a_field_is_offered_the_variables_of_its_kind_under_free_names() {
+        let (mut doc, ..) = scene();
+        let mut registry = DocumentService::default();
+        registry
+            .register_workbench(Box::new(SketchWorkbench::default()))
+            .unwrap();
+        let sizes = doc.object_named("Sizes").unwrap();
+        doc.set_variable(sizes, "tilt", "30 deg", None).unwrap();
+        registry.evaluate(&mut doc);
+        let names = |dim| {
+            doc.variables_of(dim)
+                .into_iter()
+                .map(|c| c.reference)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(core_document::expr::Dim::LENGTH), ["Sizes.w"]);
+        assert_eq!(names(core_document::expr::Dim::ANGLE), ["Sizes.tilt"]);
+        assert_eq!(doc.unused_variable_name(Some(sizes), "w"), "w_2");
+        assert_eq!(doc.unused_variable_name(None, "w"), "w");
+        assert_eq!(doc.unused_object_name("Sizes"), "Sizes_2");
+        assert_eq!(doc.unused_object_name("Variables"), "Variables");
     }
 }
 

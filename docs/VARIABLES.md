@@ -35,6 +35,27 @@ formula comes to and suggests names (Tab takes the first). A number set by
 a formula shows `fx` and its value; click it to change the formula, and
 empty the formula to keep the number as it stands.
 
+## Sketch dimensions
+
+Adding a dimension opens its editor next to its label, showing what it
+measures, with the value selected. To set a number, type it and press
+Enter. Escape keeps the measured value. Double clicking a dimension's
+label opens the same editor. You can switch this off in Preferences ›
+Sketcher ("Ask for a dimension's value"); new dimensions then take the
+measured value and their row in the panel gets the keyboard.
+
+The editor also:
+
+- lists the variables that fit the dimension (lengths for a length,
+  angles for an angle) as chips, each with its value. Click one and the
+  dimension reads it.
+- takes a formula in the same field, with names completed as you type.
+- saves the value as a variable with "+ Save as variable": give it a name
+  and pick a set (or "New set"), and Save. A typed number becomes the
+  variable's value with its unit (`12 mm`), and a formula becomes the
+  variable's formula. The dimension then reads the variable. With no
+  variable set yet, one called `Variables` is made.
+
 ## Completion
 
 Wherever a formula is typed (a number's `fx`, a variable, a

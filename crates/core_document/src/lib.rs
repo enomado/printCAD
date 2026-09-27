@@ -63,7 +63,7 @@ pub use shortcut::{ActionDescriptor, Chord};
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 #[cfg(feature = "egui")]
 pub use variables::{DocumentFormulas, formula_candidates};
-pub use variables::{VARIABLES_KIND, Variable, VariableSet};
+pub use variables::{VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
     FeatureInfo, FileImport, MarkKind, MenuItem, MenuScope, OverlayMesh, OvpRow, OvpWidget,
     PassiveGeometry, PassiveTint, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark,

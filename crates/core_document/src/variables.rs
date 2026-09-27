@@ -29,6 +29,17 @@ pub struct Variable {
     pub comment: String,
 }
 
+/// A variable a field can read, from [`crate::Document::variables_of`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableChoice {
+    pub set: FeatureId,
+    pub name: String,
+    /// As a formula reads it: `Printer.nozzle`.
+    pub reference: String,
+    /// What it last came to.
+    pub value: crate::expr::Quantity,
+}
+
 impl VariableSet {
     pub fn variable(&self, name: &str) -> Option<&Variable> {
         self.variables.iter().find(|v| v.name == name)
@@ -88,6 +99,72 @@ impl crate::Document {
             .map(|(id, _)| *id);
         let first = found.next()?;
         found.next().is_none().then_some(first)
+    }
+
+    /// `base`, or `base_2`, `base_3`, ...: the first no object is called.
+    pub fn unused_object_name(&self, base: &str) -> String {
+        (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.to_string()
+                } else {
+                    format!("{base}_{n}")
+                }
+            })
+            .find(|name| !self.has_object_named(name))
+            .unwrap_or_else(|| base.to_string())
+    }
+
+    /// `base`, or `base_2`, `base_3`, ...: the first variable `set` does
+    /// not have (with no set, `base`).
+    pub fn unused_variable_name(&self, set: Option<FeatureId>, base: &str) -> String {
+        let taken: Vec<String> = set
+            .and_then(|set| self.variable_set(set).ok())
+            .map(|data| data.variables.into_iter().map(|v| v.name).collect())
+            .unwrap_or_default();
+        (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.to_string()
+                } else {
+                    format!("{base}_{n}")
+                }
+            })
+            .find(|name| !taken.contains(name))
+            .unwrap_or_else(|| base.to_string())
+    }
+
+    /// Every variable whose last value is a `dim` quantity, set by set in
+    /// the order they were made: what a field holding `dim` can read
+    /// as it stands.
+    pub fn variables_of(&self, dim: crate::expr::Dim) -> Vec<VariableChoice> {
+        let mut out = Vec::new();
+        for (set, set_name, data) in self.variable_sets() {
+            let slots = self.evaluated_slots(set);
+            for variable in data.variables {
+                let Some(Ok(value)) = slots
+                    .iter()
+                    .find(|s| s.name.as_deref() == Some(variable.name.as_str()))
+                    .map(|s| s.result.clone())
+                else {
+                    continue;
+                };
+                if value.dim != dim {
+                    continue;
+                }
+                out.push(VariableChoice {
+                    reference: format!(
+                        "{}.{}",
+                        crate::expr::quote_name(&set_name),
+                        crate::expr::quote_name(&variable.name)
+                    ),
+                    set,
+                    name: variable.name,
+                    value,
+                });
+            }
+        }
+        out
     }
 
     /// Whether some object is called `name`.

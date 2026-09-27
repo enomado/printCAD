@@ -17,6 +17,7 @@ version first.
 ### Sketcher
 - Lines, polylines with tangent arcs, rectangles, polygons, circles, arcs, ellipses (by centre or three points), arcs of ellipses, B-splines and slots.
 - Geometric and dimensional constraints, solved live, with a message for every conflicting or redundant one.
+- A new dimension asks for its value by its label: type a number and press Enter, click a variable to have it read that, or save the value as a new variable on the spot.
 - Trim, extend, split, fillet, offset, mirror, move, rotate, scale and arrays.
 - Carbon copy brings another sketch's geometry in; merge makes one sketch of several.
 - File › Import reads a DXF drawing into a new sketch in the drawing's own units: its lines, arcs, circles, ellipses and polylines (bulges as arcs) as sketch curves, splines as lines along them, hidden ones as construction, with ends that meet joined so outlines close.

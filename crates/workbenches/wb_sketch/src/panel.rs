@@ -893,30 +893,47 @@ impl SketchWorkbench {
         }
     }
 
-    /// In-viewport dimension editor (opened by double-clicking a
-    /// dimensional glyph), drawn as a floating card near the label.
+    /// The dimension editor, a card by the dimension's label: opened by a
+    /// double click on the label, or as a tool adds the dimension. The
+    /// value is typed and Enter applies it; a variable's chip puts its
+    /// name in instead, and "Save as variable" puts the value in a new
+    /// variable the dimension then reads.
     pub(crate) fn dim_edit_window(&mut self, ui: &egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        let edited_kind = self.dim_edit.as_ref().and_then(|edit| {
+        if self.dim_edit.is_none() {
+            return;
+        }
+        let edited = self.dim_edit.as_ref().and_then(|edit| {
             let sketch = self.get_active_sketch(ctx)?;
             let c = sketch
                 .sketch
                 .constraints
                 .iter()
                 .find(|c| c.id == edit.constraint)?;
-            Some(c.kind.clone())
+            Some((c.kind.clone(), c.name.clone()))
         });
-        let (unit, dim) = match &edited_kind {
-            Some(kind) => (
-                sketch::dimension_unit(kind),
-                crate::params::formula_dim(kind),
-            ),
-            None => (
-                sketch::DimensionUnit::Length,
-                core_document::expr::Dim::LENGTH,
-            ),
+        // The dimension went (an undo, a delete): so does its editor.
+        let Some((kind, constraint_name)) = edited else {
+            self.dim_edit = None;
+            return;
         };
+        let unit = sketch::dimension_unit(&kind);
+        let dim = crate::params::formula_dim(&kind);
+        let kind_label = sketch::constraint_label(&kind);
+        let document: &core_document::Document = ctx.document;
+        let choices = document.variables_of(dim);
+        let sets: Vec<(core_document::FeatureId, String)> = document
+            .variable_sets()
+            .into_iter()
+            .map(|(id, name, _)| (id, name))
+            .collect();
+        let length_unit = document.display_unit();
         let Some(edit) = self.dim_edit.as_mut() else {
             return;
+        };
+        let title = match constraint_name.filter(|n| !n.trim().is_empty()) {
+            Some(name) => name,
+            None if edit.new => format!("New {}", kind_label.to_lowercase()),
+            None => kind_label.clone(),
         };
         let ppp = ui.ctx().pixels_per_point().max(0.1);
         let (vx, vy, ..) = ctx.viewport;
@@ -924,6 +941,9 @@ impl SketchWorkbench {
             (vx as f32 + edit.screen_pos[0]) / ppp + 12.0,
             (vy as f32 + edit.screen_pos[1]) / ppp + 12.0,
         );
+        let text_id = egui::Id::new("sketch_dim_edit_text");
+        let name_id = egui::Id::new("sketch_dim_edit_name");
+        let suffix = unit_suffix(unit);
         let mut commit = false;
         let mut cancel = false;
         egui::Area::new(egui::Id::new("sketch_dim_edit"))
@@ -933,58 +953,246 @@ impl SketchWorkbench {
                 ui_kit::widgets::Card::floating()
                     .border(BORDER_STRONG)
                     .show(ui, |ui| {
+                        ui.set_max_width(FIELD_WIDTH + SPACE_4);
                         ui.spacing_mut().item_spacing.y = SPACE_1;
-                        ui.label(
-                            RichText::new("Dimension")
-                                .font(ui_kit::sans_medium(FONT_SM))
-                                .color(TEXT1),
-                        );
-                        // Names complete as they are typed.
-                        let document: &core_document::Document = ctx.document;
+                        ui.horizontal(|ui| {
+                            ui_kit::icon::draw(ui, constraint_icon(&kind), 14.0, TEXT2);
+                            ui.label(
+                                RichText::new(&title)
+                                    .font(ui_kit::sans_medium(FONT_SM))
+                                    .color(TEXT1),
+                            );
+                        });
+
+                        // The value, or a formula; names complete as they
+                        // are typed.
                         let completed = ui_kit::completion::completing_text_edit(
                             ui,
-                            egui::Id::new("sketch_dim_edit_text"),
+                            text_id,
                             &mut edit.text,
                             &|| core_document::formula_candidates(document),
-                            |edit| edit.desired_width(180.0).font(mono(FONT_SM)),
+                            |e| {
+                                e.desired_width(FIELD_WIDTH)
+                                    .font(mono(FONT_MD))
+                                    .hint_text("A value, or a formula")
+                            },
                         );
                         let response = completed.response;
-                        // Focus once, as the editor opens: asking again
-                        // every frame would interrupt the input method's
-                        // composition every frame, and keys would arrive
-                        // late, several at once.
-                        if !response.has_focus() && !response.lost_focus() {
+                        if edit.select_all {
+                            // The first key typed takes the whole value.
+                            response.request_focus();
+                            let n = edit.text.chars().count();
+                            select_chars(ui, text_id, 0, n);
+                            edit.select_all = false;
+                        } else if edit.save_as.is_none()
+                            && !response.has_focus()
+                            && !response.lost_focus()
+                        {
+                            // Focus stays here unless the name has it; asked
+                            // only while it is elsewhere, so the input
+                            // method's composition is left alone.
                             response.request_focus();
                         }
-                        // What it comes to, as typed: a value, or a formula.
-                        let preview = ctx.document.evaluate_formula(&edit.text, Some(dim));
-                        let suffix = unit_suffix(unit);
-                        let (line, color) = match preview {
-                            Ok(q) if core_document::expr::is_constant(&edit.text) => {
-                                (format!("{:.3}{suffix}", q.value), TEXT3)
-                            }
-                            Ok(q) => (format!("ƒ = {:.3}{suffix}", q.value), SKETCH_FORMULA),
-                            Err(why) => (why, DANGER),
+                        let entered = response.lost_focus()
+                            && !completed.picked
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                        // What it comes to, as typed.
+                        let typed = edit.text.trim().to_string();
+                        let typed = typed.as_str();
+                        let constant = core_document::expr::is_constant(typed);
+                        let preview = document.evaluate_formula(typed, Some(dim));
+                        let (line, color) = match &preview {
+                            Ok(q) if constant => (format!("= {}{suffix}", fmt_value(q.value)), TEXT3),
+                            Ok(q) => (
+                                format!("ƒ = {}{suffix}", fmt_value(q.value)),
+                                SKETCH_FORMULA,
+                            ),
+                            Err(_) if typed.is_empty() => (String::new(), TEXT3),
+                            Err(why) => (why.clone(), DANGER),
                         };
-                        ui.label(RichText::new(line).font(sans(FONT_XS)).color(color));
-                        ui.label(
-                            RichText::new("A value (1 in) or a formula (Sizes.width / 2)")
-                                .font(sans(FONT_XS))
-                                .color(TEXT3),
-                        );
-                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if !line.is_empty() {
+                            ui.label(RichText::new(line).font(sans(FONT_XS)).color(color));
+                        }
+
+                        // The variables it can read, one click each.
+                        let shown: Vec<_> = choices.iter().take(MAX_CHIPS).collect();
+                        if !shown.is_empty() {
+                            ui.add_space(SPACE_1);
+                            ui_kit::widgets::overline(ui, "Variables");
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(SPACE_1, SPACE_1);
+                                for choice in &shown {
+                                    let label = if sets.len() > 1 {
+                                        &choice.reference
+                                    } else {
+                                        &choice.name
+                                    };
+                                    let chip = ui
+                                        .selectable_label(
+                                            typed == choice.reference,
+                                            RichText::new(format!(
+                                                "{label}  {}",
+                                                choice.value.display(length_unit, 3)
+                                            ))
+                                            .font(mono(FONT_XS)),
+                                        )
+                                        .on_hover_text(format!(
+                                            "Set by {}: follows it when it changes",
+                                            choice.reference
+                                        ));
+                                    if chip.clicked() {
+                                        edit.text = choice.reference.clone();
+                                        edit.save_as = None;
+                                        let n = edit.text.chars().count();
+                                        select_chars(ui, text_id, n, n);
+                                        ui.memory_mut(|m| m.request_focus(text_id));
+                                    }
+                                }
+                            });
+                            if choices.len() > shown.len() {
+                                ui.label(
+                                    RichText::new("Type a name for the rest")
+                                        .font(sans(FONT_XS))
+                                        .color(TEXT3),
+                                );
+                            }
+                        }
+
+                        // A new variable, from what is typed.
+                        let reads_a_variable =
+                            choices.iter().any(|c| c.reference == edit.text.trim());
+                        let mut name_ok = true;
+                        if edit.save_as.is_none() && !reads_a_variable {
+                            ui.add_space(SPACE_1);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("+ Save as variable")
+                                            .font(sans(FONT_XS))
+                                            .color(ACCENT),
+                                    )
+                                    .frame(false),
+                                )
+                                .on_hover_text(
+                                    "Keep this value in a variable, and have the dimension read it",
+                                )
+                                .clicked()
+                            {
+                                let set = sets.last().map(|(id, _)| *id);
+                                let base = variable_base_name(&kind_label);
+                                edit.save_as = Some(crate::SaveAs {
+                                    name: document.unused_variable_name(set, &base),
+                                    set,
+                                });
+                                ui.memory_mut(|m| m.request_focus(name_id));
+                            }
+                        }
+                        if let Some(save) = edit.save_as.as_mut() {
+                            ui.add_space(SPACE_1);
+                            ui_kit::widgets::overline(ui, "Save as variable");
+                            let mut close = false;
+                            ui.horizontal(|ui| {
+                                let name = ui.add(
+                                    egui::TextEdit::singleline(&mut save.name)
+                                        .id(name_id)
+                                        .desired_width(if sets.is_empty() {
+                                            FIELD_WIDTH - 24.0
+                                        } else {
+                                            FIELD_WIDTH * 0.5
+                                        })
+                                        .font(mono(FONT_SM))
+                                        .hint_text("name"),
+                                );
+                                if name.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                {
+                                    commit = true;
+                                }
+                                if !sets.is_empty() {
+                                    let mut options: Vec<(Option<core_document::FeatureId>, &str)> =
+                                        sets.iter().map(|(id, n)| (Some(*id), n.as_str())).collect();
+                                    options.push((None, "New set"));
+                                    select_field(
+                                        ui,
+                                        "sketch_dim_edit_set",
+                                        &mut save.set,
+                                        &options,
+                                        FIELD_WIDTH * 0.5 - 30.0,
+                                    );
+                                }
+                                if ui
+                                    .add(egui::Button::new(RichText::new("×").color(TEXT3)).frame(false))
+                                    .on_hover_text("Keep the value in the dimension only")
+                                    .clicked()
+                                {
+                                    close = true;
+                                }
+                            });
+                            let name = save.name.trim();
+                            let set_name = match save.set {
+                                Some(set) => sets
+                                    .iter()
+                                    .find(|(id, _)| *id == set)
+                                    .map(|(_, n)| n.clone())
+                                    .unwrap_or_default(),
+                                None => document.unused_object_name("Variables"),
+                            };
+                            let exists = choices
+                                .iter()
+                                .any(|c| Some(c.set) == save.set && c.name == name);
+                            let (note, color) = if !core_document::expr::is_valid_name(name) {
+                                name_ok = false;
+                                ("Give it a name".to_string(), DANGER)
+                            } else if exists {
+                                (format!("{set_name}.{name} exists: it takes this value"), WARNING)
+                            } else if save.set.is_none() {
+                                (format!("Makes the set {set_name}; formulas read {set_name}.{name}"), TEXT3)
+                            } else {
+                                (format!("Formulas read it as {set_name}.{name}"), TEXT3)
+                            };
+                            ui.label(RichText::new(note).font(sans(FONT_XS)).color(color));
+                            if close {
+                                edit.save_as = None;
+                                ui.memory_mut(|m| m.request_focus(text_id));
+                            }
+                        }
+
+                        // A plain value can stand as a reference dimension;
+                        // one a formula sets drives.
+                        if constant && edit.save_as.is_none() {
+                            check_row(ui, &mut edit.driving, "Driving")
+                                .on_hover_text("Off = reference dimension (measured, not enforced)");
+                        }
+
+                        let valid = preview.is_ok() && name_ok;
+                        if entered && valid {
                             commit = true;
                         }
-                        check_row(ui, &mut edit.driving, "Driving")
-                            .on_hover_text("Off = reference dimension (measured, not enforced)");
+                        ui.add_space(SPACE_1);
                         ui.horizontal(|ui| {
-                            if ui_kit::widgets::primary_button(ui, "OK").clicked() {
+                            let ok = if edit.save_as.is_some() { "Save" } else { "OK" };
+                            if ui
+                                .add_enabled_ui(valid, |ui| ui_kit::widgets::primary_button(ui, ok))
+                                .inner
+                                .clicked()
+                            {
                                 commit = true;
                             }
                             if secondary_button(ui, "Cancel").clicked() {
                                 cancel = true;
                             }
                         });
+                        if edit.new {
+                            ui.label(
+                                RichText::new("Esc keeps the measured value")
+                                    .font(sans(FONT_XS))
+                                    .color(TEXT3),
+                            );
+                        }
+                        if commit && !valid {
+                            commit = false;
+                        }
                         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                             cancel = true;
                         }
@@ -996,6 +1204,52 @@ impl SketchWorkbench {
             self.dim_edit = None;
         }
     }
+}
+
+/// How wide the dimension editor's value field is.
+const FIELD_WIDTH: f32 = 220.0;
+
+/// How many variables the dimension editor offers as chips.
+const MAX_CHIPS: usize = 12;
+
+/// A value as the dimension editor writes it: up to four places, no
+/// trailing zeros.
+fn fmt_value(value: f64) -> String {
+    let text = format!("{value:.4}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+/// What a variable made from a dimension of kind `label` is first called:
+/// `Distance X` gives `distance_x`.
+fn variable_base_name(label: &str) -> String {
+    let name: String = label
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let name = name.trim_matches('_').to_string();
+    if name.is_empty() {
+        "value".to_string()
+    } else {
+        name
+    }
+}
+
+/// Select characters `from..to` of text edit `id`.
+fn select_chars(ui: &egui::Ui, id: egui::Id, from: usize, to: usize) {
+    let mut state = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(from),
+            egui::text::CCursor::new(to),
+        )));
+    state.store(ui.ctx(), id);
 }
 
 /// What follows a dimension's value when it is written out.

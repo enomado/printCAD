@@ -3116,13 +3116,15 @@ fn typing_into_the_dimension_editor_lands_every_key_at_once() {
         repeat: false,
         modifiers: Default::default(),
     };
+    // The editor opens with the value selected: the first key replaces it.
     let frames: Vec<(Vec<egui::Event>, &str)> = vec![
         (vec![], "25"),
         (vec![], "25"),
-        (vec![backspace], "2"),
-        (vec![egui::Event::Text("7".into())], "27"),
-        (vec![], "27"),
-        (vec![egui::Event::Text("3".into())], "273"),
+        (vec![egui::Event::Text("3".into())], "3"),
+        (vec![egui::Event::Text("0".into())], "30"),
+        (vec![backspace], "3"),
+        (vec![], "3"),
+        (vec![egui::Event::Text("7".into())], "37"),
     ];
     let mut interrupted = Vec::new();
     for (events, want) in frames {
@@ -3332,6 +3334,45 @@ mod curve_constraints {
             h.labels().iter().any(|l| l.background && l.text == "7"),
             "the gap is labelled"
         );
+    }
+
+    #[test]
+    fn a_new_dimension_opens_its_editor_on_what_it_measured() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(0.0, 0.0, "sketch.circle");
+        h.click(3.0, 0.0, "sketch.circle");
+        h.click(12.0, 0.0, "sketch.circle");
+        h.click(14.0, 0.0, "sketch.circle");
+        pick(&mut h, 0.0, 3.0);
+        pick(&mut h, 12.0, 2.0);
+        h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+        let edit = h.wb.pending_dim_edit().expect("the editor opened").clone();
+        assert!(edit.new && edit.select_all && edit.save_as.is_none());
+        assert_eq!(edit.text, "7");
+        let label = h
+            .labels()
+            .into_iter()
+            .find(|l| l.background && l.text == "7")
+            .expect("the gap is labelled");
+        assert_eq!(edit.screen_pos, label.pos, "by its label");
+
+        // A value typed and Enter: the gap takes it.
+        h.wb.pending_dim_edit_mut().unwrap().text = "5".to_string();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(h.vp);
+        ctx.active_document_object = h.active_object;
+        h.wb.commit_dim_edit(&mut ctx);
+        let gap = h
+            .sketch()
+            .constraints
+            .iter()
+            .find_map(|c| match c.kind {
+                ConstraintKind::Gap { distance, .. } => Some(distance),
+                _ => None,
+            })
+            .unwrap();
+        assert!((gap - 5.0).abs() < 1e-4, "{gap}");
     }
 
     #[test]
@@ -3899,6 +3940,10 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     h.click(22.0, 5.5, "sketch.select");
     h.release(22.0, 5.5, "sketch.select");
     h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+    // The new dimension's editor opened; Escape keeps what it measured.
+    assert!(h.wb.pending_dim_edit().is_some());
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    assert!(h.wb.pending_dim_edit().is_none());
     let sketch = h.sketch();
     let length = sketch
         .constraints
