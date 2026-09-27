@@ -18,6 +18,8 @@ pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Tool {
     pub name: String,
+    /// How a client shows it to people.
+    pub title: String,
     pub description: String,
     pub input_schema: Value,
     /// It only reads: a client may run it without asking, and alongside
@@ -30,13 +32,22 @@ pub struct Tool {
 }
 
 impl Tool {
-    /// The tool as `tools/list` lists it.
+    /// The tool as `tools/list` lists it. Every tool acts on the one
+    /// application and nothing beyond it (`openWorldHint` false); one that
+    /// changes things may change what is there (`destructiveHint`).
     fn to_json(&self) -> Value {
         let mut tool = json!({
             "name": self.name,
+            "title": self.title,
             "description": self.description,
             "inputSchema": self.input_schema,
-            "annotations": {"readOnlyHint": self.read_only},
+            "annotations": {
+                "title": self.title,
+                "readOnlyHint": self.read_only,
+                "destructiveHint": !self.read_only,
+                "idempotentHint": self.read_only,
+                "openWorldHint": false,
+            },
         });
         if self.always_load {
             tool["_meta"] = json!({"anthropic/alwaysLoad": true});
@@ -80,12 +91,53 @@ impl ToolAnswer {
     }
 }
 
-/// What knows the tools and runs them.
+/// A document a client may read (`resources/read`), and show or attach
+/// for the model.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Resource {
+    pub uri: String,
+    pub name: String,
+    pub description: String,
+    pub mime: String,
+}
+
+/// A prompt a client offers its user, often as a slash command.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Prompt {
+    pub name: String,
+    pub title: String,
+    pub description: String,
+    /// Its arguments: name, what it is, whether it is required.
+    pub arguments: Vec<(String, String, bool)>,
+}
+
+/// What knows the tools and runs them, and what else the server offers.
 pub trait ToolHost {
     /// Every tool there is.
     fn tools(&self) -> Vec<Tool>;
     /// Run tool `name` with `args` (a JSON object).
     fn call(&mut self, name: &str, args: Value) -> ToolAnswer;
+    /// The instructions for this client, when they depend on who it is;
+    /// else [`ServerInfo::instructions`].
+    fn instructions(&mut self) -> Option<String> {
+        None
+    }
+    /// The documents a client may read.
+    fn resources(&self) -> Vec<Resource> {
+        Vec::new()
+    }
+    /// The text of resource `uri`, if there is one.
+    fn read_resource(&mut self, _uri: &str) -> Option<String> {
+        None
+    }
+    /// The prompts a client may offer.
+    fn prompts(&self) -> Vec<Prompt> {
+        Vec::new()
+    }
+    /// The text prompt `name` asks with `args`, if there is one.
+    fn prompt(&mut self, _name: &str, _args: &Value) -> Option<String> {
+        None
+    }
 }
 
 /// About the server, for `initialize`.
@@ -110,14 +162,81 @@ pub fn answer(
             let version = asked
                 .filter(|v| PROTOCOL_VERSIONS.contains(v))
                 .unwrap_or(PROTOCOL_VERSIONS[0]);
+            let mut capabilities = json!({"tools": {"listChanged": false}});
+            if !host.resources().is_empty() {
+                capabilities["resources"] = json!({"listChanged": false});
+            }
+            if !host.prompts().is_empty() {
+                capabilities["prompts"] = json!({"listChanged": false});
+            }
+            let instructions = host
+                .instructions()
+                .unwrap_or_else(|| info.instructions.clone());
             Ok(json!({
                 "protocolVersion": version,
-                "capabilities": {"tools": {"listChanged": false}},
+                "capabilities": capabilities,
                 "serverInfo": {"name": info.name, "version": info.version},
-                "instructions": info.instructions,
+                "instructions": instructions,
             }))
         }
         "ping" => Ok(json!({})),
+        "resources/list" => Ok(json!({
+            "resources": host.resources().iter().map(|r| json!({
+                "uri": r.uri,
+                "name": r.name,
+                "description": r.description,
+                "mimeType": r.mime,
+            })).collect::<Vec<_>>(),
+        })),
+        "resources/read" => {
+            let uri = params.get("uri").and_then(Value::as_str).ok_or_else(|| {
+                RpcError::new(RpcError::INVALID_PARAMS, "a read names its resource's uri")
+            })?;
+            let mime = host
+                .resources()
+                .into_iter()
+                .find(|r| r.uri == uri)
+                .map(|r| r.mime)
+                .ok_or_else(|| {
+                    RpcError::new(RpcError::INVALID_PARAMS, format!("no resource `{uri}`"))
+                })?;
+            let text = host.read_resource(uri).ok_or_else(|| {
+                RpcError::new(RpcError::INVALID_PARAMS, format!("no resource `{uri}`"))
+            })?;
+            Ok(json!({"contents": [{"uri": uri, "mimeType": mime, "text": text}]}))
+        }
+        "prompts/list" => Ok(json!({
+            "prompts": host.prompts().iter().map(|p| json!({
+                "name": p.name,
+                "title": p.title,
+                "description": p.description,
+                "arguments": p.arguments.iter().map(|(name, about, required)| json!({
+                    "name": name,
+                    "description": about,
+                    "required": required,
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        })),
+        "prompts/get" => {
+            let name = params.get("name").and_then(Value::as_str).ok_or_else(|| {
+                RpcError::new(RpcError::INVALID_PARAMS, "a prompt is asked for by name")
+            })?;
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let prompt = host.prompts().into_iter().find(|p| p.name == name);
+            let text = prompt
+                .as_ref()
+                .and_then(|_| host.prompt(name, &args))
+                .ok_or_else(|| {
+                    RpcError::new(RpcError::INVALID_PARAMS, format!("no prompt `{name}`"))
+                })?;
+            Ok(json!({
+                "description": prompt.map(|p| p.description).unwrap_or_default(),
+                "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
+            }))
+        }
         "tools/list" => Ok(json!({
             "tools": host.tools().iter().map(Tool::to_json).collect::<Vec<_>>(),
         })),
@@ -188,6 +307,7 @@ mod tests {
         fn tools(&self) -> Vec<Tool> {
             vec![Tool {
                 name: "add".into(),
+                title: "Add".into(),
                 description: "Add two numbers".into(),
                 input_schema: json!({"type": "object"}),
                 read_only: true,
@@ -249,5 +369,116 @@ mod tests {
         )
         .unwrap();
         assert_eq!(newest["protocolVersion"], PROTOCOL_VERSIONS[0]);
+    }
+
+    /// A host with a document, a prompt and its own instructions.
+    struct Library;
+
+    impl ToolHost for Library {
+        fn tools(&self) -> Vec<Tool> {
+            vec![Tool {
+                name: "look".into(),
+                title: "Look".into(),
+                description: "Look".into(),
+                input_schema: json!({"type": "object"}),
+                read_only: true,
+                always_load: false,
+            }]
+        }
+        fn call(&mut self, _: &str, _: Value) -> ToolAnswer {
+            ToolAnswer::text("seen")
+        }
+        fn instructions(&mut self) -> Option<String> {
+            Some("You are inside the library.".into())
+        }
+        fn resources(&self) -> Vec<Resource> {
+            vec![Resource {
+                uri: "lib://rules".into(),
+                name: "Rules".into(),
+                description: "House rules".into(),
+                mime: "text/markdown".into(),
+            }]
+        }
+        fn read_resource(&mut self, uri: &str) -> Option<String> {
+            (uri == "lib://rules").then(|| "Whisper.".to_string())
+        }
+        fn prompts(&self) -> Vec<Prompt> {
+            vec![Prompt {
+                name: "greet".into(),
+                title: "Greet".into(),
+                description: "Say hello".into(),
+                arguments: vec![("who".into(), "Whom".into(), true)],
+            }]
+        }
+        fn prompt(&mut self, _: &str, args: &Value) -> Option<String> {
+            Some(format!("Hello, {}", args["who"].as_str().unwrap_or("you")))
+        }
+    }
+
+    #[test]
+    fn a_host_gives_its_own_instructions_documents_and_prompts() {
+        let info = ServerInfo {
+            name: "lib".into(),
+            version: "1".into(),
+            instructions: "fallback".into(),
+        };
+        let mut host = Library;
+        let init = answer("initialize", &json!({}), &info, &mut host).unwrap();
+        assert_eq!(init["instructions"], "You are inside the library.");
+        assert!(init["capabilities"]["resources"].is_object());
+        assert!(init["capabilities"]["prompts"].is_object());
+
+        let tools = answer("tools/list", &json!({}), &info, &mut host).unwrap();
+        let annotations = &tools["tools"][0]["annotations"];
+        assert_eq!(annotations["readOnlyHint"], true);
+        assert_eq!(annotations["destructiveHint"], false);
+        assert_eq!(annotations["openWorldHint"], false);
+        assert_eq!(tools["tools"][0]["title"], "Look");
+
+        let listed = answer("resources/list", &json!({}), &info, &mut host).unwrap();
+        assert_eq!(listed["resources"][0]["uri"], "lib://rules");
+        let read = answer(
+            "resources/read",
+            &json!({"uri": "lib://rules"}),
+            &info,
+            &mut host,
+        )
+        .unwrap();
+        assert_eq!(read["contents"][0]["text"], "Whisper.");
+        assert_eq!(read["contents"][0]["mimeType"], "text/markdown");
+        assert!(
+            answer(
+                "resources/read",
+                &json!({"uri": "lib://none"}),
+                &info,
+                &mut host
+            )
+            .is_err()
+        );
+
+        let prompts = answer("prompts/list", &json!({}), &info, &mut host).unwrap();
+        assert_eq!(prompts["prompts"][0]["arguments"][0]["required"], true);
+        let got = answer(
+            "prompts/get",
+            &json!({"name": "greet", "arguments": {"who": "Ada"}}),
+            &info,
+            &mut host,
+        )
+        .unwrap();
+        assert_eq!(got["messages"][0]["content"]["text"], "Hello, Ada");
+        assert!(answer("prompts/get", &json!({"name": "shout"}), &info, &mut host).is_err());
+    }
+
+    #[test]
+    fn a_host_without_them_keeps_the_fixed_instructions_and_offers_nothing_more() {
+        let info = ServerInfo {
+            name: "t".into(),
+            version: "1".into(),
+            instructions: "fixed".into(),
+        };
+        let init = answer("initialize", &json!({}), &info, &mut Adder).unwrap();
+        assert_eq!(init["instructions"], "fixed");
+        assert!(init["capabilities"].get("resources").is_none());
+        assert!(init["capabilities"].get("prompts").is_none());
     }
 }

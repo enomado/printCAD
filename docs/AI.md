@@ -60,6 +60,39 @@ chat's tab forgets it for the file; closing the document's tab keeps
 them. They are kept in the application's own folder, not in the file, so
 a document you pass on carries no conversations.
 
+## What the agent knows
+
+Every agent is told, when it connects, that it works inside printCAD while
+you watch, on the document of its chat's tab, and how printCAD's tools work.
+It can ask at any time what is open: the document and its file, unsaved
+changes, the workbench, what is selected and being edited, the bodies and
+the features that fail to build (the `context` tool).
+
+Some commands an agent never runs, whatever you allowed: quitting printCAD
+and closing a tab would end its own session. The rules the agent keeps to
+are yours to set, so it cannot change them either. Commands that reach past
+the document wait for your OK every time, even in a chat where changes run
+without asking: new and open, save as, import, export, send to slicer, undo
+and redo, and switching tabs. An agent runs those one at a time, never from
+a script.
+
+## Rules
+
+Rules are what agents keep to, in plain words: units, wall thicknesses,
+naming, what never to change.
+
+- **For every document:** Preferences › AI agents › Rules for every
+  document.
+- **For one document:** the Rules button beside New chat, in the Assistant
+  panel. These are saved with the document, and undo takes a change back.
+  (`doc.set_agent_rules` sets them from a script; an agent cannot.)
+- **Your agent's own files:** an agent starts in the document's folder,
+  where many read instruction files of their own on start (`AGENTS.md`;
+  Claude reads `CLAUDE.md`).
+
+An agent gets both sets of rules when its chat starts, and a chat already
+open gets them again with its next message after you change them.
+
 ## Approving changes
 
 "Ask before changes" (on by default, in Preferences and per chat) holds
@@ -78,6 +111,7 @@ While the application runs it listens on a local socket,
 
 | Tool | What it does |
 | --- | --- |
+| `context` | What is open, selected and being edited, and the rules |
 | `commands` | Lists the commands, with their arguments, optionally by prefix |
 | `call` | Runs one command with named arguments and answers its result |
 | `lua` | Runs a Lua script and answers what it printed |
@@ -86,8 +120,20 @@ While the application runs it listens on a local socket,
 
 Every tool is marked to load from the start, so an agent that defers
 tools until it searches for them (Claude Code does, once many are
-installed) has printCAD's at hand in its first turn. `commands`, `log` and
-`view` are marked read-only.
+installed) has printCAD's at hand in its first turn. `context`, `commands`,
+`log` and `view` are marked read-only, `call` and `lua` as able to change
+things, and every tool as reaching nothing outside printCAD.
+
+The server also offers documents a client can read or attach
+(`printcad://rules`, `printcad://context`, and the scripting and AI guides
+as `printcad://guide/scripting` and `printcad://guide/ai`) and prompts,
+which clients such as Claude Code offer as slash commands:
+
+| Prompt | What it asks |
+| --- | --- |
+| `review-for-printing` | Check the document for what would print badly, and propose fixes |
+| `explain-model` | How the document is built, feature by feature |
+| `make-parametric` | Propose variables for sizes that belong together |
 
 `printcad --mcp` relays standard input and output to that socket, so any
 MCP client can use the running application as a server:

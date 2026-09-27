@@ -86,6 +86,10 @@ pub enum DocumentOp {
     SetDisplayUnit {
         unit: Unit,
     },
+    /// What an AI agent working on this document is told to follow.
+    SetAgentRules {
+        rules: String,
+    },
     CreateBody {
         id: BodyId,
         name: String,

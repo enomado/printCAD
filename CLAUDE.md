@@ -451,7 +451,18 @@ one thread per client handing each tool call to the UI thread
 tab pinning, one undo step per call and Stop come from the script path.
 A change waits in `PrintCadApp.approvals` while its chat asks
 (`asks_before_changes`); `CommandSpec::read_only` (declared by whoever
-registers the command) is what never waits. `app/chats.rs` keeps
+registers the command) is what never waits, and `CommandSpec::agent`
+(`AgentAccess`) what an agent may never run (`app.quit`, `tab.close`,
+`doc.set_agent_rules`) or must always have allowed, one `call` at a time
+(files, import/export, slicer, undo/redo, tabs); `agent_check` enforces it
+for `call` before it is held and for every command a `lua` script calls.
+`app/agent_context.rs` is what an agent is told: the MCP instructions,
+built per connection on the UI thread (the relay asks for them, and for
+the `printcad://rules` and `printcad://context` resources, with requests
+no client can name), the `context` tool, the prompts, and the user's rules
+(`AiSettings.rules` for every document, `Document::agent_rules` saved with
+one, op `SetAgentRules`), which also go with a chat's first prompt and with
+the next one after they change. `app/chats.rs` keeps
 `PrintCadApp.chats`, each started with the relay as its MCP server
 (every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
 client that defers tools behind a search has them in its first turn;

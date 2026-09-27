@@ -35,7 +35,8 @@ use uuid::Uuid;
 
 pub use asset::{AssetReference, AssetType};
 pub use command::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec, Recorded,
+    AgentAccess, Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec,
+    Recorded,
 };
 pub use configurations::{CONFIGURATIONS_KIND, Configuration, Configurations};
 pub use datum::{
@@ -120,6 +121,10 @@ pub struct Document {
     /// this only controls how lengths are surfaced to the user.
     #[serde(default)]
     display_unit: Unit,
+    /// What an AI agent working on this document is told to follow, beside
+    /// the rules the user keeps for every document. Travels with the file.
+    #[serde(default)]
+    agent_rules: String,
     history: Vec<DocumentRevision>,
     /// Raw asset bytes (STEP/STL files, etc.) kept in memory between import
     /// and save. Populated either on import or after `load_from_file`. Skipped
@@ -353,6 +358,7 @@ impl Document {
             imported_objects: HashMap::new(),
             imported_object_roots: Vec::new(),
             display_unit: Unit::default(),
+            agent_rules: String::new(),
             history: Vec::new(),
             asset_blobs: HashMap::new(),
             imported_brep_blobs: HashMap::new(),
@@ -392,6 +398,19 @@ impl Document {
     pub fn set_display_unit(&mut self, unit: Unit) {
         if self.display_unit != unit {
             self.record_and_apply(op::DocumentOp::SetDisplayUnit { unit });
+        }
+    }
+
+    /// What an AI agent working on this document is told to follow.
+    pub fn agent_rules(&self) -> &str {
+        &self.agent_rules
+    }
+
+    /// Set the rules an AI agent working on this document follows.
+    pub fn set_agent_rules(&mut self, rules: impl Into<String>) {
+        let rules = rules.into();
+        if self.agent_rules != rules {
+            self.record_and_apply(op::DocumentOp::SetAgentRules { rules });
         }
     }
 
@@ -453,6 +472,9 @@ impl Document {
             },
             Op::SetDisplayUnit { .. } => Op::SetDisplayUnit {
                 unit: self.display_unit,
+            },
+            Op::SetAgentRules { .. } => Op::SetAgentRules {
+                rules: self.agent_rules.clone(),
             },
             Op::CreateBody { id, .. } => Op::RemoveBody { id: *id },
             Op::RemoveBody { .. } => return None,
@@ -579,6 +601,9 @@ impl Document {
             }
             Op::SetDisplayUnit { unit } => {
                 self.display_unit = *unit;
+            }
+            Op::SetAgentRules { rules } => {
+                self.agent_rules.clone_from(rules);
             }
             Op::CreateBody {
                 id,

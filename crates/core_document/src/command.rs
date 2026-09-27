@@ -84,6 +84,24 @@ pub struct CommandSpec {
     /// It only reads: it changes neither the document nor the files, so an
     /// agent may run it without asking.
     pub read_only: bool,
+    /// What an AI agent may do with it, whatever the user allowed.
+    pub agent: AgentAccess,
+}
+
+/// What an AI agent may do with a command: the agent runs inside the
+/// user's session, so some commands would pull the ground from under it or
+/// reach past the document.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AgentAccess {
+    /// As the user's approval setting says.
+    #[default]
+    AsAllowed,
+    /// Only once the user allows it, even where changes run without
+    /// asking: it reaches past the document (files, other programs, the
+    /// undo history).
+    AlwaysAsk,
+    /// Never: the reason, which the agent is told.
+    Never(String),
 }
 
 impl CommandSpec {
@@ -95,12 +113,25 @@ impl CommandSpec {
             returns: "nothing".to_string(),
             extra_args: None,
             read_only: false,
+            agent: AgentAccess::AsAllowed,
         }
     }
 
     /// Say that it only reads.
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
+        self
+    }
+
+    /// An agent runs it only once the user allows it, every time.
+    pub fn agent_always_asks(mut self) -> Self {
+        self.agent = AgentAccess::AlwaysAsk;
+        self
+    }
+
+    /// An agent never runs it, for `reason`.
+    pub fn agent_never(mut self, reason: &str) -> Self {
+        self.agent = AgentAccess::Never(reason.to_string());
         self
     }
 
@@ -189,6 +220,11 @@ impl CommandSpec {
             "returns": self.returns,
             "read_only": self.read_only,
         });
+        match &self.agent {
+            AgentAccess::AsAllowed => {}
+            AgentAccess::AlwaysAsk => out["agent"] = Value::String("always asks".into()),
+            AgentAccess::Never(why) => out["agent"] = Value::String(format!("never: {why}")),
+        }
         if let Some(extra) = &self.extra_args {
             out["extra_args"] = Value::String(extra.clone());
         }

@@ -228,6 +228,11 @@ impl PrintCadApp {
                     option,
                 } => self.answer_permission(&chat, entry, option),
                 UiCommand::SetChatAsk { chat, ask } => self.set_chat_asks(&chat, ask),
+                UiCommand::SetDocumentAgentRules(rules) => {
+                    self.session.document.set_agent_rules(rules);
+                    self.session.journal.label_next("Agent rules");
+                    self.close_gesture();
+                }
                 UiCommand::SetParameter {
                     feature,
                     parameter,

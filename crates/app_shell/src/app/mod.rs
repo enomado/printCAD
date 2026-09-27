@@ -1,5 +1,6 @@
 //! Application-shell internals split out of `main.rs`.
 
+pub(crate) mod agent_context;
 pub(crate) mod animation;
 pub(crate) mod annotations;
 pub(crate) mod chat_store;

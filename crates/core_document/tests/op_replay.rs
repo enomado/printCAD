@@ -60,6 +60,7 @@ fn scripted_session(doc: &mut Document) {
     )
     .expect("origin");
     doc.set_display_unit(Unit::In);
+    doc.set_agent_rules("Keep every wall at least 1.2 mm thick.");
     doc.set_name("Replayed");
 }
 
@@ -249,4 +250,20 @@ fn removing_a_body_takes_its_features_and_its_geometry() {
         "other bodies untouched"
     );
     assert!(!doc.remove_body(body), "removing it again does nothing");
+}
+
+/// The rules agents keep to in a document are saved with it and replay
+/// like any edit.
+#[test]
+fn a_document_keeps_its_agent_rules() {
+    let mut doc = Document::new("rules");
+    assert_eq!(doc.agent_rules(), "");
+    doc.set_agent_rules("The lid stays 2 mm thick.");
+    let ops = doc.take_pending_ops();
+    assert_eq!(ops.len(), 1, "one op");
+    let bytes = doc
+        .save_to_bytes(core_document::Compression::None)
+        .expect("saves");
+    let back = Document::load_from_bytes(bytes).expect("loads");
+    assert_eq!(back.agent_rules(), "The lid stays 2 mm thick.");
 }

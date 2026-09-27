@@ -27,6 +27,20 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         CommandSpec::new("doc.info", "The document's name, file and unit")
             .returns("{name, file, unit, modified}")
             .read_only(),
+        CommandSpec::new(
+            "doc.agent_rules",
+            "The rules an AI agent working on this document keeps to, beside the ones in \
+             Preferences for every document",
+        )
+        .returns("the rules, as text")
+        .read_only(),
+        CommandSpec::new(
+            "doc.set_agent_rules",
+            "Set the rules an AI agent working on this document keeps to; they are saved with \
+             the document",
+        )
+        .param("rules", ParamKind::String, "The rules, as plain text")
+        .agent_never("only the user sets the rules an agent keeps to"),
         CommandSpec::new("doc.bodies", "List the bodies")
             .returns("a list of {id, name, visible, features}")
             .read_only(),
@@ -337,8 +351,28 @@ fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
             } else {
                 spec
             };
-            (spec, action)
+            (for_agents(spec, action), action)
         })
+}
+
+/// What an agent may do with a key's command. It runs inside the user's
+/// session: what would end that session it never does, and what reaches
+/// past the document it does only once the user allows it.
+fn for_agents(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
+    use keymap::HostAction::*;
+    match action {
+        Quit => spec.agent_never(
+            "it closes printCAD, the application the agent is running inside; only the user \
+             quits it",
+        ),
+        CloseTab => spec.agent_never(
+            "it closes a document's tab, and with it the chats working on that document; \
+             only the user closes tabs",
+        ),
+        New | Open | SaveAs | Import | Export | SendToSlicer | Undo | Redo | NewTab | NextTab
+        | PreviousTab => spec.agent_always_asks(),
+        _ => spec,
+    }
 }
 
 /// A file command takes the file by name, to run without its dialog.
@@ -757,6 +791,12 @@ impl PrintCadApp {
                 }
             }
             Event::Call { id, args, reply } => {
+                if let Some(RunKind::Agent { single, .. }) = &kind
+                    && let Err(refused) = self.agent_may_run(&id, *single)
+                {
+                    let _ = reply.send(Err(CommandError::failed(refused)));
+                    return;
+                }
                 if id == "doc.rebuild" {
                     self.start_rebuild(args, reply);
                     return;
@@ -774,7 +814,7 @@ impl PrintCadApp {
                     app.close_gesture();
                 });
                 self.script_runs.pop_front();
-                if let Some(RunKind::Agent { reply }) = kind {
+                if let Some(RunKind::Agent { reply, .. }) = kind {
                     let _ = reply.send(agent_answer(output));
                     self.redraw_needed = true;
                     return;
@@ -1086,6 +1126,9 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         result: Value::Null,
     };
     match command {
+        UiCommand::SetDocumentAgentRules(rules) => {
+            Some(call("doc.set_agent_rules", json!({"rules": rules})))
+        }
         UiCommand::Config(crate::ui::ConfigEdit::NewTable) => None,
         UiCommand::Config(edit) => {
             let (id, args) = edit.command();
@@ -1206,9 +1249,12 @@ pub(crate) enum RunKind {
     Console,
     /// A script file: its output shows in the console, which opens for it.
     File,
-    /// An agent's tool call: its output is the answer.
+    /// An agent's tool call: its output is the answer. `single` for a
+    /// `call`, one command the user's approval covered; a `lua` script's
+    /// commands are checked one by one as it calls them.
     Agent {
         reply: std::sync::mpsc::Sender<agents::mcp::ToolAnswer>,
+        single: bool,
     },
 }
 
@@ -1258,6 +1304,11 @@ pub(crate) fn document_command(
 ) -> Option<CommandResult> {
     let a = Args(args);
     let answer = (|| match id {
+        "doc.agent_rules" => Ok(json!(document.agent_rules())),
+        "doc.set_agent_rules" => {
+            document.set_agent_rules(a.string("rules")?);
+            Ok(Value::Null)
+        }
         "doc.info" => Ok(json!({
             "name": document.name(),
             "file": file.map(|p| p.display().to_string()),

@@ -177,6 +177,14 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - Returns {name, file, unit, modified}
 
+`pc.doc.agent_rules`: The rules an AI agent working on this document keeps to, beside the ones in Preferences for every document.
+
+- Returns the rules, as text
+
+`pc.doc.set_agent_rules`: Set the rules an AI agent working on this document keeps to; they are saved with the document.
+
+- `rules` (string): The rules, as plain text
+
 `pc.doc.bodies`: List the bodies.
 
 - Returns a list of {id, name, visible, features}

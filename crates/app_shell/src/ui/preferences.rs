@@ -650,7 +650,10 @@ fn reset_group(state: &mut PreferencesState) {
         PrefGroup::Units => state.draft_unit = Unit::Mm,
         PrefGroup::ImportExport => state.draft.import = defaults.import,
         PrefGroup::Printing => state.draft.printing = defaults.printing,
-        PrefGroup::Ai => state.draft.ai.ask_before_changes = defaults.ai.ask_before_changes,
+        PrefGroup::Ai => {
+            state.draft.ai.ask_before_changes = defaults.ai.ask_before_changes;
+            state.draft.ai.rules = defaults.ai.rules;
+        }
         PrefGroup::Packages => state.draft.packages = defaults.packages,
         PrefGroup::Workbench(_) | PrefGroup::Updates => {}
     }
@@ -1289,9 +1292,34 @@ fn ai_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         ],
         filter,
     );
-    if !filter.is_empty() && !"agents ai command chat".contains(filter) {
+    if !filter.is_empty() && !"agents ai command chat rules".contains(filter) {
         return;
     }
+    ui.add_space(SPACE_2);
+    ui.label(
+        RichText::new("Rules for every document")
+            .font(sans_semibold(FONT_SM))
+            .color(TEXT1),
+    );
+    ui.label(
+        RichText::new(
+            "What every agent keeps to, in every document: units, wall thicknesses, how to \
+             name things, what never to change. A document can add its own in the Assistant \
+             panel. Chats already open take a change with their next message.",
+        )
+        .font(sans(FONT_XS))
+        .color(TEXT3),
+    );
+    ui.add_space(SPACE_1);
+    ui.add(
+        egui::TextEdit::multiline(&mut ai.rules)
+            .hint_text(
+                "Keep every wall at least 1.2 mm thick.\nName features after what they are for.",
+            )
+            .desired_rows(5)
+            .desired_width(f32::INFINITY)
+            .font(mono(FONT_SM)),
+    );
     ui.add_space(SPACE_2);
     ui.label(
         RichText::new("Agents")

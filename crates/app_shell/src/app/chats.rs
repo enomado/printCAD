@@ -87,6 +87,9 @@ pub(crate) struct Chat {
     stderr: Vec<String>,
     /// Prompts sent: the first carries a word on where the agent is.
     prompts: usize,
+    /// The user's rules as the agent was last told them: a change goes
+    /// with the next prompt.
+    rules_sent: String,
     /// The tab whose document the chat works on.
     pub tab: uuid::Uuid,
     /// The agent's session, kept with the document's file so the chat can
@@ -112,9 +115,11 @@ fn working_folder(file: Option<&std::path::Path>) -> PathBuf {
 }
 
 /// What the first prompt of a chat starts with.
-const PREAMBLE: &str = "You are working in printCAD, a parametric CAD application for \
-3D printing, on the document the user has open. Its MCP server `printcad` has the tools \
-to read and change it: start with `commands` to see what can be done.";
+const PREAMBLE: &str = "You are working inside printCAD, a parametric CAD application for \
+3D printing, running on the user's desktop while they watch, on the document of the tab \
+this chat belongs to. Its MCP server `printcad` has the tools to read and change it: \
+`context` says what is open, `commands` what can be done. Never close printCAD or its \
+tabs: that would end this session.";
 
 impl PrintCadApp {
     /// Start a chat with agent number `agent` of the Preferences, on the
@@ -140,6 +145,7 @@ impl PrintCadApp {
             choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 0,
+            rules_sent: String::new(),
             tab: self.session.tab,
             session_id: None,
             session: Some(session),
@@ -214,8 +220,11 @@ impl PrintCadApp {
                 chose: false,
                 choices_left: Vec::new(),
                 stderr: Vec::new(),
-                // The conversation already began: no word on where it is.
+                // The conversation already began: no word on where it is,
+                // but the rules go again with the next prompt, in case they
+                // changed since.
                 prompts: 1,
+                rules_sent: String::new(),
                 tab,
                 session_id: Some(kept.session),
                 session: None,
@@ -302,6 +311,7 @@ impl PrintCadApp {
 
     pub(crate) fn send_to_chat(&mut self, id: &str, text: String) {
         self.wake_chat(id);
+        let rules = self.agent_rules(Some(id));
         let Some(chat) = self.chat_mut(id) else {
             return;
         };
@@ -317,10 +327,18 @@ impl PrintCadApp {
             attachments: attachments.iter().map(Attachment::name).collect(),
         });
         let prompt = if chat.prompts == 0 {
-            format!("{PREAMBLE}\n\n{text}")
+            match rules.is_empty() {
+                true => format!("{PREAMBLE}\n\n{text}"),
+                false => format!("{PREAMBLE}\n\nThe user's rules; keep to them:\n{rules}\n{text}"),
+            }
+        } else if rules != chat.rules_sent {
+            format!(
+                "(The user's rules for printCAD changed; keep to these from now on:\n{rules})\n\n{text}"
+            )
         } else {
             text
         };
+        chat.rules_sent = rules;
         chat.prompts += 1;
         chat.send(ChatCommand::Prompt {
             text: prompt,
@@ -517,6 +535,7 @@ impl Chat {
             choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 1,
+            rules_sent: String::new(),
             tab: uuid::Uuid::nil(),
             session_id: None,
             session: Some(AgentChat::over(
@@ -703,6 +722,7 @@ mod tests {
             choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 1,
+            rules_sent: String::new(),
             tab: uuid::Uuid::nil(),
             session_id: None,
             session: Some(AgentChat::over(

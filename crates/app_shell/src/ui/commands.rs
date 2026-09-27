@@ -201,6 +201,8 @@ pub enum UiCommand {
         chat: String,
         ask: bool,
     },
+    /// Set the rules agents keep to in the document on screen.
+    SetDocumentAgentRules(String),
     /// Pick files to go with the chat's next prompt.
     AttachFiles(String),
     /// These files go with the chat's next prompt.

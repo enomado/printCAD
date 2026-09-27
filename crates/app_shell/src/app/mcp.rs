@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use agents::mcp::{Content, ServerInfo, Tool, ToolAnswer, ToolHost};
+use agents::mcp::{Content, Prompt, Resource, ServerInfo, Tool, ToolAnswer, ToolHost};
 use serde_json::{Value, json};
 
 use crate::PrintCadApp;
@@ -140,26 +140,16 @@ fn server_info() -> ServerInfo {
     ServerInfo {
         name: "printCAD".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        instructions: INSTRUCTIONS.to_string(),
+        instructions: "printCAD, parametric CAD for 3D printing, running on the user's desktop."
+            .to_string(),
     }
 }
 
-/// What an agent is told about the tools when it connects.
-const INSTRUCTIONS: &str = "\
-printCAD is parametric CAD for 3D printing. Everything it can do is a command: \
-`commands` lists them with their arguments (filter by prefix, such as \"sketch\" or \
-\"part\"), `call` runs one with named arguments, and `lua` runs several at once as a \
-Lua script in which each command is pc.<id>{name = value, ...} and returns what it \
-makes (help() lists them there too). Ids of bodies, features and sketch elements \
-are strings. Lengths are millimetres; sketch coordinates are the sketch's own. \
-Numbers can be formulas over variables (var.new, var.set, var.list) and other \
-objects' dimensions (doc.parameters lists them, doc.set_formula sets one): \
-`3 * Printer.nozzle`, `Pad.length / 2`, with units such as mm, in and deg; \
-configurations (config.list, config.activate) switch chosen variables between sizes. \
-Solids rebuild after a change: call doc.rebuild before reading them with doc.faces \
-or doc.measure. `view` shows the scene as the user sees it, `log` the application's \
-recent messages. The user may be asked to allow each change, and can undo any of \
-them.";
+/// Requests a connection makes of the UI thread on its own account.
+const ASK_INSTRUCTIONS: &str = "(instructions)";
+const ASK_RULES: &str = "(rules)";
+/// How long a connection waits for the UI thread to answer an `ask`.
+const ASK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// A connection's side: each call goes to the UI thread, and waits.
 struct Relay {
@@ -168,12 +158,30 @@ struct Relay {
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
-impl ToolHost for Relay {
-    fn tools(&self) -> Vec<Tool> {
-        tools()
+impl Relay {
+    /// Something only the UI thread knows (the rules, the context, the
+    /// instructions), asked as a request no client can name: `tools/call`
+    /// only reaches the tools `tools()` lists. A UI thread that does not
+    /// answer within `ASK_WAIT` gets `None`, so a client's `initialize`
+    /// never waits on a busy window: the fixed instructions stand in.
+    fn ask(&mut self, what: &str) -> Option<String> {
+        let answer = self.send(what, json!({}))?.recv_timeout(ASK_WAIT).ok()?;
+        (!answer.is_error).then(|| {
+            answer
+                .content
+                .into_iter()
+                .filter_map(|c| match c {
+                    Content::Text(text) => Some(text),
+                    Content::Image { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
     }
 
-    fn call(&mut self, name: &str, args: Value) -> ToolAnswer {
+    /// Hands a request to the UI thread and wakes it; `None` once the
+    /// application is closing.
+    fn send(&mut self, name: &str, args: Value) -> Option<Receiver<ToolAnswer>> {
         let (reply, answer) = channel();
         let request = ToolRequest {
             chat: self.chat.clone(),
@@ -181,13 +189,45 @@ impl ToolHost for Relay {
             args,
             reply,
         };
-        if self.tx.send(request).is_err() {
-            return ToolAnswer::error("printCAD is closing");
-        }
+        self.tx.send(request).ok()?;
         (self.wake)();
-        answer
-            .recv()
-            .unwrap_or_else(|_| ToolAnswer::error("printCAD is closing"))
+        Some(answer)
+    }
+}
+
+impl ToolHost for Relay {
+    fn tools(&self) -> Vec<Tool> {
+        tools()
+    }
+
+    fn instructions(&mut self) -> Option<String> {
+        self.ask(ASK_INSTRUCTIONS)
+    }
+
+    fn resources(&self) -> Vec<Resource> {
+        crate::app::agent_context::resources()
+    }
+
+    fn read_resource(&mut self, uri: &str) -> Option<String> {
+        match uri {
+            "printcad://rules" => self.ask(ASK_RULES),
+            "printcad://context" => self.ask("context"),
+            _ => crate::app::agent_context::fixed_resource(uri),
+        }
+    }
+
+    fn prompts(&self) -> Vec<Prompt> {
+        crate::app::agent_context::prompts()
+    }
+
+    fn prompt(&mut self, name: &str, args: &Value) -> Option<String> {
+        crate::app::agent_context::prompt_text(name, args)
+    }
+
+    fn call(&mut self, name: &str, args: Value) -> ToolAnswer {
+        self.send(name, args)
+            .and_then(|answer| answer.recv().ok())
+            .unwrap_or_else(|| ToolAnswer::error("printCAD is closing"))
     }
 }
 
@@ -196,7 +236,20 @@ impl ToolHost for Relay {
 pub(crate) fn tools() -> Vec<Tool> {
     vec![
         Tool {
+            name: "context".into(),
+            title: "What is open".into(),
+            description: "What printCAD has open right now: the document your chat works on \
+                          (its file, unsaved changes), the workbench, what is selected and \
+                          being edited, the bodies, the features that fail to build, and the \
+                          user's rules."
+                .into(),
+            input_schema: json!({"type": "object", "properties": {}}),
+            read_only: true,
+            always_load: true,
+        },
+        Tool {
             name: "commands".into(),
+            title: "List commands".into(),
             description: "List printCAD's commands: each one's id, what it does, its \
                           arguments and what it answers."
                 .into(),
@@ -214,6 +267,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "call".into(),
+            title: "Run a command".into(),
             description: "Run one command with named arguments, as `commands` lists them, \
                           and answer its result as JSON."
                 .into(),
@@ -230,6 +284,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "lua".into(),
+            title: "Run a Lua script".into(),
             description: "Run a Lua script: pc.<command id>{name = value} calls a command \
                           and returns its result; print() output and the error that stops \
                           it come back. The whole script is one undo step."
@@ -244,6 +299,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "log".into(),
+            title: "Read the log".into(),
             description: "The application's most recent log messages.".into(),
             input_schema: json!({
                 "type": "object",
@@ -254,6 +310,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "view".into(),
+            title: "Look at the view".into(),
             description: "A picture of the visible bodies from the direction the view \
                           looks, as a PNG."
                 .into(),
@@ -304,6 +361,12 @@ impl PrintCadApp {
     fn tool_request(&mut self, request: ToolRequest) {
         let args = &request.args;
         let answer = match request.tool.as_str() {
+            ASK_INSTRUCTIONS => ToolAnswer::text(self.agent_instructions(request.chat.as_deref())),
+            ASK_RULES => ToolAnswer::text(self.agent_rules(request.chat.as_deref())),
+            "context" => ToolAnswer::text(
+                serde_json::to_string_pretty(&self.agent_context(request.chat.as_deref()))
+                    .unwrap_or_default(),
+            ),
             "commands" => {
                 let prefix = args.get("prefix").and_then(Value::as_str).unwrap_or("");
                 let listed: Vec<Value> = command_specs(&self.registry)
@@ -327,6 +390,15 @@ impl PrintCadApp {
             }
             "view" => self.view_picture(),
             "call" | "lua" => {
+                let named = (request.tool == "call")
+                    .then(|| request.args.get("command").and_then(Value::as_str))
+                    .flatten();
+                if let Some(id) = named
+                    && let Err(refused) = self.agent_may_run(id, true)
+                {
+                    let _ = request.reply.send(ToolAnswer::error(refused));
+                    return;
+                }
                 let summary = match self.change_summary(&request) {
                     Ok(summary) => summary,
                     Err(why) => {
@@ -334,7 +406,10 @@ impl PrintCadApp {
                         return;
                     }
                 };
-                let asks = self.asks_before_changes(request.chat.as_deref());
+                let asks = self.asks_before_changes(request.chat.as_deref())
+                    || named.is_some_and(|id| {
+                        self.agent_access(id) == core_document::AgentAccess::AlwaysAsk
+                    });
                 if asks && !self.only_reads(&request) {
                     self.approvals.push(Approval {
                         chat: request.chat.clone(),
@@ -353,6 +428,23 @@ impl PrintCadApp {
         let _ = request.reply.send(answer);
     }
 
+    /// What an agent may do with command `id`.
+    pub(crate) fn agent_access(&self, id: &str) -> core_document::AgentAccess {
+        command_specs(&self.registry)
+            .into_iter()
+            .find(|c| c.id == id)
+            .map(|c| c.agent)
+            .unwrap_or_default()
+    }
+
+    /// Whether an agent may run command `id` now: never one the command
+    /// forbids, and one that always asks only as a `call` of its own
+    /// (`single`), which the user's approval covers, not from inside a
+    /// script. Refused, the reason the agent is told.
+    pub(crate) fn agent_may_run(&self, id: &str, single: bool) -> Result<(), String> {
+        agent_check(&self.agent_access(id), id, single)
+    }
+
     /// What a `call` or `lua` does, as a line (or lines) of script.
     fn change_summary(&self, request: &ToolRequest) -> Result<String, String> {
         match request.tool.as_str() {
@@ -362,6 +454,11 @@ impl PrintCadApp {
                     .get("command")
                     .and_then(Value::as_str)
                     .ok_or("`call` names its command")?;
+                if !command_specs(&self.registry).iter().any(|c| c.id == id) {
+                    return Err(format!(
+                        "there is no command `{id}`; the `commands` tool lists them"
+                    ));
+                }
                 let mut recorder = scripting::Recorder::default();
                 recorder.push(&core_document::Recorded {
                     id: id.to_string(),
@@ -431,10 +528,12 @@ impl PrintCadApp {
             .as_ref()
             .and_then(|id| self.chats.iter().find(|c| &c.id == id))
             .map_or(self.session.tab, |c| c.tab);
+        let single = request.tool == "call";
         self.submit_script_in(
             job,
             RunKind::Agent {
                 reply: request.reply,
+                single,
             },
             tab,
         );
@@ -479,6 +578,25 @@ impl PrintCadApp {
     }
 }
 
+/// Whether an agent may run command `id` of access `access`, as a `call`
+/// of its own (`single`) or from a script; refused, the reason it is told.
+pub(crate) fn agent_check(
+    access: &core_document::AgentAccess,
+    id: &str,
+    single: bool,
+) -> Result<(), String> {
+    match access {
+        core_document::AgentAccess::Never(why) => {
+            Err(format!("printCAD does not let an agent run `{id}`: {why}."))
+        }
+        core_document::AgentAccess::AlwaysAsk if !single => Err(format!(
+            "`{id}` needs the user's OK every time: run it on its own with the `call` tool, \
+             not from a script."
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// `printcad --mcp [--chat <id>]`: relay stdio to the running
 /// application. What the command line asked, if it asked for this.
 pub(crate) fn relay_from_args(words: &[String]) -> Option<std::io::Result<()>> {
@@ -511,6 +629,57 @@ pub(crate) fn relay_from_args(words: &[String]) -> Option<std::io::Result<()>> {
 mod tests {
     use super::*;
 
+    /// An agent never ends its own session, and what reaches past the
+    /// document waits for the user every time, never run from a script.
+    #[test]
+    fn an_agent_never_quits_and_asks_before_reaching_past_the_document() {
+        let specs = command_specs(&core_document::DocumentService::default());
+        let access = |id: &str| {
+            specs
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap_or_else(|| panic!("no command {id}"))
+                .agent
+                .clone()
+        };
+        for never in ["app.quit", "tab.close", "doc.set_agent_rules"] {
+            let refused = agent_check(&access(never), never, true).unwrap_err();
+            assert!(refused.contains("does not let an agent"), "{refused}");
+        }
+        for asks in [
+            "file.new",
+            "file.open",
+            "file.save_as",
+            "file.import",
+            "file.export",
+            "file.send_to_slicer",
+            "edit.undo",
+            "edit.redo",
+            "tab.new",
+            "tab.next",
+        ] {
+            assert_eq!(
+                access(asks),
+                core_document::AgentAccess::AlwaysAsk,
+                "{asks}"
+            );
+            assert!(
+                agent_check(&access(asks), asks, true).is_ok(),
+                "{asks} as a call"
+            );
+            assert!(
+                agent_check(&access(asks), asks, false).is_err(),
+                "{asks} in a script"
+            );
+        }
+        for free in ["doc.bodies", "file.save", "view.top", "doc.agent_rules"] {
+            assert!(agent_check(&access(free), free, false).is_ok(), "{free}");
+        }
+        // What an agent may not do is in the command list it reads.
+        let quit = specs.iter().find(|c| c.id == "app.quit").unwrap().to_json();
+        assert!(quit["agent"].as_str().unwrap().starts_with("never: "));
+    }
+
     #[test]
     fn every_tool_has_an_object_schema_and_a_description() {
         for tool in tools() {
@@ -528,6 +697,9 @@ mod tests {
             ["call", "lua"],
             "only these may change the document"
         );
-        assert!(!INSTRUCTIONS.contains('\u{2014}'));
+        for tool in tools() {
+            assert!(!tool.title.is_empty(), "{} has a title", tool.name);
+            assert!(!tool.name.starts_with('('), "{}", tool.name);
+        }
     }
 }

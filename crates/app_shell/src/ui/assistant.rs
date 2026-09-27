@@ -29,6 +29,8 @@ pub struct AssistantState {
     /// Chats known last frame: a new one comes to the front.
     known: usize,
     drafts: std::collections::HashMap<String, String>,
+    /// The rules of the document on screen, while they are being edited.
+    rules_draft: Option<String>,
 }
 
 impl AssistantState {
@@ -43,6 +45,10 @@ pub struct AssistantInputs<'a> {
     pub approvals: &'a [Approval],
     /// The agents of the Preferences, by name.
     pub agents: Vec<String>,
+    /// The name of the document on screen, and the rules its agents keep
+    /// to.
+    pub document_name: &'a str,
+    pub document_rules: &'a str,
 }
 
 /// What the panel asked for beyond commands.
@@ -66,6 +72,8 @@ pub fn draw_assistant(
         chats,
         approvals,
         agents,
+        document_name,
+        document_rules,
     } = inputs;
     // A chat opened since last frame takes the screen; one closed gives it
     // back to the last.
@@ -101,6 +109,7 @@ pub fn draw_assistant(
                 take_dropped_files(ui, panel, chat, commands);
             }
             tab_strip(ui, state, chats, &agents, commands, &mut result);
+            rules_editor(ui, state, document_name, document_rules, commands);
             ui.separator();
             for (index, approval) in approvals.iter().enumerate() {
                 approval_card(ui, index, approval, chats, commands);
@@ -221,11 +230,79 @@ fn tab_strip(
             tab.response.on_hover_text(&chat.agent);
         }
         let plus = tab_plus(ui, TAB_BAR - 8.0).on_hover_text("New chat");
+        let rules = ui
+            .add(egui::Button::new(RichText::new("Rules").font(sans(FONT_XS))).small())
+            .on_hover_text("What agents keep to in this document");
+        if rules.clicked() {
+            state.rules_draft = match state.rules_draft {
+                Some(_) => None,
+                None => Some(String::new()),
+            };
+        }
         egui::Popup::menu(&plus).show(|ui| {
             ui.set_min_width(180.0);
             new_chat_items(ui, agents, commands, result);
         });
     });
+}
+
+/// The rules of the document on screen, edited in place: they go with it
+/// when it is saved, beside the ones in Preferences for every document.
+fn rules_editor(
+    ui: &mut egui::Ui,
+    state: &mut AssistantState,
+    document_name: &str,
+    document_rules: &str,
+    commands: &mut Vec<UiCommand>,
+) {
+    let Some(draft) = state.rules_draft.as_mut() else {
+        return;
+    };
+    // Opened: start from what the document holds.
+    if draft.is_empty() && !document_rules.is_empty() {
+        draft.push_str(document_rules);
+    }
+    let mut close = false;
+    Card::new().padding(8.0).show(ui, |ui| {
+        ui.label(
+            RichText::new(format!("Rules for {document_name}"))
+                .font(sans_medium(FONT_SM))
+                .color(TEXT1),
+        );
+        ui.label(
+            RichText::new(
+                "Agents working on this document keep to these, after the rules in \
+                 Preferences › AI agents. They are saved with the document.",
+            )
+            .font(sans(FONT_XS))
+            .color(TEXT3),
+        );
+        ui.add(
+            egui::TextEdit::multiline(draft)
+                .hint_text("The lid stays 2 mm thick.\nDo not change the mounting holes.")
+                .desired_rows(4)
+                .desired_width(f32::INFINITY)
+                .font(mono(FONT_SM)),
+        );
+        ui.horizontal(|ui| {
+            if ui
+                .button(RichText::new("Save").font(sans(FONT_SM)))
+                .clicked()
+            {
+                commands.push(UiCommand::SetDocumentAgentRules(draft.trim().to_string()));
+                close = true;
+            }
+            if ui
+                .button(RichText::new("Cancel").font(sans(FONT_SM)))
+                .clicked()
+            {
+                close = true;
+            }
+        });
+    });
+    if close {
+        state.rules_draft = None;
+    }
 }
 
 fn new_chat_items(
@@ -955,6 +1032,8 @@ mod tests {
                         chats: &chats,
                         approvals: &[],
                         agents: vec!["Test".into()],
+                        document_name: "Test",
+                        document_rules: "",
                     },
                     &mut Vec::new(),
                 );

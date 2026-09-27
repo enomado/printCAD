@@ -649,6 +649,8 @@ impl UiLayer {
                     chats,
                     approvals,
                     agents: settings.ai.agents.iter().map(|a| a.name.clone()).collect(),
+                    document_name: document.name(),
+                    document_rules: document.agent_rules(),
                 },
                 &mut commands,
             );
