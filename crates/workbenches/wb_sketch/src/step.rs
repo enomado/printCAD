@@ -234,6 +234,7 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         ("offset_both", params.offset_both, d.offset_both),
         ("offset_delete", params.offset_delete, d.offset_delete),
         ("offset_linked", params.offset_linked, d.offset_linked),
+        ("copies_linked", params.copies_linked, d.copies_linked),
     ] {
         put(name, json!(value), json!(default));
     }
@@ -306,6 +307,7 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             "offset_both" => p.offset_both = flag()?,
             "offset_delete" => p.offset_delete = flag()?,
             "offset_linked" => p.offset_linked = flag()?,
+            "copies_linked" => p.copies_linked = flag()?,
             "copies" => p.copies = number()? as u32,
             "bspline_periodic" => p.bspline_periodic = flag()?,
             "bspline_degree" => {

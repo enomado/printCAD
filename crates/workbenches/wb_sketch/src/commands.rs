@@ -190,6 +190,7 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Any,
             "Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, \
              offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, \
+             copies_linked, \
              bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, \
              array_rows, array_cols, array_dx, array_dy, mirror_keep, mirror_linked, \
              mirror_center",
@@ -313,6 +314,12 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("cols", ParamKind::Integer, "")
         .param("dx", ParamKind::Number, "The step between columns, mm")
         .param("dy", ParamKind::Number, "The step between rows, mm")
+        .optional(
+            "linked",
+            ParamKind::Bool,
+            "Copies stay the originals' size, spaced by one pitch along the rows and one \
+             down the columns (false)",
+        )
         .returns("{elements}: what it made"),
     );
     context.register_command(
@@ -837,6 +844,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 count("cols")?,
                 a.number("dx")? as f32,
                 a.number("dy")? as f32,
+                a.opt_bool("linked")?.unwrap_or(false),
             );
             if !effect.changed {
                 return Err(CommandError::failed(

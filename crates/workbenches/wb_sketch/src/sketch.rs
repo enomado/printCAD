@@ -409,6 +409,10 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         ConstraintKind::EllipseRadius { ellipse, .. } => vec![*ellipse],
         ConstraintKind::CurveLength { curve, .. } => vec![*curve],
         ConstraintKind::Offset { pairs, .. } => pairs.iter().flatten().copied().collect(),
+        ConstraintKind::Pitch { points, .. } => points.clone(),
+        ConstraintKind::PolarPitch { center, points, .. } => std::iter::once(*center)
+            .chain(points.iter().copied())
+            .collect(),
         ConstraintKind::TangentCurves { curve1, curve2 }
         | ConstraintKind::PerpendicularCurves { curve1, curve2 } => vec![*curve1, *curve2],
         ConstraintKind::Horizontal { element }
@@ -487,6 +491,9 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::EllipseRadius { major: false, .. } => "Minor radius".to_string(),
         ConstraintKind::CurveLength { .. } => "Curve length".to_string(),
         ConstraintKind::Offset { .. } => "Offset".to_string(),
+        ConstraintKind::Pitch { across: false, .. } => "Pitch".to_string(),
+        ConstraintKind::Pitch { across: true, .. } => "Row pitch".to_string(),
+        ConstraintKind::PolarPitch { .. } => "Angular pitch".to_string(),
         ConstraintKind::TangentCurves { .. } => "Tangent".to_string(),
         ConstraintKind::PerpendicularCurves { .. } => "Perpendicular".to_string(),
         ConstraintKind::Horizontal { .. } | ConstraintKind::HorizontalPoints { .. } => {
@@ -600,6 +607,18 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
             let [a, b] = *pairs.first()?;
             crate::measure::gap(sketch, a, b).map(|g| g.distance)
         }
+        ConstraintKind::Pitch { .. } => {
+            let (a, b) = pitch_ends(kind)?;
+            Some(
+                (sketch.point_position(b)? - sketch.point_position(a)?)
+                    .to_glam()
+                    .length(),
+            )
+        }
+        ConstraintKind::PolarPitch {
+            center, ref points, ..
+        } => crate::measure::angle_three_points(sketch, *points.first()?, center, *points.get(1)?)
+            .map(f32::to_degrees),
         ConstraintKind::AngleThreePoints {
             point1,
             vertex,
@@ -645,9 +664,10 @@ pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
             Some(length)
         }
         ConstraintKind::EllipseRadius { radius, .. } => Some(radius),
-        ConstraintKind::Gap { distance, .. } | ConstraintKind::Offset { distance, .. } => {
-            Some(distance)
-        }
+        ConstraintKind::Gap { distance, .. }
+        | ConstraintKind::Offset { distance, .. }
+        | ConstraintKind::Pitch { distance, .. } => Some(distance),
+        ConstraintKind::PolarPitch { angle_rad, .. } => Some(angle_rad.to_degrees()),
         ConstraintKind::Refraction { ratio, .. } => Some(ratio),
         _ => None,
     }
@@ -674,9 +694,10 @@ pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
             *length = v
         }
         ConstraintKind::EllipseRadius { radius, .. } => *radius = v,
-        ConstraintKind::Gap { distance, .. } | ConstraintKind::Offset { distance, .. } => {
-            *distance = v
-        }
+        ConstraintKind::Gap { distance, .. }
+        | ConstraintKind::Offset { distance, .. }
+        | ConstraintKind::Pitch { distance, .. } => *distance = v,
+        ConstraintKind::PolarPitch { angle_rad, .. } => *angle_rad = v.to_radians(),
         ConstraintKind::Refraction { ratio, .. } => *ratio = v,
         _ => {}
     }
@@ -706,10 +727,31 @@ pub fn dimension_unit(kind: &ConstraintKind) -> DimensionUnit {
         | ConstraintKind::AngleToAxis { .. }
         | ConstraintKind::AngleAtPoint { .. }
         | ConstraintKind::ArcAngle { .. }
-        | ConstraintKind::AngleThreePoints { .. } => DimensionUnit::Angle,
+        | ConstraintKind::AngleThreePoints { .. }
+        | ConstraintKind::PolarPitch { .. } => DimensionUnit::Angle,
         ConstraintKind::Refraction { .. } => DimensionUnit::Ratio,
         _ => DimensionUnit::Length,
     }
+}
+
+/// The two points a pitch measures: the first member's and the next one
+/// along a row, or in the next row.
+pub fn pitch_ends(kind: &ConstraintKind) -> Option<(Uuid, Uuid)> {
+    let ConstraintKind::Pitch {
+        points,
+        columns,
+        across,
+        ..
+    } = kind
+    else {
+        return None;
+    };
+    let step = if *across {
+        (*columns).max(1) as usize
+    } else {
+        1
+    };
+    Some((*points.first()?, *points.get(step)?))
 }
 
 /// Reference plane for a sketch (2D coordinate system in 3D space).
@@ -1382,6 +1424,29 @@ pub enum ConstraintKind {
         pairs: Vec<[Uuid; 2]>,
         distance: f32,
     },
+    /// The members of an array stepped evenly: `points` holds one point of
+    /// each, row by row, `columns` to a row, the original first. Along a
+    /// row each steps from the one before as the second does from the
+    /// first, `distance` apart along `direction` (any way, without one);
+    /// `across`, it is the rows that step so from one another, the first
+    /// column's points `distance` apart.
+    Pitch {
+        points: Vec<Uuid>,
+        columns: u32,
+        distance: f32,
+        #[serde(default)]
+        across: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction: Option<Vec2D>,
+    },
+    /// Rotated copies stepped evenly about `center`: each of `points` (one
+    /// point of each copy, the original first) as far from it as the first,
+    /// turned `angle_rad` counter-clockwise from the one before.
+    PolarPitch {
+        center: Uuid,
+        points: Vec<Uuid>,
+        angle_rad: f32,
+    },
     /// An arc's opening: the angle it sweeps counter-clockwise from its
     /// start to its end.
     ArcAngle { arc: Uuid, angle_rad: f32 },
@@ -1470,6 +1535,8 @@ impl ConstraintKind {
                 | ConstraintKind::EllipseRadius { .. }
                 | ConstraintKind::Gap { .. }
                 | ConstraintKind::Offset { .. }
+                | ConstraintKind::Pitch { .. }
+                | ConstraintKind::PolarPitch { .. }
                 | ConstraintKind::AngleAtPoint { .. }
                 | ConstraintKind::ArcAngle { .. }
                 | ConstraintKind::AngleThreePoints { .. }

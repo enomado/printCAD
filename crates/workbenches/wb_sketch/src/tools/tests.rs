@@ -4039,3 +4039,190 @@ fn trimming_a_parabola_moves_its_end_to_the_crossing() {
     );
     assert!(sketch.get_geometry(e).is_none());
 }
+
+fn converged(sketch: &mut Sketch) {
+    let outcome = crate::solver::solve(sketch);
+    assert!(
+        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        "{outcome:?}"
+    );
+}
+
+fn set_dimension(sketch: &mut Sketch, pick: impl Fn(&ConstraintKind) -> bool, value: f32) {
+    let c = sketch
+        .constraints
+        .iter_mut()
+        .find(|c| pick(&c.kind))
+        .expect("the dimension");
+    c.kind = crate::sketch::with_dimension_value(&c.kind, value);
+}
+
+/// A circle of radius 2 about (0, 0), its centre fixed, selected.
+fn fixed_circle(sketch: &mut Sketch, x: f32, y: f32) -> (Uuid, Uuid, HashSet<Uuid>) {
+    let c = pt(sketch, x, y);
+    sketch.add_constraint(ConstraintKind::FixedPoint {
+        point: c,
+        position: Vec2D::new(x, y),
+    });
+    let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
+    sketch.add_constraint(ConstraintKind::Radius {
+        circle,
+        radius: 2.0,
+    });
+    (c, circle, [circle].into_iter().collect())
+}
+
+fn circle_centres(sketch: &Sketch) -> Vec<glam::Vec2> {
+    sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Circle(c) => sketch.point_position(c.center).map(|p| p.to_glam()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn linked_translated_copies_follow_the_original_and_one_pitch() {
+    let mut sketch = Sketch::new("t");
+    let (_, circle, selected) = fixed_circle(&mut sketch, 0.0, 0.0);
+    let params = ToolParams {
+        copies: 3,
+        copies_linked: true,
+        ..ToolParams::default()
+    };
+    let mut state = ToolState::Idle;
+    for at in [Vec2D::new(0.0, 0.0), Vec2D::new(10.0, 0.0)] {
+        click_sel(
+            &mut state,
+            "sketch.translate",
+            &mut sketch,
+            at,
+            0.01,
+            &params,
+            &selected,
+        );
+    }
+    assert_eq!(circle_centres(&sketch).len(), 4);
+    set_dimension(
+        &mut sketch,
+        |k| matches!(k, ConstraintKind::Pitch { .. }),
+        15.0,
+    );
+    set_dimension(
+        &mut sketch,
+        |k| matches!(k, ConstraintKind::Radius { circle: c, .. } if *c == circle),
+        3.0,
+    );
+    converged(&mut sketch);
+    let mut xs: Vec<f32> = circle_centres(&sketch).iter().map(|p| p.x).collect();
+    xs.sort_by(f32::total_cmp);
+    for (x, want) in xs.iter().zip([0.0, 15.0, 30.0, 45.0]) {
+        assert!((x - want).abs() < 1e-3, "{xs:?}");
+    }
+    for g in &sketch.geometry {
+        if let GeometryElement::Circle(c) = g {
+            assert!((c.radius - 3.0).abs() < 1e-3);
+        }
+    }
+}
+
+#[test]
+fn linked_rotated_copies_turn_by_one_angle() {
+    let mut sketch = Sketch::new("t");
+    let o = pt(&mut sketch, 0.0, 0.0);
+    sketch.add_constraint(ConstraintKind::FixedPoint {
+        point: o,
+        position: Vec2D::new(0.0, 0.0),
+    });
+    let (_, _, selected) = fixed_circle(&mut sketch, 10.0, 0.0);
+    let params = ToolParams {
+        copies: 2,
+        copies_linked: true,
+        ..ToolParams::default()
+    };
+    let mut state = ToolState::Idle;
+    for at in [
+        Vec2D::new(0.0, 0.0),
+        Vec2D::new(10.0, 0.0),
+        Vec2D::new(0.0, 10.0),
+    ] {
+        click_sel(
+            &mut state,
+            "sketch.rotate",
+            &mut sketch,
+            at,
+            0.01,
+            &params,
+            &selected,
+        );
+    }
+    let pitch = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match &c.kind {
+            ConstraintKind::PolarPitch {
+                center,
+                points,
+                angle_rad,
+            } => Some((*center, points.len(), *angle_rad)),
+            _ => None,
+        })
+        .expect("an angular pitch");
+    assert_eq!(pitch.0, o, "turns about the point at the pivot");
+    assert_eq!(pitch.1, 3);
+    assert!((pitch.2 - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+    set_dimension(
+        &mut sketch,
+        |k| matches!(k, ConstraintKind::PolarPitch { .. }),
+        60.0,
+    );
+    converged(&mut sketch);
+    let mut angles: Vec<f32> = circle_centres(&sketch)
+        .iter()
+        .map(|p| {
+            assert!((p.length() - 10.0).abs() < 1e-3);
+            p.y.atan2(p.x).to_degrees()
+        })
+        .collect();
+    angles.sort_by(f32::total_cmp);
+    for (a, want) in angles.iter().zip([0.0, 60.0, 120.0]) {
+        assert!((a - want).abs() < 1e-2, "{angles:?}");
+    }
+}
+
+#[test]
+fn a_linked_array_is_spaced_by_its_two_pitches() {
+    let mut sketch = Sketch::new("t");
+    let (_, _, selected) = fixed_circle(&mut sketch, 0.0, 0.0);
+    let effect = crate::tools::array(&mut sketch, &selected, 2, 3, 10.0, 8.0, true);
+    assert!(effect.changed);
+    assert_eq!(circle_centres(&sketch).len(), 6);
+    set_dimension(
+        &mut sketch,
+        |k| matches!(k, ConstraintKind::Pitch { across: false, .. }),
+        12.0,
+    );
+    set_dimension(
+        &mut sketch,
+        |k| matches!(k, ConstraintKind::Pitch { across: true, .. }),
+        5.0,
+    );
+    converged(&mut sketch);
+    let centres = circle_centres(&sketch);
+    for want in [
+        (0.0, 0.0),
+        (12.0, 0.0),
+        (24.0, 0.0),
+        (0.0, 5.0),
+        (12.0, 5.0),
+        (24.0, 5.0),
+    ] {
+        let want = glam::Vec2::new(want.0, want.1);
+        assert!(
+            centres.iter().any(|c| (*c - want).length() < 1e-3),
+            "{want:?} in {centres:?}"
+        );
+    }
+}

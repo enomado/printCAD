@@ -46,7 +46,7 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Trim, extend and split on every curve** (partial, M). Trim and
   extend skip ellipses, arcs of ellipse, conics and B-splines; split skips
   ellipses and B-splines. Needs their intersections in `geom2d.rs`.
-- [ ] **Linked copies** (missing, M). Copies and arrays keep their own
+- [x] **Linked copies** (missing, M). Copies and arrays keep their own
   constraints but nothing ties them to the original: equal size to the
   original and one editable pitch between array members
   (`tools/transform.rs`).

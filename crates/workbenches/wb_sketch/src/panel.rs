@@ -505,6 +505,11 @@ impl SketchWorkbench {
                 ui_kit::widgets::field_label(ui, "Row step");
                 QtyField::mm(&mut params.array_dy).show(ui);
                 ui.end_row();
+                ui_kit::widgets::field_label(ui, "Linked");
+                check_row(ui, &mut params.copies_linked, "Follow the original").on_hover_text(
+                    "Copies stay the original's size, spaced by one pitch along the rows and one down the columns",
+                );
+                ui.end_row();
             });
         if ui_kit::widgets::secondary_button(ui, "Make array")
             .on_hover_text("Copy the selection into these rows and columns")
@@ -636,6 +641,16 @@ impl SketchWorkbench {
                             params.copies = copies.round() as u32;
                         }
                         ui.end_row();
+                        if tool.as_deref() != Some("sketch.scale") {
+                            ui_kit::widgets::field_label(ui, "Linked");
+                            ui.add_enabled_ui(params.copies > 0, |ui| {
+                                check_row(ui, &mut params.copies_linked, "Follow the original")
+                                    .on_hover_text(
+                                        "Copies stay the original's size, spaced by one pitch",
+                                    );
+                            });
+                            ui.end_row();
+                        }
                     }
                     Some("sketch.bspline") => {
                         ui_kit::widgets::field_label(ui, "Closed");

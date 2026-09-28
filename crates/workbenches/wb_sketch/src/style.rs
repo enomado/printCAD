@@ -21,7 +21,9 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Length { .. }
         | ConstraintKind::Distance { .. }
         | ConstraintKind::Gap { .. }
-        | ConstraintKind::Offset { .. } => "constraint-distance",
+        | ConstraintKind::Offset { .. }
+        | ConstraintKind::Pitch { .. } => "constraint-distance",
+        ConstraintKind::PolarPitch { .. } => "constraint-angle",
         ConstraintKind::ArcLength { .. } => "constraint-arc-length",
         ConstraintKind::ArcAngle { .. } | ConstraintKind::AngleThreePoints { .. } => {
             "constraint-angle"

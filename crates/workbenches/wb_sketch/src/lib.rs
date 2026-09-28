@@ -4659,6 +4659,7 @@ impl SketchWorkbench {
             p.array_cols,
             p.array_dx,
             p.array_dy,
+            p.copies_linked,
         );
         if effect.changed {
             if let Some(log) = effect.log {
@@ -4676,6 +4677,7 @@ impl SketchWorkbench {
                         "cols": p.array_cols,
                         "dx": p.array_dx,
                         "dy": p.array_dy,
+                        "linked": p.copies_linked,
                     })),
                     commands::made_since(&feature.sketch, &before),
                 );

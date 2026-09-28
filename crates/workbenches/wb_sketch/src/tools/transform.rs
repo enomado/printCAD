@@ -335,7 +335,10 @@ pub(super) fn copy_selection(
 }
 
 /// The selection repeated in a grid: `rows` × `cols` copies stepped by
-/// `dx` and `dy`, the original in the corner.
+/// `dx` and `dy`, the original in the corner. `linked`, every copy stays
+/// the original's size and one pitch along the rows and one down the
+/// columns space them.
+#[allow(clippy::too_many_arguments)]
 pub fn array(
     sketch: &mut Sketch,
     selected: &HashSet<Uuid>,
@@ -343,23 +346,148 @@ pub fn array(
     cols: u32,
     dx: f32,
     dy: f32,
+    linked: bool,
 ) -> ToolEffect {
     if selected.is_empty() || rows.max(cols) < 2 {
         return ToolEffect::none();
     }
+    let (rows, cols) = (rows.max(1), cols.max(1));
     let source = sketch.clone();
+    let reference = reference_point(&source, selected);
     let mut copies = 0;
-    for row in 0..rows.max(1) {
-        for col in 0..cols.max(1) {
+    let mut maps = Vec::new();
+    let mut members = Vec::new();
+    for row in 0..rows {
+        for col in 0..cols {
             if row == 0 && col == 0 {
+                members.extend(reference);
                 continue;
             }
             let delta = Vec2::new(col as f32 * dx, row as f32 * dy);
-            copy_from(&source, sketch, selected, &Similarity::translation(delta));
+            let map = copy_linked(
+                &source,
+                sketch,
+                selected,
+                &Similarity::translation(delta),
+                linked,
+            );
+            members.extend(reference.and_then(|r| map.get(&r).copied()));
+            maps.push(map);
             copies += 1;
         }
     }
+    if linked {
+        equal_sizes(sketch, &source, selected, &maps);
+        if members.len() == (rows * cols) as usize {
+            for (across, step, count, way) in [
+                (false, dx, cols, Vec2D::new(dx.signum(), 0.0)),
+                (true, dy, rows, Vec2D::new(0.0, dy.signum())),
+            ] {
+                if count >= 2 && step.abs() > 1e-6 {
+                    sketch.add_constraint(ConstraintKind::Pitch {
+                        points: members.clone(),
+                        columns: cols,
+                        distance: step.abs(),
+                        across,
+                        direction: Some(way),
+                    });
+                }
+            }
+        }
+    }
     ToolEffect::changed(format!("Rectangular array: {copies} copies"))
+}
+
+/// Copy as [`copy_from`] does, returning the old → new ids. A `linked`
+/// copy is placed and sized by what ties it to the original: what pinned
+/// the original where it is stays behind, and its dimensions come along
+/// as reference ones.
+fn copy_linked(
+    source: &Sketch,
+    sketch: &mut Sketch,
+    selected: &HashSet<Uuid>,
+    xf: &Similarity,
+    linked: bool,
+) -> HashMap<Uuid, Uuid> {
+    let map = copy_mapped(source, sketch, selected, xf);
+    let first = sketch.constraints.len();
+    copy_constraints(source, sketch, &map, xf);
+    if linked {
+        let mut index = 0;
+        sketch.constraints.retain(|c| {
+            index += 1;
+            index <= first
+                || !matches!(
+                    c.kind,
+                    ConstraintKind::FixedPoint { .. }
+                        | ConstraintKind::Block { .. }
+                        | ConstraintKind::DistanceX { b: None, .. }
+                        | ConstraintKind::DistanceY { b: None, .. }
+                )
+        });
+        for c in sketch.constraints.iter_mut().skip(first) {
+            if c.kind.is_dimensional() {
+                c.driving = false;
+            }
+        }
+    }
+    let copied: HashSet<Uuid> = map.values().copied().collect();
+    adapt_constraints(sketch, &copied, xf);
+    map
+}
+
+/// The point of the selection that stands for it in a pitch: its first
+/// point in the sketch's order.
+fn reference_point(source: &Sketch, selected: &HashSet<Uuid>) -> Option<Uuid> {
+    let points = selection_point_ids(source, selected);
+    source
+        .geometry
+        .iter()
+        .flat_map(|g| match g {
+            GeometryElement::Point(p) => vec![p.id],
+            other => Sketch::curve_point_ids(other),
+        })
+        .find(|id| points.contains(id))
+}
+
+/// Hold every copy's lines, circles, arcs and ellipses the size of the
+/// originals they copy.
+fn equal_sizes(
+    sketch: &mut Sketch,
+    source: &Sketch,
+    selected: &HashSet<Uuid>,
+    maps: &[HashMap<Uuid, Uuid>],
+) {
+    for geom in source
+        .geometry
+        .iter()
+        .filter(|g| selected.contains(&g.id()))
+    {
+        let id = geom.id();
+        for map in maps {
+            let Some(&copy) = map.get(&id) else {
+                continue;
+            };
+            let kind = match geom {
+                GeometryElement::Line(_) => ConstraintKind::EqualLength {
+                    line1: id,
+                    line2: copy,
+                },
+                GeometryElement::Circle(_) | GeometryElement::Arc(_) => {
+                    ConstraintKind::EqualRadius {
+                        circle1: id,
+                        circle2: copy,
+                    }
+                }
+                GeometryElement::Ellipse(_) => ConstraintKind::EqualEllipse {
+                    ellipse1: id,
+                    ellipse2: copy,
+                },
+                _ => continue,
+            };
+            sketch.add_constraint(kind);
+        }
+    }
 }
 
 /// Copy `selected` elements of `source` into `target` under `xf`: fresh
@@ -523,6 +651,12 @@ pub fn copy_constraints(
     count
 }
 
+/// A turn as the counter-clockwise angle from 0 to a full turn that the
+/// angular pitch holds.
+fn geom_angle(angle: f32) -> f32 {
+    angle.rem_euclid(std::f32::consts::TAU)
+}
+
 /// Cursor snapped to an existing point's *position* only.
 fn snapped_pos(sketch: &Sketch, cursor: Vec2D, snap_tol: f32) -> Vec2D {
     snap::snap_to_point(sketch, cursor, snap_tol, &[])
@@ -537,6 +671,7 @@ pub(super) fn translate(
     snap_tol: f32,
     selected: &HashSet<Uuid>,
     copies: u32,
+    linked: bool,
 ) -> ToolEffect {
     let pos = snapped_pos(sketch, cursor, snap_tol);
     match *state {
@@ -550,8 +685,29 @@ pub(super) fn translate(
                 let n = apply_to_selection(sketch, selected, &Similarity::translation(delta));
                 ToolEffect::changed(format!("Moved selection ({n} points)"))
             } else {
+                let source = sketch.clone();
+                let reference = reference_point(&source, selected);
+                let mut maps = Vec::new();
                 for k in 1..=copies {
-                    copy_selection(sketch, selected, &Similarity::translation(delta * k as f32));
+                    let step = Similarity::translation(delta * k as f32);
+                    maps.push(copy_linked(&source, sketch, selected, &step, linked));
+                }
+                if linked {
+                    equal_sizes(sketch, &source, selected, &maps);
+                    let points: Option<Vec<Uuid>> = reference.map(|r| {
+                        std::iter::once(r)
+                            .chain(maps.iter().filter_map(|m| m.get(&r).copied()))
+                            .collect()
+                    });
+                    if let Some(points) = points.filter(|p| p.len() == copies as usize + 1) {
+                        sketch.add_constraint(ConstraintKind::Pitch {
+                            columns: points.len() as u32,
+                            points,
+                            distance: delta.length(),
+                            across: false,
+                            direction: Some(Vec2D::from_glam(delta.normalize())),
+                        });
+                    }
                 }
                 ToolEffect::changed(format!("Created {copies} translated cop(ies)"))
             }
@@ -570,6 +726,7 @@ pub(super) fn rotate(
     snap_tol: f32,
     selected: &HashSet<Uuid>,
     copies: u32,
+    linked: bool,
 ) -> ToolEffect {
     let pos = snapped_pos(sketch, cursor, snap_tol);
     match *state {
@@ -595,12 +752,38 @@ pub(super) fn rotate(
                 apply_to_selection(sketch, selected, &Similarity::rotation_about(c, angle));
                 ToolEffect::changed(format!("Rotated selection by {:.1}°", angle.to_degrees()))
             } else {
+                let source = sketch.clone();
+                let reference = reference_point(&source, selected);
+                let mut maps = Vec::new();
                 for k in 1..=copies {
-                    copy_selection(
-                        sketch,
-                        selected,
-                        &Similarity::rotation_about(c, angle * k as f32),
-                    );
+                    let step = Similarity::rotation_about(c, angle * k as f32);
+                    maps.push(copy_linked(&source, sketch, selected, &step, linked));
+                }
+                if linked {
+                    equal_sizes(sketch, &source, selected, &maps);
+                    let points: Option<Vec<Uuid>> = reference.map(|r| {
+                        std::iter::once(r)
+                            .chain(maps.iter().filter_map(|m| m.get(&r).copied()))
+                            .collect()
+                    });
+                    if let Some(points) = points.filter(|p| p.len() == copies as usize + 1) {
+                        // The pivot as a point the pitch turns about: the
+                        // one there, or a construction point put there.
+                        let pivot = match snap::snap_to_point(sketch, center, 1e-5, &[]) {
+                            snap::SnapTarget::Existing(id) => id,
+                            _ => {
+                                let id =
+                                    sketch.add_geometry(GeometryElement::Point(Point::new(center)));
+                                sketch.set_construction(id, true);
+                                id
+                            }
+                        };
+                        sketch.add_constraint(ConstraintKind::PolarPitch {
+                            center: pivot,
+                            points,
+                            angle_rad: geom_angle(angle),
+                        });
+                    }
                 }
                 ToolEffect::changed(format!("Created {copies} rotated cop(ies)"))
             }

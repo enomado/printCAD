@@ -29,6 +29,8 @@ fn value_field(kind: &ConstraintKind) -> Option<(&'static str, &'static str)> {
         ConstraintKind::EllipseRadius { .. } => ("EllipseRadius", "radius"),
         ConstraintKind::Gap { .. } => ("Gap", "distance"),
         ConstraintKind::Offset { .. } => ("Offset", "distance"),
+        ConstraintKind::Pitch { .. } => ("Pitch", "distance"),
+        ConstraintKind::PolarPitch { .. } => ("PolarPitch", "angle_rad"),
         ConstraintKind::AngleAtPoint { .. } => ("AngleAtPoint", "angle_rad"),
         ConstraintKind::ArcAngle { .. } => ("ArcAngle", "angle_rad"),
         ConstraintKind::AngleThreePoints { .. } => ("AngleThreePoints", "angle_rad"),

@@ -223,6 +223,11 @@ fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
             let gap = crate::measure::gap(sketch, a, b)?;
             Some(Vec2D::from_glam((gap.a + gap.b) * 0.5))
         }
+        ConstraintKind::Pitch { .. } => {
+            let (a, b) = sketch::pitch_ends(kind)?;
+            Some(mid(sketch.point_position(a)?, sketch.point_position(b)?))
+        }
+        ConstraintKind::PolarPitch { center, .. } => sketch.point_position(center),
         ConstraintKind::AngleAtPoint { point, .. } | ConstraintKind::Refraction { point, .. } => {
             sketch.point_position(point)
         }
@@ -277,7 +282,8 @@ fn dim_text(sketch: &Sketch, constraint: &sketch::Constraint) -> String {
         | ConstraintKind::AngleToAxis { .. }
         | ConstraintKind::AngleAtPoint { .. }
         | ConstraintKind::ArcAngle { .. }
-        | ConstraintKind::AngleThreePoints { .. } => format!("{val}°"),
+        | ConstraintKind::AngleThreePoints { .. }
+        | ConstraintKind::PolarPitch { .. } => format!("{val}°"),
         ConstraintKind::ArcLength { .. } => format!("◠ {val}"),
         ConstraintKind::Refraction { .. } => format!("n {val}"),
         _ => val,
@@ -605,6 +611,36 @@ fn curve_dimension_lines(
                 }
             }
             lines
+        }
+        ConstraintKind::Pitch { .. } => {
+            let pos = |id: Uuid| sketch.point_position(id).map(Vec2D::to_glam);
+            let Some((Some(a), Some(b))) = sketch::pitch_ends(kind).map(|(a, b)| (pos(a), pos(b)))
+            else {
+                return Some(Vec::new());
+            };
+            let (Some(pa), Some(pb)) = (px(a), px(b)) else {
+                return Some(Vec::new());
+            };
+            let mut lines = vec![(pa, pb)];
+            lines.extend(leader(scale(add(pa, pb), 0.5)));
+            lines
+        }
+        ConstraintKind::PolarPitch {
+            center, ref points, ..
+        } => {
+            let pos = |id: Option<&Uuid>| {
+                id.and_then(|id| sketch.point_position(*id))
+                    .map(Vec2D::to_glam)
+            };
+            let (Some(a), Some(at), Some(b)) =
+                (pos(points.first()), pos(Some(&center)), pos(points.get(1)))
+            else {
+                return Some(Vec::new());
+            };
+            let (Some(pa), Some(v), Some(pb)) = (px(a), px(at), px(b)) else {
+                return Some(Vec::new());
+            };
+            polyline(Some(angle_arc_points(v, sub(pa, v), sub(pb, v), label)))
         }
         ConstraintKind::Gap { item1, item2, .. } => {
             let Some(g) = crate::measure::gap(sketch, item1, item2) else {

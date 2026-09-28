@@ -255,6 +255,8 @@ pub struct ToolParams {
     pub offset_linked: bool,
     /// Copy count for translate/rotate (0 = move the originals).
     pub copies: u32,
+    /// Copies and arrays stay the originals' size, spaced by one pitch.
+    pub copies_linked: bool,
     /// Whether new B-splines close on themselves.
     pub bspline_periodic: bool,
     /// The degree of new B-splines (2 to 5).
@@ -293,6 +295,7 @@ impl Default for ToolParams {
             offset_delete: false,
             offset_linked: false,
             copies: 0,
+            copies_linked: false,
             bspline_periodic: false,
             bspline_degree: 3,
             bspline_interpolate: false,
@@ -638,12 +641,24 @@ pub fn handle_click(
                 linked: params.offset_linked,
             },
         ),
-        "sketch.translate" => {
-            transform::translate(state, sketch, cursor, snap_tol, selected, params.copies)
-        }
-        "sketch.rotate" => {
-            transform::rotate(state, sketch, cursor, snap_tol, selected, params.copies)
-        }
+        "sketch.translate" => transform::translate(
+            state,
+            sketch,
+            cursor,
+            snap_tol,
+            selected,
+            params.copies,
+            params.copies_linked,
+        ),
+        "sketch.rotate" => transform::rotate(
+            state,
+            sketch,
+            cursor,
+            snap_tol,
+            selected,
+            params.copies,
+            params.copies_linked,
+        ),
         "sketch.scale" => {
             transform::scale(state, sketch, cursor, snap_tol, selected, params.copies)
         }

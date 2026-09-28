@@ -639,6 +639,20 @@ enum ResidualSpec {
         e2: usize,
         d: f64,
     },
+    /// A step of a set length and way: `a1 - a0` equals `(dx, dy)`.
+    Step {
+        a0: usize,
+        a1: usize,
+        dx: f64,
+        dy: f64,
+    },
+    /// Two steps the same: `b1 - b0` equals `a1 - a0`, in x and in y.
+    SameStep {
+        a0: usize,
+        a1: usize,
+        b0: usize,
+        b1: usize,
+    },
     /// |perpendicular distance(center, infinite line)| - r - d.
     GapLineCircle {
         s: usize,
@@ -780,6 +794,8 @@ impl ResidualSpec {
             | ResidualSpec::Midpoint { .. }
             | ResidualSpec::EqualEllipse { .. }
             | ResidualSpec::PointOnCurve { .. }
+            | ResidualSpec::SameStep { .. }
+            | ResidualSpec::Step { .. }
             | ResidualSpec::Internal { .. } => 2,
             ResidualSpec::CurvesMeet { .. } => 3,
             _ => 1,
@@ -1012,6 +1028,14 @@ impl ResidualSpec {
                 let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
                 let across = ((mx - v[s1]) * dy - (my - v[s1 + 1]) * dx) / len;
                 out.push(across.abs() - d);
+            }
+            ResidualSpec::Step { a0, a1, dx, dy } => {
+                out.push(v[a1] - v[a0] - dx);
+                out.push(v[a1 + 1] - v[a0 + 1] - dy);
+            }
+            ResidualSpec::SameStep { a0, a1, b0, b1 } => {
+                out.push((v[b1] - v[b0]) - (v[a1] - v[a0]));
+                out.push((v[b1 + 1] - v[b0 + 1]) - (v[a1 + 1] - v[a0 + 1]));
             }
             ResidualSpec::GapCircles {
                 c1,
@@ -1772,6 +1796,84 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                     _ => None,
                 };
                 specs.extend(spec);
+            }
+            ConstraintKind::Pitch {
+                ref points,
+                columns,
+                distance,
+                across,
+                direction,
+            } => {
+                let Some(p) = points
+                    .iter()
+                    .map(|id| point_var(*id))
+                    .collect::<Option<Vec<usize>>>()
+                else {
+                    continue;
+                };
+                let cols = (columns as usize).max(1);
+                // The pairs that step: along each row, or down the first
+                // column; the first pair sets the step the rest repeat.
+                let steps: Vec<(usize, usize)> = if across {
+                    (cols..p.len())
+                        .step_by(cols)
+                        .map(|i| (p[i - cols], p[i]))
+                        .collect()
+                } else {
+                    (0..p.len())
+                        .filter(|i| i % cols != 0)
+                        .map(|i| (p[i - 1], p[i]))
+                        .collect()
+                };
+                if let Some(&(a0, a1)) = steps.first() {
+                    let d = f64::from(distance);
+                    specs.push(match direction {
+                        Some(way) => {
+                            let way = way.to_glam().normalize_or_zero().as_dvec2() * d;
+                            ResidualSpec::Step {
+                                a0,
+                                a1,
+                                dx: way.x,
+                                dy: way.y,
+                            }
+                        }
+                        None => ResidualSpec::Distance { p1: a0, p2: a1, d },
+                    });
+                    for &(b0, b1) in &steps[1..] {
+                        specs.push(ResidualSpec::SameStep { a0, a1, b0, b1 });
+                    }
+                }
+            }
+            ConstraintKind::PolarPitch {
+                center,
+                ref points,
+                angle_rad,
+            } => {
+                let (Some(c), Some(p)) = (
+                    point_var(center),
+                    points
+                        .iter()
+                        .map(|id| point_var(*id))
+                        .collect::<Option<Vec<usize>>>(),
+                ) else {
+                    continue;
+                };
+                for w in p.windows(2) {
+                    specs.push(ResidualSpec::AngleThreePoints {
+                        a: w[0],
+                        v: c,
+                        b: w[1],
+                        angle: f64::from(angle_rad),
+                    });
+                }
+                for &q in p.iter().skip(1) {
+                    specs.push(ResidualSpec::EqualLength {
+                        s1: c,
+                        e1: p[0],
+                        s2: c,
+                        e2: q,
+                    });
+                }
             }
             ConstraintKind::Offset {
                 ref pairs,
