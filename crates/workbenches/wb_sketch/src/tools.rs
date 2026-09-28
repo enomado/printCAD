@@ -156,6 +156,12 @@ pub enum ToolState {
     ScaleRef { base: Vec2D, reference: Vec2D },
     /// Mirror tool: first axis point picked (no line was clicked).
     MirrorAxisFrom { a: Vec2D },
+    /// Fillet or chamfer: the first of two curves picked, where.
+    CornerFirst {
+        curve: Uuid,
+        pick: Vec2D,
+        bevel: bool,
+    },
 }
 
 /// What a polyline's next segment is: a line, or an arc leaving the last
@@ -234,6 +240,9 @@ pub struct ToolParams {
     pub fillet_radius: f32,
     /// Corner setback for the sketch chamfer tool, mm.
     pub chamfer_length: f32,
+    /// A fillet or chamfer keeps the corner as a construction point on
+    /// both curves, with what held it.
+    pub corner_keep: bool,
     /// Offset distance for the offset tool, mm.
     pub offset_distance: f32,
     /// Copy count for translate/rotate (0 = move the originals).
@@ -269,6 +278,7 @@ impl Default for ToolParams {
             slot_width: 4.0,
             fillet_radius: 2.0,
             chamfer_length: 2.0,
+            corner_keep: false,
             offset_distance: 2.0,
             copies: 0,
             bspline_periodic: false,
@@ -386,6 +396,8 @@ impl ToolState {
             ToolState::ScaleBase { .. } => Some("Scale: click the reference point"),
             ToolState::ScaleRef { .. } => Some("Scale: click the target point"),
             ToolState::MirrorAxisFrom { .. } => Some("Mirror: click the second axis point"),
+            ToolState::CornerFirst { bevel: false, .. } => Some("Fillet: click the second curve"),
+            ToolState::CornerFirst { bevel: true, .. } => Some("Chamfer: click the second curve"),
         }
     }
 }
@@ -583,8 +595,22 @@ pub fn handle_click(
         "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params.polygon_sides),
         "sketch.slot" => draw::slot(state, sketch, cursor, snap_tol, params.slot_width),
         "sketch.arc_slot" => draw::arc_slot(state, sketch, cursor, snap_tol, params.slot_width),
-        "sketch.fillet" => modify::fillet(sketch, cursor, snap_tol, params.fillet_radius),
-        "sketch.chamfer" => modify::chamfer(sketch, cursor, snap_tol, params.chamfer_length),
+        "sketch.fillet" => modify::corner(
+            state,
+            sketch,
+            cursor,
+            snap_tol,
+            modify::CornerCut::Round(params.fillet_radius),
+            params.corner_keep,
+        ),
+        "sketch.chamfer" => modify::corner(
+            state,
+            sketch,
+            cursor,
+            snap_tol,
+            modify::CornerCut::Bevel(params.chamfer_length),
+            params.corner_keep,
+        ),
         "sketch.trim" => modify::trim(sketch, cursor, snap_tol),
         "sketch.extend" => modify::extend(sketch, cursor, snap_tol),
         "sketch.split" => modify::split(sketch, cursor, snap_tol),

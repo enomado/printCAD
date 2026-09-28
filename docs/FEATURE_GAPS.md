@@ -34,7 +34,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Editing
 
-- [ ] **Fillet and chamfer between any curves** (partial, M). Only at a
+- [x] **Fillet and chamfer between any curves** (partial, M). Only at a
   vertex two lines share (`tools/modify.rs`). Missing line and arc, arc and
   arc, two curves that do not meet yet (trimmed or extended to fit), and a
   keep-the-corner option leaving a construction point with the corner's

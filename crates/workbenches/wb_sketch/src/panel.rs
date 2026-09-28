@@ -569,11 +569,15 @@ impl SketchWorkbench {
                         ui_kit::widgets::field_label(ui, "Radius");
                         QtyField::mm(&mut params.fillet_radius).show(ui);
                         ui.end_row();
+                        if tool.as_deref() == Some("sketch.fillet") {
+                            corner_row(ui, &mut params.corner_keep);
+                        }
                     }
                     Some("sketch.chamfer") => {
                         ui_kit::widgets::field_label(ui, "Length");
                         QtyField::mm(&mut params.chamfer_length).show(ui);
                         ui.end_row();
+                        corner_row(ui, &mut params.corner_keep);
                     }
                     Some("sketch.rect_frame") => {
                         ui_kit::widgets::field_label(ui, "Wall");
@@ -1639,4 +1643,13 @@ fn dimension_value_cell(
         let color = if constraint.active { ACCENT } else { TEXT3 };
         mono_label(ui, text, FONT_SM, color).on_hover_text("Measured value (reference dimension)");
     }
+}
+
+/// The fillet and chamfer tools' switch that keeps the corner.
+fn corner_row(ui: &mut egui::Ui, keep: &mut bool) {
+    ui_kit::widgets::field_label(ui, "Corner");
+    check_row(ui, keep, "Keep it").on_hover_text(
+        "The corner stays as a construction point on both curves, with its constraints",
+    );
+    ui.end_row();
 }

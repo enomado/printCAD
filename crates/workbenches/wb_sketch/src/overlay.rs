@@ -617,7 +617,7 @@ fn push_preview(
 ) {
     let pos = |t: &SnapTarget| t.position(sketch);
     match state {
-        ToolState::Idle => {}
+        ToolState::Idle | ToolState::CornerFirst { .. } => {}
         ToolState::LineFrom { from, .. } => {
             if let Some(a) = pos(from) {
                 push_polyline(

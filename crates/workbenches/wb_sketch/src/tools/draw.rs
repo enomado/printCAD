@@ -379,7 +379,18 @@ pub(super) fn rect_rounded(
     let c = cursor;
     let mut rounded = 0;
     for corner in [a, Vec2D::new(c.x, a.y), c, Vec2D::new(a.x, c.y)] {
-        if super::modify::fillet(sketch, corner, snap_tol.max(1e-3), radius).changed {
+        let round = super::modify::CornerCut::Round(radius);
+        let mut scratch = ToolState::Idle;
+        if super::modify::corner(
+            &mut scratch,
+            sketch,
+            corner,
+            snap_tol.max(1e-3),
+            round,
+            false,
+        )
+        .changed
+        {
             rounded += 1;
         }
     }

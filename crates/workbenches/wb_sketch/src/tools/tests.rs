@@ -3262,3 +3262,256 @@ fn a_polyline_arc_can_leave_square_to_the_last_segment_or_back_along_it() {
     );
     assert!((arc.radius - 4.0).abs() < 1e-4);
 }
+
+fn the_arc(sketch: &Sketch) -> (glam::Vec2, Arc) {
+    let arc = sketch
+        .geometry
+        .iter()
+        .rev()
+        .find_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.clone()),
+            _ => None,
+        })
+        .unwrap();
+    (sketch.point_position(arc.center).unwrap().to_glam(), arc)
+}
+
+#[test]
+fn a_fillet_rounds_the_corner_of_a_line_and_an_arc() {
+    // A D: the upper half of a circle of 10 closed by its diameter.
+    let mut sketch = Sketch::new("t");
+    let c = pt(&mut sketch, 0.0, 0.0);
+    let r = pt(&mut sketch, 10.0, 0.0);
+    let l = pt(&mut sketch, -10.0, 0.0);
+    line_between(&mut sketch, l, r);
+    sketch.add_geometry(GeometryElement::Arc(Arc::new(c, r, l, 10.0)));
+    let mut state = ToolState::Idle;
+    let fx = click_p(
+        &mut state,
+        "sketch.fillet",
+        &mut sketch,
+        Vec2D::new(10.0, 0.0),
+        0.5,
+        &fillet_params(2.0),
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let (centre, _) = the_arc(&sketch);
+    // Inside the D: 2 above the line, 8 from the circle's centre.
+    assert!((centre.y - 2.0).abs() < 1e-4, "{centre:?}");
+    assert!((centre.length() - 8.0).abs() < 1e-4, "{centre:?}");
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 3);
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(
+        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn a_fillet_joins_two_lines_that_do_not_meet() {
+    // An L with its corner missing: each line stops short of it.
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, 3.0, 0.0);
+    let b = pt(&mut sketch, 10.0, 0.0);
+    let c = pt(&mut sketch, 0.0, 4.0);
+    let d = pt(&mut sketch, 0.0, 10.0);
+    let bottom = line_between(&mut sketch, a, b);
+    let side = line_between(&mut sketch, c, d);
+    let mut state = ToolState::Idle;
+    let params = fillet_params(1.0);
+    let first = click_p(
+        &mut state,
+        "sketch.fillet",
+        &mut sketch,
+        Vec2D::new(8.0, 0.0),
+        0.5,
+        &params,
+    );
+    assert!(!first.changed);
+    assert!(matches!(state, ToolState::CornerFirst { .. }));
+    let fx = click_p(
+        &mut state,
+        "sketch.fillet",
+        &mut sketch,
+        Vec2D::new(0.0, 8.0),
+        0.5,
+        &params,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    assert!(state.is_idle());
+    let (centre, arc) = the_arc(&sketch);
+    assert!(
+        (centre - glam::Vec2::new(1.0, 1.0)).length() < 1e-4,
+        "{centre:?}"
+    );
+    // Each line runs on to the arc: the bottom is extended back to x = 1,
+    // the side down to y = 1, and they share the arc's ends.
+    let ends = |id: Uuid| match sketch.get_geometry(id) {
+        Some(GeometryElement::Line(l)) => (l.start, l.end),
+        _ => panic!(),
+    };
+    let (bs, _) = ends(bottom);
+    let (ss, _) = ends(side);
+    assert!([arc.start, arc.end].contains(&bs));
+    assert!([arc.start, arc.end].contains(&ss));
+    let at = |p: Uuid| sketch.point_position(p).unwrap().to_glam();
+    assert!((at(bs) - glam::Vec2::new(1.0, 0.0)).length() < 1e-4);
+    assert!((at(ss) - glam::Vec2::new(0.0, 1.0)).length() < 1e-4);
+    // The old ends are gone.
+    assert!(sketch.get_geometry(a).is_none() && sketch.get_geometry(c).is_none());
+}
+
+#[test]
+fn a_fillet_trims_lines_that_cross() {
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, -5.0, 0.0);
+    let b = pt(&mut sketch, 10.0, 0.0);
+    let c = pt(&mut sketch, 0.0, -5.0);
+    let d = pt(&mut sketch, 0.0, 10.0);
+    line_between(&mut sketch, a, b);
+    line_between(&mut sketch, c, d);
+    let mut state = ToolState::Idle;
+    let params = fillet_params(2.0);
+    for at in [Vec2D::new(8.0, 0.0), Vec2D::new(0.0, 8.0)] {
+        click_p(&mut state, "sketch.fillet", &mut sketch, at, 0.5, &params);
+    }
+    let (centre, _) = the_arc(&sketch);
+    assert!(
+        (centre - glam::Vec2::new(2.0, 2.0)).length() < 1e-4,
+        "{centre:?}"
+    );
+    // The parts past the crossing are cut away.
+    let lowest = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position),
+            _ => None,
+        })
+        .fold(f32::MAX, |m, p| m.min(p.x).min(p.y));
+    assert!(lowest > -1e-4, "{lowest}");
+}
+
+#[test]
+fn a_fillet_touches_a_circle_and_leaves_it_whole() {
+    let mut sketch = Sketch::new("t");
+    let o = pt(&mut sketch, 0.0, 0.0);
+    let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(o, 5.0)));
+    let a = pt(&mut sketch, 8.0, -10.0);
+    let b = pt(&mut sketch, 8.0, 10.0);
+    line_between(&mut sketch, a, b);
+    let mut state = ToolState::Idle;
+    let params = fillet_params(2.0);
+    click_p(
+        &mut state,
+        "sketch.fillet",
+        &mut sketch,
+        Vec2D::new(0.0, 5.0),
+        0.5,
+        &params,
+    );
+    let fx = click_p(
+        &mut state,
+        "sketch.fillet",
+        &mut sketch,
+        Vec2D::new(8.0, 8.0),
+        0.5,
+        &params,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let (centre, _) = the_arc(&sketch);
+    assert!((centre.length() - 7.0).abs() < 1e-3, "{centre:?}");
+    assert!((centre.x - 6.0).abs() < 1e-3, "{centre:?}");
+    assert!(centre.y > 0.0, "on the side of the line's pick: {centre:?}");
+    assert!(matches!(
+        sketch.get_geometry(circle),
+        Some(GeometryElement::Circle(_))
+    ));
+}
+
+#[test]
+fn a_chamfer_joins_two_lines_that_do_not_meet() {
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, 3.0, 0.0);
+    let b = pt(&mut sketch, 10.0, 0.0);
+    let c = pt(&mut sketch, 0.0, 4.0);
+    let d = pt(&mut sketch, 0.0, 10.0);
+    line_between(&mut sketch, a, b);
+    line_between(&mut sketch, c, d);
+    let mut state = ToolState::Idle;
+    let params = ToolParams {
+        chamfer_length: 2.0,
+        corner_keep: true,
+        ..ToolParams::default()
+    };
+    for at in [Vec2D::new(8.0, 0.0), Vec2D::new(0.0, 8.0)] {
+        click_p(&mut state, "sketch.chamfer", &mut sketch, at, 0.5, &params);
+    }
+    assert_eq!(lines(&sketch), 3);
+    let has = |x: f32, y: f32| {
+        sketch.geometry.iter().any(|g| match g {
+            GeometryElement::Point(p) => {
+                (p.position.to_glam() - glam::Vec2::new(x, y)).length() < 1e-4
+            }
+            _ => false,
+        })
+    };
+    assert!(has(2.0, 0.0) && has(0.0, 2.0));
+    // The corner is kept, as construction, on both lines.
+    let corner = sketch
+        .geometry
+        .iter()
+        .find(|g| matches!(g, GeometryElement::Point(p) if p.position.to_glam().length() < 1e-4))
+        .map(|g| g.id())
+        .expect("the corner kept");
+    assert!(sketch.is_construction(corner));
+    assert_eq!(
+        sketch
+            .constraints
+            .iter()
+            .filter(
+                |c| matches!(c.kind, ConstraintKind::PointOnLine { point, .. } if point == corner)
+            )
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_fillet_can_keep_the_corner_and_what_holds_it() {
+    let mut sketch = Sketch::new("t");
+    let [.., c, _] = build_rectangle(&mut sketch, 12.0, 8.0);
+    sketch.add_constraint(ConstraintKind::FixedPoint {
+        point: c,
+        position: Vec2D::new(12.0, 8.0),
+    });
+    let mut state = ToolState::Idle;
+    let params = ToolParams {
+        fillet_radius: 2.0,
+        corner_keep: true,
+        ..ToolParams::default()
+    };
+    let fx = click_p(
+        &mut state,
+        "sketch.fillet",
+        &mut sketch,
+        Vec2D::new(12.0, 8.0),
+        0.5,
+        &params,
+    );
+    assert!(fx.changed);
+    assert!(sketch.is_construction(c));
+    assert!(sketch.constraints.iter().any(|con| matches!(
+        con.kind,
+        ConstraintKind::FixedPoint { point, .. } if point == c
+    )));
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 1);
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(
+        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        "{outcome:?}"
+    );
+}

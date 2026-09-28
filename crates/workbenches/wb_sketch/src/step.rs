@@ -220,6 +220,11 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         json!(d.chamfer_length),
     );
     put(
+        "corner_keep",
+        json!(params.corner_keep),
+        json!(d.corner_keep),
+    );
+    put(
         "offset_distance",
         json!(params.offset_distance),
         json!(d.offset_distance),
@@ -287,6 +292,7 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             "slot_width" => p.slot_width = number()? as f32,
             "fillet_radius" => p.fillet_radius = number()? as f32,
             "chamfer_length" => p.chamfer_length = number()? as f32,
+            "corner_keep" => p.corner_keep = flag()?,
             "offset_distance" => p.offset_distance = number()? as f32,
             "copies" => p.copies = number()? as u32,
             "bspline_periodic" => p.bspline_periodic = flag()?,
