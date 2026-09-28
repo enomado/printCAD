@@ -382,6 +382,17 @@ fn approval_card(
                 .font(sans_medium(FONT_SM))
                 .color(WARNING),
         );
+        // What the agent says the change is for, above what it runs.
+        if let Some(description) = approval
+            .request
+            .args
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        {
+            ui.label(RichText::new(description).font(sans(FONT_SM)).color(TEXT1));
+        }
         egui::ScrollArea::vertical()
             .id_salt(("approval", index))
             .max_height(140.0)
@@ -525,6 +536,7 @@ fn draw_entry(
             title,
             status,
             output,
+            label,
             ..
         } => {
             let (mark, color) = match status.as_str() {
@@ -532,13 +544,21 @@ fn draw_entry(
                 "failed" => ("×", DANGER),
                 _ => ("…", TEXT3),
             };
-            // A title can be a whole command line: it is cut to the
-            // panel's width, and shown whole on hover.
-            let header = egui::Label::new(
-                RichText::new(format!("{mark} {title}"))
-                    .font(mono(FONT_XS))
-                    .color(color),
-            )
+            // One of printCAD's own tools says what it does, in words;
+            // another's title can be a whole command line. Either is cut
+            // to the panel's width; the hover shows the agent's title.
+            let header = match label {
+                Some(label) => egui::Label::new(
+                    RichText::new(format!("{mark} {label}"))
+                        .font(sans(FONT_XS))
+                        .color(color),
+                ),
+                None => egui::Label::new(
+                    RichText::new(format!("{mark} {title}"))
+                        .font(mono(FONT_XS))
+                        .color(color),
+                ),
+            }
             .truncate();
             match output {
                 Some(output) => {
@@ -986,6 +1006,8 @@ mod tests {
                     attachments: Vec::new(),
                 },
                 ChatEntry::Tool {
+                    input: None,
+                    label: None,
                     id: "t".into(),
                     title: long.clone(),
                     kind: "execute".into(),

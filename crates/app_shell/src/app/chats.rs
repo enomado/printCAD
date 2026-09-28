@@ -51,6 +51,11 @@ pub(crate) enum ChatEntry {
         kind: String,
         status: String,
         output: Option<String>,
+        /// The arguments, as the agent sent them.
+        input: Option<serde_json::Value>,
+        /// What the call does, in words, for one of printCAD's own tools
+        /// (`agent_context::tool_label`); the agent's title otherwise.
+        label: Option<String>,
     },
     Plan(Vec<PlanEntry>),
     /// The agent asks to be allowed something; `answer` is the choice once
@@ -483,11 +488,37 @@ impl PrintCadApp {
     pub(crate) fn drive_chats(&mut self) {
         let mut attention = false;
         let mut learned = false;
+        let mut specs: Option<Vec<core_document::CommandSpec>> = None;
         for chat in &mut self.chats {
             while let Some(event) = chat.session.as_ref().and_then(AgentChat::try_event) {
                 attention |= matches!(event, ChatEvent::Permission { .. });
                 learned |= matches!(event, ChatEvent::Session { .. });
+                let touched = match &event {
+                    ChatEvent::ToolCall { id, .. } | ChatEvent::ToolCallUpdate { id, .. } => {
+                        Some(id.clone())
+                    }
+                    _ => None,
+                };
                 apply(chat, event);
+                // A call of printCAD's own tools says what it does.
+                if let Some(touched) = touched
+                    && let Some(ChatEntry::Tool {
+                        title,
+                        input,
+                        label,
+                        ..
+                    }) = chat
+                        .entries
+                        .iter_mut()
+                        .rev()
+                        .find(|e| matches!(e, ChatEntry::Tool { id, .. } if *id == touched))
+                {
+                    let specs = specs
+                        .get_or_insert_with(|| crate::app::scripts::command_specs(&self.registry));
+                    let about =
+                        |id: &str| specs.iter().find(|s| s.id == id).map(|s| s.summary.clone());
+                    *label = crate::app::agent_context::tool_label(title, input.as_ref(), &about);
+                }
             }
             if !chat.chose && !chat.options.is_empty() {
                 chat.chose = true;
@@ -616,17 +647,21 @@ fn apply(chat: &mut Chat, event: ChatEvent) {
             title,
             kind,
             status,
+            input,
         } => chat.entries.push(ChatEntry::Tool {
             id,
             title,
             kind,
             status,
             output: None,
+            input,
+            label: None,
         }),
         ChatEvent::ToolCallUpdate {
             id,
             title,
             status,
+            input,
             output,
         } => {
             let found = chat.entries.iter_mut().rev().find_map(|e| match e {
@@ -635,16 +670,20 @@ fn apply(chat: &mut Chat, event: ChatEvent) {
                     title: t,
                     status: s,
                     output: o,
+                    input: i,
                     ..
-                } if *tool == id => Some((t, s, o)),
+                } if *tool == id => Some((t, s, o, i)),
                 _ => None,
             });
-            if let Some((t, s, o)) = found {
+            if let Some((t, s, o, i)) = found {
                 if let Some(title) = title {
                     *t = title;
                 }
                 if let Some(status) = status {
                     *s = status;
+                }
+                if input.is_some() {
+                    *i = input;
                 }
                 if output.is_some() {
                     *o = output;
@@ -838,6 +877,7 @@ mod tests {
         apply(
             &mut c,
             ChatEvent::ToolCall {
+                input: None,
                 id: "t".into(),
                 title: "call".into(),
                 kind: "edit".into(),
@@ -847,6 +887,7 @@ mod tests {
         apply(
             &mut c,
             ChatEvent::ToolCallUpdate {
+                input: None,
                 id: "t".into(),
                 title: Some("Pad".into()),
                 status: Some("completed".into()),
@@ -867,6 +908,8 @@ mod tests {
                     thought: false
                 },
                 ChatEntry::Tool {
+                    input: None,
+                    label: None,
                     id: "t".into(),
                     title: "Pad".into(),
                     kind: "edit".into(),

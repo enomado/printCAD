@@ -44,7 +44,10 @@ own agent and history, and several can run at once.
   text; anything else, such as a STEP or STL file, goes as its path for the
   agent to open. Click an attachment to take it off.
 - The agent's thinking, the tools it calls and their results, and its
-  plan show in the chat as it works.
+  plan show in the chat as it works. A call of printCAD's own tools reads
+  as what it does: the few words the agent gave it ("Pocket the bolt
+  holes"), else the command it runs or a script's first comment; hovering
+  shows the tool's own name.
 - When the agent asks for permission to do something outside printCAD
   (edit a file, run a command), the chat shows its choices.
 
@@ -97,7 +100,8 @@ open gets them again with its next message after you change them.
 
 "Ask before changes" (on by default, in Preferences and per chat) holds
 every command that changes the document until you allow it. The held
-change shows at the top of the panel as the call it makes, with Allow,
+change shows at the top of the panel as what the agent says it is for
+and the call it makes, with Allow,
 Deny, and Allow all in this chat, which turns asking off for that chat.
 Commands that only read (listing bodies, measuring, looking at the view)
 never wait.

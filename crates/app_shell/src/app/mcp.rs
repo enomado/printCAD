@@ -233,6 +233,10 @@ impl ToolHost for Relay {
 
 /// The tools, every one loaded by the agent from the start: they are few,
 /// and an agent that has to search for them first loses turns doing it.
+/// What a call's `description` argument is for.
+const DESCRIBE: &str = "A few words on what this does, such as \"Pocket the bolt holes\": \
+                        the user sees it as the call's title in the chat";
+
 pub(crate) fn tools() -> Vec<Tool> {
     vec![
         Tool {
@@ -275,7 +279,8 @@ pub(crate) fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The command's id, such as \"part.pad\""},
-                    "args": {"type": "object", "description": "Its named arguments"}
+                    "args": {"type": "object", "description": "Its named arguments"},
+                    "description": {"type": "string", "description": DESCRIBE}
                 },
                 "required": ["command"]
             }),
@@ -291,7 +296,10 @@ pub(crate) fn tools() -> Vec<Tool> {
                 .into(),
             input_schema: json!({
                 "type": "object",
-                "properties": {"source": {"type": "string"}},
+                "properties": {
+                    "source": {"type": "string"},
+                    "description": {"type": "string", "description": DESCRIBE}
+                },
                 "required": ["source"]
             }),
             read_only: false,

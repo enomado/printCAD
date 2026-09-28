@@ -51,7 +51,9 @@ configurations (config.list, config.activate) switch chosen variables between \
 sizes. Solids rebuild after a change: call doc.rebuild before reading them \
 with doc.faces or doc.measure. `view` shows the scene as the user sees it, \
 `log` the application's recent messages. The resource printcad://guide/scripting \
-is the full command reference.";
+is the full command reference. Give every `call` and `lua` a short `description` \
+of what it does (\"Pocket the bolt holes\"): the user reads it in the chat as \
+the call's title.";
 
 /// The rules the user keeps, as one text an agent reads: every document's,
 /// then this one's. Empty when there are none.
@@ -184,6 +186,125 @@ pub(crate) fn prompt_text(name: &str, args: &Value) -> Option<String> {
     })
 }
 
+/// Which of printCAD's own tools an agent's tool call is, by its title:
+/// agents name a server's tool `mcp__printcad__lua`, `lua (printcad MCP
+/// Server)` or plain `lua`.
+fn own_tool(title: &str) -> Option<&'static str> {
+    const TOOLS: [&str; 6] = ["context", "commands", "call", "lua", "log", "view"];
+    let lower = title.to_ascii_lowercase();
+    let name = if let Some(rest) = lower.strip_prefix("mcp__") {
+        let (server, tool) = rest.rsplit_once("__")?;
+        if !server.contains("printcad") {
+            return None;
+        }
+        tool.to_string()
+    } else if let Some((tool, server)) = lower.split_once(" (") {
+        if !server.contains("printcad") {
+            return None;
+        }
+        tool.trim().to_string()
+    } else {
+        lower.trim().to_string()
+    };
+    TOOLS.into_iter().find(|t| *t == name)
+}
+
+/// How many commands a script's label names before it says "…".
+const NAMED_IN_LABEL: usize = 3;
+
+/// What a call of one of printCAD's own tools does, in words, for the
+/// chat: the `description` the agent gave it, else what the tool is
+/// running (a command by its summary, a script by its first comment or
+/// the commands it calls). `about` gives a command's summary by its id.
+/// `None` for any other tool, whose own title stands.
+pub(crate) fn tool_label(
+    title: &str,
+    input: Option<&Value>,
+    about: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let tool = own_tool(title)?;
+    let arg = |key: &str| {
+        input
+            .and_then(|i| i.get(key))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    if let Some(description) = arg("description") {
+        return Some(description.to_string());
+    }
+    Some(match tool {
+        "call" => match arg("command") {
+            Some(id) => match about(id) {
+                Some(summary) => format!("{summary} ({id})"),
+                None => format!("Run {id}"),
+            },
+            None => "Run a command".to_string(),
+        },
+        "lua" => match arg("source") {
+            Some(source) => script_label(source, about),
+            None => "Run a script".to_string(),
+        },
+        "commands" => match arg("prefix") {
+            Some(prefix) => format!("List the {prefix} commands"),
+            None => "List the commands".to_string(),
+        },
+        "context" => "Look at what is open".to_string(),
+        "log" => "Read the log".to_string(),
+        _ => "Look at the view".to_string(),
+    })
+}
+
+/// A script in words: its first line when that is a comment, else the
+/// commands it calls, the one it calls alone by its summary.
+fn script_label(source: &str, about: &dyn Fn(&str) -> Option<String>) -> String {
+    if let Some(comment) = source
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .and_then(|l| l.strip_prefix("--"))
+        .map(|c| c.trim_start_matches('-').trim())
+        .filter(|c| !c.is_empty())
+    {
+        return comment.to_string();
+    }
+    let mut called: Vec<String> = Vec::new();
+    for (at, _) in source.match_indices("pc.") {
+        // Not the tail of a longer name (`mypc.x`).
+        let before = source[..at].chars().next_back();
+        if before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        let id: String = source[at + 3..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+            .collect();
+        let id = id.trim_end_matches('.').to_string();
+        if id.contains('.') && !called.contains(&id) {
+            called.push(id);
+        }
+    }
+    match called.as_slice() {
+        [] => "Run a script".to_string(),
+        [one] => about(one)
+            .map(|summary| format!("{summary} ({one})"))
+            .unwrap_or_else(|| format!("Run {one}")),
+        many => {
+            let shown: Vec<&str> = many
+                .iter()
+                .take(NAMED_IN_LABEL)
+                .map(String::as_str)
+                .collect();
+            let more = if many.len() > NAMED_IN_LABEL {
+                ", …"
+            } else {
+                ""
+            };
+            format!("Script: {}{more}", shown.join(", "))
+        }
+    }
+}
+
 impl PrintCadApp {
     /// The session of the tab `tab`, whether on screen or parked.
     fn session_of(&self, tab: uuid::Uuid) -> &DocumentSession {
@@ -301,6 +422,53 @@ impl PrintCadApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_call_of_printcad_s_tools_says_what_it_does() {
+        let about = |id: &str| (id == "part.pad").then(|| "Pad a sketch".to_string());
+        let label = |title: &str, input: Value| tool_label(title, Some(&input), &about);
+        // The agent's own words come first.
+        assert_eq!(
+            label(
+                "mcp__printcad__lua",
+                json!({"source": "pc.part.pad{}", "description": "Pad the base"})
+            )
+            .as_deref(),
+            Some("Pad the base")
+        );
+        // Else what it runs.
+        assert_eq!(
+            label("mcp__printcad__call", json!({"command": "part.pad"})).as_deref(),
+            Some("Pad a sketch (part.pad)")
+        );
+        assert_eq!(
+            label(
+                "lua (printcad MCP Server)",
+                json!({"source": "-- Cut the bolt holes\npc.part.pocket{}"})
+            )
+            .as_deref(),
+            Some("Cut the bolt holes")
+        );
+        assert_eq!(
+            label("lua", json!({"source": "local p = pc.part.pad{}"})).as_deref(),
+            Some("Pad a sketch (part.pad)")
+        );
+        assert_eq!(
+            label(
+                "mcp__printcad__lua",
+                json!({"source": "pc.sketch.new{} pc.sketch.draw{} pc.part.pad{} pc.part.fillet{}"})
+            )
+            .as_deref(),
+            Some("Script: sketch.new, sketch.draw, part.pad, …")
+        );
+        assert_eq!(
+            label("mcp__printcad__view", json!({})).as_deref(),
+            Some("Look at the view")
+        );
+        // Another server's tool keeps its own title.
+        assert_eq!(label("mcp__github__call", json!({})), None);
+        assert_eq!(label("Read file.rs", json!({})), None);
+    }
 
     #[test]
     fn rules_read_every_document_then_this_one() {

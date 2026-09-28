@@ -473,7 +473,10 @@ the next one after they change. `app/chats.rs` keeps
 (every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
 client that defers tools behind a search has them in its first turn;
 `read_only` becomes `readOnlyHint`);
-`ui/assistant.rs` draws them and answers with `UiCommand`s. A chat belongs
+`ui/assistant.rs` draws them and answers with `UiCommand`s; a call of
+printCAD's own tools draws as `agent_context::tool_label` (the call's
+`description` argument, which the instructions ask for, else the command
+or the script it runs), from the arguments ACP sends as `rawInput`. A chat belongs
 to the tab it started in (`Chat::tab`; its tool calls run there through
 `submit_script_in`), and once it has a session id and the tab a file,
 `persist_chats` keeps `{agent, session, title}` with the file in the

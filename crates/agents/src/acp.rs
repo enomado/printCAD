@@ -343,12 +343,16 @@ pub enum ChatEvent {
         title: String,
         kind: String,
         status: String,
+        /// The arguments, when the agent sends them.
+        input: Option<Value>,
     },
-    /// A tool call moved on: its title, status or output changed.
+    /// A tool call moved on: its title, status, arguments or output
+    /// changed.
     ToolCallUpdate {
         id: String,
         title: Option<String>,
         status: Option<String>,
+        input: Option<Value>,
         output: Option<String>,
     },
     Plan(Vec<PlanEntry>),
@@ -1053,11 +1057,13 @@ fn update_event(update: &Value) -> Option<ChatEvent> {
             title: text(update, "title"),
             kind: optional("kind").unwrap_or_else(|| "other".to_string()),
             status: optional("status").unwrap_or_else(|| "pending".to_string()),
+            input: update.get("rawInput").cloned(),
         },
         "tool_call_update" => ChatEvent::ToolCallUpdate {
             id: text(update, "toolCallId"),
             title: optional("title"),
             status: optional("status"),
+            input: update.get("rawInput").cloned(),
             output: update.get("content").and_then(content_text),
         },
         "plan" => ChatEvent::Plan(
@@ -1237,6 +1243,7 @@ mod tests {
         assert_eq!(
             next(&chat),
             ChatEvent::ToolCallUpdate {
+                input: None,
                 id: "t1".into(),
                 title: None,
                 status: Some("completed".into()),
