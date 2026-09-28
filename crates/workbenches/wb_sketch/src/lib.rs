@@ -38,7 +38,7 @@ use core_document::{
     ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
     WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
-pub use feature::{DatumSupport, SketchFeature};
+pub use feature::{DatumSupport, FaceSupport, SketchFeature};
 use overlay::SketchProjector;
 use ovp::DimCapture;
 use sketch::{Constraint, GeometryElement, Sketch, SketchPlane, Vec2D};
@@ -150,9 +150,10 @@ impl ConstraintFilter {
 /// A "create sketch" request waiting for the user to pick a plane.
 struct PendingCreation {
     body: Option<BodyId>,
-    /// Plane of the solid face that was selected when the request was made,
-    /// offered as the first choice in the picker.
-    face_plane: Option<SketchPlane>,
+    /// The solid face that was selected when the request was made, in the
+    /// body's frame, offered as the first choice in the picker: a sketch
+    /// placed on it follows it.
+    face: Option<core_document::FaceRef>,
 }
 
 /// In-progress box selection (select mode, started by pressing on empty
@@ -930,8 +931,12 @@ impl SketchWorkbench {
 
     /// The "Create Sketch" action: open the plane picker. The sketch is
     /// created once a plane is chosen in the left panel.
-    fn begin_sketch_creation(&mut self, body: Option<BodyId>, face_plane: Option<SketchPlane>) {
-        self.pending_creation = Some(PendingCreation { body, face_plane });
+    fn begin_sketch_creation(
+        &mut self,
+        body: Option<BodyId>,
+        face: Option<core_document::FaceRef>,
+    ) {
+        self.pending_creation = Some(PendingCreation { body, face });
     }
 
     fn create_sketch_on_plane(
@@ -940,12 +945,14 @@ impl SketchWorkbench {
         body: Option<BodyId>,
         plane: SketchPlane,
         support: Option<crate::feature::DatumSupport>,
+        face: Option<crate::feature::FaceSupport>,
     ) {
         let sketch_name = Self::next_sketch_name(ctx.document);
         let mut sketch = Sketch::new(sketch_name.clone());
         sketch.plane = plane;
         let mut sketch_feature = SketchFeature::new(sketch, plane);
         sketch_feature.support = support.clone();
+        sketch_feature.face = face;
 
         match ctx
             .document
@@ -2313,7 +2320,7 @@ impl Workbench for SketchWorkbench {
         match (scope, id) {
             (MenuScope::StartPage, "sketch.start_blank") => {
                 let body = ctx.selected_body_id.map(BodyId);
-                self.create_sketch_on_plane(ctx, body, SketchPlane::default(), None);
+                self.create_sketch_on_plane(ctx, body, SketchPlane::default(), None, None);
                 true
             }
             (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
@@ -2349,6 +2356,30 @@ impl Workbench for SketchWorkbench {
         else {
             return false;
         };
+        if feature.plane == plane && feature.sketch.plane == plane {
+            return false;
+        }
+        feature.plane = plane;
+        feature.sketch.plane = plane;
+        *values = feature.to_json();
+        true
+    }
+
+    fn derive_on_solid(
+        &self,
+        _node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        probed: &core_document::ProbedReferences,
+    ) -> bool {
+        let Ok(mut feature) = SketchFeature::from_json(values) else {
+            return false;
+        };
+        let (Some(face), Some(Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }))) =
+            (feature.face, probed.answers.first())
+        else {
+            return false;
+        };
+        let plane = face.plane_at(*point, *normal);
         if feature.plane == plane && feature.sketch.plane == plane {
             return false;
         }
@@ -2880,21 +2911,19 @@ impl Workbench for SketchWorkbench {
         // Another workbench (or the host) asked us to create a sketch on a
         // specific body: take the request and open the plane picker.
         if let Some(request) = ctx.attach_request.take() {
-            let face_plane = request
+            let face = request
                 .face
-                .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()))
-                .map(|f| SketchPlane::from_face(f.point, f.normal));
-            self.begin_sketch_creation(Some(BodyId(request.body)), face_plane);
+                .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()));
+            self.begin_sketch_creation(Some(BodyId(request.body)), face);
         }
 
         if base == Some("sketch.create") {
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
                 let body = ctx.selected_body_id.map(BodyId);
-                let face_plane = body
+                let face = body
                     .and_then(|b| ctx.selected_face_in(b))
-                    .or(ctx.selected_face)
-                    .map(|f| SketchPlane::from_face(f.point, f.normal));
-                self.begin_sketch_creation(body, face_plane);
+                    .or(ctx.selected_face);
+                self.begin_sketch_creation(body, face);
             }
             return InputResult::consumed();
         }
@@ -4302,15 +4331,24 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let Some(face) = ctx.selected_face else {
+        let body = self
+            .active_sketch_id
+            .and_then(|id| ctx.document.get_feature_meta(id))
+            .and_then(|n| n.body);
+        let face = match body {
+            Some(body) => ctx.selected_face_in(body),
+            None => ctx.selected_face,
+        };
+        let Some(face) = face else {
             ctx.log_warn("Click a face of a solid first");
             return InputResult::consumed();
         };
-        self.set_plane(
-            ctx,
-            &mut feature,
-            SketchPlane::from_face(face.point, face.normal),
-        );
+        let plane = SketchPlane::from_face(face.point, face.normal);
+        // On a face of its own body the sketch follows the face; the face
+        // replaces any datum it stood on.
+        feature.support = None;
+        feature.face = body.map(|_| crate::feature::FaceSupport::on(&face, plane));
+        self.set_plane(ctx, &mut feature, plane);
         ctx.log_info("Sketch attached to the picked face");
         InputResult::consumed()
     }
@@ -4323,6 +4361,25 @@ impl SketchWorkbench {
     ) {
         feature.plane = plane;
         feature.sketch.plane = plane;
+        // A sketch on a face keeps following it from where the face is now,
+        // on the plane just set.
+        if let Some(face) = feature.face.as_mut() {
+            let now = self
+                .active_sketch_id
+                .and_then(|id| ctx.document.probed_references(id))
+                .and_then(|probed| probed.answers.first())
+                .and_then(|answer| match answer {
+                    Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }) => {
+                        Some((point.map(|c| c as f32), normal.map(|c| c as f32)))
+                    }
+                    _ => None,
+                });
+            if let Some((point, normal)) = now {
+                face.point = point;
+                face.normal = normal;
+            }
+            face.placed = plane;
+        }
         self.store_sketch(ctx, feature.clone());
         if let Some(id) = self.active_sketch_id
             && let Some(stored) = stored_sketch(ctx.document, id)

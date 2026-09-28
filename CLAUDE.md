@@ -852,18 +852,31 @@ on the start page (`Screen::Start`); the recent list lives in
   selects a whole face, a bore or a fillet as much as a flat side
   (`app/input.rs::face_submesh`). A mesh without faces (a sketch, a datum, a
   document saved before they were recorded) falls back to the plane through
-  the hit. Persisted references are still geometric: dress-up edge selection
-  and up-to-face terminations carry a sample point + normal (`FacePick`),
-  re-resolved against the current solid each rebuild, because a rebuilt solid
-  numbers its faces afresh. `TriMesh.edge_ids` names the kernel edge of every
+  the hit. References find their faces by name (`kernel_api::naming`):
+  the chain names every face as it builds (`kernel_ogeom::naming`: a
+  feature's walls after the sketch elements they were swept from, which
+  the sketcher's profiles carry as `ProfileWire::names`; its ends after
+  where they stand; other new faces by surface kind and facing; a face a
+  later op splits, trims or merges after the faces it lies on or covers,
+  the faces an op left alone recognised by a `Print`), each op under its
+  feature's name (`execute_solid_chain_named`, the worker's tags). The
+  mesh carries `face_names` and `edge_faces`; a pick keeps them
+  (`FaceRef::name`, `EdgeRef::faces`, `FacePick`, `EdgePick`, datum
+  anchors, `FaceSupport` of a sketch placed on a face), and a rebuild finds
+  a named face or edge by name first (`naming::find_face`/`find_edge`,
+  reading the running solid's names the chain sets for the op), falling
+  back to the stored point + normal. A sketch placed on its body's face
+  follows it: Part Design's plan asks where the face stands at the
+  sketch's place in history, and `Workbench::derive_on_solid` moves the
+  plane from the placement it recorded. `TriMesh.edge_ids` names the kernel edge of every
   outline segment (the tessellator draws the outline from the kernel's own
   edges, each to the chord the faces agreed on; triangle boundaries are only
   the fallback), so a click within a few pixels of an outline picks the
   whole edge (`app/edges.rs`: hover, Ctrl-additive selection, highlight line
   bodies, the hover card's edge length, the measure tool's snap). Benches
-  see picked edges as `ctx.selected_edges` (point, direction, length);
-  Part Design's fillet and chamfer store them as `EdgeSel::Edges` probe
-  points the kernel resolves through `EdgeSelection::Near`.
+  see picked edges as `ctx.selected_edges` (point, direction, length,
+  faces); Part Design's fillet and chamfer store them as `EdgeSel::Edges`
+  picks the kernel resolves through `EdgeSelection::Picked`.
 - "Through all" derives its length from the base solid's bounding box.
   Up to face (`ExtrudeTermination::UpToFace`, the base's face nearest the
   pick), to first and to last trim a long prism by the half-space of the

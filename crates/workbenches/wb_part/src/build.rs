@@ -155,8 +155,9 @@ fn following_datums(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> 
         .collect()
 }
 
-/// The datums of `body` with references to find again on its solid: id,
-/// place in the history and the probes.
+/// The datums of `body`, and its sketches placed on its faces, with
+/// references to find again on its solid: id, place in the history and
+/// the probes.
 fn datums_asking(
     document: &Document,
     body: BodyId,
@@ -164,14 +165,18 @@ fn datums_asking(
     let mut datums: Vec<(FeatureId, u64, Vec<kernel_api::ShapeProbe>)> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, n)| {
-            n.workbench_id.as_str() == core_document::DATUM_KIND
-                && n.body == Some(body)
-                && !n.suppressed
-        })
+        .filter(|(_, n)| n.body == Some(body) && !n.suppressed)
         .filter_map(|(id, n)| {
-            let datum = core_document::DatumFeature::from_json(&n.data).ok()?;
-            let probes = datum.probes();
+            let probes = match n.workbench_id.as_str() {
+                core_document::DATUM_KIND => core_document::DatumFeature::from_json(&n.data)
+                    .ok()?
+                    .probes(),
+                "wb.sketch" => {
+                    let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
+                    sketch.face.iter().map(|face| face.probe()).collect()
+                }
+                _ => return None,
+            };
             (!probes.is_empty()).then_some((*id, n.seq, probes))
         })
         .collect();

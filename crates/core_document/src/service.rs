@@ -277,6 +277,11 @@ impl DocumentService {
                     .or_else(|| document.get_feature_data(id).cloned())
             };
             let mut moved = owner.derive(node, &mut values, &values_of);
+            if node.workbench_id.as_str() != crate::datum::DATUM_KIND
+                && let Some(probed) = document.probed_references(node.id)
+            {
+                moved |= owner.derive_on_solid(node, &mut values, probed);
+            }
             // A datum takes what the last build found of what it stands on.
             if node.workbench_id.as_str() == crate::datum::DATUM_KIND {
                 moved |= crate::datum::derive(

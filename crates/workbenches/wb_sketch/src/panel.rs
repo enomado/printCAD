@@ -179,8 +179,13 @@ impl SketchWorkbench {
             return;
         };
         let body = pending.body;
-        let face_plane = pending.face_plane;
-        let mut chosen: Option<(SketchPlane, Option<crate::feature::DatumSupport>)> = None;
+        let face = pending.face;
+        type Choice = (
+            SketchPlane,
+            Option<crate::feature::DatumSupport>,
+            Option<crate::feature::FaceSupport>,
+        );
+        let mut chosen: Option<Choice> = None;
         let mut cancel = false;
         ui_kit::widgets::Card::new().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -197,22 +202,27 @@ impl SketchWorkbench {
                     .color(TEXT2),
             );
             ui.add_space(SPACE_1);
-            if let Some(face) = face_plane
+            if let Some(face) = face
                 && secondary_button(ui, "Selected face")
-                    .on_hover_text("Sketch on the face you clicked on the solid")
+                    .on_hover_text(
+                        "Sketch on the face you clicked on the solid; the sketch follows the face",
+                    )
                     .clicked()
             {
-                chosen = Some((face, None));
+                let plane = SketchPlane::from_face(face.point, face.normal);
+                // A face of the sketch's own body is followed.
+                let follows = body.map(|_| crate::feature::FaceSupport::on(&face, plane));
+                chosen = Some((plane, None, follows));
             }
             ui.horizontal(|ui| {
                 if secondary_button(ui, "Top (XY)").clicked() {
-                    chosen = Some((SketchPlane::xy(), None));
+                    chosen = Some((SketchPlane::xy(), None, None));
                 }
                 if secondary_button(ui, "Front (XZ)").clicked() {
-                    chosen = Some((SketchPlane::xz(), None));
+                    chosen = Some((SketchPlane::xz(), None, None));
                 }
                 if secondary_button(ui, "Side (YZ)").clicked() {
-                    chosen = Some((SketchPlane::yz(), None));
+                    chosen = Some((SketchPlane::yz(), None, None));
                 }
             });
             // Datum planes of the target body attach the sketch to their
@@ -237,6 +247,7 @@ impl SketchWorkbench {
                                         plane: None,
                                         offset: 0.0,
                                     }),
+                                    None,
                                 ));
                             }
                         }
@@ -253,6 +264,7 @@ impl SketchWorkbench {
                                             plane: Some(plane.to_string()),
                                             offset: 0.0,
                                         }),
+                                        None,
                                     ));
                                 }
                             }
@@ -269,9 +281,9 @@ impl SketchWorkbench {
         if cancel {
             self.pending_creation = None;
         }
-        if let Some((plane, support)) = chosen {
+        if let Some((plane, support, face)) = chosen {
             self.pending_creation = None;
-            self.create_sketch_on_plane(ctx, body, plane, support);
+            self.create_sketch_on_plane(ctx, body, plane, support, face);
         }
     }
 

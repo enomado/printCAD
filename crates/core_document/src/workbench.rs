@@ -695,6 +695,20 @@ pub trait Workbench: Send {
         false
     }
 
+    /// Bring an owned feature's working data up to date with what the last
+    /// build found of the solid it stands on: `probed` answers the probes
+    /// a plan asked for it (a sketch placed on a face asks where the face
+    /// is now). Answers whether it changed anything. Derived, never
+    /// recorded.
+    fn derive_on_solid(
+        &self,
+        _node: &FeatureNode,
+        _values: &mut serde_json::Value,
+        _probed: &crate::rebuild::ProbedReferences,
+    ) -> bool {
+        false
+    }
+
     /// What the generic property panel should know about this bench's
     /// feature payloads.
     fn property_hints(&self) -> PropertyHints {

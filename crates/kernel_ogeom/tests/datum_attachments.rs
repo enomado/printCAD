@@ -50,6 +50,7 @@ fn datum(shape: DatumShape, attachment: DatumAttachment) -> DatumFeature {
 fn settle(registry: &DocumentService, doc: &mut Document, body: BodyId) -> ([f32; 3], [f32; 3]) {
     let mut kernel = OgeomKernel::new();
     for _ in 0..8 {
+        registry.evaluate(doc);
         let jobs = registry.rebuild_jobs(doc);
         if jobs.is_empty() {
             break;
@@ -57,9 +58,15 @@ fn settle(registry: &DocumentService, doc: &mut Document, body: BodyId) -> ([f32
         for job in jobs {
             let plan = job.plan.expect("the history translates");
             let asked: Vec<kernel_api::ChainProbe> = plan.probes.iter().map(|p| p.probe).collect();
+            let tags: Vec<kernel_api::TopoName> = plan
+                .op_features
+                .iter()
+                .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+                .collect();
             let result = kernel
-                .execute_solid_chain_probing(
+                .execute_solid_chain_named(
                     &plan.ops,
+                    &tags,
                     &TessellationSettings::default(),
                     None,
                     &asked,
@@ -381,4 +388,136 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
     let want = cylinder_volume + PI * (49.0 - 16.0) * 2.0;
     let got = volume(&doc, body);
     assert!((got - want).abs() < want * 1e-4, "{got} against {want}");
+}
+
+fn pad(sketch: FeatureId, length: f32) -> PartFeature {
+    PartFeature::Pad {
+        refine: false,
+        sketch: Some(sketch),
+        length,
+        reversed: false,
+        symmetric: false,
+        mode: wb_part::ExtrudeMode::Dimension,
+        length2: 0.0,
+        taper_deg: 0.0,
+        up_to_face: None,
+        up_to_offset: 0.0,
+        profile_face: None,
+        direction: Default::default(),
+        up_to_shape: Vec::new(),
+        mode2: None,
+        up_to_face2: None,
+        up_to_offset2: 0.0,
+        up_to_shape2: Vec::new(),
+    }
+}
+
+fn pocket(sketch: FeatureId, depth: f32) -> PartFeature {
+    PartFeature::Pocket {
+        refine: false,
+        sketch: Some(sketch),
+        depth,
+        reversed: false,
+        symmetric: false,
+        through_all: false,
+        mode: wb_part::ExtrudeMode::Dimension,
+        depth2: 0.0,
+        taper_deg: 0.0,
+        up_to_face: None,
+        up_to_offset: 0.0,
+        profile_face: None,
+        direction: Default::default(),
+        up_to_shape: Vec::new(),
+        mode2: None,
+        up_to_face2: None,
+        up_to_offset2: 0.0,
+        up_to_shape2: Vec::new(),
+    }
+}
+
+/// The heights of the flat faces of `body`'s mesh that face up.
+fn upward_floors(doc: &Document, body: BodyId) -> Vec<f32> {
+    let mesh = &doc.imported_geometry(body).unwrap().mesh;
+    let mut heights: Vec<f32> = mesh
+        .face_surfaces
+        .iter()
+        .filter_map(|s| match s {
+            kernel_api::FaceSurface::Plane { origin, normal } if normal[2] > 0.99 => {
+                Some((origin[2] * 1000.0).round() / 1000.0)
+            }
+            _ => None,
+        })
+        .collect();
+    heights.sort_by(f32::total_cmp);
+    heights.dedup();
+    heights
+}
+
+/// A pocket drawn on the pad's top stays at the top when the pad grows:
+/// its sketch follows the face it was placed on, found by its name.
+#[test]
+fn a_sketch_on_a_face_follows_the_face_when_the_pad_grows() {
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let base = doc
+        .add_feature_in_body(rect_sketch(20.0, 20.0), "base".into(), Some(body))
+        .unwrap();
+    let pad_id = doc
+        .add_feature_in_body(pad(base, 10.0), "Pad".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+
+    // The top face, as a click picks it.
+    let mesh = doc.imported_geometry(body).unwrap().mesh.clone();
+    let top_id = mesh
+        .face_surfaces
+        .iter()
+        .position(|s| {
+            matches!(s, kernel_api::FaceSurface::Plane { origin, normal }
+                if normal[2] > 0.99 && (origin[2] - 10.0).abs() < 1e-3)
+        })
+        .expect("a top face");
+    let top = core_document::FaceRef {
+        point: [10.0, 10.0, 10.0],
+        normal: [0.0, 0.0, 1.0],
+        surface: None,
+        name: mesh.face_names[top_id],
+    };
+    assert_ne!(top.name, 0, "the top is named");
+    let plane = wb_sketch::sketch::SketchPlane::from_face(top.point, top.normal);
+    let mut hole = Sketch::new("hole");
+    hole.plane = plane;
+    let centre = hole.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
+    hole.add_geometry(GeometryElement::Circle(wb_sketch::sketch::Circle::new(
+        centre, 3.0,
+    )));
+    let mut hole = SketchFeature::new(hole, plane);
+    hole.face = Some(wb_sketch::FaceSupport::on(&top, plane));
+    let hole = doc
+        .add_feature_in_body(hole, "hole".into(), Some(body))
+        .unwrap();
+    let pocket_id = doc
+        .add_feature_in_body(pocket(hole, 3.0), "Pocket".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(pocket_id);
+    settle(&registry, &mut doc, body);
+    assert_eq!(
+        upward_floors(&doc, body),
+        [7.0, 10.0],
+        "the pocket's floor and the top"
+    );
+
+    // The pad grows: the top rises to 20, and the pocket with it.
+    let mut data = doc.get_feature_data(pad_id).unwrap().clone();
+    data["Pad"]["length"] = serde_json::json!(20.0);
+    doc.update_feature_data(pad_id, data).unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+    assert_eq!(
+        upward_floors(&doc, body),
+        [17.0, 20.0],
+        "the pocket went up with the top"
+    );
 }

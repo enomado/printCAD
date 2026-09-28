@@ -44,6 +44,7 @@ version first.
 - The model tree is the body's history in order. Selecting a feature shows the body as it stood there, and a feature made then goes in at that point; selecting the last feature shows everything again. Moving through history is not an undo step.
 - A click in the tree selects; a double click opens the feature's settings. A feature stays selected after its settings close.
 - A feature's profile is changed in the property panel's Inputs group, which keeps the settings panel to the operation itself.
+- Fillets, chamfers, up-to-face stops, datums and sketches placed on a face keep hold of the faces and edges they were made on when dimensions change or features go in earlier: every face is named by how it was made, and a rebuild finds it by its name.
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, additive and subtractive, and booleans between bodies.
 - Holes to standard sizes, fillets and chamfers on picked edges, draft, thickness, and linear, polar and mirrored patterns.
 - Datum points, lines and planes, and local coordinate systems whose planes carry sketches.
