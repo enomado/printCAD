@@ -20,7 +20,8 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         | ConstraintKind::EqualEllipse { .. } => "constraint-equal",
         ConstraintKind::Length { .. }
         | ConstraintKind::Distance { .. }
-        | ConstraintKind::Gap { .. } => "constraint-distance",
+        | ConstraintKind::Gap { .. }
+        | ConstraintKind::Offset { .. } => "constraint-distance",
         ConstraintKind::ArcLength { .. } => "constraint-arc-length",
         ConstraintKind::ArcAngle { .. } | ConstraintKind::AngleThreePoints { .. } => {
             "constraint-angle"

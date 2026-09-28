@@ -245,6 +245,14 @@ pub struct ToolParams {
     pub corner_keep: bool,
     /// Offset distance for the offset tool, mm.
     pub offset_distance: f32,
+    /// The offset rounds the copies' convex corners with arcs.
+    pub offset_round: bool,
+    /// The offset copies to both sides.
+    pub offset_both: bool,
+    /// The offset replaces the originals with their copies.
+    pub offset_delete: bool,
+    /// One offset dimension holds the copies to the originals.
+    pub offset_linked: bool,
     /// Copy count for translate/rotate (0 = move the originals).
     pub copies: u32,
     /// Whether new B-splines close on themselves.
@@ -280,6 +288,10 @@ impl Default for ToolParams {
             chamfer_length: 2.0,
             corner_keep: false,
             offset_distance: 2.0,
+            offset_round: false,
+            offset_both: false,
+            offset_delete: false,
+            offset_linked: false,
             copies: 0,
             bspline_periodic: false,
             bspline_degree: 3,
@@ -614,7 +626,18 @@ pub fn handle_click(
         "sketch.trim" => modify::trim(sketch, cursor, snap_tol),
         "sketch.extend" => modify::extend(sketch, cursor, snap_tol),
         "sketch.split" => modify::split(sketch, cursor, snap_tol),
-        "sketch.offset" => modify::offset(sketch, cursor, selected, params.offset_distance),
+        "sketch.offset" => modify::offset(
+            sketch,
+            cursor,
+            selected,
+            modify::OffsetOptions {
+                distance: params.offset_distance,
+                round: params.offset_round,
+                both: params.offset_both,
+                delete: params.offset_delete,
+                linked: params.offset_linked,
+            },
+        ),
         "sketch.translate" => {
             transform::translate(state, sketch, cursor, snap_tol, selected, params.copies)
         }

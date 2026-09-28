@@ -408,6 +408,7 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         ConstraintKind::PointOnCurve { point, curve } => vec![*point, *curve],
         ConstraintKind::EllipseRadius { ellipse, .. } => vec![*ellipse],
         ConstraintKind::CurveLength { curve, .. } => vec![*curve],
+        ConstraintKind::Offset { pairs, .. } => pairs.iter().flatten().copied().collect(),
         ConstraintKind::TangentCurves { curve1, curve2 }
         | ConstraintKind::PerpendicularCurves { curve1, curve2 } => vec![*curve1, *curve2],
         ConstraintKind::Horizontal { element }
@@ -485,6 +486,7 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::EllipseRadius { major: true, .. } => "Major radius".to_string(),
         ConstraintKind::EllipseRadius { major: false, .. } => "Minor radius".to_string(),
         ConstraintKind::CurveLength { .. } => "Curve length".to_string(),
+        ConstraintKind::Offset { .. } => "Offset".to_string(),
         ConstraintKind::TangentCurves { .. } => "Tangent".to_string(),
         ConstraintKind::PerpendicularCurves { .. } => "Perpendicular".to_string(),
         ConstraintKind::Horizontal { .. } | ConstraintKind::HorizontalPoints { .. } => {
@@ -594,6 +596,10 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
             }
         }
         ConstraintKind::CurveLength { curve, .. } => crate::measure::curve_length(sketch, curve),
+        ConstraintKind::Offset { ref pairs, .. } => {
+            let [a, b] = *pairs.first()?;
+            crate::measure::gap(sketch, a, b).map(|g| g.distance)
+        }
         ConstraintKind::AngleThreePoints {
             point1,
             vertex,
@@ -639,7 +645,9 @@ pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
             Some(length)
         }
         ConstraintKind::EllipseRadius { radius, .. } => Some(radius),
-        ConstraintKind::Gap { distance, .. } => Some(distance),
+        ConstraintKind::Gap { distance, .. } | ConstraintKind::Offset { distance, .. } => {
+            Some(distance)
+        }
         ConstraintKind::Refraction { ratio, .. } => Some(ratio),
         _ => None,
     }
@@ -666,7 +674,9 @@ pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
             *length = v
         }
         ConstraintKind::EllipseRadius { radius, .. } => *radius = v,
-        ConstraintKind::Gap { distance, .. } => *distance = v,
+        ConstraintKind::Gap { distance, .. } | ConstraintKind::Offset { distance, .. } => {
+            *distance = v
+        }
         ConstraintKind::Refraction { ratio, .. } => *ratio = v,
         _ => {}
     }
@@ -1364,6 +1374,14 @@ pub enum ConstraintKind {
     /// Two ellipses (or arcs of them) the same size: equal major and minor
     /// radii.
     EqualEllipse { ellipse1: Uuid, ellipse2: Uuid },
+    /// Offset copies held `distance` from their originals, as one
+    /// dimension: each pair is an original and its copy, two lines kept
+    /// parallel that far apart, or two circles or arcs about one centre
+    /// that much apart in radius.
+    Offset {
+        pairs: Vec<[Uuid; 2]>,
+        distance: f32,
+    },
     /// An arc's opening: the angle it sweeps counter-clockwise from its
     /// start to its end.
     ArcAngle { arc: Uuid, angle_rad: f32 },
@@ -1451,6 +1469,7 @@ impl ConstraintKind {
                 | ConstraintKind::CurveLength { .. }
                 | ConstraintKind::EllipseRadius { .. }
                 | ConstraintKind::Gap { .. }
+                | ConstraintKind::Offset { .. }
                 | ConstraintKind::AngleAtPoint { .. }
                 | ConstraintKind::ArcAngle { .. }
                 | ConstraintKind::AngleThreePoints { .. }

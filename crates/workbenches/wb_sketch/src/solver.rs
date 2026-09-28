@@ -1773,6 +1773,31 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                 };
                 specs.extend(spec);
             }
+            ConstraintKind::Offset {
+                ref pairs,
+                distance,
+            } => {
+                let d = f64::from(distance);
+                for &[a, b] in pairs {
+                    match (item_vars(a), item_vars(b)) {
+                        (Some(ItemVars::Line(s1, e1)), Some(ItemVars::Line(s2, e2))) => {
+                            specs.push(ResidualSpec::Parallel { s1, e1, s2, e2 });
+                            specs.push(ResidualSpec::GapLines { s1, e1, s2, e2, d });
+                        }
+                        (Some(ItemVars::Circle(c1, r1)), Some(ItemVars::Circle(c2, r2))) => {
+                            specs.push(ResidualSpec::GapCircles {
+                                c1,
+                                r1,
+                                c2,
+                                r2,
+                                nested: true,
+                                d,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
             ConstraintKind::AngleAtPoint {
                 curve1,
                 curve2,

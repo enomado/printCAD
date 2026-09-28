@@ -229,6 +229,14 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         json!(params.offset_distance),
         json!(d.offset_distance),
     );
+    for (name, value, default) in [
+        ("offset_round", params.offset_round, d.offset_round),
+        ("offset_both", params.offset_both, d.offset_both),
+        ("offset_delete", params.offset_delete, d.offset_delete),
+        ("offset_linked", params.offset_linked, d.offset_linked),
+    ] {
+        put(name, json!(value), json!(default));
+    }
     put("copies", json!(params.copies), json!(d.copies));
     put(
         "bspline_periodic",
@@ -294,6 +302,10 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             "chamfer_length" => p.chamfer_length = number()? as f32,
             "corner_keep" => p.corner_keep = flag()?,
             "offset_distance" => p.offset_distance = number()? as f32,
+            "offset_round" => p.offset_round = flag()?,
+            "offset_both" => p.offset_both = flag()?,
+            "offset_delete" => p.offset_delete = flag()?,
+            "offset_linked" => p.offset_linked = flag()?,
             "copies" => p.copies = number()? as u32,
             "bspline_periodic" => p.bspline_periodic = flag()?,
             "bspline_degree" => {

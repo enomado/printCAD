@@ -1172,12 +1172,33 @@ enum OffsetPrim {
     Arc { c: Vec2, new_r: f32 },
 }
 
+/// How the offset tool makes its copies.
+#[derive(Clone, Copy)]
+pub(super) struct OffsetOptions {
+    pub distance: f32,
+    /// Where two copies part at a convex corner, an arc about the corner
+    /// joins them rather than the copies run on to meet.
+    pub round: bool,
+    /// A copy on each side.
+    pub both: bool,
+    /// The originals go, the copies take their place.
+    pub delete: bool,
+    /// One offset dimension holds each copy to its original.
+    pub linked: bool,
+}
+
+/// What one side's offset made: each original with its copy.
+struct OffsetMade {
+    pairs: Vec<[Uuid; 2]>,
+}
+
 pub(super) fn offset(
     sketch: &mut Sketch,
     cursor: Vec2D,
     selected: &HashSet<Uuid>,
-    distance: f32,
+    options: OffsetOptions,
 ) -> ToolEffect {
+    let distance = options.distance;
     if distance < 1e-6 {
         return ToolEffect::none();
     }
@@ -1188,72 +1209,225 @@ pub(super) fn offset(
             selected.contains(&g.id())
                 && matches!(
                     g,
-                    GeometryElement::Line(_) | GeometryElement::Arc(_) | GeometryElement::Circle(_)
+                    GeometryElement::Line(_)
+                        | GeometryElement::Arc(_)
+                        | GeometryElement::Circle(_)
+                        | GeometryElement::Ellipse(_)
+                        | GeometryElement::BSpline(_)
+                        | GeometryElement::Conic(_)
                 )
         })
         .cloned()
         .collect();
-    // A single circle offsets on its own (concentric copy).
-    if let [GeometryElement::Circle(circle)] = curves.as_slice() {
-        let Some(c) = sketch.point_position(circle.center) else {
-            return ToolEffect::none();
+    if curves.is_empty() {
+        return ToolEffect::none();
+    }
+    let sides: &[bool] = if options.both {
+        &[false, true]
+    } else {
+        &[false]
+    };
+    let mut made = Vec::new();
+    for &flip in sides {
+        let side = match curves.as_slice() {
+            [GeometryElement::Circle(circle)] => {
+                offset_circle(sketch, circle, cursor, distance, flip)
+            }
+            [
+                one @ (GeometryElement::Ellipse(_)
+                | GeometryElement::BSpline(_)
+                | GeometryElement::Conic(_)),
+            ] => offset_sampled(sketch, one.id(), cursor, distance, flip),
+            _ if curves.iter().all(|g| chain_ends(g).is_some()) => {
+                offset_chain(sketch, &curves, cursor, distance, flip, options.round)
+            }
+            _ => None,
         };
-        let outside = (cursor - c).to_glam().length() > circle.radius;
-        let new_r = if outside {
-            circle.radius + distance
-        } else {
-            circle.radius - distance
+        let Some(side) = side else {
+            continue;
         };
-        if new_r < 1e-6 {
-            return ToolEffect::none();
+        made.push(side);
+    }
+    if made.is_empty() {
+        return ToolEffect::log(
+            "Select one circle, ellipse, spline or conic, or a chain of lines and arcs",
+        );
+    }
+    if options.delete {
+        let originals: Vec<Uuid> = curves.iter().map(|g| g.id()).collect();
+        sketch.remove_geometry_cascade(&originals);
+    } else if options.linked {
+        for side in made.iter().filter(|m| !m.pairs.is_empty()) {
+            sketch.add_constraint(ConstraintKind::Offset {
+                pairs: side.pairs.clone(),
+                distance,
+            });
         }
-        let center = circle.center; // concentric: share the center point
-        let flag = sketch.is_construction(circle.id);
-        let new_id = sketch.add_geometry(GeometryElement::Circle(crate::sketch::Circle::new(
-            center, new_r,
-        )));
-        sketch.set_construction(new_id, flag);
-        return ToolEffect::changed(format!("Offset circle to r={new_r:.2}"));
     }
-    if curves.is_empty()
-        || curves
-            .iter()
-            .any(|g| matches!(g, GeometryElement::Circle(_)))
-    {
-        return ToolEffect::none(); // circles only offset alone
-    }
+    let count: usize = made.iter().map(|m| m.pairs.len().max(1)).sum();
+    ToolEffect::changed(format!("Offset {count} element(s) by {distance:.2}"))
+}
 
+/// A concentric copy of a circle, on the side of the click (the other with
+/// `flip`).
+fn offset_circle(
+    sketch: &mut Sketch,
+    circle: &crate::sketch::Circle,
+    cursor: Vec2D,
+    distance: f32,
+    flip: bool,
+) -> Option<OffsetMade> {
+    let c = sketch.point_position(circle.center)?;
+    let outside = ((cursor - c).to_glam().length() > circle.radius) != flip;
+    let new_r = if outside {
+        circle.radius + distance
+    } else {
+        circle.radius - distance
+    };
+    if new_r < 1e-6 {
+        return None;
+    }
+    let flag = sketch.is_construction(circle.id);
+    let new_id = sketch.add_geometry(GeometryElement::Circle(crate::sketch::Circle::new(
+        circle.center,
+        new_r,
+    )));
+    sketch.set_construction(new_id, flag);
+    Some(OffsetMade {
+        pairs: vec![[circle.id, new_id]],
+    })
+}
+
+/// How many points a sampled curve's copy passes through.
+const OFFSET_SAMPLES: usize = 32;
+
+/// An ellipse's, spline's or conic's copy, which is none of those: a
+/// spline through points set off square to the curve along it.
+fn offset_sampled(
+    sketch: &mut Sketch,
+    id: Uuid,
+    cursor: Vec2D,
+    distance: f32,
+    flip: bool,
+) -> Option<OffsetMade> {
+    let geom = sketch.get_geometry(id)?.clone();
+    let closed = match &geom {
+        GeometryElement::Ellipse(e) => e.arc.is_none(),
+        GeometryElement::BSpline(b) => b.periodic,
+        _ => false,
+    };
+    let mut samples: Vec<Vec2> = crate::external_ref::element_samples(sketch, &geom)?
+        .into_iter()
+        .map(Vec2D::to_glam)
+        .collect();
+    if closed && samples.len() > 2 {
+        samples.pop();
+    }
+    let n = samples.len();
+    if n < 3 {
+        return None;
+    }
+    let tangent = |i: usize| {
+        let (prev, next) = if closed {
+            ((i + n - 1) % n, (i + 1) % n)
+        } else {
+            (i.saturating_sub(1), (i + 1).min(n - 1))
+        };
+        (samples[next] - samples[prev]).normalize_or_zero()
+    };
+    let p = cursor.to_glam();
+    let nearest = (0..n).min_by(|a, b| {
+        (samples[*a] - p)
+            .length()
+            .total_cmp(&(samples[*b] - p).length())
+    })?;
+    let left = (tangent(nearest).perp().dot(p - samples[nearest]) > 0.0) != flip;
+    let d = if left { distance } else { -distance };
+    let step = (n as f32 / OFFSET_SAMPLES as f32).max(1.0);
+    let mut picks: Vec<usize> = (0..)
+        .map(|k| (k as f32 * step) as usize)
+        .take_while(|i| *i < n)
+        .collect();
+    if !closed && picks.last() != Some(&(n - 1)) {
+        picks.push(n - 1);
+    }
+    let points: Vec<[f64; 2]> = picks
+        .iter()
+        .map(|&i| samples[i] + tangent(i).perp() * d)
+        .map(|q| [f64::from(q.x), f64::from(q.y)])
+        .collect();
+    let fit = crate::spline::interpolate(&points, 3, closed)?;
+    let control: Vec<Uuid> = fit
+        .control
+        .iter()
+        .map(|q| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
+                q[0] as f32,
+                q[1] as f32,
+            ))))
+        })
+        .collect();
+    let flag = sketch.is_construction(id);
+    let new_id = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline {
+        degree: fit.degree,
+        knots: fit.knots,
+        ..crate::sketch::BSpline::new(control, closed)
+    }));
+    sketch.set_construction(new_id, flag);
+    // A spline's distance from its original is no dimension the solver
+    // holds, so it is not paired.
+    Some(OffsetMade { pairs: Vec::new() })
+}
+
+/// Tangent of a chain link at its `at` end, the way the chain runs.
+fn link_tangent(
+    sketch: &Sketch,
+    geom: &GeometryElement,
+    link: &ChainLink,
+    at: Uuid,
+) -> Option<Vec2> {
+    let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
+    Some(match geom {
+        GeometryElement::Line(_) => (pos(link.exit)? - pos(link.entry)?).normalize_or_zero(),
+        GeometryElement::Arc(arc) => {
+            let ccw = (pos(at)? - pos(arc.center)?).normalize_or_zero().perp();
+            if link.entry == arc.start { ccw } else { -ccw }
+        }
+        _ => return None,
+    })
+}
+
+/// Copies of a chain of lines and arcs, joined where they meet.
+fn offset_chain(
+    sketch: &mut Sketch,
+    curves: &[GeometryElement],
+    cursor: Vec2D,
+    distance: f32,
+    flip: bool,
+    round: bool,
+) -> Option<OffsetMade> {
     let ends: Vec<(Uuid, (Uuid, Uuid))> = curves
         .iter()
         .filter_map(|g| chain_ends(g).map(|e| (g.id(), e)))
         .collect();
-    let Some((links, closed)) = order_chain(&ends) else {
-        return ToolEffect::none(); // not a single connected chain
-    };
+    let (links, closed) = order_chain(&ends)?;
     let elem_of = |id: Uuid| curves.iter().find(|g| g.id() == id).unwrap();
     let pos_of = |sketch: &Sketch, pid: Uuid| sketch.point_position(pid).map(|p| p.to_glam());
 
     // Signed left-offset: positive when the click lies left of the chain
     // direction at the nearest link.
-    let nearest = links
+    let near = links
         .iter()
         .filter_map(|l| snap::distance_to_element(sketch, elem_of(l.id), cursor).map(|d| (l, d)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(l, _)| l);
-    let Some(near) = nearest else {
-        return ToolEffect::none();
-    };
+        .map(|(l, _)| l)?;
     let left = match elem_of(near.id) {
         GeometryElement::Line(_) => {
-            let (Some(a), Some(b)) = (pos_of(sketch, near.entry), pos_of(sketch, near.exit)) else {
-                return ToolEffect::none();
-            };
+            let (a, b) = (pos_of(sketch, near.entry)?, pos_of(sketch, near.exit)?);
             (b - a).perp_dot(cursor.to_glam() - a) > 0.0
         }
         GeometryElement::Arc(arc) => {
-            let (Some(c), Some(s)) = (pos_of(sketch, arc.center), pos_of(sketch, arc.start)) else {
-                return ToolEffect::none();
-            };
+            let (c, s) = (pos_of(sketch, arc.center)?, pos_of(sketch, arc.start)?);
             let inside = (cursor.to_glam() - c).length() < (s - c).length();
             // Traversed CCW (entry == start) the left side faces the center.
             if near.entry == arc.start {
@@ -1262,40 +1436,36 @@ pub(super) fn offset(
                 !inside
             }
         }
-        _ => return ToolEffect::none(),
+        _ => return None,
     };
-    let d_left = if left { distance } else { -distance };
+    let d_left = if left != flip { distance } else { -distance };
 
     // Raw offset endpoints + carriers per link.
     let mut prims: Vec<(OffsetPrim, Vec2, Vec2)> = Vec::with_capacity(links.len());
     for link in &links {
-        let (Some(a), Some(b)) = (pos_of(sketch, link.entry), pos_of(sketch, link.exit)) else {
-            return ToolEffect::none();
-        };
+        let (a, b) = (pos_of(sketch, link.entry)?, pos_of(sketch, link.exit)?);
         match elem_of(link.id) {
             GeometryElement::Line(_) => {
                 let dir = b - a;
                 if dir.length() < 1e-6 {
-                    return ToolEffect::none();
+                    return None;
                 }
                 let shift = dir.normalize().perp() * d_left;
                 prims.push((OffsetPrim::Line, a + shift, b + shift));
             }
             GeometryElement::Arc(arc) => {
-                let Some(c) = pos_of(sketch, arc.center) else {
-                    return ToolEffect::none();
-                };
+                let c = pos_of(sketch, arc.center)?;
                 let r = (pos_of(sketch, arc.start).unwrap_or(a) - c).length();
                 // CCW traversal keeps the center on the left.
                 let forward = link.entry == arc.start;
                 let new_r = if forward { r - d_left } else { r + d_left };
                 if new_r < 1e-6 {
-                    return ToolEffect::none(); // arc would invert
+                    return None; // arc would invert
                 }
                 let proj = |q: Vec2| c + (q - c).normalize() * new_r;
                 prims.push((OffsetPrim::Arc { c, new_r }, proj(a), proj(b)));
             }
-            _ => return ToolEffect::none(),
+            _ => return None,
         }
     }
 
@@ -1322,46 +1492,98 @@ pub(super) fn offset(
             .min_by(|p, q| (*p - raw_mid).length().total_cmp(&(*q - raw_mid).length()))
             .unwrap_or(raw_mid)
     };
-    let mut junction: HashMap<Uuid, Vec2> = HashMap::new();
+    let new_point = |sketch: &mut Sketch, p: Vec2| {
+        sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(p))))
+    };
+    // Each copy's new (entry, exit) points, and the corners rounded.
+    let mut link_ends: Vec<(Option<Uuid>, Option<Uuid>)> = vec![(None, None); links.len()];
+    let mut rounded: Vec<(Uuid, Uuid, Uuid)> = Vec::new();
     for i in 0..links.len() {
         let j = (i + 1) % links.len();
         if j == 0 && !closed {
             break;
         }
-        junction.insert(links[i].exit, join(&prims[i], &prims[j]));
+        let corner = links[i].exit;
+        let turn = match (
+            link_tangent(sketch, elem_of(links[i].id), &links[i], corner),
+            link_tangent(sketch, elem_of(links[j].id), &links[j], corner),
+        ) {
+            (Some(t_in), Some(t_out)) => t_in.perp_dot(t_out),
+            _ => 0.0,
+        };
+        // Offset to the left of a right turn (or the right of a left one)
+        // opens a gap at the corner: a convex corner on the copy's side.
+        if round && turn * d_left < -1e-4 {
+            let a = new_point(sketch, prims[i].2);
+            let b = new_point(sketch, prims[j].1);
+            link_ends[i].1 = Some(a);
+            link_ends[j].0 = Some(b);
+            rounded.push((corner, a, b));
+        } else {
+            let p = new_point(sketch, join(&prims[i], &prims[j]));
+            link_ends[i].1 = Some(p);
+            link_ends[j].0 = Some(p);
+        }
     }
     if !closed {
-        junction.insert(links[0].entry, prims[0].1);
-        junction.insert(links[links.len() - 1].exit, prims[links.len() - 1].2);
+        let last = links.len() - 1;
+        link_ends[0].0 = Some(new_point(sketch, prims[0].1));
+        link_ends[last].1 = Some(new_point(sketch, prims[last].2));
     }
 
-    // Materialize: one new point per original junction id (internal sharing
-    // preserved), then one offset curve per link.
-    let mut new_pts: HashMap<Uuid, Uuid> = HashMap::new();
-    for (pid, pos) in &junction {
-        let id = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(*pos))));
-        new_pts.insert(*pid, id);
-    }
-    let count = links.len();
-    for (link, prim) in links.iter().zip(&prims) {
+    let mut pairs = Vec::new();
+    let mut copies: HashMap<Uuid, Uuid> = HashMap::new();
+    for ((link, prim), (entry, exit)) in links.iter().zip(&prims).zip(&link_ends) {
+        let (entry, exit) = (entry.unwrap(), exit.unwrap());
         let flag = sketch.is_construction(link.id);
         let new_id = match (elem_of(link.id).clone(), &prim.0) {
-            (GeometryElement::Line(_), _) => sketch.add_geometry(GeometryElement::Line(Line::new(
-                new_pts[&link.entry],
-                new_pts[&link.exit],
-            ))),
+            (GeometryElement::Line(_), _) => {
+                sketch.add_geometry(GeometryElement::Line(Line::new(entry, exit)))
+            }
             (GeometryElement::Arc(arc), OffsetPrim::Arc { new_r, .. }) => {
                 // Preserve the stored CCW start/end regardless of traversal.
+                let (start, end) = if link.entry == arc.start {
+                    (entry, exit)
+                } else {
+                    (exit, entry)
+                };
                 sketch.add_geometry(GeometryElement::Arc(Arc::new(
-                    arc.center,
-                    new_pts[&arc.start],
-                    new_pts[&arc.end],
-                    *new_r,
+                    arc.center, start, end, *new_r,
                 )))
             }
             _ => continue,
         };
         sketch.set_construction(new_id, flag);
+        pairs.push([link.id, new_id]);
+        copies.insert(link.id, new_id);
     }
-    ToolEffect::changed(format!("Offset {count} element(s) by {distance:.2}"))
+    // Each rounded corner: an arc about the original corner from one copy's
+    // end to the next one's start, tangent to both.
+    for (corner, a, b) in rounded {
+        let Some(c) = pos_of(sketch, corner) else {
+            continue;
+        };
+        let (Some(pa), Some(pb)) = (pos_of(sketch, a), pos_of(sketch, b)) else {
+            continue;
+        };
+        let (start, end) = if (pa - c).perp_dot(pb - c) > 0.0 {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(corner, start, end, distance)));
+        for (link, (entry, exit)) in links.iter().zip(&link_ends) {
+            if [*entry, *exit]
+                .iter()
+                .any(|e| *e == Some(a) || *e == Some(b))
+                && let Some(copy) = copies.get(&link.id)
+            {
+                sketch.add_constraint(ConstraintKind::Tangent {
+                    line_or_circle1: *copy,
+                    item2: arc,
+                });
+            }
+        }
+    }
+    Some(OffsetMade { pairs })
 }

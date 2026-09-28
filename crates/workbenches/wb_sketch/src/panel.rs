@@ -588,6 +588,24 @@ impl SketchWorkbench {
                         ui_kit::widgets::field_label(ui, "Distance");
                         QtyField::mm(&mut params.offset_distance).show(ui);
                         ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Corners");
+                        check_row(ui, &mut params.offset_round, "Round")
+                            .on_hover_text("Arcs join the copies where they part at a corner");
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Sides");
+                        check_row(ui, &mut params.offset_both, "Both");
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Original");
+                        check_row(ui, &mut params.offset_delete, "Replace it");
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Copy");
+                        ui.add_enabled_ui(!params.offset_delete, |ui| {
+                            check_row(ui, &mut params.offset_linked, "Follows the original")
+                                .on_hover_text(
+                                    "One offset dimension holds the copy to the original",
+                                );
+                        });
+                        ui.end_row();
                     }
                     Some("sketch.mirror") => {
                         ui_kit::widgets::field_label(ui, "Original");

@@ -218,6 +218,11 @@ fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
             let gap = crate::measure::gap(sketch, item1, item2)?;
             Some(Vec2D::from_glam((gap.a + gap.b) * 0.5))
         }
+        ConstraintKind::Offset { ref pairs, .. } => {
+            let [a, b] = *pairs.first()?;
+            let gap = crate::measure::gap(sketch, a, b)?;
+            Some(Vec2D::from_glam((gap.a + gap.b) * 0.5))
+        }
         ConstraintKind::AngleAtPoint { point, .. } | ConstraintKind::Refraction { point, .. } => {
             sketch.point_position(point)
         }
@@ -603,6 +608,20 @@ fn curve_dimension_lines(
         }
         ConstraintKind::Gap { item1, item2, .. } => {
             let Some(g) = crate::measure::gap(sketch, item1, item2) else {
+                return Some(Vec::new());
+            };
+            let (Some(pa), Some(pb)) = (px(g.a), px(g.b)) else {
+                return Some(Vec::new());
+            };
+            let mut lines = vec![(pa, pb)];
+            lines.extend(leader(scale(add(pa, pb), 0.5)));
+            lines
+        }
+        ConstraintKind::Offset { ref pairs, .. } => {
+            let Some(g) = pairs
+                .first()
+                .and_then(|[a, b]| crate::measure::gap(sketch, *a, *b))
+            else {
                 return Some(Vec::new());
             };
             let (Some(pa), Some(pb)) = (px(g.a), px(g.b)) else {

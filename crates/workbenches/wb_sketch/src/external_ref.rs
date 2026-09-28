@@ -117,7 +117,7 @@ fn project_element(
 }
 
 /// Points along any curve of a sketch, in its own coordinates.
-fn element_samples(
+pub(crate) fn element_samples(
     sketch: &crate::sketch::Sketch,
     geom: &GeometryElement,
 ) -> Option<Vec<crate::sketch::Vec2D>> {

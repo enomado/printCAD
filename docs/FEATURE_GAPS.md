@@ -39,7 +39,7 @@ and noted on its item, and the rest of the item is built around it.
   arc, two curves that do not meet yet (trimmed or extended to fit), and a
   keep-the-corner option leaving a construction point with the corner's
   constraints.
-- [ ] **Offset options** (partial, M). Lines, arcs and circles with
+- [x] **Offset options** (partial, M). Lines, arcs and circles with
   sharp joins only. Missing rounded joins at convex corners, ellipses and
   B-splines, both sides, deleting the original, and an offset dimension that
   keeps the copy parametric.

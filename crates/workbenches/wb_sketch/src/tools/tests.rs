@@ -3515,3 +3515,212 @@ fn a_fillet_can_keep_the_corner_and_what_holds_it() {
         "{outcome:?}"
     );
 }
+
+fn offset_params(f: impl FnOnce(&mut ToolParams)) -> ToolParams {
+    let mut p = ToolParams {
+        offset_distance: 1.0,
+        ..ToolParams::default()
+    };
+    f(&mut p);
+    p
+}
+
+/// A 10 × 5 rectangle, its lines selected.
+fn selected_rectangle(sketch: &mut Sketch) -> HashSet<Uuid> {
+    build_rectangle(sketch, 10.0, 5.0);
+    sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Line(_)))
+        .map(|g| g.id())
+        .collect()
+}
+
+#[test]
+fn an_offset_outward_can_round_its_corners() {
+    let mut sketch = Sketch::new("t");
+    let selected = selected_rectangle(&mut sketch);
+    let mut state = ToolState::Idle;
+    let fx = click_sel(
+        &mut state,
+        "sketch.offset",
+        &mut sketch,
+        Vec2D::new(5.0, -3.0),
+        0.5,
+        &offset_params(|p| p.offset_round = true),
+        &selected,
+    );
+    assert!(fx.changed);
+    // Four copies and four quarter arcs about the original corners.
+    assert_eq!((lines(&sketch), arcs(&sketch)), (8, 4));
+    for g in &sketch.geometry {
+        if let GeometryElement::Arc(a) = g {
+            assert!((a.radius - 1.0).abs() < 1e-5);
+            let c = sketch.point_position(a.center).unwrap().to_glam();
+            assert!(
+                [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)]
+                    .iter()
+                    .any(|&(x, y)| (c - glam::Vec2::new(x, y)).length() < 1e-5)
+            );
+        }
+    }
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 2);
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(
+        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn an_inward_offset_does_not_round_its_corners() {
+    let mut sketch = Sketch::new("t");
+    let selected = selected_rectangle(&mut sketch);
+    let mut state = ToolState::Idle;
+    click_sel(
+        &mut state,
+        "sketch.offset",
+        &mut sketch,
+        Vec2D::new(5.0, 2.5),
+        0.5,
+        &offset_params(|p| p.offset_round = true),
+        &selected,
+    );
+    assert_eq!((lines(&sketch), arcs(&sketch)), (8, 0));
+}
+
+#[test]
+fn an_offset_to_both_sides_replacing_the_original() {
+    let mut sketch = Sketch::new("t");
+    let selected = selected_rectangle(&mut sketch);
+    let mut state = ToolState::Idle;
+    click_sel(
+        &mut state,
+        "sketch.offset",
+        &mut sketch,
+        Vec2D::new(5.0, 2.5),
+        0.5,
+        &offset_params(|p| {
+            p.offset_both = true;
+            p.offset_delete = true;
+        }),
+        &selected,
+    );
+    assert_eq!(lines(&sketch), 8);
+    assert!(selected.iter().all(|id| sketch.get_geometry(*id).is_none()));
+    let xs: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.x),
+            _ => None,
+        })
+        .collect();
+    assert!(xs.iter().any(|x| (x - 1.0).abs() < 1e-4));
+    assert!(xs.iter().any(|x| (x + 1.0).abs() < 1e-4));
+    assert!(
+        !xs.iter().any(|x| x.abs() < 1e-4),
+        "the original corners are gone"
+    );
+}
+
+#[test]
+fn a_linked_offset_follows_its_dimension() {
+    let mut sketch = Sketch::new("t");
+    let selected = selected_rectangle(&mut sketch);
+    for g in sketch.geometry.clone() {
+        if let GeometryElement::Point(p) = g {
+            sketch.add_constraint(ConstraintKind::FixedPoint {
+                point: p.id,
+                position: p.position,
+            });
+        }
+    }
+    let mut state = ToolState::Idle;
+    click_sel(
+        &mut state,
+        "sketch.offset",
+        &mut sketch,
+        Vec2D::new(5.0, -3.0),
+        0.5,
+        &offset_params(|p| {
+            p.offset_linked = true;
+            p.offset_round = true;
+        }),
+        &selected,
+    );
+    let offset = sketch
+        .constraints
+        .iter()
+        .position(|c| matches!(c.kind, ConstraintKind::Offset { .. }))
+        .expect("one offset dimension");
+    let ConstraintKind::Offset { pairs, .. } = &sketch.constraints[offset].kind else {
+        unreachable!()
+    };
+    assert_eq!(pairs.len(), 4);
+    let kind = crate::sketch::with_dimension_value(&sketch.constraints[offset].kind, 2.5);
+    sketch.constraints[offset].kind = kind;
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(
+        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        "{outcome:?}"
+    );
+    // Every copy stands 2.5 out, the corners round with radius 2.5.
+    let lowest = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.y),
+            _ => None,
+        })
+        .fold(f32::MAX, f32::min);
+    assert!((lowest + 2.5).abs() < 1e-3, "{lowest}");
+    for g in &sketch.geometry {
+        if let GeometryElement::Arc(a) = g {
+            let c = sketch.point_position(a.center).unwrap();
+            let s = sketch.point_position(a.start).unwrap();
+            assert!(((s - c).to_glam().length() - 2.5).abs() < 1e-3);
+        }
+    }
+}
+
+#[test]
+fn an_ellipse_offsets_as_a_closed_spline() {
+    let mut sketch = Sketch::new("t");
+    let c = pt(&mut sketch, 0.0, 0.0);
+    let ellipse = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
+        c,
+        Vec2D::new(10.0, 0.0),
+        0.5,
+    )));
+    let selected: HashSet<Uuid> = [ellipse].into_iter().collect();
+    let mut state = ToolState::Idle;
+    let fx = click_sel(
+        &mut state,
+        "sketch.offset",
+        &mut sketch,
+        Vec2D::new(0.0, 9.0),
+        0.5,
+        &offset_params(|p| p.offset_distance = 2.0),
+        &selected,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let spline = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.id),
+            _ => None,
+        })
+        .expect("a spline copy");
+    let samples = crate::measure::curve_samples(&sketch, spline).unwrap();
+    // Outside the ellipse, about 2 from it: at its ends 12 out along x and
+    // 7 up at its top.
+    let max_x = samples.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+    let max_y = samples.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    assert!((max_x - 12.0).abs() < 0.1, "{max_x}");
+    assert!((max_y - 7.0).abs() < 0.1, "{max_y}");
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 2, "the copy is closed");
+}
