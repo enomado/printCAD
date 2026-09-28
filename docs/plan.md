@@ -58,6 +58,10 @@ rebuilds, workbench packages, releases for Linux, Windows and macOS, and
 the command API: typed commands registered by the application and the
 workbenches, run from Lua scripts.
 
+Next: [What is left to build](FEATURE_GAPS.md), the Sketcher, Part Design
+and Assembly checked feature by feature, with what matters most to
+printing first.
+
 ### Command API
 
 Scripts and AI agents both need to drive the app. They share one layer,

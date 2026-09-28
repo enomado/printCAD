@@ -74,4 +74,5 @@ What is built, by area. The plan for what comes next is in
 
 ## Not built yet
 
-Nothing on the roadmap is waiting; see [docs/plan.md](docs/plan.md).
+What each workbench still lacks, feature by feature and ranked for
+printing, is in [docs/FEATURE_GAPS.md](docs/FEATURE_GAPS.md).
