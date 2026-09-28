@@ -3724,3 +3724,318 @@ fn an_ellipse_offsets_as_a_closed_spline() {
     let wires = crate::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 2, "the copy is closed");
 }
+
+/// An ellipse of radii 10 and 5 about the origin, and a vertical line
+/// through x = 4 across it.
+fn ellipse_and_line(sketch: &mut Sketch, arc: bool) -> (Uuid, Uuid) {
+    let c = pt(sketch, 0.0, 0.0);
+    let ellipse = if arc {
+        // The upper half, from (10, 0) round to (-10, 0).
+        let s = pt(sketch, 10.0, 0.0);
+        let e = pt(sketch, -10.0, 0.0);
+        crate::sketch::Ellipse::new_arc(c, Vec2D::new(10.0, 0.0), 0.5, s, e)
+    } else {
+        crate::sketch::Ellipse::new(c, Vec2D::new(10.0, 0.0), 0.5)
+    };
+    let ellipse = sketch.add_geometry(GeometryElement::Ellipse(ellipse));
+    let a = pt(sketch, 4.0, -8.0);
+    let b = pt(sketch, 4.0, 8.0);
+    let line = line_between(sketch, a, b);
+    (ellipse, line)
+}
+
+fn ellipse_arc_span(sketch: &Sketch, id: Uuid) -> Option<(f32, f32)> {
+    match sketch.get_geometry(id)? {
+        GeometryElement::Ellipse(e) => e.param_span(sketch),
+        _ => None,
+    }
+}
+
+#[test]
+fn trimming_a_whole_ellipse_leaves_an_arc_of_it() {
+    let mut sketch = Sketch::new("t");
+    let (ellipse, _) = ellipse_and_line(&mut sketch, false);
+    let mut state = ToolState::Idle;
+    // Click its right end, past the line: that part goes.
+    let fx = handle_click(
+        &mut state,
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::new(10.0, 0.0),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let (t0, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
+    let x_at = |t: f32| 10.0 * t.cos();
+    // What stays runs from the line's top crossing round the left.
+    assert!((x_at(t0) - 4.0).abs() < 1e-3 && (x_at(t1) - 4.0).abs() < 1e-3);
+    let mid = (t0 + t1) * 0.5;
+    assert!(x_at(mid) < -9.0, "the left side stays");
+}
+
+#[test]
+fn trimming_an_arc_of_an_ellipse_shortens_it() {
+    let mut sketch = Sketch::new("t");
+    let (ellipse, _) = ellipse_and_line(&mut sketch, true);
+    let mut state = ToolState::Idle;
+    let near_right = Vec2D::new(10.0 * 0.3f32.cos(), 5.0 * 0.3f32.sin());
+    let fx = handle_click(&mut state, "sketch.trim", &mut sketch, near_right, 0.5);
+    assert!(fx.changed, "{:?}", fx.log);
+    let (t0, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
+    assert!((10.0 * t0.cos() - 4.0).abs() < 1e-3, "starts at the line");
+    assert!(
+        (t1 - std::f32::consts::PI).abs() < 1e-3,
+        "still ends at (-10, 0)"
+    );
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(
+        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn splitting_an_arc_of_an_ellipse_makes_two_that_meet() {
+    let mut sketch = Sketch::new("t");
+    let (ellipse, _) = ellipse_and_line(&mut sketch, true);
+    let mut state = ToolState::Idle;
+    let top = Vec2D::new(0.0, 5.0);
+    let fx = handle_click(&mut state, "sketch.split", &mut sketch, top, 0.5);
+    assert!(fx.changed, "{:?}", fx.log);
+    let arcs: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Ellipse(e) => Some(e.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 2);
+    let first = arcs.iter().find(|e| e.id == ellipse).unwrap();
+    let second = arcs.iter().find(|e| e.id != ellipse).unwrap();
+    assert_eq!(first.arc.unwrap().end, second.arc.unwrap().start);
+}
+
+#[test]
+fn extending_an_arc_of_an_ellipse_to_a_line() {
+    let mut sketch = Sketch::new("t");
+    let c = pt(&mut sketch, 0.0, 0.0);
+    // A quarter from (10, 0) to the top (0, 5).
+    let s = pt(&mut sketch, 10.0, 0.0);
+    let e = pt(&mut sketch, 0.0, 5.0);
+    let ellipse = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new_arc(
+        c,
+        Vec2D::new(10.0, 0.0),
+        0.5,
+        s,
+        e,
+    )));
+    let a = pt(&mut sketch, -6.0, -8.0);
+    let b = pt(&mut sketch, -6.0, 8.0);
+    line_between(&mut sketch, a, b);
+    let mut state = ToolState::Idle;
+    let near_end = Vec2D::new(10.0 * 1.4f32.cos(), 5.0 * 1.4f32.sin());
+    let fx = handle_click(&mut state, "sketch.extend", &mut sketch, near_end, 0.5);
+    assert!(fx.changed, "{:?}", fx.log);
+    let end = sketch.point_position(e).unwrap();
+    assert!((end.x + 6.0).abs() < 1e-3 && end.y > 0.0, "{end:?}");
+    let (_, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
+    assert!(t1 > std::f32::consts::FRAC_PI_2);
+}
+
+/// An open cubic spline from (0, 0) to (30, 0) and a vertical line through
+/// x = 15 across it.
+fn spline_and_line(sketch: &mut Sketch, periodic: bool) -> (Uuid, Vec<Uuid>) {
+    let pts: Vec<Uuid> = [
+        (0.0, 0.0),
+        (8.0, 10.0),
+        (15.0, -6.0),
+        (22.0, 10.0),
+        (30.0, 0.0),
+    ]
+    .iter()
+    .map(|&(x, y)| pt(sketch, x, y))
+    .collect();
+    let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+        pts.clone(),
+        periodic,
+    )));
+    let a = pt(sketch, 15.0, -20.0);
+    let b = pt(sketch, 15.0, 20.0);
+    line_between(sketch, a, b);
+    (spline, pts)
+}
+
+fn spline_samples(sketch: &Sketch, id: Uuid) -> Vec<glam::Vec2> {
+    crate::measure::curve_samples(sketch, id).unwrap()
+}
+
+#[test]
+fn trimming_a_spline_keeps_the_rest_of_the_same_curve() {
+    let mut sketch = Sketch::new("t");
+    let (spline, pts) = spline_and_line(&mut sketch, false);
+    let before = spline_samples(&sketch, spline);
+    let mut state = ToolState::Idle;
+    // Click near its far end, right of the line.
+    let near_end = before[before.len() - 8];
+    let fx = handle_click(
+        &mut state,
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::from_glam(near_end),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let after = spline_samples(&sketch, spline);
+    // It still starts where it did and now stops on the line.
+    let GeometryElement::BSpline(b) = sketch.get_geometry(spline).unwrap() else {
+        panic!()
+    };
+    assert_eq!(b.control_points[0], pts[0]);
+    assert!((after.last().unwrap().x - 15.0).abs() < 1e-3);
+    // Every point of what stays lies on the original curve.
+    for p in &after {
+        let d = before
+            .windows(2)
+            .map(|w| {
+                let d = w[1] - w[0];
+                let t = ((*p - w[0]).dot(d) / d.length_squared().max(1e-12)).clamp(0.0, 1.0);
+                (*p - (w[0] + d * t)).length()
+            })
+            .fold(f32::MAX, f32::min);
+        assert!(d < 0.05, "{p:?} off the curve by {d}");
+    }
+    assert!(
+        sketch.get_geometry(*pts.last().unwrap()).is_none(),
+        "the cut-off end goes"
+    );
+}
+
+#[test]
+fn splitting_a_spline_makes_two_meeting_at_one_point() {
+    let mut sketch = Sketch::new("t");
+    let (spline, pts) = spline_and_line(&mut sketch, false);
+    let before = spline_samples(&sketch, spline);
+    let mut state = ToolState::Idle;
+    let at = before[before.len() / 3];
+    let fx = handle_click(
+        &mut state,
+        "sketch.split",
+        &mut sketch,
+        Vec2D::from_glam(at),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let splines: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(splines.len(), 2);
+    let first = splines.iter().find(|b| b.id == spline).unwrap();
+    let second = splines.iter().find(|b| b.id != spline).unwrap();
+    assert_eq!(first.control_points[0], pts[0]);
+    assert_eq!(second.control_points.last(), pts.last());
+    assert_eq!(first.control_points.last(), second.control_points.first());
+    let joint = sketch
+        .point_position(*first.control_points.last().unwrap())
+        .unwrap()
+        .to_glam();
+    assert!((joint - at).length() < 0.1, "{joint:?} vs {at:?}");
+}
+
+#[test]
+fn trimming_a_closed_spline_opens_it() {
+    let mut sketch = Sketch::new("t");
+    let (spline, _) = spline_and_line(&mut sketch, true);
+    let before = spline_samples(&sketch, spline);
+    let right = before
+        .iter()
+        .copied()
+        .max_by(|a, b| a.x.total_cmp(&b.x))
+        .unwrap();
+    let mut state = ToolState::Idle;
+    let fx = handle_click(
+        &mut state,
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::from_glam(right),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let GeometryElement::BSpline(b) = sketch.get_geometry(spline).unwrap() else {
+        panic!()
+    };
+    assert!(!b.periodic);
+    let after = spline_samples(&sketch, spline);
+    assert!(
+        after.iter().all(|p| p.x < 15.0 + 1e-3),
+        "the right side is gone"
+    );
+    for end in [after[0], *after.last().unwrap()] {
+        assert!((end.x - 15.0).abs() < 1e-3, "{end:?}");
+    }
+}
+
+#[test]
+fn a_line_trims_back_to_an_ellipse_it_crosses() {
+    let mut sketch = Sketch::new("t");
+    let (_, line) = ellipse_and_line(&mut sketch, false);
+    let mut state = ToolState::Idle;
+    // The line's top, outside the ellipse, goes.
+    let fx = handle_click(
+        &mut state,
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::new(4.0, 7.0),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let GeometryElement::Line(l) = sketch.get_geometry(line).unwrap() else {
+        panic!()
+    };
+    let end = sketch.point_position(l.end).unwrap();
+    let y = 5.0 * (1.0f32 - 0.16).sqrt();
+    assert!((end.y - y).abs() < 1e-3, "{end:?}");
+}
+
+#[test]
+fn trimming_a_parabola_moves_its_end_to_the_crossing() {
+    let mut sketch = Sketch::new("t");
+    let v = pt(&mut sketch, 0.0, 0.0);
+    let s = pt(&mut sketch, 9.0, -6.0);
+    let e = pt(&mut sketch, 9.0, 6.0);
+    let parabola = sketch.add_geometry(GeometryElement::Conic(crate::sketch::Conic::new(
+        crate::sketch::ConicKind::Parabola,
+        v,
+        Vec2D::new(1.0, 0.0),
+        0.0,
+        s,
+        e,
+    )));
+    let a = pt(&mut sketch, 4.0, -10.0);
+    let b = pt(&mut sketch, 4.0, 10.0);
+    line_between(&mut sketch, a, b);
+    let mut state = ToolState::Idle;
+    let fx = handle_click(
+        &mut state,
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::new(6.25, 5.0),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let GeometryElement::Conic(k) = sketch.get_geometry(parabola).unwrap() else {
+        panic!()
+    };
+    assert_eq!(k.start, s);
+    let end = sketch.point_position(k.end).unwrap();
+    assert!(
+        (end.x - 4.0).abs() < 1e-3 && (end.y - 4.0).abs() < 1e-3,
+        "{end:?}"
+    );
+    assert!(sketch.get_geometry(e).is_none());
+}

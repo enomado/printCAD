@@ -147,6 +147,90 @@ impl Basis {
     }
 }
 
+/// A part of a spline: the control points and clamped knots over `[0, 1]`
+/// of an open spline of the same degree that is exactly the curve from one
+/// parameter to another.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Piece {
+    pub control: Vec<[f64; 2]>,
+    pub knots: Vec<f64>,
+}
+
+impl Basis {
+    /// The spline over `control` from `t0` to `t1` (`t0 < t1`) as an open
+    /// spline of its own. A closed spline's part may run on past the end
+    /// of its domain, up to a whole turn from `t0`. `None` when the
+    /// parameters fall outside what the curve covers.
+    pub fn piece(&self, control: &[[f64; 2]], t0: f64, t1: f64) -> Option<Piece> {
+        let p = self.degree;
+        let (d0, d1) = self.domain();
+        // A closed spline laid out twice round as an open one, so a part
+        // can cross where it closes.
+        let (mut knots, mut ctrl) = if self.periodic {
+            let n = self.points;
+            let knots: Vec<f64> = (0..2 * n + 2 * p + 1).map(|i| i as f64).collect();
+            let ctrl: Vec<[f64; 2]> = (0..2 * n + p).map(|i| control[i % n]).collect();
+            (knots, ctrl)
+        } else {
+            (self.knots.clone(), control.to_vec())
+        };
+        let end = if self.periodic { d1 + (d1 - d0) } else { d1 };
+        let slack = 1e-9 * (d1 - d0);
+        if t0 < d0 - slack || t1 > end + slack || t1 <= t0 {
+            return None;
+        }
+        let (t0, t1) = (t0.max(d0), t1.min(end));
+        for u in [t0, t1] {
+            while knots.iter().filter(|k| (**k - u).abs() < 1e-12).count() < p {
+                insert_knot(&mut knots, &mut ctrl, p, u);
+            }
+        }
+        let last_a = knots.iter().rposition(|k| (*k - t0).abs() < 1e-12)?;
+        let first_b = knots.iter().position(|k| (*k - t1).abs() < 1e-12)?;
+        let m = (last_a + 1).checked_sub(p)?;
+        if m == 0 || first_b <= m {
+            return None;
+        }
+        let control = ctrl[m - 1..first_b].to_vec();
+        let scale = |k: f64| (k - t0) / (t1 - t0);
+        let mut out = vec![0.0; p + 1];
+        out.extend(knots[last_a + 1..first_b].iter().map(|k| scale(*k)));
+        out.extend(std::iter::repeat_n(1.0, p + 1));
+        (out.len() == control.len() + p + 1).then_some(Piece {
+            control,
+            knots: out,
+        })
+    }
+}
+
+/// One more knot at `u`, the curve unchanged (Boehm's insertion).
+fn insert_knot(knots: &mut Vec<f64>, ctrl: &mut Vec<[f64; 2]>, p: usize, u: f64) {
+    let n = ctrl.len();
+    let mut k = p;
+    while k + 1 < n && knots[k + 1] <= u {
+        k += 1;
+    }
+    let mut out = Vec::with_capacity(n + 1);
+    for i in 0..=n {
+        if i + p <= k {
+            out.push(ctrl[i]);
+        } else if i > k {
+            out.push(ctrl[i - 1]);
+        } else {
+            let span = knots[i + p] - knots[i];
+            let a = if span.abs() < 1e-300 {
+                0.0
+            } else {
+                (u - knots[i]) / span
+            };
+            let (q, r) = (ctrl[i - 1], ctrl[i]);
+            out.push([q[0] + (r[0] - q[0]) * a, q[1] + (r[1] - q[1]) * a]);
+        }
+    }
+    knots.insert(k + 1, u);
+    *ctrl = out;
+}
+
 /// A clamped knot vector with evenly spaced interior knots over `[0, 1]`.
 pub fn clamped_uniform_knots(degree: usize, points: usize) -> Vec<f64> {
     let interior = points.saturating_sub(degree + 1);
@@ -587,6 +671,36 @@ mod tests {
                 .map(|p| dist([f64::from(p.x), f64::from(p.y)], *q))
                 .fold(f64::MAX, f64::min);
             assert!(nearest < 0.05, "{q:?} is {nearest} away");
+        }
+    }
+
+    #[test]
+    fn a_piece_of_a_spline_is_that_part_of_the_curve() {
+        let control = [[0.0, 0.0], [2.0, 5.0], [5.0, -1.0], [8.0, 4.0], [10.0, 0.0]];
+        let open = Basis::new(3, 5, &[], false).unwrap();
+        let closed = Basis::new(3, 5, &[], true).unwrap();
+        for (basis, t0, t1) in [(&open, 0.2, 0.7), (&open, 0.0, 0.4), (&open, 0.5, 1.0)] {
+            let piece = basis.piece(&control, t0, t1).unwrap();
+            let part = Basis::new(3, piece.control.len(), &piece.knots, false).unwrap();
+            for i in 0..=10 {
+                let s = i as f64 / 10.0;
+                let [x, y] = part.eval(&piece.control, s);
+                let [ex, ey] = basis.eval(&control, t0 + (t1 - t0) * s);
+                assert!((x - ex).hypot(y - ey) < 1e-9, "{t0}..{t1} at {s}");
+            }
+        }
+        // Across where a closed spline closes.
+        let (d0, d1) = closed.domain();
+        let (t0, t1) = (d1 - 1.5, d1 + 1.0);
+        let piece = closed.piece(&control, t0, t1).unwrap();
+        let part = Basis::new(3, piece.control.len(), &piece.knots, false).unwrap();
+        for i in 0..=10 {
+            let s = i as f64 / 10.0;
+            let t = t0 + (t1 - t0) * s;
+            let t = if t > d1 { t - (d1 - d0) } else { t };
+            let [x, y] = part.eval(&piece.control, s);
+            let [ex, ey] = closed.eval(&control, t);
+            assert!((x - ex).hypot(y - ey) < 1e-9, "at {s}");
         }
     }
 }

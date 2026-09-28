@@ -5,6 +5,7 @@
 mod commands;
 pub mod conic;
 mod constrain;
+mod curves;
 mod dxf;
 mod external;
 mod external_ref;

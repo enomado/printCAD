@@ -43,7 +43,7 @@ and noted on its item, and the rest of the item is built around it.
   sharp joins only. Missing rounded joins at convex corners, ellipses and
   B-splines, both sides, deleting the original, and an offset dimension that
   keeps the copy parametric.
-- [ ] **Trim, extend and split on every curve** (partial, M). Trim and
+- [x] **Trim, extend and split on every curve** (partial, M). Trim and
   extend skip ellipses, arcs of ellipse, conics and B-splines; split skips
   ellipses and B-splines. Needs their intersections in `geom2d.rs`.
 - [ ] **Linked copies** (missing, M). Copies and arrays keep their own
