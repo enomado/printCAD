@@ -320,6 +320,7 @@ pub fn execute_named(
                 neutral_normal,
                 pull_dir,
                 faces,
+                face_names,
             } => {
                 let solid = base.ok_or_else(|| err("draft needs an existing solid".into()))?;
                 ops::dressup::draft(
@@ -329,7 +330,11 @@ pub fn execute_named(
                     *neutral_point,
                     *neutral_normal,
                     *pull_dir,
-                    faces,
+                    &faces
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (*p, face_names.get(i).copied().unwrap_or(0)))
+                        .collect::<Vec<_>>(),
                 )
                 .map_err(&err)?
             }
@@ -342,12 +347,21 @@ pub fn execute_named(
             SolidOp::Thickness {
                 value,
                 open_faces,
+                open_face_names,
                 inward,
                 join,
             } => {
                 let solid = base.ok_or_else(|| err("thickness needs an existing solid".into()))?;
-                ops::dressup::thickness(&mut model, &solid, *value, open_faces, *inward, *join)
-                    .map_err(&err)?
+                ops::dressup::thickness(
+                    &mut model,
+                    &solid,
+                    *value,
+                    open_faces,
+                    open_face_names,
+                    *inward,
+                    *join,
+                )
+                .map_err(&err)?
             }
             SolidOp::Transform {
                 transforms,

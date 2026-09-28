@@ -800,6 +800,7 @@ fn thickness_hollows_the_box() {
                     BooleanOp::NewSolid,
                 ),
                 SolidOp::Thickness {
+                    open_face_names: Vec::new(),
                     value: 1.5,
                     open_faces: vec![[10.0, 10.0, 10.0]],
                     inward: true,
@@ -840,6 +841,7 @@ fn draft_tilts_side_faces() {
                     BooleanOp::NewSolid,
                 ),
                 SolidOp::Draft {
+                    face_names: Vec::new(),
                     angle_deg: -10.0,
                     neutral_point: [0.0, 0.0, 0.0],
                     neutral_normal: [0.0, 0.0, 1.0],
@@ -2257,6 +2259,7 @@ fn a_drafted_solid_measures() {
                     BooleanOp::NewSolid,
                 ),
                 SolidOp::Draft {
+                    face_names: Vec::new(),
                     angle_deg: 1.5,
                     neutral_point: [10.0, 10.0, 0.0],
                     neutral_normal: [0.0, 0.0, -1.0],

@@ -370,10 +370,17 @@ fn face_points(picks: &[FacePick]) -> Vec<[f64; 3]> {
         .collect()
 }
 
+/// The name of each pick, in order.
+fn face_names(picks: &[FacePick]) -> Vec<kernel_api::TopoName> {
+    picks.iter().map(|p| p.name).collect()
+}
+
 fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
     match edges {
         crate::feature::EdgeSel::All => EdgeSelection::All,
-        crate::feature::EdgeSel::Faces(picks) => EdgeSelection::OfFaces(face_points(picks)),
+        crate::feature::EdgeSel::Faces(picks) => {
+            EdgeSelection::OfPickedFaces(picks.iter().map(face_probe).collect())
+        }
         crate::feature::EdgeSel::Edges(picks) => EdgeSelection::Picked(
             picks
                 .iter()
@@ -724,6 +731,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     neutral_normal,
                     pull_dir: pull,
                     faces: face_points(faces),
+                    face_names: face_names(faces),
                 });
             }
             PartFeature::Thickness {
@@ -738,6 +746,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 plan.ops.push(SolidOp::Thickness {
                     value: *value as f64,
                     open_faces: face_points(faces),
+                    open_face_names: face_names(faces),
                     inward: *inward,
                     join: *join,
                 });

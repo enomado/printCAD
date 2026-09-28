@@ -58,6 +58,19 @@ fn nearest_with_distance(
         .ok_or_else(|| format!("no {want:?} found near the selection point"))
 }
 
+/// The face of `root` named `name`, else the one nearest `point`.
+fn face_named_or_nearest(
+    model: &mut Model,
+    root: &Shape,
+    name: Option<kernel_api::TopoName>,
+    point: [f64; 3],
+) -> Result<Shape, String> {
+    match name.and_then(|n| crate::naming::find_face(model, root, n, point3(point))) {
+        Some(face) => Ok(face),
+        None => nearest_of(model, root, ShapeType::Face, point3(point)),
+    }
+}
+
 /// How far from an edge a picked point may lie and still name it: a tenth
 /// of the solid's diagonal, room for the edge to move with an upstream
 /// edit while a point in the middle of a face names nothing.
@@ -141,11 +154,18 @@ fn selection_probes(
                 .map(Probe::at)
                 .collect()
         }
-        EdgeSelection::OfFaces(points) => {
+        EdgeSelection::OfFaces(_) | EdgeSelection::OfPickedFaces(_) => {
+            let picks: Vec<([f64; 3], Option<kernel_api::TopoName>)> = match edges {
+                EdgeSelection::OfPickedFaces(probes) => {
+                    probes.iter().map(|p| (p.point, Some(p.name))).collect()
+                }
+                EdgeSelection::OfFaces(points) => points.iter().map(|p| (*p, None)).collect(),
+                _ => Vec::new(),
+            };
             let mut probes = Vec::new();
             let mut seen: Vec<Shape> = Vec::new();
-            for p in points {
-                let face = nearest_of(model, solid, ShapeType::Face, point3(*p))?;
+            for (p, name) in picks {
+                let face = face_named_or_nearest(model, solid, name, p)?;
                 let face_edges = explore_unique(model, &face, ShapeType::Edge)
                     .map_err(|e| format!("exploring face edges failed: {e}"))?;
                 for edge in face_edges {
@@ -428,9 +448,9 @@ pub fn draft(
     neutral_point: [f64; 3],
     neutral_normal: [f64; 3],
     pull_dir: Option<[f64; 3]>,
-    face_points: &[[f64; 3]],
+    faces: &[([f64; 3], kernel_api::TopoName)],
 ) -> Result<Shape, String> {
-    if face_points.is_empty() {
+    if faces.is_empty() {
         return Err("draft has no selected faces".into());
     }
     let normal = Direction::new(
@@ -444,14 +464,14 @@ pub fn draft(
             .map_err(|_| "draft pull direction is (near) zero".to_string())?,
         None => normal,
     };
-    let mut faces = Vec::with_capacity(face_points.len());
-    for p in face_points {
-        faces.push(nearest_of(model, solid, ShapeType::Face, point3(*p))?);
+    let mut found = Vec::with_capacity(faces.len());
+    for (point, name) in faces {
+        found.push(face_named_or_nearest(model, solid, Some(*name), *point)?);
     }
     apply_draft(
         model,
         solid,
-        &faces,
+        &found,
         neutral,
         pull,
         angle_deg.to_radians(),
@@ -466,12 +486,18 @@ pub fn thickness(
     solid: &Shape,
     value: f64,
     open_face_points: &[[f64; 3]],
+    open_face_names: &[kernel_api::TopoName],
     inward: bool,
     join: ThicknessJoin,
 ) -> Result<Shape, String> {
     let mut removed = Vec::with_capacity(open_face_points.len());
-    for p in open_face_points {
-        removed.push(nearest_of(model, solid, ShapeType::Face, point3(*p))?);
+    for (i, p) in open_face_points.iter().enumerate() {
+        removed.push(face_named_or_nearest(
+            model,
+            solid,
+            open_face_names.get(i).copied(),
+            *p,
+        )?);
     }
     // Positive thickness hollows inward; negative builds the walls outward
     // around the solid.

@@ -997,6 +997,9 @@ impl Default for Placement {
 pub enum EdgeSelection {
     All,
     OfFaces(Vec<[f64; 3]>),
+    /// The edges bordering the picked faces, each found by its name when
+    /// it has one.
+    OfPickedFaces(Vec<FaceProbe>),
     Near(Vec<[f64; 3]>),
     /// Edges picked one by one: each the nearest edge to its point that
     /// runs along its direction there.
@@ -1126,6 +1129,10 @@ pub enum SolidOp {
         neutral_normal: [f64; 3],
         pull_dir: Option<[f64; 3]>,
         faces: Vec<[f64; 3]>,
+        /// The name of each face, one per point, found by name first; empty
+        /// or zero where a face has none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        face_names: Vec<TopoName>,
     },
     /// Merge adjacent faces of the solid that lie on one plane — the split
     /// a fuse or cut leaves where two pieces meet flush.
@@ -1134,6 +1141,10 @@ pub enum SolidOp {
     Thickness {
         value: f64,
         open_faces: Vec<[f64; 3]>,
+        /// The name of each open face, one per point; empty or zero where
+        /// a face has none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        open_face_names: Vec<TopoName>,
         inward: bool,
         /// How the walls meet where the solid's faces meet.
         #[serde(default)]

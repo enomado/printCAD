@@ -172,3 +172,29 @@ fn a_face_probe_finds_its_face_by_name() {
     };
     assert!((point[2] - 30.0).abs() < 1e-6 && (normal[2] - 1.0).abs() < 1e-9);
 }
+
+/// A shell opened at the block's top stays open at the top when the block
+/// grows: the open face is found by its name.
+#[test]
+fn a_thickness_opens_its_face_by_name() {
+    let first = build(&[block(10.0)], &[]);
+    let top = face_name(&first.mesh, |p| (p[2] - 10.0).abs() < 1e-3);
+    let shell = |name: TopoName| SolidOp::Thickness {
+        value: 1.0,
+        open_faces: vec![[10.0, 10.0, 10.0]],
+        open_face_names: vec![name],
+        inward: true,
+        join: kernel_api::ThicknessJoin::Intersection,
+    };
+    let volume = |ops: &[SolidOp]| {
+        OgeomKernel::new()
+            .physical_properties(&build(ops, &[]).brep_blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap()
+    };
+    // Open at the top: the walls and the floor, 1 mm thick.
+    let open_top = |h: f64| 400.0 * h - 18.0 * 18.0 * (h - 1.0);
+    assert!((volume(&[block(10.0), shell(top)]) - open_top(10.0)).abs() < 0.5);
+    assert!((volume(&[block(30.0), shell(top)]) - open_top(30.0)).abs() < 0.5);
+}
