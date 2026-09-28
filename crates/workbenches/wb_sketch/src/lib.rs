@@ -20,6 +20,7 @@ mod panel;
 mod params;
 pub mod profile;
 pub mod render;
+mod repair;
 mod selection;
 pub mod sketch;
 pub mod snap;
@@ -2505,6 +2506,11 @@ impl Workbench for SketchWorkbench {
             "sketch-validate",
         ));
         context.register_tool(manage(
+            "sketch.repair",
+            "Repair sketch: join near ends, drop empty and doubled curves",
+            "sketch-validate",
+        ));
+        context.register_tool(manage(
             "sketch.wall_thickness",
             "Check wall thickness",
             "thickness",
@@ -3035,6 +3041,7 @@ impl Workbench for SketchWorkbench {
                     return InputResult::consumed();
                 }
                 "sketch.validate" => return self.validate(ctx),
+                "sketch.repair" => return self.repair(ctx),
                 "sketch.wall_thickness" => return self.check_walls(ctx),
                 "sketch.select_malformed" => return self.select_malformed(ctx),
                 "sketch.select_unconstrained" => return self.select_free(ctx, true),
@@ -4150,6 +4157,35 @@ impl SketchWorkbench {
 
     /// Stray points, constraints that reference missing geometry, and
     /// whether the sketch closes into profiles: reported and selected.
+    /// Repair the sketch being edited, ends within the snap reach joined,
+    /// as `sketch.repair` does.
+    fn repair(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let Some(id) = self.active_sketch_id else {
+            return InputResult::ignored();
+        };
+        let tolerance = Self::snap_tolerance(ctx, &feature.plane) * 0.5;
+        let done = repair::repair(&mut feature.sketch, tolerance);
+        if !done.is_empty() {
+            self.selected.clear();
+            self.selected_constraints.clear();
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+            ctx.record(
+                "sketch.repair",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "tolerance": tolerance,
+                })),
+                serde_json::json!(done.describe()),
+            );
+        }
+        ctx.log_info(format!("Sketch repair: {}", done.describe()));
+        InputResult::consumed()
+    }
+
     fn validate(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();

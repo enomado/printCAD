@@ -220,6 +220,35 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(sketch(
         CommandSpec::new(
+            "sketch.solver_settings",
+            "How far the solver goes on this sketch",
+        )
+        .optional(
+            "iterations",
+            ParamKind::Number,
+            "The most steps it takes (100 when never set)",
+        )
+        .optional(
+            "tolerance",
+            ParamKind::Number,
+            "How small what is left must be, against the sketch's size (1e-9 when never set)",
+        ),
+    ));
+    context.register_command(sketch(
+        CommandSpec::new(
+            "sketch.repair",
+            "Join ends of curves that nearly meet, and remove curves of no size, doubled \
+             curves and constraints left naming nothing",
+        )
+        .optional(
+            "tolerance",
+            ParamKind::Number,
+            "How near two ends must be to join, mm (0.01 when left out)",
+        )
+        .returns("what was repaired, in words"),
+    ));
+    context.register_command(sketch(
+        CommandSpec::new(
             "sketch.restore",
             "Put the sketch back as `data` holds it: an editing session cancelled",
         )
@@ -496,6 +525,32 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "sketch.merge" => {
             let with = feature_ids(args.get("with"), "with")?;
             return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.solver_settings" => {
+            if let Some(n) = a.opt_number("iterations")? {
+                if n < 1.0 {
+                    return Err(CommandError::bad("iterations", "must be at least 1"));
+                }
+                feature.sketch.solver.max_iterations = n as u32;
+            }
+            if let Some(t) = a.opt_number("tolerance")? {
+                if !(t > 0.0 && t < 1.0) {
+                    return Err(CommandError::bad(
+                        "tolerance",
+                        "must be above 0 and below 1",
+                    ));
+                }
+                feature.sketch.solver.tolerance = t;
+            }
+            crate::solver::solve(&mut feature.sketch);
+            return save(ctx, sketch_id, feature, Value::Null);
+        }
+        "sketch.repair" => {
+            let tolerance = a.opt_number("tolerance")?.unwrap_or(0.01) as f32;
+            let done = crate::repair::repair(&mut feature.sketch, tolerance);
+            crate::solver::solve(&mut feature.sketch);
+            let words = done.describe();
+            return save(ctx, sketch_id, feature, Value::Null).map(|_| json!(words));
         }
         "sketch.restore" => {
             let data = args

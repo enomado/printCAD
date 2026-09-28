@@ -73,6 +73,34 @@ pub struct Sketch {
     /// and brought up to the solid again when the sketch is edited.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub external: std::collections::HashMap<Uuid, ExternalSource>,
+    /// How the solver works on this sketch.
+    #[serde(default, skip_serializing_if = "SolverSettings::is_default")]
+    pub solver: SolverSettings,
+}
+
+/// How far the solver goes on a sketch: how many steps it takes at most,
+/// and how small what is left must be to count as solved (against the
+/// sketch's size).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SolverSettings {
+    pub max_iterations: u32,
+    pub tolerance: f64,
+}
+
+impl Default for SolverSettings {
+    fn default() -> Self {
+        Self {
+            max_iterations: 100,
+            tolerance: 1e-9,
+        }
+    }
+}
+
+impl SolverSettings {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Where an external element came from, in its body's own frame: a solid
@@ -100,6 +128,7 @@ impl Sketch {
             is_fully_constrained: false,
             construction: std::collections::HashSet::new(),
             external: std::collections::HashMap::new(),
+            solver: SolverSettings::default(),
         }
     }
 

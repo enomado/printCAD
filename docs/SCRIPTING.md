@@ -591,6 +591,18 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `items` (list): The elements to drag
 - `by` (list): The step, {x, y}
 
+`pc.sketch.solver_settings`: How far the solver goes on this sketch.
+
+- `iterations` (number, optional): The most steps it takes (100 when never set)
+- `tolerance` (number, optional): How small what is left must be, against the sketch's size (1e-9 when never set)
+- `sketch` (id): The sketch to draw in
+
+`pc.sketch.repair`: Join ends of curves that nearly meet, and remove curves of no size, doubled curves and constraints left naming nothing.
+
+- `tolerance` (number, optional): How near two ends must be to join, mm (0.01 when left out)
+- `sketch` (id): The sketch to draw in
+- Returns what was repaired, in words
+
 `pc.sketch.restore`: Put the sketch back as `data` holds it: an editing session cancelled.
 
 - `data` (any): The sketch as doc.feature lists its data

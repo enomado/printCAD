@@ -96,13 +96,13 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Solver and selection
 
-- [ ] **Validate that repairs** (partial, M). It reports and selects
+- [x] **Validate that repairs** (partial, M). It reports and selects
   stray points, malformed constraints and open or branching profiles;
   missing joining endpoints within a tolerance, removing duplicate and
   zero-length geometry, and fixing degenerate arcs.
 - [x] **From elements to their constraints and back** (missing, S). The
   main way to untangle a conflicting sketch.
-- [ ] **Solver settings** (missing, M). Iterations, tolerance, output for a
+- [x] **Solver settings** (missing, M). Iterations, tolerance, output for a
   hard sketch.
 
 ### B-splines

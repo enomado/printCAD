@@ -15,8 +15,6 @@ use crate::sketch::{
     Y_AXIS_ID, constraint_refs,
 };
 
-/// Maximum number of outer (Jacobian) iterations.
-const MAX_ITERATIONS: usize = 100;
 /// Maximum damping retries per outer iteration before declaring a stall.
 const MAX_INNER_RETRIES: usize = 25;
 /// Initial Levenberg-Marquardt damping factor.
@@ -96,9 +94,16 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     let mut cost = sq_norm(&r);
     let mut lambda = LAMBDA_INIT;
     let mut iterations = 0;
-    let mut converged = inf_norm(&r) < CONVERGENCE_TOL * var_scale(&x);
+    let settings = sketch.solver;
+    let tolerance = if settings.tolerance > 0.0 {
+        settings.tolerance
+    } else {
+        CONVERGENCE_TOL
+    };
+    let max_iterations = (settings.max_iterations as usize).max(1);
+    let mut converged = inf_norm(&r) < tolerance * var_scale(&x);
 
-    while !converged && iterations < MAX_ITERATIONS {
+    while !converged && iterations < max_iterations {
         iterations += 1;
 
         let jac = jacobian(&sys, &x);
@@ -145,7 +150,7 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
             lambda = (lambda * 10.0).min(LAMBDA_MAX);
         }
 
-        if inf_norm(&r) < CONVERGENCE_TOL * var_scale(&x) {
+        if inf_norm(&r) < tolerance * var_scale(&x) {
             converged = true;
             break;
         }
@@ -3657,6 +3662,37 @@ mod curve_constraints {
             .unwrap();
         let along = (samples[i + 1] - samples[i.saturating_sub(1)]).normalize();
         assert!(along.dot(dir).abs() < 0.02, "square: {}", along.dot(dir));
+    }
+
+    #[test]
+    fn the_solver_goes_as_far_as_the_sketch_lets_it() {
+        let build = || {
+            let mut sketch = Sketch::new("t");
+            let a = point(&mut sketch, 0.0, 0.0);
+            let b = point(&mut sketch, 1.0, 0.5);
+            fix(&mut sketch, a);
+            sketch.add_constraint(ConstraintKind::Distance {
+                point1: a,
+                point2: b,
+                distance: 500.0,
+            });
+            sketch
+        };
+        let mut short = build();
+        short.solver.max_iterations = 1;
+        assert!(matches!(
+            solve(&mut short),
+            SolveOutcome::NotConverged { .. }
+        ));
+        let mut full = build();
+        assert!(matches!(solve(&mut full), SolveOutcome::Converged { .. }));
+        // Settings never changed are not written with the sketch.
+        let saved = serde_json::to_value(&full).unwrap();
+        assert!(saved.get("solver").is_none(), "{saved}");
+        short.solver.max_iterations = 50;
+        let saved = serde_json::to_value(&short).unwrap();
+        let back: Sketch = serde_json::from_value(saved).unwrap();
+        assert_eq!(back.solver.max_iterations, 50);
     }
 
     #[test]

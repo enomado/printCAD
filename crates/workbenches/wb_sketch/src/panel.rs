@@ -525,6 +525,57 @@ impl SketchWorkbench {
                 self.solve_from_panel(ctx);
             }
         });
+        // How the last solve went, and how far the solver may go.
+        let last = match self.last_solve {
+            Some(crate::solver::SolveOutcome::Converged { iterations }) => {
+                format!("Last solve: settled in {iterations} step(s)")
+            }
+            Some(crate::solver::SolveOutcome::NotConverged { residual }) => {
+                format!("Last solve: stopped with {residual:.2e} left")
+            }
+            Some(crate::solver::SolveOutcome::NothingToSolve) => {
+                "Last solve: nothing to solve".to_string()
+            }
+            None => String::new(),
+        };
+        if !last.is_empty() {
+            ui.label(RichText::new(last).font(sans(FONT_XS)).color(TEXT3));
+        }
+        let mut iterations = sketch.solver.max_iterations as f32;
+        let mut exponent = -(sketch.solver.tolerance.log10().round() as i32);
+        let mut changed = None;
+        egui::Grid::new("sketch_solver_grid")
+            .num_columns(2)
+            .spacing([SPACE_2, SPACE_1])
+            .show(ui, |ui| {
+                ui_kit::widgets::field_label(ui, "Most steps");
+                if QtyField::new(&mut iterations)
+                    .decimals(0)
+                    .speed(1.0)
+                    .range(1.0..=10_000.0)
+                    .show(ui)
+                {
+                    changed = Some(serde_json::json!({"iterations": iterations.round()}));
+                }
+                ui.end_row();
+                ui_kit::widgets::field_label(ui, "Solved within");
+                let options: Vec<(i32, String)> =
+                    (4..=12).map(|e| (e, format!("1e-{e}"))).collect();
+                let options: Vec<(i32, &str)> =
+                    options.iter().map(|(e, t)| (*e, t.as_str())).collect();
+                if select_field(ui, "sketch_solver_tolerance", &mut exponent, &options, 90.0) {
+                    changed = Some(serde_json::json!({"tolerance": 10f64.powi(-exponent)}));
+                }
+                ui.end_row();
+            });
+        if let (Some(mut args), Some(id)) = (changed, self.active_sketch_id) {
+            args["sketch"] = serde_json::json!(id.0.to_string());
+            let args = crate::commands::args(args);
+            if crate::commands::run("sketch.solver_settings", &args, ctx).is_ok() {
+                ctx.record("sketch.solver_settings", args, serde_json::Value::Null);
+                self.last_diagnosis = None;
+            }
+        }
     }
 
     fn edit_controls_section(&mut self, ui: &mut egui::Ui) {
