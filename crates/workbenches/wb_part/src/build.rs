@@ -663,13 +663,23 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
             } => {
                 let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
                 let profile = profile_of(&sketch_feature).map_err(&fail)?;
-                let (axis_origin, axis_dir) =
-                    axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
                 let extent =
                     helix_extent(*mode, *pitch, *height, *turns, *growth).map_err(&fail)?;
-                plan.ops.push(SolidOp::Sweep {
-                    profile,
-                    kind: SweepKind::Helix {
+                let kind = if *axis == RevolveAxis::SketchNormal {
+                    SweepKind::HelixNormal {
+                        axis_origin: [0.0, 0.0],
+                        pitch: extent.pitch,
+                        height: extent.height,
+                        left_handed: *left_handed,
+                        cone_angle_deg: *cone_angle_deg as f64,
+                        reversed: *reversed,
+                        turns: extent.turns,
+                        growth: extent.growth,
+                    }
+                } else {
+                    let (axis_origin, axis_dir) =
+                        axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
+                    SweepKind::Helix {
                         axis_origin,
                         axis_dir,
                         pitch: extent.pitch,
@@ -679,7 +689,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                         reversed: *reversed,
                         turns: extent.turns,
                         growth: extent.growth,
-                    },
+                    }
+                };
+                plan.ops.push(SolidOp::Sweep {
+                    profile,
+                    kind,
                     op: if *subtractive && *keep_inside {
                         BooleanOp::Common
                     } else {
@@ -1392,6 +1406,13 @@ pub(crate) fn axis_in_sketch(
     let (origin, dir) = match axis {
         RevolveAxis::SketchY => ([0.0, 0.0], [0.0, 1.0]),
         RevolveAxis::SketchX => ([0.0, 0.0], [1.0, 0.0]),
+        RevolveAxis::Base(base) => onto_plane([0.0; 3], base.vector(), "body's axis")?,
+        RevolveAxis::SketchNormal => {
+            return Err(
+                "the sketch's normal stands square to its plane; only a helix turns about it"
+                    .into(),
+            );
+        }
         RevolveAxis::Custom { origin, dir } => (origin.map(f64::from), dir.map(f64::from)),
         RevolveAxis::Edge(edge) => onto_plane(
             edge.point.map(f64::from),
@@ -2020,6 +2041,7 @@ fn pipe_frame(
             }
             PipeFrame::Binormal { direction }
         }
+        PipeOrientation::Fixed => PipeFrame::Fixed,
     })
 }
 

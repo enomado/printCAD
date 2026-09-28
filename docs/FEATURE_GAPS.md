@@ -153,13 +153,16 @@ and noted on its item, and the rest of the item is built around it.
   profile plane.
 - [x] **A taper per side** (partial, S). Needs a second taper in the
   kernel's extrude.
-- [ ] **Revolution and helix about the base axes** (partial, S), and a
-  helix about the sketch normal.
+- [x] **Revolution and helix about the base axes** (partial, S), and a
+  helix about the sketch normal. The helix about the normal is wired and
+  waits on the kernel's screw sweep of a profile off the axis's plane
+  (ogeom-rs#89).
 - [ ] **Loft to a point, faces as sections** (partial, M).
 - [ ] **Pipe along solid or borrowed edges, a face as the profile, a point at
   the end** (partial, M).
-- [ ] **Fixed pipe orientation** (partial, S). The section keeps its
-  orientation in space.
+- [x] **Fixed pipe orientation** (partial, S). The section keeps its
+  orientation in space. Wired; waits on a fixed pipe law in the kernel
+  (ogeom-rs#90).
 - [ ] **Attachable primitives** (partial, M). Placed on a face, datum
   or edge and following it (`DatumAttachment` on `PartFeature::Primitive`).
 - [ ] **Primitive parameters** (partial, S). The ellipsoid's angular

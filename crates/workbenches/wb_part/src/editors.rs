@@ -971,6 +971,7 @@ fn revolve_axis_editor(
     sketch: FeatureId,
     axis: &mut RevolveAxis,
     id_salt: impl egui::AsIdSalt,
+    helix: bool,
 ) -> bool {
     let mut changed = false;
     let references = axis_choices(ctx, body, sketch);
@@ -1002,6 +1003,17 @@ fn revolve_axis_editor(
                         "Custom axis".to_string(),
                     ),
                 ];
+                candidates.extend(
+                    crate::feature::BaseAxis::ALL
+                        .into_iter()
+                        .map(|a| (RevolveAxis::Base(a), a.label().to_string())),
+                );
+                if helix {
+                    candidates.push((
+                        RevolveAxis::SketchNormal,
+                        RevolveAxis::SketchNormal.label().to_string(),
+                    ));
+                }
                 candidates.extend(references.iter().cloned());
                 candidates.push((
                     RevolveAxis::Edge(picked_edge.unwrap_or(EdgePick {
@@ -1015,9 +1027,8 @@ fn revolve_axis_editor(
                     let is_current = match (&*axis, &candidate) {
                         (RevolveAxis::SketchLine(_), RevolveAxis::SketchLine(_))
                         | (RevolveAxis::Datum(_), RevolveAxis::Datum(_))
-                        | (RevolveAxis::Borrowed(_), RevolveAxis::Borrowed(_)) => {
-                            *axis == candidate
-                        }
+                        | (RevolveAxis::Borrowed(_), RevolveAxis::Borrowed(_))
+                        | (RevolveAxis::Base(_), RevolveAxis::Base(_)) => *axis == candidate,
                         _ => std::mem::discriminant(axis) == std::mem::discriminant(&candidate),
                     };
                     if ui.selectable_label(is_current, name).clicked() && !is_current {
@@ -1079,6 +1090,7 @@ fn pipe_orientation_editor(
             y: normal[1],
             z: normal[2],
         },
+        PipeOrientation::Fixed,
     ];
     ui.horizontal(|ui| {
         label_cell(ui, "Orientation");
@@ -1099,7 +1111,7 @@ fn pipe_orientation_editor(
     .on_hover_text(
         "Standard keeps the section from twisting; Frenet turns it with the \
          path's curvature; an auxiliary path turns it to face a second path; \
-         a binormal holds one direction of it fixed",
+         a binormal holds one direction of it fixed; fixed keeps it as drawn",
     );
     match orientation {
         PipeOrientation::Auxiliary { path } => {
@@ -1120,7 +1132,7 @@ fn pipe_orientation_editor(
                 changed |= number_drag(ui, fx, value, label);
             }
         }
-        PipeOrientation::Standard | PipeOrientation::Frenet => {}
+        PipeOrientation::Standard | PipeOrientation::Frenet | PipeOrientation::Fixed => {}
     }
     changed
 }
@@ -1924,7 +1936,15 @@ pub fn feature_editor(
                 }
                 RevolveMode::ToFirst | RevolveMode::ToLast => {}
             }
-            changed |= revolve_axis_editor(ui, ctx, body, *sketch, axis, ("rev_axis", feature_id));
+            changed |= revolve_axis_editor(
+                ui,
+                ctx,
+                body,
+                *sketch,
+                axis,
+                ("rev_axis", feature_id),
+                false,
+            );
             if *mode == RevolveMode::Angle {
                 changed |= check_row(ui, midplane, "Midplane").changed();
                 let mut two_sided = second_angle_deg.is_some();
@@ -2068,8 +2088,15 @@ pub fn feature_editor(
             growth,
             keep_inside,
         } => {
-            changed |=
-                revolve_axis_editor(ui, ctx, body, *sketch, axis, ("helix_axis", feature_id));
+            changed |= revolve_axis_editor(
+                ui,
+                ctx,
+                body,
+                *sketch,
+                axis,
+                ("helix_axis", feature_id),
+                true,
+            );
             ui.horizontal(|ui| {
                 label_cell(ui, "Mode");
                 egui::ComboBox::from_id_salt(("helix_mode", feature_id))

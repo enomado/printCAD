@@ -852,6 +852,22 @@ pub enum SweepKind {
         #[serde(default)]
         growth: Option<f64>,
     },
+    /// Sweep the profile along a helix whose axis runs square to the sketch
+    /// plane through `axis_origin` (sketch 2D coordinates): every point of
+    /// the profile climbs its own helix about it, the profile staying
+    /// level. The rest reads as for `Helix`.
+    HelixNormal {
+        axis_origin: [f64; 2],
+        pitch: f64,
+        height: f64,
+        left_handed: bool,
+        cone_angle_deg: f64,
+        reversed: bool,
+        #[serde(default)]
+        turns: Option<f64>,
+        #[serde(default)]
+        growth: Option<f64>,
+    },
 }
 
 /// How a pipe's section turns as it runs down its path.
@@ -869,6 +885,9 @@ pub enum PipeFrame {
     /// The section keeps a fixed binormal: the world-space direction square
     /// to the path that the section's frame holds all the way.
     Binormal { direction: [f64; 3] },
+    /// The section keeps its orientation in space: carried along the path
+    /// without ever turning, as it is drawn.
+    Fixed,
 }
 
 impl PipeFrame {

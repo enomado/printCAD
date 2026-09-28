@@ -29,6 +29,11 @@ pub enum RevolveAxis {
     SketchLine(uuid::Uuid),
     /// A straight edge another body lends this one.
     Borrowed(BorrowedRef),
+    /// One of the body's own axes, which must lie in the sketch plane.
+    Base(BaseAxis),
+    /// Square to the sketch through its origin: a helix's alone, which
+    /// climbs about it with the profile level.
+    SketchNormal,
 }
 
 impl RevolveAxis {
@@ -41,6 +46,8 @@ impl RevolveAxis {
             RevolveAxis::Datum(_) => "Datum line",
             RevolveAxis::SketchLine(_) => "Sketch line",
             RevolveAxis::Borrowed(_) => "Borrowed edge",
+            RevolveAxis::Base(axis) => axis.label(),
+            RevolveAxis::SketchNormal => "Sketch normal",
         }
     }
 }
@@ -366,6 +373,8 @@ pub enum PipeOrientation {
     Auxiliary { path: FeatureId },
     /// The section keeps a fixed binormal, a direction in the body's frame.
     Binormal { x: f32, y: f32, z: f32 },
+    /// The section keeps its orientation in space, as it is drawn.
+    Fixed,
 }
 
 impl PipeOrientation {
@@ -376,6 +385,7 @@ impl PipeOrientation {
             PipeOrientation::Frenet => "Frenet",
             PipeOrientation::Auxiliary { .. } => "Auxiliary path",
             PipeOrientation::Binormal { .. } => "Binormal",
+            PipeOrientation::Fixed => "Fixed",
         }
     }
 

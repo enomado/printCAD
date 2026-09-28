@@ -3842,3 +3842,123 @@ fn a_pad_runs_along_a_datum_or_a_sketch_line() {
         Some("the extrusion direction lies in the profile's plane")
     );
 }
+
+/// A 2 × 4 rectangle standing 5 out from the Z axis on the XZ plane.
+fn off_axis_rect() -> SketchFeature {
+    let plane = wb_sketch::sketch::SketchPlane::xz();
+    let mut sketch = Sketch::new("s");
+    sketch.plane = plane;
+    let corners = [(5.0, 0.0), (7.0, 0.0), (7.0, 4.0), (5.0, 4.0)]
+        .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
+    for i in 0..4 {
+        sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )));
+    }
+    SketchFeature::new(sketch, plane)
+}
+
+fn build_one(
+    sketch: SketchFeature,
+    feature: impl Fn(FeatureId) -> serde_json::Value,
+) -> (([f32; 3], [f32; 3]), f64) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let id = doc
+        .add_feature_in_body(sketch, "s".into(), Some(body))
+        .unwrap();
+    let made = <PartFeature as core_document::WorkbenchFeature>::from_json(&feature(id)).unwrap();
+    doc.add_feature_in_body(made, "F".into(), Some(body))
+        .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("it builds");
+    let volume = kernel
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    (result.bounds_mm.unwrap(), volume)
+}
+
+#[test]
+fn a_revolution_turns_about_the_bodys_axis() {
+    let (_, volume) = build_one(off_axis_rect(), |sketch| {
+        serde_json::json!({"Revolution": {
+            "sketch": sketch.0.to_string(),
+            "angle_deg": 360.0,
+            "axis": {"Base": "Z"},
+        }})
+    });
+    let ring = std::f64::consts::PI * (49.0 - 25.0) * 4.0;
+    assert!((volume - ring).abs() < 1e-3 * ring, "{volume} vs {ring}");
+}
+
+#[test]
+#[ignore = "kernel: make_helical_sweep refuses a profile whose plane does not hold the axis (ogeom-rs#89)"]
+fn a_helix_climbs_about_its_sketchs_normal_with_the_profile_level() {
+    let disc = circle_sketch_on(wb_sketch::sketch::SketchPlane::xy(), 10.0, 0.0, 1.0);
+    let ((lo, hi), volume) = build_one(disc, |sketch| {
+        serde_json::json!({"Helix": {
+            "sketch": sketch.0.to_string(),
+            "axis": "SketchNormal",
+            "mode": "PitchHeight",
+            "pitch": 10.0,
+            "height": 10.0,
+            "turns": 1.0,
+            "left_handed": false,
+            "cone_angle_deg": 0.0,
+            "reversed": false,
+            "subtractive": false,
+        }})
+    });
+    assert!(
+        lo[2].abs() < 1e-3 && (hi[2] - 10.0).abs() < 1e-2,
+        "{lo:?}..{hi:?}"
+    );
+    // Every level cut is the disc: its area times the rise.
+    let expected = std::f64::consts::PI * 10.0;
+    assert!(
+        (volume - expected).abs() < 1e-2 * expected,
+        "{volume} vs {expected}"
+    );
+}
+
+/// A fixed orientation carries the section along the path without turning
+/// it: the square, upright in the XZ plane, stays so round the quarter arc,
+/// sweeping its 2 mm width across the path's 20 mm run in y, 2 mm tall.
+#[test]
+#[ignore = "kernel: no pipe law keeps the section's orientation in space (ogeom-rs#90)"]
+fn a_fixed_pipe_carries_its_section_without_turning_it() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let (doc, body) = pipe_body(square_section(), quarter_arc_sketch(), &[], |p, s, _| {
+        pipe_of(
+            p,
+            s,
+            PipeOrientation::Fixed,
+            PipeCorner::Transformed,
+            Vec::new(),
+        )
+    });
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    assert_near(volume, 2.0 * 2.0 * 20.0, 5e-3, "fixed");
+}
+
+/// Until the kernel keeps a section fixed, the pipe says so as its error.
+#[test]
+fn a_fixed_pipe_says_what_the_kernel_lacks() {
+    use wb_part::{PipeCorner, PipeOrientation};
+    let (doc, body) = pipe_body(square_section(), quarter_arc_sketch(), &[], |p, s, _| {
+        pipe_of(
+            p,
+            s,
+            PipeOrientation::Fixed,
+            PipeCorner::Transformed,
+            Vec::new(),
+        )
+    });
+    assert!(built_body(&doc, body).is_err());
+}

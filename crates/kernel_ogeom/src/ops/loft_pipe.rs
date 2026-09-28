@@ -140,6 +140,12 @@ pub fn pipe_tool(
         PipeFrame::Auxiliary { .. } => PipeLaw::Auxiliary {
             guide: guide.as_ref().expect("built above"),
         },
+        PipeFrame::Fixed => {
+            return Err(
+                "the kernel cannot yet carry a pipe's section along its path without turning it"
+                    .into(),
+            );
+        }
     };
     let corners = match corner {
         PipeCorner::Transformed => PipeCorners::Mitre,

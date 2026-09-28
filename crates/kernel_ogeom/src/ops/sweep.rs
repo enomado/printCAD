@@ -86,6 +86,30 @@ pub fn build_tool(
                 *reversed,
             )
         }
+        SweepKind::HelixNormal {
+            axis_origin,
+            pitch,
+            height,
+            left_handed,
+            cone_angle_deg,
+            reversed,
+            turns,
+            growth,
+        } => {
+            let extent = HelixExtent::of(*pitch, *height, *turns, *cone_angle_deg, *growth)?;
+            let p = &prof.plane;
+            let location = profile::world_point(p, axis_origin[0], axis_origin[1]);
+            let normal = Direction::new(Vector::new(p.normal[0], p.normal[1], p.normal[2]), tol())
+                .map_err(|_| "the sketch plane has no normal".to_string())?;
+            helix_about(
+                model,
+                &built,
+                Axis::new(location, normal),
+                extent,
+                *left_handed,
+                *reversed,
+            )
+        }
     }
 }
 
@@ -1041,6 +1065,19 @@ fn helix(
     reversed: bool,
 ) -> Result<Shape, String> {
     let axis = sketch_plane_axis(&prof.plane, axis_origin, axis_dir)?;
+    helix_about(model, built, axis, extent, left_handed, reversed)
+}
+
+/// The helical sweep of the profile's faces about `axis`, which the
+/// profile must not sit on.
+fn helix_about(
+    model: &mut Model,
+    built: &BuiltProfile,
+    axis: Axis,
+    extent: HelixExtent,
+    left_handed: bool,
+    reversed: bool,
+) -> Result<Shape, String> {
     let centroid = profile::profile_centroid(model, built)?;
     let to_start = centroid - axis.location;
     let along = axis.direction.vector() * to_start.dot(axis.direction.vector());
@@ -1053,8 +1090,7 @@ fn helix(
         axis.direction
     };
     let axis = Axis::new(axis.location, direction);
-    // The profile lies in a plane through the axis, as a screw sweep takes
-    // it: every point of it runs its own helix.
+    // Every point of the profile runs its own helix about the axis.
     let mut parts = Vec::with_capacity(built.faces.len());
     for face in &built.faces {
         let part = ogeom::offset::make_helical_sweep(

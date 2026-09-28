@@ -74,7 +74,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
             SweepKind::Extrude { .. } => "Pad",
             SweepKind::Revolve { .. } if subtractive => "Groove",
             SweepKind::Revolve { .. } => "Revolution",
-            SweepKind::Helix { .. } => "Helix",
+            SweepKind::Helix { .. } | SweepKind::HelixNormal { .. } => "Helix",
         },
         SolidOp::SweepFace { .. } if subtractive => "Pocket",
         SolidOp::SweepFace { .. } => "Pad",
