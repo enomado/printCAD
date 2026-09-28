@@ -224,6 +224,7 @@ fn centres_follow_the_solid_they_are_found_on() {
                 DatumShape::Point,
                 DatumAttachment::CurveCentre {
                     edge: EdgeAnchor {
+                        along: None,
                         faces: [0, 0],
                         point: [5.0, 0.0, 10.0],
                         direction: [0.0, 1.0, 0.0],
@@ -316,6 +317,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
                 DatumShape::Line { length: 20.0 },
                 DatumAttachment::AlongEdge {
                     edge: EdgeAnchor {
+                        along: None,
                         faces: [0, 0],
                         point: [2.0, 0.0, 10.0],
                         direction: [0.0, 1.0, 0.0],

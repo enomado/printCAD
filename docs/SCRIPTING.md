@@ -1056,6 +1056,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `offset` (list, optional): Moved along its own x, y and normal, {x, y, z} in mm
 - `rotation` (number, optional): Turned about its normal, degrees
 - `flip` (boolean, optional): Turned to face the other way
+- `tilt` (list, optional): Tilted about its own x-axis, then its y-axis, {x, y} in degrees
 - `size` (number, optional): How large it draws, mm
 - `name` (string, optional): Its name in the tree
 - Returns the datum's id

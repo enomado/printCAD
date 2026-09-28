@@ -183,6 +183,11 @@ pub fn register(context: &mut WorkbenchContext) {
             "Turned about its normal, degrees",
         )
         .optional("flip", ParamKind::Bool, "Turned to face the other way")
+        .optional(
+            "tilt",
+            ParamKind::List,
+            "Tilted about its own x-axis, then its y-axis, {x, y} in degrees",
+        )
         .optional("size", ParamKind::Number, "How large it draws, mm")
         .optional("name", ParamKind::String, "Its name in the tree")
         .returns("the datum's id"),
@@ -401,6 +406,19 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
     Ok(Value::Null)
 }
 
+/// A tilt, {x, y} degrees, where one is given.
+fn tilt_of(value: Option<&Value>) -> Result<Option<[f32; 2]>, CommandError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_array()
+            .filter(|p| p.len() == 2)
+            .and_then(|p| Some([p[0].as_f64()? as f32, p[1].as_f64()? as f32]))
+            .map(Some)
+            .ok_or_else(|| CommandError::bad("tilt", "must be {x, y} degrees")),
+    }
+}
+
 /// A datum's fields as `part.set` takes them: `offset` as `part.datum`
 /// gives it, {x, y, z}, with `rotation` and `flip` beside it, or whole as
 /// the datum keeps it, {translation, rotation_deg, flip}.
@@ -427,6 +445,10 @@ fn datum_fields(
         offset.flip = flip
             .as_bool()
             .ok_or_else(|| CommandError::bad("flip", "must be true or false"))?;
+        moved = true;
+    }
+    if let Some(tilt) = tilt_of(fields.remove("tilt").as_ref())? {
+        offset.tilt = tilt;
         moved = true;
     }
     if moved {
@@ -461,6 +483,7 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     };
     let attachment = crate::datum_refs::attachment_from_args(a, ctx, body)?;
     let offset = AttachmentOffset {
+        tilt: tilt_of(a.0.get("tilt"))?.unwrap_or_default(),
         translation: match a.0.get("offset") {
             Some(v) if !v.is_null() => vector3(Some(v), "offset")?,
             _ => [0.0; 3],
@@ -702,6 +725,9 @@ pub(crate) fn record_task(
                 "rotation": datum.offset.rotation_deg,
                 "flip": datum.offset.flip,
             });
+            if datum.offset.tilt != [0.0; 2] {
+                args["tilt"] = json!(datum.offset.tilt);
+            }
             if let Some(size) = size {
                 args["size"] = json!(size);
             }

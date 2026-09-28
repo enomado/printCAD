@@ -2261,6 +2261,7 @@ mod tests {
                     shape: DatumShape::CoordinateSystem { size: 10.0 },
                     attachment: DatumAttachment::BasePlane(BasePlane::XY),
                     offset: AttachmentOffset {
+                        tilt: [0.0; 2],
                         translation: [0.0, 0.0, 5.0],
                         rotation_deg: 0.0,
                         flip: false,

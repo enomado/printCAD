@@ -1420,6 +1420,10 @@ pub enum ShapeProbe {
         direction: [f64; 3],
         #[serde(default)]
         faces: [TopoName; 2],
+        /// A share along the edge from its start (0 to 1) whose point and
+        /// tangent the answer also gives.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        along: Option<f64>,
     },
     /// The solid's centre of mass and principal axes of inertia.
     Mass,
@@ -1446,6 +1450,10 @@ pub enum ProbeAnswer {
         end: [f64; 3],
         middle: [f64; 3],
         circle: Option<ProbedCircle>,
+        /// The point and tangent the probe's share along gives, when it
+        /// asked for one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        along: Option<([f64; 3], [f64; 3])>,
     },
     /// The centre of mass and the principal axes of inertia, the axis of
     /// the smallest moment first.

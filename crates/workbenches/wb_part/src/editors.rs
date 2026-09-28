@@ -87,6 +87,8 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Offset Y", "offset_y"),
     ("Normal offset", "offset_z"),
     ("Rotation", "rotation"),
+    ("Tilt about X", "tilt_x"),
+    ("Tilt about Y", "tilt_y"),
 ];
 
 /// What a feature's fields know of formulas: the feature's parameters,
@@ -1575,6 +1577,9 @@ pub fn datum_editor(
         "Rotation:",
         -180.0..=180.0,
     );
+    let [about_x, about_y] = &mut datum.offset.tilt;
+    changed |= deg_drag(ui, fx, about_x, "Tilt about X:", -180.0..=180.0);
+    changed |= deg_drag(ui, fx, about_y, "Tilt about Y:", -180.0..=180.0);
     changed |= check_row(ui, &mut datum.offset.flip, "Flip side").changed();
     changed
 }

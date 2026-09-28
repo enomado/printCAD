@@ -705,6 +705,7 @@ impl PartDesignWorkbench {
                 DatumShape::Line { .. } => DatumAttachment::AlongEdge { edge },
                 DatumShape::Point if edge.circle.is_some() => DatumAttachment::CurveCentre { edge },
                 _ => DatumAttachment::NormalToEdge {
+                    along: None,
                     edge,
                     spot: core_document::EdgeSpot::Picked,
                 },
@@ -1524,6 +1525,59 @@ impl Workbench for PartDesignWorkbench {
         } else {
             params::feature_parameters(node)
         }
+    }
+
+    /// A datum made from a sketch's points or lines takes where they stand
+    /// now.
+    fn derive(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+    ) -> bool {
+        use core_document::{LineAnchor, PointAnchor, WorkbenchFeature};
+        if node.workbench_id.as_str() != core_document::DATUM_KIND {
+            return false;
+        }
+        let Ok(mut datum) = core_document::DatumFeature::from_json(values) else {
+            return false;
+        };
+        let before = datum;
+        let at = |sketch: FeatureId, element: uuid::Uuid| {
+            let feature = wb_sketch::SketchFeature::from_json(&values_of(sketch)?).ok()?;
+            datum_refs::sketch_points_of(&feature, element)
+        };
+        for anchor in datum.sketch_points_mut() {
+            if let PointAnchor::Sketch {
+                sketch,
+                element,
+                point,
+            } = anchor
+                && let Some([now]) =
+                    at(*sketch, *element).and_then(|p| <[[f32; 3]; 1]>::try_from(p).ok())
+            {
+                *point = now;
+            }
+        }
+        for anchor in datum.sketch_lines_mut() {
+            if let LineAnchor::Sketch {
+                sketch,
+                element,
+                start,
+                end,
+            } = anchor
+                && let Some([a, b]) =
+                    at(*sketch, *element).and_then(|p| <[[f32; 3]; 2]>::try_from(p).ok())
+            {
+                *start = a;
+                *end = b;
+            }
+        }
+        if datum == before {
+            return false;
+        }
+        *values = datum.to_json();
+        true
     }
 
     fn property_hints(&self) -> core_document::PropertyHints {

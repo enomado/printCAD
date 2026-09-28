@@ -49,7 +49,8 @@ pub fn answer(model: &mut Model, root: &Shape, probe: &ShapeProbe) -> Result<Pro
             point,
             direction,
             faces,
-        } => edge(model, root, point, direction, faces),
+            along,
+        } => edge(model, root, point, direction, faces, along),
         ShapeProbe::Mass => mass(model, root),
     }
 }
@@ -114,9 +115,10 @@ fn edge(
     point: [f64; 3],
     direction: [f64; 3],
     faces: [kernel_api::TopoName; 2],
+    along: Option<f64>,
 ) -> Result<ProbeAnswer, String> {
     if let Some(named) = crate::naming::find_edge(model, root, faces, point3(point)) {
-        return describe_edge(model, &named, point);
+        return describe_edge(model, &named, point, along);
     }
     let tol = tess::tolerances();
     let edges = explore_unique(model, root, ShapeType::Edge).map_err(|e| e.to_string())?;
@@ -142,7 +144,7 @@ fn edge(
     // so a rim found again after its circle grew or moved is still the
     // rim, not the straight edge beside it.
     for (_, edge) in &near {
-        let Ok(answer) = describe_edge(model, edge, point) else {
+        let Ok(answer) = describe_edge(model, edge, point, along) else {
             continue;
         };
         let ProbeAnswer::Edge { direction: d, .. } = answer else {
@@ -160,8 +162,14 @@ fn edge(
     ))
 }
 
-/// What `edge` is where it passes `point` nearest.
-fn describe_edge(model: &Model, edge: &Shape, point: [f64; 3]) -> Result<ProbeAnswer, String> {
+/// What `edge` is where it passes `point` nearest, and, asked `along`, where
+/// it is that share of its parameter from its start.
+fn describe_edge(
+    model: &Model,
+    edge: &Shape,
+    point: [f64; 3],
+    along: Option<f64>,
+) -> Result<ProbeAnswer, String> {
     let tol = tess::tolerances();
     let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
         return Err("the edge holds no edge data".into());
@@ -207,6 +215,22 @@ fn describe_edge(model: &Model, edge: &Shape, point: [f64; 3]) -> Result<ProbeAn
         }
         _ => None,
     };
+    let along = match along {
+        Some(share) => {
+            let share = share.clamp(0.0, 1.0);
+            let t = if reversed {
+                range.1 - share * (range.1 - range.0)
+            } else {
+                range.0 + share * (range.1 - range.0)
+            };
+            let mut d = curve.d1_at(t, tol).map_err(|e| e.to_string())?;
+            if reversed {
+                d = -d;
+            }
+            Some((array(at(t)?), unit(d)))
+        }
+        None => None,
+    };
     Ok(ProbeAnswer::Edge {
         point: array(foot.point),
         direction: unit(tangent),
@@ -214,6 +238,7 @@ fn describe_edge(model: &Model, edge: &Shape, point: [f64; 3]) -> Result<ProbeAn
         end: array(end),
         middle: array(at(f64::midpoint(range.0, range.1))?),
         circle,
+        along,
     })
 }
 

@@ -3,8 +3,9 @@
 //! at hand, and written back out as the arguments that make them again.
 
 use core_document::{
-    Args, BasePlane, BodyId, CommandError, DatumAttachment, DatumFeature, EdgeAnchor, EdgeSpot,
-    FaceAnchor, FeatureId, PlaneAnchor, PointAnchor, WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, BasePlane, BodyId, CommandError, DatumAttachment, DatumFeature, DatumShape, Document,
+    EdgeAnchor, EdgeSpot, FaceAnchor, FeatureId, LineAnchor, PlaneAnchor, PointAnchor,
+    WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Map, Value, json};
 
@@ -39,7 +40,125 @@ pub const MODES: &[(&str, &str)] = &[
         "inertia",
         "at the body's centre of mass, on its axes of inertia",
     ),
+    (
+        "on_datum",
+        "on a datum plane, or a coordinate system's plane (datum, plane)",
+    ),
+    (
+        "other_body",
+        "on one of another body's origin planes (of_body, plane)",
+    ),
+    ("face_normal", "square to a face (face_point, face_normal)"),
+    (
+        "tangent_to_edge",
+        "tangent to an edge (edge_point, edge_direction, spot)",
+    ),
+    ("line_and_point", "through a line and a point (line, point)"),
+    (
+        "line_meets_plane",
+        "where a line meets a plane (line, plane)",
+    ),
+    ("two_lines", "where two lines cross (lines)"),
 ];
+
+/// Where a sketch's point or line ends stand, in its body's frame.
+pub fn sketch_points(
+    document: &Document,
+    sketch: FeatureId,
+    element: uuid::Uuid,
+) -> Option<Vec<[f32; 3]>> {
+    let feature = wb_sketch::SketchFeature::from_json(document.feature_values(sketch)?).ok()?;
+    sketch_points_of(&feature, element)
+}
+
+/// [`sketch_points`] of a sketch feature at hand.
+pub fn sketch_points_of(
+    feature: &wb_sketch::SketchFeature,
+    element: uuid::Uuid,
+) -> Option<Vec<[f32; 3]>> {
+    use wb_sketch::sketch::GeometryElement;
+    let plane = feature.plane;
+    let world = |id: uuid::Uuid| {
+        let p = feature.sketch.point_position(id)?;
+        Some(std::array::from_fn(|i| {
+            plane.origin[i] + plane.x_axis[i] * p.x + plane.y_axis[i] * p.y
+        }))
+    };
+    match feature.sketch.get_geometry(element)? {
+        GeometryElement::Point(_) => Some(vec![world(element)?]),
+        GeometryElement::Line(l) => Some(vec![world(l.start)?, world(l.end)?]),
+        _ => None,
+    }
+}
+
+fn id_of(value: Option<&Value>, name: &str) -> Result<uuid::Uuid, CommandError> {
+    value
+        .and_then(Value::as_str)
+        .and_then(|t| uuid::Uuid::parse_str(t).ok())
+        .ok_or_else(|| CommandError::bad(name, "must be an id"))
+}
+
+/// A datum of `body` by its id in `value`, with its frame.
+fn datum_of(
+    value: Option<&Value>,
+    name: &str,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+) -> Result<(FeatureId, DatumFeature), CommandError> {
+    let datum = FeatureId(id_of(value, name)?);
+    let node = ctx
+        .document
+        .get_feature_meta(datum)
+        .filter(|n| n.workbench_id.as_str() == core_document::DATUM_KIND)
+        .ok_or_else(|| CommandError::bad(name, "is not a datum of this document"))?;
+    if node.body != Some(body) {
+        return Err(CommandError::bad(name, "is a datum of another body"));
+    }
+    let made = ctx
+        .document
+        .feature_values(datum)
+        .and_then(|v| DatumFeature::from_json(v).ok())
+        .ok_or_else(|| CommandError::bad(name, "is a datum that does not read"))?;
+    Ok((datum, made))
+}
+
+fn line_from(
+    value: &Value,
+    name: &str,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+) -> Result<LineAnchor, CommandError> {
+    if value.is_string() {
+        let (datum, made) = datum_of(Some(value), name, ctx, body)?;
+        if !matches!(made.shape, DatumShape::Line { .. }) {
+            return Err(CommandError::bad(name, "is a datum that is no line"));
+        }
+        let frame = made.frame();
+        return Ok(LineAnchor::Datum {
+            datum,
+            origin: frame.origin,
+            direction: frame.x_axis,
+        });
+    }
+    if value.get("sketch").is_some() {
+        let sketch = FeatureId(id_of(value.get("sketch"), &format!("{name}.sketch"))?);
+        let element = id_of(value.get("element"), &format!("{name}.element"))?;
+        let Some([start, end]) = sketch_points(ctx.document, sketch, element)
+            .and_then(|p| <[[f32; 3]; 2]>::try_from(p).ok())
+        else {
+            return Err(CommandError::bad(name, "names no line of that sketch"));
+        };
+        return Ok(LineAnchor::Sketch {
+            sketch,
+            element,
+            start,
+            end,
+        });
+    }
+    Ok(LineAnchor::Edge {
+        edge: edge_from(value, name)?,
+    })
+}
 
 fn face_from(value: &Value, name: &str) -> Result<FaceAnchor, CommandError> {
     Ok(FaceAnchor {
@@ -53,6 +172,7 @@ fn face_from(value: &Value, name: &str) -> Result<FaceAnchor, CommandError> {
 
 fn edge_from(value: &Value, name: &str) -> Result<EdgeAnchor, CommandError> {
     Ok(EdgeAnchor {
+        along: None,
         faces: [0, 0],
         point: vector3(value.get("edge_point"), &format!("{name}.edge_point"))?,
         direction: match value.get("edge_direction") {
@@ -90,7 +210,33 @@ fn base_plane_key(plane: BasePlane) -> &'static str {
     }
 }
 
-fn point_from(value: &Value, name: &str) -> Result<PointAnchor, CommandError> {
+fn point_from(
+    value: &Value,
+    name: &str,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+) -> Result<PointAnchor, CommandError> {
+    if value.get("datum").is_some() {
+        let (datum, made) = datum_of(value.get("datum"), &format!("{name}.datum"), ctx, body)?;
+        return Ok(PointAnchor::Datum {
+            datum,
+            point: made.frame().origin,
+        });
+    }
+    if value.get("sketch").is_some() {
+        let sketch = FeatureId(id_of(value.get("sketch"), &format!("{name}.sketch"))?);
+        let element = id_of(value.get("element"), &format!("{name}.element"))?;
+        let Some([point]) = sketch_points(ctx.document, sketch, element)
+            .and_then(|p| <[[f32; 3]; 1]>::try_from(p).ok())
+        else {
+            return Err(CommandError::bad(name, "names no point of that sketch"));
+        };
+        return Ok(PointAnchor::Sketch {
+            sketch,
+            element,
+            point,
+        });
+    }
     if value.get("face_point").is_some() {
         Ok(PointAnchor::Face {
             face: face_from(value, name)?,
@@ -214,14 +360,79 @@ pub fn attachment_from_args(
             },
         },
         "three_points" => DatumAttachment::ThreePoints {
-            points: anchors(a, "points", point_from)?,
+            points: anchors(a, "points", |v, n| point_from(v, n, ctx, body))?,
         },
         "two_points" => DatumAttachment::TwoPoints {
-            points: anchors(a, "points", point_from)?,
+            points: anchors(a, "points", |v, n| point_from(v, n, ctx, body))?,
         },
         "normal_to_edge" => DatumAttachment::NormalToEdge {
             edge: edge()?,
             spot: spot_from(a.0.get("spot"), "spot")?,
+            along: match a.opt_number("along")? {
+                Some(v) if (0.0..=1.0).contains(&v) => Some(v as f32),
+                Some(_) => return Err(CommandError::bad("along", "must be from 0 to 1")),
+                None => None,
+            },
+        },
+        "on_datum" => {
+            let (datum, made) = datum_of(a.0.get("datum"), "datum", ctx, body)?;
+            let plane = match made.shape {
+                DatumShape::Plane { .. } => None,
+                DatumShape::CoordinateSystem { .. } => Some(
+                    base_plane(a.opt_string("plane")?.unwrap_or("XY"))
+                        .ok_or_else(|| CommandError::bad("plane", "must be XY, XZ or YZ"))?,
+                ),
+                _ => return Err(CommandError::bad("datum", "is a datum line or point")),
+            };
+            let frame = made.frame();
+            let frame = match plane {
+                Some(which) => frame
+                    .planes()
+                    .into_iter()
+                    .zip(BasePlane::ALL)
+                    .find(|(_, p)| *p == which)
+                    .map(|((_, f), _)| f)
+                    .unwrap_or(frame),
+                None => frame,
+            };
+            DatumAttachment::OnDatum {
+                datum,
+                plane,
+                frame: frame.into(),
+            }
+        }
+        "other_body" => {
+            let other = BodyId(id_of(a.0.get("of_body"), "of_body")?);
+            let plane = base_plane(a.opt_string("plane")?.unwrap_or("XY"))
+                .ok_or_else(|| CommandError::bad("plane", "must be XY, XZ or YZ"))?;
+            if other == body {
+                return Err(CommandError::bad("of_body", "is the datum's own body"));
+            }
+            let frame = core_document::body_plane_in(ctx.document, body, other, plane)
+                .ok_or_else(|| CommandError::bad("of_body", "is not a body of this document"))?;
+            DatumAttachment::OtherBody {
+                body: other,
+                plane,
+                frame: frame.into(),
+            }
+        }
+        "face_normal" => DatumAttachment::FaceNormal {
+            face: face_from(&Value::Object(a.0.clone()), "face")?,
+        },
+        "tangent_to_edge" => DatumAttachment::TangentToEdge {
+            edge: edge()?,
+            spot: spot_from(a.0.get("spot"), "spot")?,
+        },
+        "line_and_point" => DatumAttachment::LineAndPoint {
+            line: line_from(a.0.get("line").unwrap_or(&Value::Null), "line", ctx, body)?,
+            point: point_from(a.0.get("point").unwrap_or(&Value::Null), "point", ctx, body)?,
+        },
+        "line_meets_plane" => DatumAttachment::LineMeetsPlane {
+            line: line_from(a.0.get("line").unwrap_or(&Value::Null), "line", ctx, body)?,
+            plane: plane_from(a.0.get("plane").unwrap_or(&Value::Null), "plane", ctx, body)?,
+        },
+        "two_lines" => DatumAttachment::TwoLines {
+            lines: anchors(a, "lines", |v, n| line_from(v, n, ctx, body))?,
         },
         "along_edge" => DatumAttachment::AlongEdge { edge: edge()? },
         "curve_centre" => DatumAttachment::CurveCentre { edge: edge()? },
@@ -265,6 +476,20 @@ fn point_args(point: &PointAnchor) -> Value {
             args.insert("spot".into(), json!(spot.key()));
             Value::Object(args)
         }
+        PointAnchor::Datum { datum, .. } => json!({"datum": datum.0.to_string()}),
+        PointAnchor::Sketch {
+            sketch, element, ..
+        } => json!({"sketch": sketch.0.to_string(), "element": element.to_string()}),
+    }
+}
+
+fn line_args(line: &LineAnchor) -> Value {
+    match line {
+        LineAnchor::Edge { edge } => Value::Object(edge_args(edge)),
+        LineAnchor::Datum { datum, .. } => json!(datum.0.to_string()),
+        LineAnchor::Sketch {
+            sketch, element, ..
+        } => json!({"sketch": sketch.0.to_string(), "element": element.to_string()}),
     }
 }
 
@@ -302,9 +527,49 @@ pub fn attachment_args(attachment: &DatumAttachment) -> Map<String, Value> {
             args.insert("points".into(), points.iter().map(point_args).collect());
             args
         }
-        DatumAttachment::NormalToEdge { edge, spot } => {
+        DatumAttachment::NormalToEdge { edge, spot, along } => {
             let mut args = edge_args(edge);
             args.insert("spot".into(), json!(spot.key()));
+            if let Some(along) = along {
+                args.insert("along".into(), json!(along));
+            }
+            args
+        }
+        DatumAttachment::TangentToEdge { edge, spot } => {
+            let mut args = edge_args(edge);
+            args.insert("spot".into(), json!(spot.key()));
+            args
+        }
+        DatumAttachment::OnDatum { datum, plane, .. } => {
+            let mut args = Map::new();
+            args.insert("datum".into(), json!(datum.0.to_string()));
+            if let Some(plane) = plane {
+                args.insert("plane".into(), json!(base_plane_key(*plane)));
+            }
+            args
+        }
+        DatumAttachment::OtherBody { body, plane, .. } => {
+            let mut args = Map::new();
+            args.insert("of_body".into(), json!(body.0.to_string()));
+            args.insert("plane".into(), json!(base_plane_key(*plane)));
+            args
+        }
+        DatumAttachment::FaceNormal { face } => face_args(face),
+        DatumAttachment::LineAndPoint { line, point } => {
+            let mut args = Map::new();
+            args.insert("line".into(), line_args(line));
+            args.insert("point".into(), point_args(point));
+            args
+        }
+        DatumAttachment::LineMeetsPlane { line, plane } => {
+            let mut args = Map::new();
+            args.insert("line".into(), line_args(line));
+            args.insert("plane".into(), plane_args(plane));
+            args
+        }
+        DatumAttachment::TwoLines { lines } => {
+            let mut args = Map::new();
+            args.insert("lines".into(), lines.iter().map(line_args).collect());
             args
         }
         DatumAttachment::AlongEdge { edge } | DatumAttachment::CurveCentre { edge } => {
@@ -370,6 +635,7 @@ mod tests {
                     }
                 }
                 ShapeProbe::Edge { point, .. } if point[2] > 6.0 => ProbeAnswer::Edge {
+                    along: None,
                     point: [5.0, 0.0, 12.0],
                     direction: [0.0, 1.0, 0.0],
                     start: [5.0, 0.0, 12.0],
@@ -382,6 +648,7 @@ mod tests {
                     }),
                 },
                 ShapeProbe::Edge { point, .. } => ProbeAnswer::Edge {
+                    along: None,
                     point: [point[0], 0.0, 0.0],
                     direction: [1.0, 0.0, 0.0],
                     start: [0.0; 3],
@@ -621,6 +888,47 @@ mod tests {
     fn every_mode_s_arguments_make_it_again() {
         let (mut doc, body) = with_solid();
         let (base, _) = datum(&mut doc, body, false, json!({"kind": "plane"})).unwrap();
+        let (system, _) = datum(
+            &mut doc,
+            body,
+            false,
+            json!({"kind": "coordinate_system", "offset": [1, 2, 3]}),
+        )
+        .unwrap();
+        let (dot, _) = datum(
+            &mut doc,
+            body,
+            false,
+            json!({"kind": "point", "offset": [4, 4, 4]}),
+        )
+        .unwrap();
+        let (axis, _) = datum(
+            &mut doc,
+            body,
+            false,
+            json!({"kind": "line", "mode": "base_plane", "plane": "YZ"}),
+        )
+        .unwrap();
+        let other = doc.create_body(None);
+        // A sketch with a line and a point to take them from.
+        let (sketch, line, point) = {
+            use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
+            let mut drawing = Sketch::new("refs");
+            let a = drawing.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 7.0))));
+            let b = drawing.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(9.0, 7.0))));
+            let line = drawing.add_geometry(GeometryElement::Line(Line::new(a, b)));
+            let point =
+                drawing.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(3.0, -2.0))));
+            let plane = drawing.plane;
+            let id = doc
+                .add_feature_in_body(
+                    wb_sketch::SketchFeature::new(drawing, plane),
+                    "refs".into(),
+                    Some(body),
+                )
+                .unwrap();
+            (id, line, point)
+        };
         let made = [
             json!({"mode": "base_plane", "plane": "XZ"}),
             json!({"face_point": [0, 0, 3], "face_normal": [0, 0, 1]}),
@@ -637,6 +945,29 @@ mod tests {
             json!({"mode": "plane_intersection", "planes": [
                 base.0.to_string(),
                 {"face_point": [0, 5, 0], "face_normal": [0, 1, 0]},
+            ]}),
+            json!({"mode": "normal_to_edge", "edge_point": [1, 0, 0],
+                   "edge_direction": [1, 0, 0], "along": 0.25}),
+            json!({"mode": "on_datum", "datum": base.0.to_string()}),
+            json!({"mode": "on_datum", "datum": system.0.to_string(), "plane": "YZ"}),
+            json!({"mode": "other_body", "of_body": other.0.to_string(), "plane": "XZ"}),
+            json!({"mode": "face_normal", "face_point": [0, 5, 4], "face_normal": [0, 1, 0]}),
+            json!({"mode": "tangent_to_edge", "edge_point": [1, 0, 0],
+                   "edge_direction": [1, 0, 0], "spot": "end"}),
+            json!({"mode": "line_and_point",
+                   "line": {"sketch": sketch.0.to_string(), "element": line.to_string()},
+                   "point": {"datum": dot.0.to_string()}}),
+            json!({"mode": "line_meets_plane",
+                   "line": {"edge_point": [1, 0, 0], "edge_direction": [0, 0, 1]},
+                   "plane": "XY"}),
+            json!({"mode": "two_lines", "lines": [
+                axis.0.to_string(),
+                {"sketch": sketch.0.to_string(), "element": line.to_string()},
+            ]}),
+            json!({"mode": "three_points", "points": [
+                [0, 0, 2],
+                {"sketch": sketch.0.to_string(), "element": point.to_string()},
+                {"datum": dot.0.to_string()},
             ]}),
         ];
         for args in made {

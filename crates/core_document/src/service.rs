@@ -284,10 +284,12 @@ impl DocumentService {
             }
             // A datum takes what the last build found of what it stands on.
             if node.workbench_id.as_str() == crate::datum::DATUM_KIND {
+                let own = node.body;
                 moved |= crate::datum::derive(
                     &mut values,
                     document.probed_references(node.id),
                     &values_of,
+                    &|other, plane| crate::datum::body_plane_in(document, own?, other, plane),
                 );
             }
             if moved {

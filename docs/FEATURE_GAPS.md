@@ -129,14 +129,14 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Datums and attachment
 
-- [ ] **More attachment modes** (partial, M). Ten exist. Missing: a
+- [x] **More attachment modes** (partial, M). Ten exist. Missing: a
   datum on another datum (a plane offset or turned from a datum plane or a
   coordinate system's plane), another body's origin planes as the frame, a
   line normal to a face, a line tangent to an edge, planes along a curve,
   a plane through a line and a point, a point where a line meets a plane or
   two lines cross, and sketch vertices and lines as references
   (`core_document/src/datum.rs`, `wb_part/src/datum_panel.rs`).
-- [ ] **Attachment offset tilt** (partial, S). The offset turns only about
+- [x] **Attachment offset tilt** (partial, S). The offset turns only about
   the normal.
 - [ ] **Borrowed geometry options** (partial, M). An offset of the
   borrowed geometry, a face from borrowed closed edges, a whole solid as

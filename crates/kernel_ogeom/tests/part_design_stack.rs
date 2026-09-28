@@ -1227,6 +1227,7 @@ fn a_pad_on_a_datum_sketch_follows_the_datum() {
         shape: DatumShape::Plane { size: 20.0 },
         attachment: DatumAttachment::BasePlane(BasePlane::XY),
         offset: AttachmentOffset {
+            tilt: [0.0; 2],
             translation: [0.0, 0.0, z],
             rotation_deg,
             flip,

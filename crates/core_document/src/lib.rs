@@ -42,8 +42,8 @@ pub use command::{
 pub use configurations::{CONFIGURATIONS_KIND, Configuration, Configurations};
 pub use datum::{
     AnchorCircle, AttachmentOffset, BasePlane, DATUM_KIND, DatumAttachment, DatumFeature,
-    DatumFrame, DatumShape, EdgeAnchor, EdgeSpot, FaceAnchor, PlaneAnchor, PointAnchor,
-    datums_of_body,
+    DatumFrame, DatumShape, EdgeAnchor, EdgeSpot, FaceAnchor, FrameAnchor, LineAnchor, PlaneAnchor,
+    PointAnchor, body_plane_in, datums_of_body,
 };
 pub use evaluate::{Evaluation, Parameter, SlotValue};
 pub use feature::{

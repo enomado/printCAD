@@ -83,6 +83,7 @@ fn an_edge_probe_finds_a_rim_circle_and_a_straight_edge_s_ends() {
         &[ChainProbe {
             after_op: 1,
             probe: ShapeProbe::Edge {
+                along: None,
                 faces: [0, 0],
                 point: [5.0, 0.0, 12.0],
                 direction: [0.0, 1.0, 0.0],
@@ -105,6 +106,7 @@ fn an_edge_probe_finds_a_rim_circle_and_a_straight_edge_s_ends() {
         &[ChainProbe {
             after_op: 1,
             probe: ShapeProbe::Edge {
+                along: Some(0.25),
                 faces: [0, 0],
                 point: [4.0, 0.0, 0.0],
                 direction: [1.0, 0.0, 0.0],
@@ -118,6 +120,7 @@ fn an_edge_probe_finds_a_rim_circle_and_a_straight_edge_s_ends() {
         end,
         middle,
         circle: None,
+        along: Some((quarter, tangent)),
     }) = answers[0]
     else {
         panic!("{:?}", answers[0]);
@@ -131,6 +134,10 @@ fn an_edge_probe_finds_a_rim_circle_and_a_straight_edge_s_ends() {
         "{ends:?}"
     );
     assert!(close(middle, [5.0, 0.0, 0.0], 1e-6), "{middle:?}");
+    // A quarter of the way from its start, whichever end that is.
+    let from_start = [start[0] + (end[0] - start[0]) * 0.25, 0.0, 0.0];
+    assert!(close(quarter, from_start, 1e-6), "{quarter:?}");
+    assert!(parallel(tangent, [1.0, 0.0, 0.0]));
 }
 
 #[test]

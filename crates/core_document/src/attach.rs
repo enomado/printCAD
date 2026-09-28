@@ -5,7 +5,8 @@
 
 use crate::{
     BasePlane, BodyId, DatumAttachment, DatumFeature, DatumFrame, EdgeAnchor, EdgeRef, EdgeSpot,
-    FaceAnchor, FaceRef, PlaneAnchor, PointAnchor, WorkbenchRuntimeContext,
+    FaceAnchor, FaceRef, FeatureId, FrameAnchor, LineAnchor, PlaneAnchor, PointAnchor,
+    WorkbenchRuntimeContext,
 };
 
 /// The modes the selector offers after the base planes, with what each
@@ -19,12 +20,25 @@ pub const PICK_MODES: &[(&str, &str)] = &[
     ("plane_intersection", ""),
     ("curve_centre", "Click a circular edge first"),
     ("inertia", "Needs the body's solid"),
+    (
+        "on_datum",
+        "Needs a datum plane or coordinate system made before",
+    ),
+    ("other_body", "Needs another body"),
+    ("face_normal", "Click a face first"),
+    ("tangent_to_edge", "Click an edge first"),
+    ("line_and_point", "Click an edge first"),
+    ("line_meets_plane", "Click an edge first"),
+    ("two_lines", "Click two edges first"),
 ];
 
 /// What is picked in the viewport, as references in the datum's body.
 pub struct Picked {
     pub face: Option<FaceAnchor>,
     pub edges: Vec<EdgeAnchor>,
+    /// Datums a datum may stand on: their id, frame and whether they are a
+    /// coordinate system. Empty unless the caller says which.
+    pub datums: Vec<(FeatureId, DatumFrame, bool)>,
 }
 
 impl Picked {
@@ -38,7 +52,37 @@ impl Picked {
             .iter()
             .map(|edge| edge_anchor(edge, edge.body == body.0))
             .collect();
-        Self { face, edges }
+        Self {
+            face,
+            edges,
+            datums: Vec::new(),
+        }
+    }
+
+    /// With the datum planes and coordinate systems of `body` it may stand
+    /// on: those `before` lets through.
+    pub fn with_datums(
+        mut self,
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+        before: impl Fn(FeatureId) -> bool,
+    ) -> Self {
+        self.datums = crate::datums_of_body(ctx.document, body)
+            .into_iter()
+            .filter(|(id, _, datum)| {
+                before(*id)
+                    && matches!(
+                        datum.shape,
+                        crate::DatumShape::Plane { .. }
+                            | crate::DatumShape::CoordinateSystem { .. }
+                    )
+            })
+            .map(|(id, _, datum)| {
+                let system = matches!(datum.shape, crate::DatumShape::CoordinateSystem { .. });
+                (id, datum.frame(), system)
+            })
+            .collect();
+        self
     }
 
     /// The picked points: each edge where it was picked, then the face.
@@ -63,7 +107,16 @@ pub fn current_edge(attachment: &DatumAttachment) -> Option<EdgeAnchor> {
     match attachment {
         DatumAttachment::NormalToEdge { edge, .. }
         | DatumAttachment::AlongEdge { edge }
-        | DatumAttachment::CurveCentre { edge } => Some(*edge),
+        | DatumAttachment::CurveCentre { edge }
+        | DatumAttachment::TangentToEdge { edge, .. } => Some(*edge),
+        DatumAttachment::LineAndPoint {
+            line: LineAnchor::Edge { edge },
+            ..
+        }
+        | DatumAttachment::LineMeetsPlane {
+            line: LineAnchor::Edge { edge },
+            ..
+        } => Some(*edge),
         _ => None,
     }
 }
@@ -107,8 +160,71 @@ pub fn candidate(
         "normal_to_edge" => DatumAttachment::NormalToEdge {
             edge: edge?,
             spot: EdgeSpot::Picked,
+            along: None,
         },
         "along_edge" => DatumAttachment::AlongEdge { edge: edge? },
+        "on_datum" => {
+            let (datum, found, system) = picked.datums.first().copied()?;
+            let plane = system.then_some(BasePlane::XY);
+            DatumAttachment::OnDatum {
+                datum,
+                plane,
+                frame: found.into(),
+            }
+        }
+        "other_body" => {
+            let other = ctx
+                .document
+                .bodies()
+                .iter()
+                .map(|b| b.id)
+                .find(|b| *b != body)?;
+            let found = crate::body_plane_in(ctx.document, body, other, BasePlane::XY)?;
+            DatumAttachment::OtherBody {
+                body: other,
+                plane: BasePlane::XY,
+                frame: found.into(),
+            }
+        }
+        "face_normal" => DatumAttachment::FaceNormal { face: picked.face? },
+        "tangent_to_edge" => DatumAttachment::TangentToEdge {
+            edge: edge?,
+            spot: EdgeSpot::Picked,
+        },
+        "line_and_point" => {
+            let line = LineAnchor::Edge { edge: edge? };
+            // The point: a second edge where picked, else the face, else
+            // a spare point off the line.
+            let point = picked
+                .edges
+                .get(1)
+                .map(|edge| PointAnchor::Edge {
+                    edge: *edge,
+                    spot: EdgeSpot::Picked,
+                })
+                .or(picked.face.map(|face| PointAnchor::Face { face }))
+                .unwrap_or(PointAnchor::At {
+                    point: add(frame.origin, frame.y_axis(), 10.0),
+                });
+            DatumAttachment::LineAndPoint { line, point }
+        }
+        "line_meets_plane" => DatumAttachment::LineMeetsPlane {
+            line: LineAnchor::Edge { edge: edge? },
+            plane: match picked.face {
+                Some(face) => PlaneAnchor::Face { face },
+                None => PlaneAnchor::Base(BasePlane::XY),
+            },
+        },
+        "two_lines" => DatumAttachment::TwoLines {
+            lines: [
+                LineAnchor::Edge {
+                    edge: *picked.edges.first()?,
+                },
+                LineAnchor::Edge {
+                    edge: *picked.edges.get(1)?,
+                },
+            ],
+        },
         "curve_centre" => DatumAttachment::CurveCentre {
             edge: edge.filter(|e| e.circle.is_some())?,
         },
@@ -161,16 +277,42 @@ pub fn mode_label(mode: &str) -> &'static str {
         middle: None,
         circle: None,
         follows: false,
+        along: None,
     };
     let point = PointAnchor::At { point: [0.0; 3] };
     let plane = PlaneAnchor::Base(BasePlane::XY);
+    let frame = FrameAnchor {
+        origin: [0.0; 3],
+        normal: [0.0, 0.0, 1.0],
+        x_axis: [1.0, 0.0, 0.0],
+    };
+    let line = LineAnchor::Edge { edge };
     match mode {
         "face" => DatumAttachment::Face { face },
         "three_points" => DatumAttachment::ThreePoints { points: [point; 3] },
         "normal_to_edge" => DatumAttachment::NormalToEdge {
             edge,
             spot: EdgeSpot::Picked,
+            along: None,
         },
+        "on_datum" => DatumAttachment::OnDatum {
+            datum: FeatureId(uuid::Uuid::nil()),
+            plane: None,
+            frame,
+        },
+        "other_body" => DatumAttachment::OtherBody {
+            body: BodyId(uuid::Uuid::nil()),
+            plane: BasePlane::XY,
+            frame,
+        },
+        "face_normal" => DatumAttachment::FaceNormal { face },
+        "tangent_to_edge" => DatumAttachment::TangentToEdge {
+            edge,
+            spot: EdgeSpot::Picked,
+        },
+        "line_and_point" => DatumAttachment::LineAndPoint { line, point },
+        "line_meets_plane" => DatumAttachment::LineMeetsPlane { line, plane },
+        "two_lines" => DatumAttachment::TwoLines { lines: [line; 2] },
         "along_edge" => DatumAttachment::AlongEdge { edge },
         "two_points" => DatumAttachment::TwoPoints { points: [point; 2] },
         "plane_intersection" => DatumAttachment::PlaneIntersection { planes: [plane; 2] },
@@ -210,6 +352,7 @@ pub fn edge_anchor(edge: &EdgeRef, follows: bool) -> EdgeAnchor {
             radius: c.radius,
         }),
         follows,
+        along: None,
     }
 }
 

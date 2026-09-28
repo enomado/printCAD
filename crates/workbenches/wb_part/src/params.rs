@@ -307,6 +307,8 @@ pub fn datum_parameters() -> Vec<Parameter> {
             "/offset/translation/2",
         ),
         Parameter::new("rotation", "Rotation", ANGLE, "/offset/rotation_deg"),
+        Parameter::new("tilt_x", "Tilt about X", ANGLE, "/offset/tilt/0"),
+        Parameter::new("tilt_y", "Tilt about Y", ANGLE, "/offset/tilt/1"),
     ]
 }
 
@@ -400,7 +402,7 @@ mod tests {
             .map(|p| p.integer)
             .collect();
         assert_eq!(counts, [false, true, false, true]);
-        assert_eq!(datum_parameters().len(), 4);
+        assert_eq!(datum_parameters().len(), 6);
     }
 
     /// The listed numbers the feature has: a counterbore hole has no

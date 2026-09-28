@@ -83,11 +83,14 @@ pub enum DatumAttachment {
     /// The plane through three points; its x-axis runs from the first
     /// towards the second.
     ThreePoints { points: [PointAnchor; 3] },
-    /// The plane square to an edge, where `spot` falls on it.
+    /// The plane square to an edge, where `spot` falls on it, or a share
+    /// `along` the edge from its start (0 to 1): the planes along a curve.
     NormalToEdge {
         edge: EdgeAnchor,
         #[serde(default)]
         spot: EdgeSpot,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        along: Option<f32>,
     },
     /// Along a straight edge, centred on it; round a circular one, its
     /// axis through its centre.
@@ -104,6 +107,109 @@ pub enum DatumAttachment {
         centre: [f32; 3],
         axes: [[f32; 3]; 3],
     },
+    /// On another datum: a datum plane, or one of a coordinate system's
+    /// three planes (`plane`), as it was last seen; the offset moves and
+    /// turns it from there, and it follows the datum.
+    OnDatum {
+        datum: FeatureId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plane: Option<BasePlane>,
+        frame: FrameAnchor,
+    },
+    /// One of another body's origin planes, where it stands in this body's
+    /// frame as last seen; it follows the other body as it is placed.
+    OtherBody {
+        body: crate::BodyId,
+        plane: BasePlane,
+        frame: FrameAnchor,
+    },
+    /// The line square to a face where it was picked.
+    FaceNormal { face: FaceAnchor },
+    /// The line tangent to an edge at `spot`.
+    TangentToEdge {
+        edge: EdgeAnchor,
+        #[serde(default)]
+        spot: EdgeSpot,
+    },
+    /// The plane through a line and a point off it; its x-axis along the
+    /// line, its origin the point's foot on it.
+    LineAndPoint {
+        line: LineAnchor,
+        point: PointAnchor,
+    },
+    /// The point where a line meets a plane.
+    LineMeetsPlane {
+        line: LineAnchor,
+        plane: PlaneAnchor,
+    },
+    /// Where two lines cross: the middle of where they pass nearest, the
+    /// x-axis along the first, the normal square to both.
+    TwoLines { lines: [LineAnchor; 2] },
+}
+
+/// A frame as it was last seen, which a datum follows.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FrameAnchor {
+    pub origin: [f32; 3],
+    pub normal: [f32; 3],
+    pub x_axis: [f32; 3],
+}
+
+impl From<DatumFrame> for FrameAnchor {
+    fn from(f: DatumFrame) -> Self {
+        Self {
+            origin: f.origin,
+            normal: f.normal,
+            x_axis: f.x_axis,
+        }
+    }
+}
+
+/// A line a datum is made from.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum LineAnchor {
+    /// A straight edge, or the tangent of a curved one where picked.
+    Edge { edge: EdgeAnchor },
+    /// A datum line, as it was last seen.
+    Datum {
+        datum: FeatureId,
+        origin: [f32; 3],
+        direction: [f32; 3],
+    },
+    /// A sketch's line, its ends where they were last seen.
+    Sketch {
+        sketch: FeatureId,
+        element: uuid::Uuid,
+        start: [f32; 3],
+        end: [f32; 3],
+    },
+}
+
+impl LineAnchor {
+    /// A point of the line and the way it runs.
+    pub fn line(&self) -> ([f32; 3], [f32; 3]) {
+        match *self {
+            LineAnchor::Edge { edge } => match edge.ends {
+                Some([a, b]) if edge.circle.is_none() && length(sub(b, a)) > 1e-6 => {
+                    (a, normalize(sub(b, a)))
+                }
+                _ => (edge.point, normalize(edge.direction)),
+            },
+            LineAnchor::Datum {
+                origin, direction, ..
+            } => (origin, normalize(direction)),
+            LineAnchor::Sketch { start, end, .. } => (start, normalize(sub(end, start))),
+        }
+    }
+
+    /// The feature it is made from, when it is another feature.
+    fn feature(&self) -> Option<FeatureId> {
+        match self {
+            LineAnchor::Datum { datum, .. } => Some(*datum),
+            LineAnchor::Sketch { sketch, .. } => Some(*sketch),
+            LineAnchor::Edge { .. } => None,
+        }
+    }
 }
 
 fn is_zero(name: &kernel_api::TopoName) -> bool {
@@ -151,6 +257,11 @@ pub struct EdgeAnchor {
     /// finds it by; zeros when it has none, and the point finds it.
     #[serde(default, skip_serializing_if = "are_zero")]
     pub faces: [kernel_api::TopoName; 2],
+    /// Where the edge is a share along it from its start, and the way it
+    /// runs there, as the solid last answered: the share, the point and the
+    /// tangent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub along: Option<(f32, [f32; 3], [f32; 3])>,
 }
 
 /// The circle a circular edge runs round.
@@ -222,6 +333,14 @@ pub enum PointAnchor {
         #[serde(default)]
         spot: EdgeSpot,
     },
+    /// A datum's origin, as it was last seen.
+    Datum { datum: FeatureId, point: [f32; 3] },
+    /// A sketch's point, as it was last seen.
+    Sketch {
+        sketch: FeatureId,
+        element: uuid::Uuid,
+        point: [f32; 3],
+    },
 }
 
 impl PointAnchor {
@@ -230,6 +349,16 @@ impl PointAnchor {
             PointAnchor::At { point } => *point,
             PointAnchor::Face { face } => face.point,
             PointAnchor::Edge { edge, spot } => edge.spot_point(*spot),
+            PointAnchor::Datum { point, .. } | PointAnchor::Sketch { point, .. } => *point,
+        }
+    }
+
+    /// The feature it is made from, when it is another feature.
+    fn feature(&self) -> Option<FeatureId> {
+        match self {
+            PointAnchor::Datum { datum, .. } => Some(*datum),
+            PointAnchor::Sketch { sketch, .. } => Some(*sketch),
+            _ => None,
         }
     }
 }
@@ -266,6 +395,48 @@ impl PlaneAnchor {
 }
 
 impl EdgeAnchor {
+    /// The point `share` of the way along the edge from its start (0 to 1)
+    /// and the way it runs there: as the solid answered for that share, else
+    /// worked out for a straight edge or an arc of a circle, else where it
+    /// was picked.
+    pub fn at_share(&self, share: f32) -> ([f32; 3], [f32; 3]) {
+        if let Some((s, point, tangent)) = self.along
+            && (s - share).abs() < 1e-6
+        {
+            return (point, normalize(tangent));
+        }
+        let Some([a, b]) = self.ends else {
+            return (self.point, normalize(self.direction));
+        };
+        match self.circle {
+            Some(circle) => {
+                let n = normalize(circle.normal);
+                let (ra, rb) = (sub(a, circle.center), sub(b, circle.center));
+                // The sweep from start to end, the way the edge runs.
+                let mut sweep = dot(cross(ra, rb), n).atan2(dot(ra, rb));
+                let turn = dot(cross(ra, self.tangent_at(a)), n);
+                if turn < 0.0 {
+                    sweep = if sweep > 0.0 {
+                        sweep - std::f32::consts::TAU
+                    } else {
+                        sweep
+                    };
+                } else if sweep <= 0.0 {
+                    sweep += std::f32::consts::TAU;
+                }
+                let angle = sweep * share;
+                let (sin, cos) = angle.sin_cos();
+                let rotated = add(
+                    add(scale(ra, cos), scale(cross(n, ra), sin)),
+                    scale(n, dot(n, ra) * (1.0 - cos)),
+                );
+                let point = add(circle.center, rotated);
+                (point, self.tangent_at(point))
+            }
+            None => (add(a, scale(sub(b, a), share)), normalize(sub(b, a))),
+        }
+    }
+
     /// The point of the edge `spot` names; where it was picked when the
     /// spot is not known (an edge picked without its ends).
     pub fn spot_point(&self, spot: EdgeSpot) -> [f32; 3] {
@@ -311,6 +482,13 @@ impl DatumAttachment {
             DatumAttachment::PlaneIntersection { .. } => "Where two planes meet",
             DatumAttachment::CurveCentre { .. } => "Centre of a curve",
             DatumAttachment::Inertia { .. } => "Centre of mass",
+            DatumAttachment::OnDatum { .. } => "On a datum",
+            DatumAttachment::OtherBody { .. } => "Another body's origin",
+            DatumAttachment::FaceNormal { .. } => "Square to a face",
+            DatumAttachment::TangentToEdge { .. } => "Tangent to an edge",
+            DatumAttachment::LineAndPoint { .. } => "Through a line and a point",
+            DatumAttachment::LineMeetsPlane { .. } => "Where a line meets a plane",
+            DatumAttachment::TwoLines { .. } => "Where two lines cross",
         }
     }
 
@@ -327,19 +505,42 @@ impl DatumAttachment {
             DatumAttachment::PlaneIntersection { .. } => "plane_intersection",
             DatumAttachment::CurveCentre { .. } => "curve_centre",
             DatumAttachment::Inertia { .. } => "inertia",
+            DatumAttachment::OnDatum { .. } => "on_datum",
+            DatumAttachment::OtherBody { .. } => "other_body",
+            DatumAttachment::FaceNormal { .. } => "face_normal",
+            DatumAttachment::TangentToEdge { .. } => "tangent_to_edge",
+            DatumAttachment::LineAndPoint { .. } => "line_and_point",
+            DatumAttachment::LineMeetsPlane { .. } => "line_meets_plane",
+            DatumAttachment::TwoLines { .. } => "two_lines",
         }
     }
 
-    /// The other datums it is made from.
+    /// The other features it is made from: datums and sketches.
     pub fn datums(&self) -> Vec<FeatureId> {
+        let plane = |p: &PlaneAnchor| match p {
+            PlaneAnchor::Datum { datum, .. } => Some(*datum),
+            _ => None,
+        };
         match self {
-            DatumAttachment::PlaneIntersection { planes } => planes
-                .iter()
-                .filter_map(|p| match p {
-                    PlaneAnchor::Datum { datum, .. } => Some(*datum),
-                    _ => None,
-                })
-                .collect(),
+            DatumAttachment::PlaneIntersection { planes } => {
+                planes.iter().filter_map(plane).collect()
+            }
+            DatumAttachment::ThreePoints { points } => {
+                points.iter().filter_map(PointAnchor::feature).collect()
+            }
+            DatumAttachment::TwoPoints { points } => {
+                points.iter().filter_map(PointAnchor::feature).collect()
+            }
+            DatumAttachment::OnDatum { datum, .. } => vec![*datum],
+            DatumAttachment::LineAndPoint { line, point } => {
+                line.feature().into_iter().chain(point.feature()).collect()
+            }
+            DatumAttachment::LineMeetsPlane { line, plane: p } => {
+                line.feature().into_iter().chain(plane(p)).collect()
+            }
+            DatumAttachment::TwoLines { lines } => {
+                lines.iter().filter_map(LineAnchor::feature).collect()
+            }
             _ => Vec::new(),
         }
     }
@@ -373,7 +574,26 @@ impl DatumAttachment {
             DatumAttachment::NormalToEdge {
                 edge,
                 spot: EdgeSpot::Centre,
+                along: None,
+            }
+            | DatumAttachment::TangentToEdge {
+                edge,
+                spot: EdgeSpot::Centre,
             } => edge.circle.is_none().then_some(not_round),
+            DatumAttachment::LineAndPoint { line, point } => {
+                let (p, d) = line.line();
+                let off = reject(sub(point.point(), p), d);
+                (length(off) < LEAST).then_some("the point lies on the line")
+            }
+            DatumAttachment::LineMeetsPlane { line, plane } => {
+                let (_, d) = line.line();
+                let (_, n) = plane.plane();
+                (dot(d, n).abs() < LEAST).then_some("the line runs along the plane")
+            }
+            DatumAttachment::TwoLines { lines } => {
+                let [(_, d1), (_, d2)] = lines.map(|l| l.line());
+                (length(cross(d1, d2)) < LEAST).then_some("the two lines are parallel")
+            }
             _ => None,
         }
     }
@@ -411,7 +631,25 @@ impl DatumAttachment {
                 let n = normalize(n);
                 (a, n, normalize(reject(x, n)))
             }
-            DatumAttachment::NormalToEdge { edge, spot } => {
+            DatumAttachment::NormalToEdge {
+                edge,
+                along: Some(share),
+                ..
+            } => {
+                let (at, tangent) = edge.at_share(share);
+                let radial = edge
+                    .circle
+                    .map(|c| reject(sub(at, c.center), tangent))
+                    .filter(|r| length(*r) > 1e-4);
+                (
+                    at,
+                    tangent,
+                    radial
+                        .map(normalize)
+                        .unwrap_or_else(|| stable_x_axis(tangent)),
+                )
+            }
+            DatumAttachment::NormalToEdge { edge, spot, .. } => {
                 let at = edge.spot_point(spot);
                 // A circle's centre is off the edge: the plane there is
                 // square to the edge where it was picked.
@@ -484,6 +722,59 @@ impl DatumAttachment {
                 let n = normalize(reject(axes[2], x));
                 (centre, n, x)
             }
+            DatumAttachment::OnDatum { frame, .. } | DatumAttachment::OtherBody { frame, .. } => {
+                (frame.origin, frame.normal, frame.x_axis)
+            }
+            DatumAttachment::FaceNormal { face } => along_x(face.point, face.normal),
+            DatumAttachment::TangentToEdge { edge, spot } => {
+                let at = edge.spot_point(spot);
+                let on_edge = if spot == EdgeSpot::Centre {
+                    edge.point
+                } else {
+                    at
+                };
+                along_x(at, edge.tangent_at(on_edge))
+            }
+            DatumAttachment::LineAndPoint { line, point } => {
+                let (p, d) = line.line();
+                let q = point.point();
+                let foot = scale_add(p, d, dot(sub(q, p), d));
+                let n = cross(d, sub(q, p));
+                if length(n) < 1e-9 {
+                    return along_x(p, d);
+                }
+                (foot, normalize(n), d)
+            }
+            DatumAttachment::LineMeetsPlane { line, plane } => {
+                let (p, d) = line.line();
+                let (o, n) = plane.plane();
+                let along = dot(d, n);
+                if along.abs() < 1e-9 {
+                    return (p, n, stable_x_axis(n));
+                }
+                let at = scale_add(p, d, dot(sub(o, p), n) / along);
+                let x = reject(d, n);
+                let x = if length(x) > 1e-4 {
+                    normalize(x)
+                } else {
+                    stable_x_axis(n)
+                };
+                (at, n, x)
+            }
+            DatumAttachment::TwoLines { lines } => {
+                let [(p1, d1), (p2, d2)] = lines.map(|l| l.line());
+                let n = cross(d1, d2);
+                if length(n) < 1e-9 {
+                    return along_x(p1, d1);
+                }
+                // The nearest points of the two lines, and the middle.
+                let w = sub(p1, p2);
+                let (b, d, e) = (dot(d1, d2), dot(d1, w), dot(d2, w));
+                let denom = 1.0 - b * b;
+                let (s, t) = ((b * e - d) / denom, (e - b * d) / denom);
+                let (a, c) = (scale_add(p1, d1, s), scale_add(p2, d2, t));
+                (scale(add(a, c), 0.5), normalize(n), d1)
+            }
         }
     }
 }
@@ -504,6 +795,19 @@ pub struct AttachmentOffset {
     pub rotation_deg: f32,
     /// Flip to the other side (180° about the local x-axis).
     pub flip: bool,
+    /// Degrees it tilts about the local x-axis, then about the local
+    /// y-axis, after the turn about the normal.
+    #[serde(default)]
+    pub tilt: [f32; 2],
+}
+
+/// `v` turned by `angle` radians about the unit axis `k` (Rodrigues).
+fn turned(v: [f32; 3], k: [f32; 3], angle: f32) -> [f32; 3] {
+    let (s, c) = angle.sin_cos();
+    add(
+        add(scale(v, c), scale(cross(k, v), s)),
+        scale(k, dot(k, v) * (1.0 - c)),
+    )
 }
 
 /// A datum feature payload.
@@ -632,6 +936,16 @@ impl DatumFeature {
             x_axis = normalize(rotated);
             y_axis = cross(normal, x_axis);
         }
+        // Tilted about x, then about the y it leaves.
+        let [about_x, about_y] = self.offset.tilt.map(f32::to_radians);
+        if about_x.abs() > 1e-9 {
+            normal = normalize(turned(normal, x_axis, about_x));
+            y_axis = cross(normal, x_axis);
+        }
+        if about_y.abs() > 1e-9 {
+            normal = normalize(turned(normal, y_axis, about_y));
+            x_axis = normalize(turned(x_axis, y_axis, about_y));
+        }
 
         let mut origin = origin;
         origin = scale_add(origin, x_axis, self.offset.translation[0]);
@@ -677,7 +991,8 @@ impl WorkbenchFeature for DatumFeature {
 /// A reference of a datum a build finds again on the body's solid.
 enum Followed<'a> {
     Face(&'a mut FaceAnchor),
-    Edge(&'a mut EdgeAnchor),
+    /// An edge, and the share along it the datum takes, when it takes one.
+    Edge(&'a mut EdgeAnchor, Option<f32>),
     Mass(&'a mut [f32; 3], &'a mut [[f32; 3]; 3]),
 }
 
@@ -706,23 +1021,41 @@ impl DatumFeature {
                     push_point(anchor, &mut followed);
                 }
             }
-            DatumAttachment::NormalToEdge { edge, .. }
-            | DatumAttachment::AlongEdge { edge }
-            | DatumAttachment::CurveCentre { edge } => followed.push(Followed::Edge(edge)),
+            DatumAttachment::NormalToEdge { edge, along, .. } => {
+                followed.push(Followed::Edge(edge, *along));
+            }
+            DatumAttachment::AlongEdge { edge }
+            | DatumAttachment::CurveCentre { edge }
+            | DatumAttachment::TangentToEdge { edge, .. } => {
+                followed.push(Followed::Edge(edge, None));
+            }
             DatumAttachment::PlaneIntersection { planes } => {
                 for plane in planes.iter_mut() {
-                    if let PlaneAnchor::Face { face } = plane {
-                        followed.push(Followed::Face(face));
-                    }
+                    push_plane(plane, &mut followed);
                 }
             }
             DatumAttachment::Inertia { centre, axes } => {
                 followed.push(Followed::Mass(centre, axes));
             }
+            DatumAttachment::FaceNormal { face } => followed.push(Followed::Face(face)),
+            DatumAttachment::LineAndPoint { line, point } => {
+                push_line(line, &mut followed);
+                push_point(point, &mut followed);
+            }
+            DatumAttachment::LineMeetsPlane { line, plane } => {
+                push_line(line, &mut followed);
+                push_plane(plane, &mut followed);
+            }
+            DatumAttachment::TwoLines { lines } => {
+                for line in lines.iter_mut() {
+                    push_line(line, &mut followed);
+                }
+            }
+            DatumAttachment::OnDatum { .. } | DatumAttachment::OtherBody { .. } => {}
         }
         followed.retain(|f| match f {
             Followed::Face(face) => face.follows,
-            Followed::Edge(edge) => edge.follows,
+            Followed::Edge(edge, _) => edge.follows,
             Followed::Mass(..) => true,
         });
         followed
@@ -740,10 +1073,11 @@ impl DatumFeature {
                     normal: f64s(face.normal),
                     name: face.name,
                 },
-                Followed::Edge(edge) => ShapeProbe::Edge {
+                Followed::Edge(edge, along) => ShapeProbe::Edge {
                     point: f64s(edge.point),
                     direction: f64s(edge.direction),
                     faces: edge.faces,
+                    along: along.map(f64::from),
                 },
                 Followed::Mass(..) => ShapeProbe::Mass,
             })
@@ -769,7 +1103,7 @@ impl DatumFeature {
                     face.surface = Some(*surface);
                 }
                 (
-                    Followed::Edge(edge),
+                    Followed::Edge(edge, share),
                     Ok(ProbeAnswer::Edge {
                         point,
                         direction,
@@ -777,8 +1111,12 @@ impl DatumFeature {
                         end,
                         middle,
                         circle,
+                        along,
                     }),
                 ) => {
+                    edge.along = share
+                        .zip(*along)
+                        .map(|(s, (at, tangent))| (s, f32s(at), f32s(tangent)));
                     edge.point = f32s(*point);
                     edge.direction = f32s(*direction);
                     edge.ends = Some([f32s(*start), f32s(*end)]);
@@ -798,31 +1136,158 @@ impl DatumFeature {
         }
     }
 
-    /// Take the planes of the other datums this one is made from, as
-    /// `frame_of` gives them now.
+    /// Take the frames of the other datums this one is made from, as
+    /// `frame_of` gives them now (a datum's frame, and for a coordinate
+    /// system the plane named).
     pub fn follow_datums(&mut self, frame_of: &dyn Fn(FeatureId) -> Option<DatumFrame>) {
-        if let DatumAttachment::PlaneIntersection { planes } = &mut self.attachment {
-            for plane in planes.iter_mut() {
-                if let PlaneAnchor::Datum {
-                    datum,
-                    origin,
-                    normal,
-                } = plane
-                    && let Some(frame) = frame_of(*datum)
-                {
-                    *origin = frame.origin;
-                    *normal = frame.normal;
+        let follow_plane = |plane: &mut PlaneAnchor| {
+            if let PlaneAnchor::Datum {
+                datum,
+                origin,
+                normal,
+            } = plane
+                && let Some(frame) = frame_of(*datum)
+            {
+                *origin = frame.origin;
+                *normal = frame.normal;
+            }
+        };
+        let follow_line = |line: &mut LineAnchor| {
+            if let LineAnchor::Datum {
+                datum,
+                origin,
+                direction,
+            } = line
+                && let Some(frame) = frame_of(*datum)
+            {
+                *origin = frame.origin;
+                *direction = frame.x_axis;
+            }
+        };
+        let follow_point = |point: &mut PointAnchor| {
+            if let PointAnchor::Datum { datum, point } = point
+                && let Some(frame) = frame_of(*datum)
+            {
+                *point = frame.origin;
+            }
+        };
+        match &mut self.attachment {
+            DatumAttachment::PlaneIntersection { planes } => {
+                planes.iter_mut().for_each(follow_plane)
+            }
+            DatumAttachment::ThreePoints { points } => points.iter_mut().for_each(follow_point),
+            DatumAttachment::TwoPoints { points } => points.iter_mut().for_each(follow_point),
+            DatumAttachment::OnDatum {
+                datum,
+                plane,
+                frame,
+            } => {
+                if let Some(found) = frame_of(*datum) {
+                    let found = match plane {
+                        Some(which) => found
+                            .planes()
+                            .into_iter()
+                            .zip(BasePlane::ALL)
+                            .find(|(_, p)| p == which)
+                            .map(|((_, f), _)| f)
+                            .unwrap_or(found),
+                        None => found,
+                    };
+                    *frame = found.into();
                 }
             }
+            DatumAttachment::LineAndPoint { line, point } => {
+                follow_line(line);
+                follow_point(point);
+            }
+            DatumAttachment::LineMeetsPlane { line, plane } => {
+                follow_line(line);
+                follow_plane(plane);
+            }
+            DatumAttachment::TwoLines { lines } => lines.iter_mut().for_each(follow_line),
+            _ => {}
         }
+    }
+
+    /// Take where another body's origin plane stands now in this body's
+    /// frame, as `frame_of` gives it.
+    pub fn follow_bodies(
+        &mut self,
+        frame_of: &dyn Fn(crate::BodyId, BasePlane) -> Option<DatumFrame>,
+    ) {
+        if let DatumAttachment::OtherBody { body, plane, frame } = &mut self.attachment
+            && let Some(found) = frame_of(*body, *plane)
+        {
+            *frame = found.into();
+        }
+    }
+
+    /// The sketch references this datum takes, to be brought up to date by
+    /// the sketches' owner.
+    pub fn sketch_points_mut(&mut self) -> Vec<&mut PointAnchor> {
+        match &mut self.attachment {
+            DatumAttachment::ThreePoints { points } => points.iter_mut().collect(),
+            DatumAttachment::TwoPoints { points } => points.iter_mut().collect(),
+            DatumAttachment::LineAndPoint { point, .. } => vec![point],
+            _ => Vec::new(),
+        }
+        .into_iter()
+        .filter(|p| matches!(p, PointAnchor::Sketch { .. }))
+        .collect()
+    }
+
+    /// The sketch lines this datum takes, to be brought up to date by the
+    /// sketches' owner.
+    pub fn sketch_lines_mut(&mut self) -> Vec<&mut LineAnchor> {
+        match &mut self.attachment {
+            DatumAttachment::LineAndPoint { line, .. }
+            | DatumAttachment::LineMeetsPlane { line, .. } => vec![line],
+            DatumAttachment::TwoLines { lines } => lines.iter_mut().collect(),
+            _ => Vec::new(),
+        }
+        .into_iter()
+        .filter(|l| matches!(l, LineAnchor::Sketch { .. }))
+        .collect()
+    }
+}
+
+/// Where one of `other`'s origin planes stands in `own`'s frame, the
+/// bodies placed as the document has them.
+pub fn body_plane_in(
+    document: &crate::Document,
+    own: crate::BodyId,
+    other: crate::BodyId,
+    plane: BasePlane,
+) -> Option<DatumFrame> {
+    document.bodies().iter().find(|b| b.id == other)?;
+    let (origin, normal, x_axis) = plane.frame();
+    let there = document.body_placement(other);
+    let back = document.body_placement(own).inverse();
+    let to_own = back.after(&there);
+    Some(DatumFrame {
+        origin: to_own.point(origin),
+        normal: to_own.direction(normal),
+        x_axis: to_own.direction(x_axis),
+    })
+}
+
+fn push_plane<'a>(plane: &'a mut PlaneAnchor, into: &mut Vec<Followed<'a>>) {
+    if let PlaneAnchor::Face { face } = plane {
+        into.push(Followed::Face(face));
+    }
+}
+
+fn push_line<'a>(line: &'a mut LineAnchor, into: &mut Vec<Followed<'a>>) {
+    if let LineAnchor::Edge { edge } = line {
+        into.push(Followed::Edge(edge, None));
     }
 }
 
 fn push_point<'a>(anchor: &'a mut PointAnchor, into: &mut Vec<Followed<'a>>) {
     match anchor {
-        PointAnchor::At { .. } => {}
+        PointAnchor::At { .. } | PointAnchor::Datum { .. } | PointAnchor::Sketch { .. } => {}
         PointAnchor::Face { face } => into.push(Followed::Face(face)),
-        PointAnchor::Edge { edge, .. } => into.push(Followed::Edge(edge)),
+        PointAnchor::Edge { edge, .. } => into.push(Followed::Edge(edge, None)),
     }
 }
 
@@ -834,6 +1299,7 @@ pub fn derive(
     values: &mut serde_json::Value,
     probed: Option<&crate::rebuild::ProbedReferences>,
     values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+    body_plane: &dyn Fn(crate::BodyId, BasePlane) -> Option<DatumFrame>,
 ) -> bool {
     let Ok(mut datum) = DatumFeature::from_json(values) else {
         return false;
@@ -848,6 +1314,7 @@ pub fn derive(
         let data = values_of(id)?;
         DatumFeature::from_json(&data).ok().map(|d| d.frame())
     });
+    datum.follow_bodies(body_plane);
     if datum == before {
         return false;
     }
@@ -891,6 +1358,7 @@ mod tests {
             shape: DatumShape::Plane { size: 20.0 },
             attachment: DatumAttachment::BasePlane(BasePlane::XY),
             offset: AttachmentOffset {
+                tilt: [0.0; 2],
                 translation: [0.0, 0.0, 7.5],
                 rotation_deg: 0.0,
                 flip: false,
@@ -925,6 +1393,7 @@ mod tests {
             shape: DatumShape::Plane { size: 20.0 },
             attachment: DatumAttachment::BasePlane(BasePlane::XY),
             offset: AttachmentOffset {
+                tilt: [0.0; 2],
                 translation: [0.0; 3],
                 rotation_deg: 0.0,
                 flip: true,
@@ -939,6 +1408,7 @@ mod tests {
             shape: DatumShape::Plane { size: 20.0 },
             attachment: DatumAttachment::BasePlane(BasePlane::XY),
             offset: AttachmentOffset {
+                tilt: [0.0; 2],
                 translation: [0.0; 3],
                 rotation_deg: 90.0,
                 flip: false,
@@ -953,6 +1423,7 @@ mod tests {
             shape: DatumShape::CoordinateSystem { size: 20.0 },
             attachment: DatumAttachment::BasePlane(BasePlane::XY),
             offset: AttachmentOffset {
+                tilt: [0.0; 2],
                 translation: [1.0, 2.0, 3.0],
                 rotation_deg: 0.0,
                 flip: false,
@@ -976,6 +1447,7 @@ mod tests {
                 normal: [0.0, 0.0, 1.0],
             },
             offset: AttachmentOffset {
+                tilt: [0.0; 2],
                 translation: [1.0, 2.0, 3.0],
                 rotation_deg: 15.0,
                 flip: true,
@@ -1017,6 +1489,7 @@ mod tests {
 
     fn straight_edge() -> EdgeAnchor {
         EdgeAnchor {
+            along: None,
             faces: [0, 0],
             point: [2.0, 0.0, 0.0],
             direction: [1.0, 0.0, 0.0],
@@ -1029,6 +1502,7 @@ mod tests {
 
     fn rim() -> EdgeAnchor {
         EdgeAnchor {
+            along: None,
             faces: [0, 0],
             point: [5.0, 0.0, 12.0],
             direction: [0.0, 1.0, 0.0],
@@ -1102,6 +1576,7 @@ mod tests {
     #[test]
     fn a_plane_square_to_an_edge_stands_where_the_spot_is() {
         let frame = plane(DatumAttachment::NormalToEdge {
+            along: None,
             edge: straight_edge(),
             spot: EdgeSpot::End,
         });
@@ -1111,6 +1586,7 @@ mod tests {
 
         // On a circle: square to it where picked, x out from the centre.
         let frame = plane(DatumAttachment::NormalToEdge {
+            along: None,
             edge: rim(),
             spot: EdgeSpot::Picked,
         });
@@ -1251,6 +1727,7 @@ mod tests {
                 surface: kernel_api::FaceSurface::Other,
             }),
             Ok(ProbeAnswer::Edge {
+                along: None,
                 point: [2.0, 0.0, 0.0],
                 direction: [1.0, 0.0, 0.0],
                 start: [-1.0, 0.0, 0.0],
@@ -1286,12 +1763,12 @@ mod tests {
             probes: vec![ShapeProbe::Mass],
             answers: vec![answer.clone()],
         };
-        assert!(!derive(&mut values, Some(&stale), &none));
+        assert!(!derive(&mut values, Some(&stale), &none, &|_, _| None));
         let fresh = crate::rebuild::ProbedReferences {
             probes: datum.probes(),
             answers: vec![answer],
         };
-        assert!(derive(&mut values, Some(&fresh), &none));
+        assert!(derive(&mut values, Some(&fresh), &none, &|_, _| None));
         let followed = DatumFeature::from_json(&values).unwrap().frame();
         assert!(close(followed.origin, [0.0, 8.0, 3.0]));
     }
@@ -1316,6 +1793,7 @@ mod tests {
             shape: DatumShape::Plane { size: 20.0 },
             attachment: DatumAttachment::BasePlane(BasePlane::XY),
             offset: AttachmentOffset {
+                tilt: [0.0; 2],
                 translation: [0.0, 0.0, 6.0],
                 rotation_deg: 0.0,
                 flip: false,
@@ -1323,7 +1801,7 @@ mod tests {
         };
         let values_of = |id: FeatureId| (id == other).then(|| moved.to_json());
         let mut values = line.to_json();
-        assert!(derive(&mut values, None, &values_of));
+        assert!(derive(&mut values, None, &values_of, &|_, _| None));
         let frame = DatumFeature::from_json(&values).unwrap().frame();
         assert!((frame.origin[2] - 6.0).abs() < 1e-5, "{:?}", frame.origin);
     }
@@ -1347,6 +1825,7 @@ mod tests {
                 ],
             },
             DatumAttachment::NormalToEdge {
+                along: None,
                 edge: straight_edge(),
                 spot: EdgeSpot::Middle,
             },
@@ -1383,5 +1862,183 @@ mod tests {
         let datum = DatumFeature::from_json(&old).unwrap();
         assert!(close(datum.frame().origin, [1.0, 2.0, 3.0]));
         assert!(datum.probes().is_empty());
+    }
+
+    #[test]
+    fn a_line_square_to_a_face_and_one_tangent_to_an_edge() {
+        let face = line(DatumAttachment::FaceNormal {
+            face: cylinder_face(),
+        });
+        assert!(close(face.origin, [0.0, 5.0, 3.0]));
+        assert!(parallel(face.x_axis, [0.0, 1.0, 0.0]));
+        let tangent = line(DatumAttachment::TangentToEdge {
+            edge: rim(),
+            spot: EdgeSpot::Picked,
+        });
+        assert!(close(tangent.origin, [5.0, 0.0, 12.0]));
+        assert!(parallel(tangent.x_axis, [0.0, 1.0, 0.0]));
+        orthonormal(&tangent);
+    }
+
+    #[test]
+    fn planes_along_an_edge_stand_that_share_of_the_way() {
+        let straight = plane(DatumAttachment::NormalToEdge {
+            edge: straight_edge(),
+            spot: EdgeSpot::Picked,
+            along: Some(0.3),
+        });
+        assert!(
+            close(straight.origin, [3.0, 0.0, 0.0]),
+            "{:?}",
+            straight.origin
+        );
+        assert!(parallel(straight.normal, [1.0, 0.0, 0.0]));
+        // A half circle from (5, 0) round to (-5, 0) counter-clockwise: a
+        // quarter of the way is a quarter turn round.
+        let arc = EdgeAnchor {
+            ends: Some([[5.0, 0.0, 12.0], [-5.0, 0.0, 12.0]]),
+            ..rim()
+        };
+        let quarter = plane(DatumAttachment::NormalToEdge {
+            edge: arc,
+            spot: EdgeSpot::Picked,
+            along: Some(0.5),
+        });
+        assert!(
+            close(quarter.origin, [0.0, 5.0, 12.0]),
+            "{:?}",
+            quarter.origin
+        );
+        assert!(parallel(quarter.normal, [1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_plane_through_a_line_and_a_point_and_where_lines_and_planes_meet() {
+        let x_line = LineAnchor::Edge {
+            edge: straight_edge(),
+        };
+        let through = plane(DatumAttachment::LineAndPoint {
+            line: x_line,
+            point: at([4.0, 3.0, 0.0]),
+        });
+        assert!(close(through.origin, [4.0, 0.0, 0.0]));
+        assert!(parallel(through.normal, [0.0, 0.0, 1.0]));
+        assert!(parallel(through.x_axis, [1.0, 0.0, 0.0]));
+        let upright = LineAnchor::Datum {
+            datum: FeatureId(uuid::Uuid::nil()),
+            origin: [2.0, 3.0, -5.0],
+            direction: [0.0, 0.0, 1.0],
+        };
+        let meet = plane(DatumAttachment::LineMeetsPlane {
+            line: upright,
+            plane: PlaneAnchor::Base(BasePlane::XY),
+        });
+        assert!(close(meet.origin, [2.0, 3.0, 0.0]));
+        // Two skew lines: the x-axis, and one along y 4 above (2, 0).
+        let cross_line = LineAnchor::Sketch {
+            sketch: FeatureId(uuid::Uuid::nil()),
+            element: uuid::Uuid::nil(),
+            start: [2.0, -1.0, 4.0],
+            end: [2.0, 1.0, 4.0],
+        };
+        let crossing = plane(DatumAttachment::TwoLines {
+            lines: [x_line, cross_line],
+        });
+        assert!(
+            close(crossing.origin, [2.0, 0.0, 2.0]),
+            "{:?}",
+            crossing.origin
+        );
+        assert!(parallel(crossing.normal, [0.0, 0.0, 1.0]));
+        assert_eq!(
+            DatumAttachment::TwoLines {
+                lines: [x_line, x_line]
+            }
+            .problem(),
+            Some("the two lines are parallel")
+        );
+    }
+
+    #[test]
+    fn a_tilt_leans_the_plane_about_its_axes() {
+        let datum = DatumFeature {
+            shape: DatumShape::Plane { size: 20.0 },
+            attachment: DatumAttachment::BasePlane(BasePlane::XY),
+            offset: AttachmentOffset {
+                tilt: [90.0, 0.0],
+                ..AttachmentOffset::default()
+            },
+        };
+        // A quarter turn about x takes the normal from z to -y.
+        let frame = datum.frame();
+        assert!(close(frame.normal, [0.0, -1.0, 0.0]), "{:?}", frame.normal);
+        assert!(close(frame.x_axis, [1.0, 0.0, 0.0]));
+        let about_y = DatumFeature {
+            offset: AttachmentOffset {
+                tilt: [0.0, 90.0],
+                ..AttachmentOffset::default()
+            },
+            ..datum
+        };
+        let frame = about_y.frame();
+        assert!(close(frame.normal, [1.0, 0.0, 0.0]), "{:?}", frame.normal);
+        orthonormal(&frame);
+    }
+
+    #[test]
+    fn a_datum_on_a_datum_and_on_another_body_follow_them() {
+        let leader = DatumFeature {
+            shape: DatumShape::CoordinateSystem { size: 10.0 },
+            attachment: DatumAttachment::BasePlane(BasePlane::XY),
+            offset: AttachmentOffset {
+                translation: [0.0, 0.0, 7.0],
+                ..AttachmentOffset::default()
+            },
+        };
+        let leader_id = FeatureId(uuid::Uuid::new_v4());
+        let follower = datum(
+            DatumShape::Plane { size: 10.0 },
+            DatumAttachment::OnDatum {
+                datum: leader_id,
+                plane: Some(BasePlane::YZ),
+                frame: FrameAnchor {
+                    origin: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                    x_axis: [1.0, 0.0, 0.0],
+                },
+            },
+        );
+        let values_of = |id: FeatureId| (id == leader_id).then(|| leader.to_json());
+        let mut values = follower.to_json();
+        assert!(derive(&mut values, None, &values_of, &|_, _| None));
+        let frame = DatumFeature::from_json(&values).unwrap().frame();
+        assert!(close(frame.origin, [0.0, 0.0, 7.0]));
+        assert!(parallel(frame.normal, [1.0, 0.0, 0.0]), "its YZ plane");
+
+        let mut doc = crate::Document::new("t");
+        let own = doc.create_body(None);
+        let other = doc.create_body(None);
+        doc.set_body_placement(
+            other,
+            crate::BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 20.0)),
+        );
+        let on_other = datum(
+            DatumShape::Plane { size: 10.0 },
+            DatumAttachment::OtherBody {
+                body: other,
+                plane: BasePlane::XY,
+                frame: FrameAnchor {
+                    origin: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                    x_axis: [1.0, 0.0, 0.0],
+                },
+            },
+        );
+        let mut values = on_other.to_json();
+        assert!(derive(&mut values, None, &|_| None, &|b, p| {
+            body_plane_in(&doc, own, b, p)
+        }));
+        let frame = DatumFeature::from_json(&values).unwrap().frame();
+        assert!(close(frame.origin, [0.0, 0.0, 20.0]), "{:?}", frame.origin);
     }
 }
