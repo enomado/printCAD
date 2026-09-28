@@ -229,7 +229,10 @@ pub fn fillet(
         chain = tangent_chain(model, solid, chain)?;
     }
     fillet_edges(model, solid, &chain, radius, tol())
-        .map(|b| b.shape)
+        .map(|b| {
+            crate::naming::record(&b.history);
+            b.shape
+        })
         .map_err(|e| format!("fillet failed: {e}"))
 }
 
@@ -419,7 +422,10 @@ pub fn chamfer(
         specs.push((edge, spec));
     }
     chamfer_edges_with(model, solid, &specs, tol())
-        .map(|b| b.shape)
+        .map(|b| {
+            crate::naming::record(&b.history);
+            b.shape
+        })
         .map_err(|e| format!("chamfer failed: {e}"))
 }
 
@@ -477,7 +483,10 @@ pub fn draft(
         angle_deg.to_radians(),
         tol(),
     )
-    .map(|b| b.shape)
+    .map(|b| {
+        crate::naming::record(&b.history);
+        b.shape
+    })
     .map_err(|e| format!("draft failed: {e}"))
 }
 
@@ -507,6 +516,9 @@ pub fn thickness(
         ThicknessJoin::Intersection => Join::Intersection,
     };
     make_thick_solid_with(model, solid, &removed, signed, join, tol())
-        .map(|b| b.shape)
+        .map(|b| {
+            crate::naming::record(&b.history);
+            b.shape
+        })
         .map_err(|e| format!("thickness failed: {e}"))
 }

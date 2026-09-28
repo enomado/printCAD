@@ -37,7 +37,10 @@ pub fn bounds_overlap(model: &Model, a: &Shape, b: &Shape) -> bool {
 pub fn fuse_or_compound(model: &mut Model, a: &Shape, b: &Shape) -> Result<Shape, String> {
     if bounds_overlap(model, a, b) {
         ogeom::boolean::fuse(model, a, b, tol())
-            .map(|built| built.shape)
+            .map(|built| {
+                crate::naming::record(&built.history);
+                built.shape
+            })
             .map_err(|e| format!("fuse failed: {e}"))
     } else {
         model
@@ -125,7 +128,10 @@ pub fn bool_once(
         BoolKind::Common => "common",
     };
     match run(model) {
-        Ok(built) => Ok(normalized(model, built.shape)),
+        Ok(built) => {
+            crate::naming::record(&built.history);
+            Ok(normalized(model, built.shape))
+        }
         Err(e) if e.is_tolerance_sensitive() => {
             let fuzz = t.confusion() * 100.0;
             let retried = match kind {
@@ -134,7 +140,10 @@ pub fn bool_once(
                 BoolKind::Common => Err(e),
             };
             retried
-                .map(|built| normalized(model, built.shape))
+                .map(|built| {
+                    crate::naming::record(&built.history);
+                    normalized(model, built.shape)
+                })
                 .map_err(|e| format!("boolean {verb} failed: {e}"))
         }
         Err(e) => Err(format!("boolean {verb} failed: {e}")),

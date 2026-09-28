@@ -202,3 +202,58 @@ fn a_thickness_opens_its_face_by_name() {
     assert!((volume(&[block(10.0), shell(top)]) - open_top(10.0)).abs() < 0.5);
     assert!((volume(&[block(30.0), shell(top)]) - open_top(30.0)).abs() < 0.5);
 }
+
+/// The round a fillet makes is named after the edge it rounds, so it keeps
+/// its name when the block grows (a reference on the round finds it).
+#[test]
+fn a_fillet_s_round_is_named_after_its_edge() {
+    let first = build(&[block(10.0)], &[]);
+    // The top edge along X at y = 0: its two faces' names, as a pick keeps.
+    let edge = (0..first.mesh.edge_faces.len())
+        .find(|&e| {
+            let points: Vec<[f32; 3]> = first
+                .mesh
+                .edges
+                .chunks(2)
+                .zip(&first.mesh.edge_ids)
+                .filter(|(_, id)| **id as usize == e)
+                .flat_map(|(pair, _)| pair.iter().map(|i| first.mesh.positions[*i as usize]))
+                .collect();
+            !points.is_empty()
+                && points
+                    .iter()
+                    .all(|p| (p[2] - 10.0).abs() < 1e-3 && p[1].abs() < 1e-3)
+        })
+        .expect("the top front edge");
+    let faces = first.mesh.edge_faces[edge];
+    let round = |height: f64| {
+        let fillet = SolidOp::Fillet {
+            radius: 2.0,
+            edges: kernel_api::EdgeSelection::Picked(vec![kernel_api::EdgeProbe {
+                point: [10.0, 0.0, height],
+                direction: [1.0, 0.0, 0.0],
+                faces,
+            }]),
+            follow_tangent: false,
+        };
+        let built = build(&[block(height), fillet], &[]);
+        let blend = built
+            .mesh
+            .face_surfaces
+            .iter()
+            .position(|s| matches!(s, kernel_api::FaceSurface::Cylinder { .. }))
+            .expect("a round");
+        built.mesh.face_names[blend]
+    };
+    let (short, tall) = (round(10.0), round(20.0));
+    // Named after the edge it came from: its two faces' names under the
+    // fillet's own.
+    let mut bytes = faces[0].to_le_bytes().to_vec();
+    bytes.extend_from_slice(&faces[1].to_le_bytes());
+    assert_eq!(
+        short,
+        naming::child(TAGS[1], &bytes),
+        "named after its edge"
+    );
+    assert_eq!(short, tall, "the round keeps its name");
+}

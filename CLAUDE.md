@@ -863,8 +863,12 @@ on the start page (`Screen::Start`); the recent list lives in
   feature's walls after the sketch elements they were swept from, which
   the sketcher's profiles carry as `ProfileWire::names`; its ends after
   where they stand; other new faces by surface kind and facing; a face a
-  later op splits, trims or merges after the faces it lies on or covers,
-  the faces an op left alone recognised by a `Print`), each op under its
+  later op splits, trims or merges after the faces the kernel's history
+  says it came from (every `Built.history` an op's kernel calls return
+  is recorded, `naming::record`, and followed back), a face generated
+  from an edge (a fillet's round) after that edge's two faces, and where
+  the history says nothing after the faces it lies on or covers; the
+  faces an op left alone recognised by a `Print`), each op under its
   feature's name (`execute_solid_chain_named`, the worker's tags). The
   mesh carries `face_names` and `edge_faces`; a pick keeps them
   (`FaceRef::name`, `EdgeRef::faces`, `FacePick`, `EdgePick`, datum

@@ -19,6 +19,7 @@
 use std::cell::RefCell;
 
 use kernel_api::{Profile, ProfileSegment, TopoName, naming};
+use ogeom::algo::History;
 use ogeom::math::{Point, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::topo::{Model, NodeData, SameKey, Shape, ShapeType, explore_unique};
@@ -260,8 +261,64 @@ impl NameMap {
     /// The faces of `result`, each named after every face of `sources` it
     /// came from; faces that came from none are named afresh under
     /// `fresh`.
-    pub fn carry(model: &Model, result: &Shape, sources: &[&NameMap], fresh: TopoName) -> Self {
+    pub fn carry(
+        model: &Model,
+        result: &Shape,
+        sources: &[&NameMap],
+        fresh: TopoName,
+        histories: &[History],
+    ) -> Self {
+        // Each source edge's two faces' names, for faces a kernel operation
+        // generated from an edge (a fillet's blend).
+        let edge_names = |edge: &Shape| -> Option<TopoName> {
+            let key = SameKey(edge.clone());
+            let mut faces: Vec<TopoName> = sources
+                .iter()
+                .flat_map(|s| s.faces.iter())
+                .filter(|g| {
+                    explore_unique(model, &g.face, ShapeType::Edge)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .any(|e| SameKey(e) == key)
+                })
+                .filter_map(|g| g.names.iter().copied().min())
+                .collect();
+            faces.sort_unstable();
+            faces.dedup();
+            match faces.as_slice() {
+                [a, b, ..] => {
+                    let mut bytes = a.to_le_bytes().to_vec();
+                    bytes.extend_from_slice(&b.to_le_bytes());
+                    Some(naming::child(fresh, &bytes))
+                }
+                _ => None,
+            }
+        };
+        let histories: Vec<Sources> = histories.iter().map(sources_of).collect();
         Self::assign_reusing(model, result, fresh, sources, |f| {
+            // What the kernel says the face came from, first.
+            if !histories.is_empty() {
+                let came_from = ancestors(&f.face, &histories);
+                let mut names: Vec<TopoName> = Vec::new();
+                for shape in &came_from[1..] {
+                    let key = SameKey(shape.clone());
+                    if let Some(g) = sources
+                        .iter()
+                        .flat_map(|s| s.faces.iter())
+                        .find(|g| SameKey(g.face.clone()) == key)
+                    {
+                        names.extend(&g.names);
+                    } else if model.kind_of(shape) == Ok(ShapeType::Edge)
+                        && let Some(name) = edge_names(shape)
+                    {
+                        names.push(name);
+                    }
+                }
+                if !names.is_empty() {
+                    return names;
+                }
+            }
+            // Else where it lies.
             let key = SameKey(f.face.clone());
             let mut names: Vec<TopoName> = Vec::new();
             for source in sources {
@@ -519,6 +576,15 @@ fn point_triangle_distance(p: Point, t: &[Point; 3]) -> f64 {
 thread_local! {
     /// The names of the solid the op running on this thread works on.
     static CURRENT: RefCell<Option<NameMap>> = const { RefCell::new(None) };
+    /// What the kernel said the op running on this thread did, one record
+    /// per kernel operation, in order.
+    static HISTORIES: RefCell<Vec<History>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Keep what a kernel operation of the op running on this thread did:
+/// the result's faces are named from it (see [`NameMap::carry`]).
+pub(crate) fn record(history: &History) {
+    HISTORIES.with(|h| h.borrow_mut().push(history.clone()));
 }
 
 /// The names of the solid the ops on this thread work on, while this
@@ -532,18 +598,79 @@ impl Current {
     pub fn take(self) -> NameMap {
         CURRENT.with(|c| c.borrow_mut().take()).unwrap_or_default()
     }
+
+    /// The names, given back, and what the kernel's operations did while
+    /// they were set, in order.
+    pub fn take_with_histories(self) -> (NameMap, Vec<History>) {
+        let histories = HISTORIES.with(|h| std::mem::take(&mut *h.borrow_mut()));
+        (self.take(), histories)
+    }
 }
 
 impl Drop for Current {
     fn drop(&mut self) {
         CURRENT.with(|c| c.borrow_mut().take());
+        HISTORIES.with(|h| h.borrow_mut().clear());
     }
 }
 
-/// Make `names` the names of the solid the ops on this thread work on.
+/// Make `names` the names of the solid the ops on this thread work on, and
+/// start keeping what the kernel's operations do.
 pub(crate) fn set_current(names: NameMap) -> Current {
     CURRENT.with(|c| *c.borrow_mut() = Some(names));
+    HISTORIES.with(|h| h.borrow_mut().clear());
     Current
+}
+
+/// A kernel operation's record turned about: each shape it made, with the
+/// shapes it made it from.
+type Sources = std::collections::HashMap<SameKey, Vec<Shape>>;
+
+fn sources_of(history: &History) -> Sources {
+    let mut out: Sources = std::collections::HashMap::new();
+    for input in history.inputs() {
+        for made in history
+            .modified(&input)
+            .iter()
+            .chain(history.generated(&input))
+        {
+            out.entry(SameKey(made.clone()))
+                .or_default()
+                .push(input.clone());
+        }
+    }
+    out
+}
+
+/// Every shape `face` came from through `histories` (the kernel's records
+/// of the operations that made it, oldest first, each turned about by
+/// [`sources_of`]), `face` included: what each operation modified into it
+/// or generated it from, followed back operation by operation.
+fn ancestors(face: &Shape, histories: &[Sources]) -> Vec<Shape> {
+    let mut all: Vec<Shape> = vec![face.clone()];
+    let mut frontier: Vec<Shape> = vec![face.clone()];
+    for sources in histories.iter().rev() {
+        let mut next: Vec<Shape> = Vec::new();
+        for shape in &frontier {
+            match sources.get(&SameKey(shape.clone())) {
+                Some(inputs) => {
+                    for input in inputs {
+                        if !all
+                            .iter()
+                            .any(|a| SameKey(a.clone()) == SameKey(input.clone()))
+                        {
+                            all.push(input.clone());
+                        }
+                        next.push(input.clone());
+                    }
+                }
+                // A shape this operation did not make was there before it.
+                None => next.push(shape.clone()),
+            }
+        }
+        frontier = next;
+    }
+    all
 }
 
 /// The face of `root` named `name`: the one bearing the name, or, among

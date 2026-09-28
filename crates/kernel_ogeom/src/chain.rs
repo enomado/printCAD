@@ -341,7 +341,10 @@ pub fn execute_named(
             SolidOp::Refine => {
                 let solid = base.ok_or_else(|| err("refine needs an existing solid".into()))?;
                 ogeom::heal::unify_same_domain(&mut model, &solid, ops::tol())
-                    .map(|(built, _)| built.shape)
+                    .map(|(built, _)| {
+                        naming::record(&built.history);
+                        built.shape
+                    })
                     .map_err(|e| err(format!("refine failed: {e}")))?
             }
             SolidOp::Thickness {
@@ -418,7 +421,7 @@ pub fn execute_named(
         };
 
         // The result's faces take the names of the faces they came from.
-        let before_names = named.take();
+        let (before_names, histories) = named.take_with_histories();
         names = match solid_op {
             SolidOp::Shape { .. } => tool_names_fresh(&model, &next, tag),
             _ => {
@@ -426,7 +429,7 @@ pub fn execute_named(
                 if let Some(tool) = &tool_names {
                     sources.push(tool);
                 }
-                NameMap::carry(&model, &next, &sources, tag)
+                NameMap::carry(&model, &next, &sources, tag, &histories)
             }
         };
         current = Some(next);
