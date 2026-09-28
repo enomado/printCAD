@@ -346,6 +346,8 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         ConstraintKind::PointOnCircle { point, circle } => vec![*point, *circle],
         ConstraintKind::PointOnEllipse { point, ellipse } => vec![*point, *ellipse],
         ConstraintKind::PointOnCurve { point, curve } => vec![*point, *curve],
+        ConstraintKind::EllipseRadius { ellipse, .. } => vec![*ellipse],
+        ConstraintKind::CurveLength { curve, .. } => vec![*curve],
         ConstraintKind::TangentCurves { curve1, curve2 }
         | ConstraintKind::PerpendicularCurves { curve1, curve2 } => vec![*curve1, *curve2],
         ConstraintKind::Horizontal { element }
@@ -420,6 +422,9 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::PointOnCircle { .. } => "Point on circle".to_string(),
         ConstraintKind::PointOnEllipse { .. } => "Point on ellipse".to_string(),
         ConstraintKind::PointOnCurve { .. } => "Point on curve".to_string(),
+        ConstraintKind::EllipseRadius { major: true, .. } => "Major radius".to_string(),
+        ConstraintKind::EllipseRadius { major: false, .. } => "Minor radius".to_string(),
+        ConstraintKind::CurveLength { .. } => "Curve length".to_string(),
         ConstraintKind::TangentCurves { .. } => "Tangent".to_string(),
         ConstraintKind::PerpendicularCurves { .. } => "Perpendicular".to_string(),
         ConstraintKind::Horizontal { .. } | ConstraintKind::HorizontalPoints { .. } => {
@@ -519,6 +524,16 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
         ConstraintKind::ArcAngle { arc, .. } => {
             crate::measure::arc_sweep(sketch, arc).map(f32::to_degrees)
         }
+        ConstraintKind::EllipseRadius { ellipse, major, .. } => {
+            match sketch.get_geometry(ellipse) {
+                Some(GeometryElement::Ellipse(e)) => {
+                    let a = e.major.to_glam().length();
+                    Some(if major { a } else { a * e.ratio })
+                }
+                _ => None,
+            }
+        }
+        ConstraintKind::CurveLength { curve, .. } => crate::measure::curve_length(sketch, curve),
         ConstraintKind::AngleThreePoints {
             point1,
             vertex,
@@ -560,7 +575,10 @@ pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
         | ConstraintKind::AngleAtPoint { angle_rad, .. }
         | ConstraintKind::ArcAngle { angle_rad, .. }
         | ConstraintKind::AngleThreePoints { angle_rad, .. } => Some(angle_rad.to_degrees()),
-        ConstraintKind::ArcLength { length, .. } => Some(length),
+        ConstraintKind::ArcLength { length, .. } | ConstraintKind::CurveLength { length, .. } => {
+            Some(length)
+        }
+        ConstraintKind::EllipseRadius { radius, .. } => Some(radius),
         ConstraintKind::Gap { distance, .. } => Some(distance),
         ConstraintKind::Refraction { ratio, .. } => Some(ratio),
         _ => None,
@@ -584,7 +602,10 @@ pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
         | ConstraintKind::AngleAtPoint { angle_rad, .. }
         | ConstraintKind::ArcAngle { angle_rad, .. }
         | ConstraintKind::AngleThreePoints { angle_rad, .. } => *angle_rad = v.to_radians(),
-        ConstraintKind::ArcLength { length, .. } => *length = v,
+        ConstraintKind::ArcLength { length, .. } | ConstraintKind::CurveLength { length, .. } => {
+            *length = v
+        }
+        ConstraintKind::EllipseRadius { radius, .. } => *radius = v,
         ConstraintKind::Gap { distance, .. } => *distance = v,
         ConstraintKind::Refraction { ratio, .. } => *ratio = v,
         _ => {}
@@ -1262,6 +1283,15 @@ pub enum ConstraintKind {
         point: Uuid,
         angle_rad: f32,
     },
+    /// An ellipse's semi-major (`major`) or semi-minor radius.
+    EllipseRadius {
+        ellipse: Uuid,
+        major: bool,
+        radius: f32,
+    },
+    /// The length along a spline, or along an arc of a parabola or
+    /// hyperbola between its ends.
+    CurveLength { curve: Uuid, length: f32 },
     /// A point on any curve: a spline, a parabola or hyperbola, or any of
     /// the others.
     PointOnCurve { point: Uuid, curve: Uuid },
@@ -1358,6 +1388,8 @@ impl ConstraintKind {
                 | ConstraintKind::Angle { .. }
                 | ConstraintKind::AngleToAxis { .. }
                 | ConstraintKind::ArcLength { .. }
+                | ConstraintKind::CurveLength { .. }
+                | ConstraintKind::EllipseRadius { .. }
                 | ConstraintKind::Gap { .. }
                 | ConstraintKind::AngleAtPoint { .. }
                 | ConstraintKind::ArcAngle { .. }

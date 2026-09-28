@@ -2772,6 +2772,11 @@ impl Workbench for SketchWorkbench {
                             "Radius or diameter by kind",
                             "constraint-diameter",
                         ),
+                        ToolVariant::new(
+                            "ellipse_minor",
+                            "An ellipse's minor radius",
+                            "constraint-radius",
+                        ),
                     ]);
                 }
                 "angle" => {

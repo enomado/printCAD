@@ -168,6 +168,18 @@ fn element_anchor(sketch: &Sketch, id: Uuid) -> Option<Vec2D> {
     }
 }
 
+/// An ellipse's centre and the vertex at the end of its major or minor
+/// radius.
+fn ellipse_radius_ends(sketch: &Sketch, ellipse: Uuid, major: bool) -> Option<(Vec2D, Vec2D)> {
+    let GeometryElement::Ellipse(e) = sketch.get_geometry(ellipse)? else {
+        return None;
+    };
+    let c = sketch.point_position(e.center)?;
+    let m = e.major.to_glam();
+    let reach = if major { m } else { m.perp() * e.ratio };
+    Some((c, Vec2D::from_glam(c.to_glam() + reach)))
+}
+
 /// Sketch-space anchor of a dimensional constraint's label.
 fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
     let mid = |a: Vec2D, b: Vec2D| Vec2D::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y));
@@ -197,6 +209,11 @@ fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
             element_anchor(sketch, arc)
         }
         ConstraintKind::AngleThreePoints { vertex, .. } => sketch.point_position(vertex),
+        ConstraintKind::CurveLength { curve, .. } => element_anchor(sketch, curve),
+        ConstraintKind::EllipseRadius { ellipse, major, .. } => {
+            let (c, tip) = ellipse_radius_ends(sketch, ellipse, major)?;
+            Some(mid(c, tip))
+        }
         ConstraintKind::Gap { item1, item2, .. } => {
             let gap = crate::measure::gap(sketch, item1, item2)?;
             Some(Vec2D::from_glam((gap.a + gap.b) * 0.5))
@@ -249,6 +266,8 @@ fn dim_text(sketch: &Sketch, constraint: &sketch::Constraint) -> String {
     let text = match constraint.kind {
         ConstraintKind::Radius { .. } => format!("R {val}"),
         ConstraintKind::Diameter { .. } => format!("Ø {val}"),
+        ConstraintKind::EllipseRadius { .. } => format!("R {val}"),
+        ConstraintKind::CurveLength { .. } => format!("◠ {val}"),
         ConstraintKind::Angle { .. }
         | ConstraintKind::AngleToAxis { .. }
         | ConstraintKind::AngleAtPoint { .. }
@@ -532,6 +551,17 @@ fn curve_dimension_lines(
         (dot(d, d).sqrt() > LEADER_MIN_PX).then_some((from, label))
     };
     Some(match *kind {
+        ConstraintKind::EllipseRadius { ellipse, major, .. } => {
+            let Some((c, tip)) = ellipse_radius_ends(sketch, ellipse, major) else {
+                return Some(Vec::new());
+            };
+            let (Some(a), Some(b)) = (proj.to_px(c), proj.to_px(tip)) else {
+                return Some(Vec::new());
+            };
+            let mut lines = vec![(a, b)];
+            lines.extend(leader(scale(add(a, b), 0.5)));
+            lines
+        }
         ConstraintKind::AngleThreePoints {
             point1,
             vertex,

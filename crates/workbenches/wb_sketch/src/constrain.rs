@@ -152,6 +152,7 @@ pub const TOOLS: &[&str] = &[
     "arc_length",
     "arc_angle",
     "angle_three_points",
+    "ellipse_minor",
     "gap",
     "radius_diameter",
     "angle_at_point",
@@ -466,6 +467,29 @@ pub fn kinds_for(
             });
             kinds
         }
+        "radius" | "ellipse_minor" if shape.only(0, 0, 0, 1) => {
+            let major = tool == "radius";
+            let probe = ConstraintKind::EllipseRadius {
+                ellipse: e[0],
+                major,
+                radius: 0.0,
+            };
+            vec![ConstraintKind::EllipseRadius {
+                ellipse: e[0],
+                major,
+                radius: measured(&probe),
+            }]
+        }
+        "arc_length" if shape.others.len() == 1 && shape.total() == 1 => {
+            let probe = ConstraintKind::CurveLength {
+                curve: shape.others[0],
+                length: 0.0,
+            };
+            vec![ConstraintKind::CurveLength {
+                curve: shape.others[0],
+                length: measured(&probe),
+            }]
+        }
         "arc_angle" if !shape.arcs.is_empty() && shape.only(0, 0, shape.arcs.len(), 0) => shape
             .arcs
             .iter()
@@ -743,6 +767,8 @@ pub fn dimension_for(shape: &SelectionShape) -> Option<&'static str> {
         "radius_diameter",
         "distance_x",
         "distance_y",
+        // An ellipse: its major radius.
+        "radius",
     ]
     .into_iter()
     .find(|tool| fits(tool, shape))

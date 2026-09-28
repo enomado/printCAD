@@ -374,6 +374,23 @@ impl CurveVars {
         [dx / len, dy / len]
     }
 
+    /// The parameter of a point on a parabola or hyperbola, in its frame;
+    /// `None` for other curves.
+    fn param_of(&self, v: &[f64], p: usize) -> Option<f64> {
+        let (c, shape, hyperbola) = match self {
+            CurveVars::Hyperbola { c, shape } => (*c, *shape, true),
+            CurveVars::Parabola { c, shape } => (*c, *shape, false),
+            _ => return None,
+        };
+        let (u, _, b) = Self::frame(v, shape);
+        let across = -(v[p] - v[c]) * u[1] + (v[p + 1] - v[c + 1]) * u[0];
+        Some(if hyperbola {
+            (across / b.max(MIN_LEN)).asinh()
+        } else {
+            across
+        })
+    }
+
     /// The parameters worth searching for a first guess.
     fn range(&self, v: &[f64]) -> (f64, f64) {
         match self {
@@ -441,6 +458,16 @@ fn nearest_params(a: &CurveVars, b: &CurveVars, v: &[f64]) -> (f64, f64) {
 
 /// One resolved constraint residual, expressed in variable indices.
 enum ResidualSpec {
+    /// An ellipse's semi-major or semi-minor radius, its shape at `k`,
+    /// less `radius`.
+    EllipseRadius { k: usize, major: bool, radius: f64 },
+    /// The length along a curve less `length`: a spline's whole domain, or
+    /// a conic's arc between the ends `ends` holds.
+    CurveLength {
+        curve: CurveVars,
+        ends: Option<(usize, usize)>,
+        length: f64,
+    },
     /// p - curve(t) (2 residuals), `t` a variable of its own.
     PointOnCurve {
         p: usize,
@@ -756,6 +783,29 @@ impl ResidualSpec {
 
     fn eval(&self, v: &[f64], out: &mut Vec<f64>) {
         match self {
+            ResidualSpec::CurveLength {
+                curve,
+                ends,
+                length,
+            } => {
+                let (t0, t1) = match ends {
+                    Some((s, e)) => (
+                        curve.param_of(v, *s).unwrap_or(0.0),
+                        curve.param_of(v, *e).unwrap_or(0.0),
+                    ),
+                    None => curve.range(v),
+                };
+                let n = 128;
+                let mut total = 0.0;
+                let mut last = curve.at(v, t0);
+                for i in 1..=n {
+                    let q = curve.at(v, t0 + (t1 - t0) * i as f64 / n as f64);
+                    total += ((q[0] - last[0]).powi(2) + (q[1] - last[1]).powi(2)).sqrt();
+                    last = q;
+                }
+                out.push(total - length);
+                return;
+            }
             ResidualSpec::PointOnCurve { p, curve, t } => {
                 let q = curve.at(v, v[*t]);
                 out.push(v[*p] - q[0]);
@@ -783,7 +833,16 @@ impl ResidualSpec {
             _ => {}
         }
         match *self {
-            ResidualSpec::PointOnCurve { .. } | ResidualSpec::CurvesMeet { .. } => {}
+            ResidualSpec::PointOnCurve { .. }
+            | ResidualSpec::CurvesMeet { .. }
+            | ResidualSpec::CurveLength { .. } => {}
+            ResidualSpec::EllipseRadius { k, major, radius } => {
+                out.push(if major {
+                    (v[k] * v[k] + v[k + 1] * v[k + 1]).sqrt() - radius
+                } else {
+                    v[k + 2] - radius
+                });
+            }
             ResidualSpec::FixedPoint { p, x, y } => {
                 out.push(v[p] - x);
                 out.push(v[p + 1] - y);
@@ -1128,6 +1187,7 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
             ConstraintKind::InternalAlignment { curve, .. } => vec![curve],
             // Equal ellipses size each other, so their shapes are free.
             ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => vec![ellipse1, ellipse2],
+            ConstraintKind::EllipseRadius { ellipse, .. } => vec![ellipse],
             _ => Vec::new(),
         })
         .collect();
@@ -1300,6 +1360,32 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
             continue;
         }
         match constraint.kind {
+            ConstraintKind::EllipseRadius {
+                ellipse,
+                major,
+                radius,
+            } => {
+                if let Some(&k) = shape_vars.get(&ellipse) {
+                    specs.push(ResidualSpec::EllipseRadius {
+                        k,
+                        major,
+                        radius: f64::from(radius),
+                    });
+                }
+            }
+            ConstraintKind::CurveLength { curve: id, length } => {
+                if let Some(curve) = curve_of(id) {
+                    let ends = match sketch.get_geometry(id) {
+                        Some(GeometryElement::Conic(k)) => point_var(k.start).zip(point_var(k.end)),
+                        _ => None,
+                    };
+                    specs.push(ResidualSpec::CurveLength {
+                        curve,
+                        ends,
+                        length: f64::from(length),
+                    });
+                }
+            }
             ConstraintKind::PointOnCurve { point, curve } => {
                 if let (Some(p), Some(curve)) = (point_var(point), curve_of(curve)) {
                     let t0 = nearest_param(&curve, &vars, [vars[p], vars[p + 1]]);
@@ -3450,6 +3536,52 @@ mod curve_constraints {
         converged(&mut sketch);
         let at = sketch.point_position(p).unwrap();
         near(at.y * at.y, 8.0 * at.x);
+    }
+
+    #[test]
+    fn an_ellipse_takes_its_radii_and_a_spline_its_length() {
+        let mut sketch = Sketch::new("t");
+        let c = point(&mut sketch, 0.0, 0.0);
+        fix(&mut sketch, c);
+        let ellipse = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
+            c,
+            Vec2D::new(6.0, 0.0),
+            0.5,
+        )));
+        for (major, radius) in [(true, 8.0), (false, 2.0)] {
+            sketch.add_constraint(ConstraintKind::EllipseRadius {
+                ellipse,
+                major,
+                radius,
+            });
+        }
+        converged(&mut sketch);
+        let Some(GeometryElement::Ellipse(e)) = sketch.get_geometry(ellipse) else {
+            unreachable!()
+        };
+        near(e.major.to_glam().length(), 8.0);
+        near(e.major.to_glam().length() * e.ratio, 2.0);
+
+        let mut sketch = Sketch::new("t");
+        let control: Vec<Uuid> = [(0.0, 0.0), (5.0, 8.0), (10.0, -4.0), (15.0, 3.0)]
+            .iter()
+            .map(|(x, y)| point(&mut sketch, *x, *y))
+            .collect();
+        for p in &control[..3] {
+            fix(&mut sketch, *p);
+        }
+        let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+            control.clone(),
+            false,
+        )));
+        let now = measure::curve_length(&sketch, spline).unwrap();
+        sketch.add_constraint(ConstraintKind::CurveLength {
+            curve: spline,
+            length: now + 4.0,
+        });
+        converged(&mut sketch);
+        let after = measure::curve_length(&sketch, spline).unwrap();
+        assert!((after - (now + 4.0)).abs() < 0.05, "{now} -> {after}");
     }
 
     #[test]

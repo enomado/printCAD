@@ -90,7 +90,7 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Distance between two parallel lines** (missing, S).
 - [x] **An arc's sweep angle** (missing, S).
 - [x] **Angle by three points** (missing, S).
-- [ ] **Dimensions on ellipses, conics and splines** (partial, M). Directly
+- [x] **Dimensions on ellipses, conics and splines** (partial, M). Directly
   on the curve, and a spline's length.
 - [x] **Label shows name, value, or both** (missing, S).
 

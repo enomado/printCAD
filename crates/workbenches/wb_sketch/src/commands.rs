@@ -126,7 +126,8 @@ pub fn register(context: &mut WorkbenchContext) {
              horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, \
              distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, \
              angle, angle_x, angle_y, angle_at_point, arc_angle, angle_three_points (items: \
-             arm, corner, arm) or refraction",
+             arm, corner, arm), ellipse_minor or refraction; radius on an ellipse is its \
+             major radius, arc_length on a spline or conic its length",
         )
         .param(
             "items",

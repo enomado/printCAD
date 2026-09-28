@@ -173,6 +173,63 @@ fn gap_ordered(i1: Item, i2: Item) -> Option<Gap> {
     })
 }
 
+/// The points along a spline, or along an arc of a parabola or hyperbola
+/// between its ends: fine enough that their polyline's length is the
+/// curve's.
+pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<Vec2>> {
+    use crate::sketch::{ConicKind, GeometryElement};
+    const STEPS: usize = 256;
+    let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
+    match sketch.get_geometry(curve)? {
+        GeometryElement::BSpline(b) => {
+            let basis = crate::spline::Basis::of(b)?;
+            let control = b
+                .control_points
+                .iter()
+                .map(|id| pos(*id).map(|p| [f64::from(p.x), f64::from(p.y)]))
+                .collect::<Option<Vec<_>>>()?;
+            Some(
+                basis
+                    .sample(&control, STEPS)
+                    .into_iter()
+                    .map(|p| p.to_glam())
+                    .collect(),
+            )
+        }
+        GeometryElement::Conic(k) => {
+            let c = pos(k.center)?;
+            let a = k.axis.to_glam().length().max(1e-9);
+            let u = k.axis.to_glam() / a;
+            let w = u.perp();
+            // The parameter of a point on the curve, in its own frame.
+            let param = |p: Vec2| {
+                let across = (p - c).dot(w);
+                match k.kind {
+                    ConicKind::Hyperbola => (across / k.minor.max(1e-9)).asinh(),
+                    ConicKind::Parabola => across,
+                }
+            };
+            let at = |t: f32| match k.kind {
+                ConicKind::Hyperbola => c + u * (a * t.cosh()) + w * (k.minor * t.sinh()),
+                ConicKind::Parabola => c + u * (t * t / (4.0 * a)) + w * t,
+            };
+            let (t0, t1) = (param(pos(k.start)?), param(pos(k.end)?));
+            Some(
+                (0..=STEPS)
+                    .map(|i| at(t0 + (t1 - t0) * i as f32 / STEPS as f32))
+                    .collect(),
+            )
+        }
+        _ => None,
+    }
+}
+
+/// The length along a spline, or along an arc of a conic between its ends.
+pub fn curve_length(sketch: &Sketch, curve: Uuid) -> Option<f32> {
+    let pts = curve_samples(sketch, curve)?;
+    Some(pts.windows(2).map(|w| (w[1] - w[0]).length()).sum())
+}
+
 /// The angle an arc sweeps counter-clockwise from its start to its end, in
 /// radians (0 to a whole turn).
 pub fn arc_sweep(sketch: &Sketch, arc: Uuid) -> Option<f32> {

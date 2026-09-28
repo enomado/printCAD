@@ -26,7 +26,8 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
             "constraint-angle"
         }
         ConstraintKind::Refraction { .. } => "constraint-refraction",
-        ConstraintKind::Radius { .. } => "constraint-radius",
+        ConstraintKind::Radius { .. } | ConstraintKind::EllipseRadius { .. } => "constraint-radius",
+        ConstraintKind::CurveLength { .. } => "constraint-arc-length",
         ConstraintKind::Diameter { .. } => "constraint-diameter",
         ConstraintKind::PointOnLine { .. }
         | ConstraintKind::PointOnCircle { .. }
