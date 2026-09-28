@@ -1673,10 +1673,14 @@ mod tests {
     fn a_program_that_does_not_speak_the_protocol_fails_to_start() {
         // It writes a line that is not JSON and ends: the initialize
         // request is never answered.
+        #[cfg(unix)]
+        let (command, args) = ("sh", ["-c", "echo not json; exit 3"]);
+        #[cfg(windows)]
+        let (command, args) = ("cmd", ["/C", "echo not json & exit 3"]);
         let chat = AgentChat::start(
             &Program {
-                command: "sh".into(),
-                args: vec!["-c".into(), "echo not json; exit 3".into()],
+                command: command.into(),
+                args: args.map(String::from).to_vec(),
                 env: Vec::new(),
             },
             PathBuf::from("/tmp"),

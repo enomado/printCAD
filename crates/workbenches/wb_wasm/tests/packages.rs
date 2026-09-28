@@ -322,7 +322,8 @@ fn a_job_runs_away_from_the_window_and_reports_when_the_bench_is_active() {
 }
 
 /// Run the rogue's helper job and answer how it ended, as the bench was
-/// told.
+/// told. The helper is a shell script, so this runs where one does.
+#[cfg(unix)]
 fn helper_job(granted: Capabilities, name: &str) -> String {
     let package = installed("tests/rogue", "rogue.wasm", name);
     let helpers = package.dir.join("helpers").join(format!(
@@ -333,11 +334,8 @@ fn helper_job(granted: Capabilities, name: &str) -> String {
     std::fs::create_dir_all(&helpers).unwrap();
     let script = helpers.join("upper");
     std::fs::write(&script, "#!/bin/sh\ntr a-z A-Z\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut registry = registry_with(&package, granted);
     let mut document = Document::new("rogue");
     run(
