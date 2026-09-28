@@ -63,6 +63,7 @@ fn parameter_rows(
         return;
     }
     group_header(ui, "Parameters");
+    let width = ui.available_width();
     let slots = document.evaluated_slots(feature);
     for p in params {
         // Only the numbers the feature has now (a counterbore hole has no
@@ -86,18 +87,11 @@ fn parameter_rows(
             document,
             dim: p.dim,
         };
-        ui.horizontal(|ui| {
-            let half = ui.available_width() * 0.5;
-            ui.add_space(24.0);
-            ui.add_sized(
-                [half - 32.0, TREE_ROW],
-                egui::Label::new(RichText::new(&p.label).font(sans(FONT_SM)).color(TEXT2))
-                    .truncate(),
-            )
-            .on_hover_text(match &p.name {
-                Some(name) => format!("{}.{name}", core_document::expr::quote_name(&node.name)),
-                None => "Name it to read it from formulas".to_string(),
-            });
+        let hint = match &p.name {
+            Some(name) => format!("{}.{name}", core_document::expr::quote_name(&node.name)),
+            None => "Name it to read it from formulas".to_string(),
+        };
+        field_row(ui, width, &p.label, Some(&hint), |ui, field_width| {
             let field = ui_kit::widgets::FormulaField::new(
                 ui.id().with(("parameter", feature, &p.key)),
                 value,
@@ -108,12 +102,51 @@ fn parameter_rows(
             .unit(unit_suffix(p.dim))
             .decimals(if p.integer { 0 } else { 2 })
             .speed(if p.integer { 0.05 } else { 0.1 })
-            .width((ui.available_width() - 40.0).max(80.0));
+            .fill(field_width);
             if let Some(edit) = field.show(ui) {
                 result.parameter = Some((feature, p.clone(), edit));
             }
         });
     }
+}
+
+/// One labelled row of an editable group, `width` wide: the label in a
+/// column of its own, left-aligned and cut short when long, and `field`
+/// given exactly the rest, so no row reaches past the panel. `width` is
+/// measured once per group, before its rows, so one row never widens the
+/// next.
+fn field_row(
+    ui: &mut egui::Ui,
+    width: f32,
+    label: &str,
+    hint: Option<&str>,
+    field: impl FnOnce(&mut egui::Ui, f32),
+) {
+    const INDENT: f32 = 24.0;
+    const RIGHT: f32 = 8.0;
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let label_width = ((width - INDENT) * 0.42).max(60.0);
+        ui.add_space(INDENT - gap);
+        let shown = ui
+            .allocate_ui_with_layout(
+                egui::vec2(label_width, TREE_ROW),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(label_width);
+                    ui.add(
+                        egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2))
+                            .truncate(),
+                    )
+                },
+            )
+            .inner;
+        if let Some(hint) = hint {
+            shown.on_hover_text(hint);
+        }
+        let rest = width - INDENT - label_width - gap - RIGHT;
+        field(ui, rest.max(40.0));
+    });
 }
 
 /// The inputs a feature's bench lets be swapped (its profile), each a
@@ -130,23 +163,13 @@ fn reference_rows(
         return;
     }
     group_header(ui, "Inputs");
+    let width = ui.available_width();
     for reference in references {
-        ui.horizontal(|ui| {
-            let half = ui.available_width() * 0.5;
-            ui.add_space(24.0);
-            ui.add_sized(
-                [half - 32.0, TREE_ROW],
-                egui::Label::new(
-                    RichText::new(&reference.label)
-                        .font(sans(FONT_SM))
-                        .color(TEXT2),
-                )
-                .truncate(),
-            );
+        field_row(ui, width, &reference.label, None, |ui, field_width| {
             let mut picked = None;
             egui::ComboBox::from_id_salt(("reference", feature, &reference.key))
                 .selected_text(RichText::new(&reference.current).font(sans(FONT_SM)))
-                .width((ui.available_width() - 8.0).max(80.0))
+                .width(field_width - 2.0 * ui.spacing().button_padding.x)
                 .show_ui(ui, |ui| {
                     for (id, name) in &reference.choices {
                         let on = reference.selected == Some(*id);

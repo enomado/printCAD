@@ -1119,6 +1119,9 @@ pub struct FormulaField<'a> {
     speed: f64,
     decimals: usize,
     width: f32,
+    /// The whole widget's width, the `fx` button included, when it fills a
+    /// given space.
+    fill: Option<f32>,
     host: &'a dyn FormulaHost,
 }
 
@@ -1133,6 +1136,7 @@ impl<'a> FormulaField<'a> {
             speed: 0.1,
             decimals: 2,
             width: 140.0,
+            fill: None,
             host,
         }
     }
@@ -1165,6 +1169,30 @@ impl<'a> FormulaField<'a> {
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
         self
+    }
+
+    /// Spans exactly `total`, border, padding and the `fx` button included,
+    /// so a row of fields never reaches past the space it was given.
+    pub fn fill(mut self, total: f32) -> Self {
+        self.fill = Some(total);
+        self
+    }
+
+    /// The field frame's border and padding, both sides.
+    const FRAME: f32 = 2.0 * SPACE_2 + 2.0;
+
+    /// The width inside the field's frame; `button` when the `fx` button
+    /// sits beside it.
+    fn inner_width(&self, ui: &Ui, button: bool) -> f32 {
+        let Some(total) = self.fill else {
+            return self.width;
+        };
+        let beside = if button {
+            SPACE_1 + 12.0 + 2.0 * ui.spacing().button_padding.x
+        } else {
+            0.0
+        };
+        (total - Self::FRAME - beside).max(24.0)
     }
 
     pub fn show(self, ui: &mut Ui) -> Option<FormulaEdit> {
@@ -1204,11 +1232,12 @@ impl<'a> FormulaField<'a> {
         } else {
             format!(" {}", self.unit)
         };
+        let inner = self.inner_width(ui, true);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_1;
             let field = self.frame(border).show(ui, |ui| {
-                ui.set_min_size(Vec2::new(self.width, INPUT - 2.0));
-                ui.set_max_width(self.width);
+                ui.set_min_size(Vec2::new(inner, INPUT - 2.0));
+                ui.set_max_width(inner);
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = SPACE_1;
                     ui.style_mut().override_font_id = Some(mono(FONT_SM));
@@ -1285,11 +1314,21 @@ impl<'a> FormulaField<'a> {
         let host = self.host;
         let mut out = None;
         let mut done = false;
+        let inner = self.inner_width(ui, false);
+        // Filling a space, the formula stays inside it; a free field lets a
+        // long formula reach wider than the number it replaces.
+        let text_width = match self.fill {
+            Some(_) => inner - 12.0 - ui.spacing().item_spacing.x,
+            None => self.width * 1.6,
+        };
         ui.vertical(|ui| {
             let mut preview = host.evaluate(&text);
             self.frame(if preview.is_err() { DANGER } else { ACCENT })
                 .show(ui, |ui| {
-                    ui.set_min_size(Vec2::new(self.width, INPUT - 2.0));
+                    ui.set_min_size(Vec2::new(inner, INPUT - 2.0));
+                    if self.fill.is_some() {
+                        ui.set_max_width(inner);
+                    }
                     ui.horizontal_centered(|ui| {
                         icon::draw(ui, "expression", 12.0, ACCENT);
                         let edit = crate::completion::completing_text_edit(
@@ -1300,7 +1339,7 @@ impl<'a> FormulaField<'a> {
                             |edit| {
                                 edit.frame(Frame::NONE)
                                     .font(mono(FONT_SM))
-                                    .desired_width(self.width * 1.6)
+                                    .desired_width(text_width)
                             },
                         );
                         let resp = edit.response;
