@@ -28,12 +28,18 @@ linux)
   mkdir -p "$dir"
   install -m 755 "$root/target/release/printcad" "$root/target/release/printcad-serverd" "$dir/"
   for doc in "${docs[@]}"; do cp "$root/$doc" "$dir/"; done
+  cp "$root/crates/app_shell/assets/icon/printcad-256.png" "$dir/printcad.png"
+  install -m 755 "$root/scripts/linux-install.sh" "$dir/install.sh"
+  # The entry's name and StartupWMClass are the window's app id, so the
+  # desktop matches the running window to this entry and its icon.
   cat > "$dir/printcad.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=printCAD
 Comment=Parametric CAD for 3D printing
 Exec=printcad %F
+Icon=printcad
+StartupWMClass=printcad
 Terminal=false
 Categories=Graphics;Engineering;3DGraphics;
 MimeType=model/step;model/stl;model/3mf;
@@ -65,6 +71,7 @@ macos)
   done
   # The renderer loads Vulkan from here when the system has none.
   cp "$moltenvk" "$app/Contents/Frameworks/libMoltenVK.dylib"
+  cp "$root/crates/app_shell/assets/icon/printcad.icns" "$app/Contents/Resources/"
   for doc in "${docs[@]}"; do cp "$root/$doc" "$app/Contents/Resources/"; done
   cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -76,6 +83,7 @@ macos)
   <key>CFBundleName</key><string>printCAD</string>
   <key>CFBundleDisplayName</key><string>printCAD</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>printcad</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>

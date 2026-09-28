@@ -40,7 +40,12 @@ pure Rust. No system CAD libraries are needed.
 
 printCAD runs on Linux (Wayland or X11), Windows 10 or later, and macOS 11
 or later. Ready-made downloads are on the
-[releases page](https://github.com/gilbertorconde/printCAD/releases).
+[releases page](https://github.com/gilbertorconde/printCAD/releases). On
+Linux, unpack the archive and run `./install.sh`: it puts printCAD in your
+applications menu and `printcad` on your path (`./install.sh --remove`
+takes it away). The macOS and Windows builds are not signed yet, so the
+first launch needs right-click › Open on macOS, and "Run anyway" on
+Windows.
 
 To build it you need Rust 1.98 or later and a GPU with Vulkan drivers. On
 macOS Vulkan runs over Metal through MoltenVK (`brew install molten-vk`);

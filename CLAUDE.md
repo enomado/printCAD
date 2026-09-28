@@ -65,6 +65,14 @@ cargo fmt --all                   # CI enforces --check
   builds Linux (Ubuntu 22.04, `.tar.gz`), Windows (`.zip`) and macOS (one
   universal `.app` in a `.dmg`, carrying MoltenVK, ad-hoc signed) through
   `scripts/package-release.sh` and publishes them as a GitHub release.
+  The Linux archive carries `install.sh` (`scripts/linux-install.sh`: a
+  per-user install with its menu entry and icon). The application icon is
+  drawn in `crates/app_shell/assets/icon/` (`printcad.svg`, and
+  `printcad-small.svg` for 48 px and below); `scripts/app-icon.sh` renders
+  the PNG, `.ico` and `.icns` the builds carry: the window icon
+  (`window_icon`), the Windows program's resource (`build.rs`,
+  `winresource`), the macOS bundle's, and the desktop entry's, which the
+  window finds through its app id `printcad`.
   The CI's `platforms` job runs clippy and the tests on Windows and macOS.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set

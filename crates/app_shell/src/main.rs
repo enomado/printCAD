@@ -542,6 +542,27 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
     }
 }
 
+/// The name the desktop entry and the window share, so a Linux desktop
+/// finds the window's icon.
+#[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
+const APP_ID: &str = "printcad";
+
+/// The application's icon, for the window on the systems that draw one
+/// (Windows, X11); macOS takes it from the bundle.
+fn window_icon() -> Option<winit::window::Icon> {
+    let bytes: &[u8] = include_bytes!("../assets/icon/printcad-256.png");
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().ok()?;
+    let mut rgba = vec![0; reader.output_buffer_size()?];
+    let frame = reader.next_frame(&mut rgba).ok()?;
+    rgba.truncate(frame.buffer_size());
+    if frame.color_type != png::ColorType::Rgba || frame.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    winit::window::Icon::from_rgba(rgba, frame.width, frame.height).ok()
+}
+
 impl PrintCadApp {
     /// Create the window, renderer, and UI layer once the event loop is live.
     fn init_gfx(&mut self, event_loop: &ActiveEventLoop) {
@@ -549,9 +570,15 @@ impl PrintCadApp {
             return;
         }
 
-        let window = match event_loop
-            .create_window(WindowAttributes::default().with_title("printCAD".to_string()))
-        {
+        let attributes = WindowAttributes::default()
+            .with_title("printCAD".to_string())
+            .with_window_icon(window_icon());
+        // Wayland shows the icon of the desktop entry the app id names.
+        #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
+        let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
+            attributes, APP_ID, APP_ID,
+        );
+        let window = match event_loop.create_window(attributes) {
             Ok(window) => window,
             Err(err) => {
                 error!("failed to create window: {err}");
@@ -583,5 +610,13 @@ impl PrintCadApp {
             window,
             window_id,
         });
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    #[test]
+    fn the_window_icon_decodes_from_the_bundled_picture() {
+        assert!(super::window_icon().is_some());
     }
 }
