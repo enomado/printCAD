@@ -38,13 +38,22 @@ pure Rust. No system CAD libraries are needed.
 
 ## Build and run
 
-You need Rust 1.98 or later, Vulkan drivers, and Wayland or X11.
+printCAD runs on Linux (Wayland or X11), Windows 10 or later, and macOS 11
+or later. Ready-made downloads are on the
+[releases page](https://github.com/gilbertorconde/printCAD/releases).
+
+To build it you need Rust 1.98 or later and a GPU with Vulkan drivers. On
+macOS Vulkan runs over Metal through MoltenVK (`brew install molten-vk`);
+the released app carries its own. The shaders are compiled with shaderc:
+`glslc`/`libshaderc` from your distribution on Linux, `brew install shaderc`
+on macOS (then set `SHADERC_LIB_DIR=$(brew --prefix shaderc)/lib`); on
+Windows it builds from source, which needs CMake and Python.
 
 ```bash
 git clone https://github.com/gilbertorconde/printCAD.git
 cd printCAD
 cargo build --release
-./target/release/app_shell
+./target/release/printcad
 ```
 
 Build the whole workspace, not only `app_shell`. The app starts a document
@@ -53,9 +62,9 @@ plain file access.
 
 A debug build (`cargo run -p app_shell`) is fine for development.
 
-To use a 6-DoF mouse, install and start
-[spacenavd](https://spacenav.sourceforge.net/). printCAD finds the device on
-its own.
+To use a 6-DoF mouse on Linux, install and start
+[spacenavd](https://spacenav.sourceforge.net/). On Windows and macOS printCAD
+reads the device directly. Either way it finds the device on its own.
 
 ## Controls
 

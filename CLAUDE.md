@@ -59,6 +59,13 @@ cargo fmt --all                   # CI enforces --check
   to install the package from `package_source`; opening a document warns
   of each package it needs and does not have running
   (`report_missing_packages`).
+- The executable is `printcad` (package `app_shell`). A release is the
+  app's version in `crates/app_shell/Cargo.toml`, its section in
+  `RELEASE_NOTES.md`, and a tag `vX.Y.Z`: `.github/workflows/release.yml`
+  builds Linux (Ubuntu 22.04, `.tar.gz`), Windows (`.zip`) and macOS (one
+  universal `.app` in a `.dmg`, carrying MoltenVK, ad-hoc signed) through
+  `scripts/package-release.sh` and publishes them as a GitHub release.
+  The CI's `platforms` job runs clippy and the tests on Windows and macOS.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
   `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step` is an
