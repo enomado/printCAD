@@ -237,6 +237,7 @@ fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
         || match source.backend() {
             sixdof::Backend::Daemon => None,
             sixdof::Backend::Magellan => Some("device on the display server".to_string()),
+            sixdof::Backend::Hid => Some("USB device".to_string()),
         },
         |device| Some(device.name.clone()),
     );

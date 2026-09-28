@@ -35,7 +35,8 @@ cargo fmt --all                   # CI enforces --check
   is, with the same commented `[patch.crates-io]` for local work. It needs no
   system library: it speaks the spacenavd socket
   protocol itself, with the display-server (Magellan) protocol behind its
-  `magellan` feature. Nothing is required to build or run without a device.
+  `magellan` feature, and on Windows and macOS (without spacenavd) reads the
+  device's USB HID reports, giving the numbers the daemon would. Nothing is required to build or run without a device.
 - Workbench packages build in `sdk/` (`cargo build --release --target
   wasm32-wasip2`, the target named in `rust-toolchain.toml`);
   `cargo test -p wb_wasm` builds them itself. At start `app/packages.rs`
