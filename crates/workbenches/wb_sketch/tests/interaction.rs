@@ -2709,7 +2709,11 @@ fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
         },
         Some("sketch.polyline"),
     );
-    assert!(names(&mut h).contains(&("Shift+A".to_string(), "lines")));
+    assert!(
+        names(&mut h).contains(&("Shift+A".to_string(), "square arcs")),
+        "the key names the next kind of segment: {:?}",
+        names(&mut h)
+    );
 }
 
 /// The origin and the two axes snap like drawn geometry: a line started at
@@ -4010,4 +4014,40 @@ fn section_view_cuts_the_scene_at_the_sketch_plane_and_stays_with_the_sketch() {
     );
     h.key(KeyCode::A, Some("sketch.section_view"));
     assert_eq!(clip(&mut h), None);
+}
+
+/// Cancel puts the sketch back as the editing session found it, and says
+/// so in the recording, so a replay ends where the live session did.
+#[test]
+fn cancelling_a_sketch_session_puts_the_sketch_back() {
+    use core_document::{TaskRequest, Workbench};
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    assert_eq!(h.counts().1, 1, "a line drawn");
+    let ctx = egui::Context::default();
+    ui_kit::theme::apply_theme(&ctx);
+    let mut recorded = Vec::new();
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut wbctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
+        wbctx.view_proj = Some(h.vp);
+        wbctx.active_document_object = h.active_object;
+        let _ = h.wb.ui_task_panel(
+            ui,
+            &mut wbctx,
+            TaskRequest {
+                accept: false,
+                cancel: true,
+            },
+        );
+        recorded = core_document::HookOutcome::take(&mut wbctx).recorded;
+    });
+    out.textures_delta.clear();
+    assert_eq!(h.counts().1, 0, "the line is gone again");
+    assert!(
+        recorded.iter().any(|r| r.id == "sketch.restore"),
+        "{recorded:?}"
+    );
 }

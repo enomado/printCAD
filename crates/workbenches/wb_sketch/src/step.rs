@@ -249,6 +249,21 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
     put("array_cols", json!(params.array_cols), json!(d.array_cols));
     put("array_dx", json!(params.array_dx), json!(d.array_dx));
     put("array_dy", json!(params.array_dy), json!(d.array_dy));
+    put(
+        "mirror_keep",
+        json!(params.mirror_keep),
+        json!(d.mirror_keep),
+    );
+    put(
+        "mirror_linked",
+        json!(params.mirror_linked),
+        json!(d.mirror_linked),
+    );
+    put(
+        "mirror_center",
+        json!(params.mirror_center),
+        json!(d.mirror_center),
+    );
     out
 }
 
@@ -284,6 +299,9 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             "array_cols" => p.array_cols = number()? as u32,
             "array_dx" => p.array_dx = number()? as f32,
             "array_dy" => p.array_dy = number()? as f32,
+            "mirror_keep" => p.mirror_keep = flag()?,
+            "mirror_linked" => p.mirror_linked = flag()?,
+            "mirror_center" => p.mirror_center = flag()?,
             other => return Err(format!("params has no setting `{other}`")),
         }
     }

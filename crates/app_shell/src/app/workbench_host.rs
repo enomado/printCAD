@@ -33,6 +33,7 @@ pub(crate) struct WbCtxParams {
     pub selected_face: Option<core_document::FaceRef>,
     pub selected_edges: Vec<core_document::EdgeRef>,
     pub ctrl_down: bool,
+    pub shift_down: bool,
 }
 
 /// Where a hook ran from, which decides what its requests may do.
@@ -95,6 +96,7 @@ impl PrintCadApp {
                 .map(|(_, face)| face),
             selected_edges: self.selected_edge_refs(),
             ctrl_down: self.modifiers.control_key(),
+            shift_down: self.modifiers.shift_key(),
         }
     }
 
@@ -122,6 +124,7 @@ impl PrintCadApp {
             selected_face: None,
             selected_edges: self.selected_edge_refs(),
             ctrl_down: false,
+            shift_down: false,
         }
     }
 
@@ -156,6 +159,7 @@ impl PrintCadApp {
         ctx.selected_edges = params.selected_edges;
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         ctx.ctrl_down = params.ctrl_down;
+        ctx.shift_down = params.shift_down;
 
         let result = f(wb.as_mut(), &mut ctx);
 

@@ -301,6 +301,21 @@ pub enum AxisSnap {
     Vertical,
 }
 
+/// `cursor` turned about `from` to the nearest direction that is a whole
+/// number of `step_deg` from the x axis, at the cursor's distance projected
+/// onto it.
+pub fn angle_step(from: Vec2D, cursor: Vec2D, step_deg: f32) -> Vec2D {
+    let d = (cursor - from).to_glam();
+    if d.length_squared() < 1e-12 || step_deg <= 0.0 {
+        return cursor;
+    }
+    let step = step_deg.to_radians();
+    let angle = (d.y.atan2(d.x) / step).round() * step;
+    let dir = glam::Vec2::from_angle(angle);
+    let reach = d.dot(dir).max(0.0);
+    Vec2D::from_glam(from.to_glam() + dir * reach)
+}
+
 /// Snap `cursor` to the nearest existing sketch point within `tol`
 /// (sketch units). Points in `exclude` are ignored (e.g. the chain's own
 /// previous point).
@@ -603,6 +618,23 @@ mod tests {
         assert_eq!(pos.x, 0.0);
         let (_, axis) = snap_axis(from, Vec2D::new(5.0, 5.0), 0.5);
         assert_eq!(axis, None);
+    }
+
+    #[test]
+    fn an_angle_step_turns_the_cursor_to_the_nearest_fifteen_degrees() {
+        let from = Vec2D::new(1.0, 1.0);
+        let at = angle_step(from, Vec2D::new(11.0, 4.0), 15.0);
+        let d = (at - from).to_glam();
+        assert!((d.y.atan2(d.x).to_degrees() - 15.0).abs() < 1e-4, "{d:?}");
+        assert!(
+            (d.length()
+                - glam::Vec2::new(10.0, 3.0).dot(glam::Vec2::from_angle(15f32.to_radians())))
+            .abs()
+                < 1e-4
+        );
+        let straight_up = angle_step(from, Vec2D::new(1.4, 9.0), 15.0);
+        assert!((straight_up.x - 1.0).abs() < 1e-5);
+        assert_eq!(angle_step(from, from, 15.0), from, "no direction to turn");
     }
 
     #[test]

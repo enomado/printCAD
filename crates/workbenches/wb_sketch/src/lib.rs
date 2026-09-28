@@ -190,7 +190,8 @@ struct DrawRecord {
     sketch: FeatureId,
     tool: String,
     /// Each click (a point, or a point with typed values), and the polyline's
-    /// "arc"/"line" switches and "finish".
+    /// segment switches ("line", "arc", "perpendicular_arc", "reverse_arc")
+    /// and "finish".
     events: Vec<serde_json::Value>,
     /// The other arguments: tolerance, tool settings, construction.
     settings: serde_json::Map<String, serde_json::Value>,
@@ -266,6 +267,8 @@ struct GlyphHit {
 }
 
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
+/// The angle a drawn segment keeps to with Shift held.
+const ANGLE_STEP_DEG: f32 = 15.0;
 
 /// Sketch workbench: 2D drawing with constraints.
 /// The switches on the sketcher's panel and Preferences page.
@@ -364,6 +367,8 @@ pub struct SketchWorkbench {
     clipboard: Option<Sketch>,
     /// Currently active sketch feature ID (if any).
     active_sketch_id: Option<FeatureId>,
+    /// The sketch as the editing session found it, for Cancel.
+    session_start: Option<serde_json::Value>,
     /// Waiting for a plane choice before creating a sketch.
     pending_creation: Option<PendingCreation>,
     /// Point being dragged (select mode).
@@ -823,6 +828,7 @@ impl SketchWorkbench {
             && self.active_sketch_id != Some(feature_id)
         {
             self.active_sketch_id = Some(feature_id);
+            self.session_start = ctx.document.get_feature_data(feature_id).cloned();
             self.clear_interaction_state();
 
             if let Some(sketch_feature) = self.get_active_sketch(ctx) {
@@ -909,6 +915,13 @@ impl SketchWorkbench {
         }
         if !is_draw_tool(tool) {
             return (cursor, tol);
+        }
+        // With Shift held, a segment leaves its start in steps of 15
+        // degrees, as far as the cursor reaches along that direction.
+        if ctx.shift_down
+            && let Some(from) = tools::snap_context(&self.tool_state, &feature.sketch).from
+        {
+            return (snap::angle_step(from, cursor, ANGLE_STEP_DEG), tol);
         }
         // A snap onto a point wins over the grid; one onto a curve, an axis
         // or an alignment leaves a direction free for the grid to round.
@@ -998,6 +1011,7 @@ impl SketchWorkbench {
                     serde_json::json!(feature_id.0.to_string()),
                 );
                 self.active_sketch_id = Some(feature_id);
+                self.session_start = ctx.document.get_feature_data(feature_id).cloned();
                 self.clear_interaction_state();
                 ctx.active_document_object = Some(feature_id);
                 // The view turns to the plane where the body has it.
@@ -1885,12 +1899,10 @@ impl SketchWorkbench {
     fn handle_action(&mut self, id: &str) -> InputResult {
         match id {
             POLYLINE_ARC_ACTION if tools::toggle_polyline_arc(&mut self.tool_state) => {
-                if let (Some(record), ToolState::PolylineFrom { arc, .. }) =
+                if let (Some(record), ToolState::PolylineFrom { segment, .. }) =
                     (self.draw_record.as_mut(), &self.tool_state)
                 {
-                    record
-                        .events
-                        .push(serde_json::json!(if *arc { "arc" } else { "line" }));
+                    record.events.push(serde_json::json!(segment.word()));
                 }
                 InputResult::consumed()
             }
@@ -3386,6 +3398,7 @@ impl Workbench for SketchWorkbench {
         self.flush_draw_record(ctx);
         if self.active_sketch_id.is_some() {
             self.active_sketch_id = None;
+            self.session_start = None;
             self.sketch_picker = None;
             self.clear_interaction_state();
             // Deselect the feature: with it still active the next input
@@ -3428,11 +3441,22 @@ impl Workbench for SketchWorkbench {
             ToolState::LineFrom { chain: true, .. } | ToolState::BSplineDraw { .. }
         ) {
             key("Enter", "finish");
-        } else if let ToolState::PolylineFrom { arc, heading, .. } = self.tool_state {
+        } else if let ToolState::PolylineFrom {
+            segment, heading, ..
+        } = self.tool_state
+        {
             if heading.is_some()
                 && let Some(switch) = self.action_keys.get(POLYLINE_ARC_ACTION)
             {
-                key(switch, if arc { "lines" } else { "tangent arcs" });
+                key(
+                    switch,
+                    match segment.next() {
+                        tools::PolySegment::Line => "lines",
+                        tools::PolySegment::Tangent => "tangent arcs",
+                        tools::PolySegment::Perpendicular => "square arcs",
+                        tools::PolySegment::Reverse => "reversed arcs",
+                    },
+                );
             }
             key("Enter", "finish");
         }

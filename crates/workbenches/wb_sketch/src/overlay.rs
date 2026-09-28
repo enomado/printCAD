@@ -631,11 +631,14 @@ fn push_preview(
             }
         }
         ToolState::PolylineFrom {
-            from, heading, arc, ..
+            from,
+            heading,
+            segment,
+            ..
         } => {
             if let Some(a) = pos(from) {
                 let arc_points = heading
-                    .filter(|_| *arc)
+                    .and_then(|h| segment.arc_heading(h, cursor - a))
                     .and_then(|h| geom2d::tangent_arc(a, h, cursor))
                     .map(|(c, r, ccw)| {
                         let angle = |p: Vec2D| (p.y - c.y).atan2(p.x - c.x);

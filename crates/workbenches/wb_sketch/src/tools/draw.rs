@@ -153,7 +153,7 @@ pub(super) fn polyline(
         first,
         heading,
         prev,
-        arc,
+        segment,
     } = *state
     else {
         let from = snap_point_or_curve(sketch, cursor, snap_tol);
@@ -162,7 +162,7 @@ pub(super) fn polyline(
             first: None,
             heading: None,
             prev: None,
-            arc: false,
+            segment: super::PolySegment::Line,
         };
         return ToolEffect::none();
     };
@@ -175,6 +175,7 @@ pub(super) fn polyline(
         SnapTarget::Existing(id) => vec![id],
         SnapTarget::New(_) => vec![],
     };
+    let arc = segment != super::PolySegment::Line;
     let (axis_pos, mut axis) = if arc {
         (cursor, None)
     } else {
@@ -195,13 +196,13 @@ pub(super) fn polyline(
         return ToolEffect::none();
     }
     let tangent = heading
-        .filter(|_| arc)
+        .and_then(|h| segment.arc_heading(h, end_pos - from_pos))
         .and_then(|h| geom2d::tangent_arc(from_pos, h, end_pos));
 
     let start_id = materialize_on_curve(sketch, from, snap_tol);
     let end_id = materialize_on_curve(sketch, end, snap_tol);
     let first = first.unwrap_or(start_id);
-    let (segment, next_heading, log) = match tangent {
+    let (made, next_heading, log) = match tangent {
         Some((center, radius, ccw)) => {
             let center_id = sketch.add_geometry(GeometryElement::Point(Point::new(center)));
             // An arc is stored counter-clockwise: a right turn runs end to
@@ -213,10 +214,24 @@ pub(super) fn polyline(
             };
             let id = sketch.add_geometry(GeometryElement::Arc(Arc::new(center_id, s, e, radius)));
             if let Some(prev) = prev {
-                sketch.add_constraint(ConstraintKind::Tangent {
-                    line_or_circle1: prev,
-                    item2: id,
-                });
+                // Along the last segment or back along it, the arc touches
+                // it; square to it, it meets it at its measured angle.
+                if segment == super::PolySegment::Perpendicular {
+                    let probe = ConstraintKind::AngleAtPoint {
+                        curve1: prev,
+                        curve2: id,
+                        point: start_id,
+                        angle_rad: 0.0,
+                    };
+                    if let Some(degrees) = crate::sketch::measured_value(sketch, &probe) {
+                        sketch.add_constraint(crate::sketch::with_dimension_value(&probe, degrees));
+                    }
+                } else {
+                    sketch.add_constraint(ConstraintKind::Tangent {
+                        line_or_circle1: prev,
+                        item2: id,
+                    });
+                }
             }
             let radial = (end_pos - center).to_glam().perp().normalize_or_zero();
             let out = if ccw { radial } else { -radial };
@@ -254,8 +269,8 @@ pub(super) fn polyline(
         from: SnapTarget::Existing(end_id),
         first: Some(first),
         heading: Some(next_heading),
-        prev: Some(segment),
-        arc,
+        prev: Some(made),
+        segment,
     };
     ToolEffect::changed(log)
 }

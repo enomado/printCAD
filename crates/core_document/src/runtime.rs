@@ -79,6 +79,9 @@ pub struct WorkbenchRuntimeContext<'a> {
 
     /// Host → workbench: whether Ctrl is held (multi-select modifier).
     pub ctrl_down: bool,
+    /// Host → workbench: whether Shift is held (a drawing tool's angle
+    /// steps).
+    pub shift_down: bool,
 
     /// Host → workbench: the face under the last body selection, when the
     /// GPU pick landed on solid geometry (surface point + outward normal in
@@ -370,6 +373,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             selected_edges: Vec::new(),
             kernel: None,
             ctrl_down: false,
+            shift_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
         }
     }

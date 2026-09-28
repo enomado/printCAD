@@ -28,7 +28,7 @@ and noted on its item, and the rest of the item is built around it.
   spacing and an anchor point constraints can hold, editable afterwards. A
   generated sketch element (`src/generator/`) regenerated from its
   parameters.
-- [ ] **Polyline segment modes** (partial, S). Only straight and tangent
+- [x] **Polyline segment modes** (partial, S). Only straight and tangent
   arc; missing a perpendicular arc and a free or reversed arc
   (`tools.rs::toggle_polyline_arc`).
 
@@ -50,11 +50,11 @@ and noted on its item, and the rest of the item is built around it.
   constraints but nothing ties them to the original: equal size to the
   original and one editable pitch between array members
   (`tools/transform.rs`).
-- [ ] **Symmetry options** (partial, S). Mirror about a point, delete
+- [x] **Symmetry options** (partial, S). Mirror about a point, delete
   the original, and symmetric constraints so the copy follows edits.
-- [ ] **Scale options** (partial, S). A keep-the-original copy, and
+- [x] **Scale options** (partial, S). A keep-the-original copy, and
   scaling the selection's dimensions with it.
-- [ ] **Cancel a sketch session** (missing, S). Cancel closes like Close;
+- [x] **Cancel a sketch session** (missing, S). Cancel closes like Close;
   it should put the sketch back as the session found it.
 
 ### External references
@@ -120,7 +120,7 @@ and noted on its item, and the rest of the item is built around it.
   with a circular edge, without a datum first.
 - [ ] **Offset within the plane** (partial, S). Shift, turn and flip
   against the support.
-- [ ] **Angle snap while drawing** (missing, S). Steps of 15 degrees
+- [x] **Angle snap while drawing** (missing, S). Steps of 15 degrees
   with a modifier.
 - [x] **Rendering order in the options panel** (placeholder, S). The
   dropdown is drawn but disabled; the toolbar toggle already does it.

@@ -134,13 +134,13 @@ pub enum ToolState {
     /// Polyline: waiting for the next segment's end. `first` is the chain's
     /// first point (a click back on it closes the shape), `heading` the
     /// direction the last segment left `from` in, `prev` that segment, and
-    /// `arc` whether the next segments are tangent arcs (M switches).
+    /// `segment` what the next segments are (M cycles).
     PolylineFrom {
         from: SnapTarget,
         first: Option<Uuid>,
         heading: Option<Vec2D>,
         prev: Option<Uuid>,
-        arc: bool,
+        segment: PolySegment,
     },
     /// B-spline tool: control points accumulated so far.
     BSplineDraw { points: Vec<SnapTarget> },
@@ -156,6 +156,71 @@ pub enum ToolState {
     ScaleRef { base: Vec2D, reference: Vec2D },
     /// Mirror tool: first axis point picked (no line was clicked).
     MirrorAxisFrom { a: Vec2D },
+}
+
+/// What a polyline's next segment is: a line, or an arc leaving the last
+/// segment's end along it, square to it, or back the way it came.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PolySegment {
+    #[default]
+    Line,
+    Tangent,
+    Perpendicular,
+    Reverse,
+}
+
+impl PolySegment {
+    /// The mode after this one, as the switch key cycles them.
+    pub fn next(self) -> Self {
+        match self {
+            PolySegment::Line => PolySegment::Tangent,
+            PolySegment::Tangent => PolySegment::Perpendicular,
+            PolySegment::Perpendicular => PolySegment::Reverse,
+            PolySegment::Reverse => PolySegment::Line,
+        }
+    }
+
+    /// Its word in a recording.
+    pub fn word(self) -> &'static str {
+        match self {
+            PolySegment::Line => "line",
+            PolySegment::Tangent => "arc",
+            PolySegment::Perpendicular => "perpendicular_arc",
+            PolySegment::Reverse => "reverse_arc",
+        }
+    }
+
+    pub fn of_word(word: &str) -> Option<Self> {
+        [
+            PolySegment::Line,
+            PolySegment::Tangent,
+            PolySegment::Perpendicular,
+            PolySegment::Reverse,
+        ]
+        .into_iter()
+        .find(|s| s.word() == word)
+    }
+
+    /// The direction an arc of this kind leaves the end in, the last
+    /// segment having left along `heading` and the cursor at `toward` from
+    /// the end; `None` for a line.
+    pub fn arc_heading(self, heading: Vec2D, toward: Vec2D) -> Option<Vec2D> {
+        let h = heading.to_glam();
+        Some(Vec2D::from_glam(match self {
+            PolySegment::Line => return None,
+            PolySegment::Tangent => h,
+            PolySegment::Reverse => -h,
+            // Square to the last segment, on the side the cursor is.
+            PolySegment::Perpendicular => {
+                let n = h.perp();
+                if n.dot(toward.to_glam()) >= 0.0 {
+                    n
+                } else {
+                    -n
+                }
+            }
+        }))
+    }
 }
 
 /// Panel-editable parameters consumed by the drawing tools.
@@ -188,6 +253,13 @@ pub struct ToolParams {
     pub array_cols: u32,
     pub array_dx: f32,
     pub array_dy: f32,
+    /// The mirror keeps the original beside its image; off, it moves it.
+    pub mirror_keep: bool,
+    /// The image holds to the original with symmetric constraints, so it
+    /// follows edits.
+    pub mirror_linked: bool,
+    /// The mirror reflects through a point rather than about a line.
+    pub mirror_center: bool,
 }
 
 impl Default for ToolParams {
@@ -207,6 +279,9 @@ impl Default for ToolParams {
             array_cols: 2,
             array_dx: 20.0,
             array_dy: 20.0,
+            mirror_keep: true,
+            mirror_linked: false,
+            mirror_center: false,
         }
     }
 }
@@ -286,12 +361,22 @@ impl ToolState {
                 kind: ConicKind::Hyperbola,
                 ..
             } => Some("Arc of hyperbola: click the arc's end"),
-            ToolState::PolylineFrom { arc: false, .. } => {
-                Some("Polyline: click the next point; M for arcs, right-click or Esc to finish")
-            }
-            ToolState::PolylineFrom { arc: true, .. } => {
-                Some("Polyline: click where the tangent arc ends; M for lines")
-            }
+            ToolState::PolylineFrom {
+                segment: PolySegment::Line,
+                ..
+            } => Some("Polyline: click the next point; M for arcs, right-click or Esc to finish"),
+            ToolState::PolylineFrom {
+                segment: PolySegment::Tangent,
+                ..
+            } => Some("Polyline: click where the tangent arc ends; M for a square arc"),
+            ToolState::PolylineFrom {
+                segment: PolySegment::Perpendicular,
+                ..
+            } => Some("Polyline: click where the square arc ends; M for a reversed arc"),
+            ToolState::PolylineFrom {
+                segment: PolySegment::Reverse,
+                ..
+            } => Some("Polyline: click where the reversed arc ends; M for lines"),
             ToolState::BSplineDraw { .. } => Some(
                 "Spline: click its points; Enter/right-click finishes (degree, closed: tool settings)",
             ),
@@ -423,7 +508,9 @@ pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
     let from = match state {
         ToolState::LineFrom { from, .. }
         | ToolState::PolylineFrom {
-            from, arc: false, ..
+            from,
+            segment: PolySegment::Line,
+            ..
         } => Some(*from),
         _ => None,
     };
@@ -508,8 +595,10 @@ pub fn handle_click(
         "sketch.rotate" => {
             transform::rotate(state, sketch, cursor, snap_tol, selected, params.copies)
         }
-        "sketch.scale" => transform::scale(state, sketch, cursor, snap_tol, selected),
-        "sketch.mirror" => transform::mirror(state, sketch, cursor, snap_tol, selected),
+        "sketch.scale" => {
+            transform::scale(state, sketch, cursor, snap_tol, selected, params.copies)
+        }
+        "sketch.mirror" => transform::mirror(state, sketch, cursor, snap_tol, selected, params),
         _ => ToolEffect::none(),
     }
 }
@@ -518,13 +607,33 @@ pub fn handle_click(
 /// arcs. Returns whether there was a polyline to switch.
 pub fn toggle_polyline_arc(state: &mut ToolState) -> bool {
     match state {
-        ToolState::PolylineFrom { arc, heading, .. } => {
-            // An arc needs a direction to be tangent to: the first segment
-            // is straight.
-            *arc = !*arc && heading.is_some();
+        ToolState::PolylineFrom {
+            segment, heading, ..
+        } => {
+            // An arc needs a direction to leave in: the first segment is
+            // straight.
+            *segment = if heading.is_some() {
+                segment.next()
+            } else {
+                PolySegment::Line
+            };
             true
         }
         _ => false,
+    }
+}
+
+/// Put a polyline in progress on `segment` (a recording's switch).
+pub fn set_polyline_segment(state: &mut ToolState, to: PolySegment) {
+    if let ToolState::PolylineFrom {
+        segment, heading, ..
+    } = state
+    {
+        *segment = if heading.is_some() {
+            to
+        } else {
+            PolySegment::Line
+        };
     }
 }
 

@@ -58,6 +58,24 @@ impl SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return TaskOutcome::Open;
         };
+        if request.cancel
+            && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
+            && ctx.document.get_feature_data(id) != Some(&start)
+        {
+            // Every edit so far recorded first, then the sketch put back.
+            self.flush_draw_record(ctx);
+            let args = crate::commands::args(serde_json::json!({
+                "sketch": id.0.to_string(),
+                "data": start,
+            }));
+            if crate::commands::run("sketch.restore", &args, ctx).is_ok() {
+                ctx.record("sketch.restore", args, serde_json::Value::Null);
+            }
+            ctx.request(core_document::HostRequest::FinishEditing);
+            return TaskOutcome::Accepted {
+                label: format!("Cancel editing {}", feature.sketch.name),
+            };
+        }
         if request.accept || request.cancel {
             ctx.request(core_document::HostRequest::FinishEditing);
             return TaskOutcome::Accepted {
@@ -350,6 +368,8 @@ impl SketchWorkbench {
                     | "sketch.offset"
                     | "sketch.translate"
                     | "sketch.rotate"
+                    | "sketch.scale"
+                    | "sketch.mirror"
                     | "sketch.bspline"
                     | "sketch.rect_rounded"
                     | "sketch.rect_frame"
@@ -405,7 +425,24 @@ impl SketchWorkbench {
                         QtyField::mm(&mut params.offset_distance).show(ui);
                         ui.end_row();
                     }
-                    Some("sketch.translate" | "sketch.rotate") => {
+                    Some("sketch.mirror") => {
+                        ui_kit::widgets::field_label(ui, "Original");
+                        check_row(ui, &mut params.mirror_keep, "Keep it");
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Image");
+                        ui.add_enabled_ui(params.mirror_keep, |ui| {
+                            check_row(ui, &mut params.mirror_linked, "Follows the original")
+                                .on_hover_text(
+                                    "Symmetric constraints hold the image to the original",
+                                );
+                        });
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "About");
+                        check_row(ui, &mut params.mirror_center, "A point")
+                            .on_hover_text("One click, the centre; off, a line or two points");
+                        ui.end_row();
+                    }
+                    Some("sketch.translate" | "sketch.rotate" | "sketch.scale") => {
                         ui_kit::widgets::field_label(ui, "Copies");
                         let mut copies = params.copies as f32;
                         if QtyField::new(&mut copies)

@@ -502,12 +502,15 @@ fn joining_a_polyline_leaves_one_spline_and_replays() {
         Some("sketch.polyline"),
     );
     s.click(16.0, 6.0, "sketch.polyline");
-    s.event(
-        WorkbenchInputEvent::Action {
-            id: "sketch.polyline_arc".into(),
-        },
-        Some("sketch.polyline"),
-    );
+    // The switch cycles square and reversed arcs before lines again.
+    for _ in 0..3 {
+        s.event(
+            WorkbenchInputEvent::Action {
+                id: "sketch.polyline_arc".into(),
+            },
+            Some("sketch.polyline"),
+        );
+    }
     s.click(16.0, 16.0, "sketch.polyline");
     s.key(KeyCode::Escape, Some("sketch.polyline"));
     s.key(KeyCode::Escape, Some("sketch.select"));

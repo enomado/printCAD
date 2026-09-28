@@ -591,6 +591,11 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `items` (list): The elements to drag
 - `by` (list): The step, {x, y}
 
+`pc.sketch.restore`: Put the sketch back as `data` holds it: an editing session cancelled.
+
+- `data` (any): The sketch as doc.feature lists its data
+- `sketch` (id): The sketch to draw in
+
 `pc.sketch.set_plane`: Move the sketch onto another plane, its geometry kept in its own coordinates.
 
 - `sketch` (id): The sketch to draw in

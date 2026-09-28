@@ -46,6 +46,14 @@ impl Similarity {
         }
     }
 
+    /// Reflection through the point `c`: a half turn about it.
+    pub fn point_reflection(c: Vec2) -> Self {
+        Self {
+            m: -Mat2::IDENTITY,
+            t: 2.0 * c,
+        }
+    }
+
     /// Reflection about the line through `a` and `b`.
     pub fn mirror_about(a: Vec2, b: Vec2) -> Self {
         let u = (b - a).normalize();
@@ -610,6 +618,7 @@ pub(super) fn scale(
     cursor: Vec2D,
     snap_tol: f32,
     selected: &HashSet<Uuid>,
+    copies: u32,
 ) -> ToolEffect {
     let pos = snapped_pos(sketch, cursor, snap_tol);
     match *state {
@@ -630,8 +639,18 @@ pub(super) fn scale(
             if selected.is_empty() || factor < 1e-4 {
                 return ToolEffect::none();
             }
-            apply_to_selection(sketch, selected, &Similarity::scale_about(b, factor));
-            ToolEffect::changed(format!("Scaled selection by {factor:.3}"))
+            if copies == 0 {
+                apply_to_selection(sketch, selected, &Similarity::scale_about(b, factor));
+                return ToolEffect::changed(format!("Scaled selection by {factor:.3}"));
+            }
+            // The original stays; each copy is scaled once more than the one
+            // before it.
+            let source = sketch.clone();
+            for k in 1..=copies {
+                let step = Similarity::scale_about(b, factor.powi(k as i32));
+                copy_from(&source, sketch, selected, &step);
+            }
+            ToolEffect::changed(format!("Scaled {copies} copies by {factor:.3} each"))
         }
         _ => {
             *state = ToolState::ScaleBase { base: pos };
@@ -640,8 +659,9 @@ pub(super) fn scale(
     }
 }
 
-/// Line element endpoints under the cursor, for one-click mirror axes.
-fn line_under_cursor(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<(Vec2D, Vec2D)> {
+/// The line element under the cursor and its endpoints, for one-click
+/// mirror axes.
+fn line_under_cursor(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<(Vec2D, Vec2D, Uuid)> {
     sketch
         .geometry
         .iter()
@@ -653,32 +673,134 @@ fn line_under_cursor(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<(Vec2D,
                         sketch.point_position(l.start),
                         sketch.point_position(l.end),
                         d,
+                        l.id,
                     )
                 })
             }
             _ => None,
         })
         .min_by(|a, b| a.2.total_cmp(&b.2))
-        .and_then(|(a, b, _)| Some((a?, b?)))
+        .and_then(|(a, b, _, id)| Some((a?, b?, id)))
+}
+
+/// What a mirror reflects about.
+#[derive(Debug, Clone, Copy)]
+enum MirrorAbout {
+    /// The line through two points; `element` when a line was clicked.
+    Line {
+        a: Vec2D,
+        b: Vec2D,
+        element: Option<Uuid>,
+    },
+    /// A point; `point` when an existing one was clicked.
+    Point { at: Vec2D, point: Option<Uuid> },
 }
 
 fn mirror_now(
     state: &mut ToolState,
     sketch: &mut Sketch,
     selected: &HashSet<Uuid>,
-    a: Vec2D,
-    b: Vec2D,
+    about: MirrorAbout,
+    params: &super::ToolParams,
 ) -> ToolEffect {
     *state = ToolState::Idle;
-    if selected.is_empty() || (b - a).to_glam().length() < 1e-6 {
+    if selected.is_empty() {
         return ToolEffect::none();
     }
-    let n = copy_selection(
-        sketch,
-        selected,
-        &Similarity::mirror_about(a.to_glam(), b.to_glam()),
-    );
+    let xf = match about {
+        MirrorAbout::Line { a, b, .. } => {
+            if (b - a).to_glam().length() < 1e-6 {
+                return ToolEffect::none();
+            }
+            Similarity::mirror_about(a.to_glam(), b.to_glam())
+        }
+        MirrorAbout::Point { at, .. } => Similarity::point_reflection(at.to_glam()),
+    };
+    // A linked image follows the original, which must stay for it to.
+    let linked = params.mirror_linked && params.mirror_keep;
+    let n = if linked {
+        let source = sketch.clone();
+        let map = copy_mapped(&source, sketch, selected, &xf);
+        link_image(sketch, &source, &map, about);
+        map.len()
+    } else {
+        copy_selection(sketch, selected, &xf)
+    };
+    if !params.mirror_keep {
+        let originals: Vec<Uuid> = selected.iter().copied().collect();
+        crate::commands::delete_items(sketch, &originals);
+    }
     ToolEffect::changed(format!("Mirrored {n} element(s)"))
+}
+
+/// The mirror's line or centre as an element to hold symmetry to: the one
+/// clicked, or else a construction line or point made and blocked where
+/// the clicks put it.
+fn mirror_reference(sketch: &mut Sketch, about: MirrorAbout) -> (Uuid, bool) {
+    let point_at = |sketch: &mut Sketch, at: Vec2D| match snap::snap_to_point(sketch, at, 1e-5, &[])
+    {
+        snap::SnapTarget::Existing(id) => id,
+        _ => sketch.add_geometry(GeometryElement::Point(Point::new(at))),
+    };
+    match about {
+        MirrorAbout::Line {
+            element: Some(line),
+            ..
+        } => (line, true),
+        MirrorAbout::Line { a, b, .. } => {
+            let (pa, pb) = (point_at(sketch, a), point_at(sketch, b));
+            let line = sketch.add_geometry(GeometryElement::Line(Line::new(pa, pb)));
+            sketch.set_construction(line, true);
+            sketch.add_constraint(ConstraintKind::Block { element: line });
+            (line, true)
+        }
+        MirrorAbout::Point { point: Some(p), .. } => (p, false),
+        MirrorAbout::Point { at, .. } => {
+            let p = point_at(sketch, at);
+            sketch.set_construction(p, true);
+            sketch.add_constraint(ConstraintKind::Block { element: p });
+            (p, false)
+        }
+    }
+}
+
+/// Hold each copied point symmetric to its original, and each copied
+/// circle, arc and ellipse the size of its original, so the image follows
+/// the original's edits.
+fn link_image(sketch: &mut Sketch, source: &Sketch, map: &HashMap<Uuid, Uuid>, about: MirrorAbout) {
+    let (reference, is_line) = mirror_reference(sketch, about);
+    for (old, new) in map {
+        match source.get_geometry(*old) {
+            Some(GeometryElement::Point(_)) => {
+                sketch.add_constraint(if is_line {
+                    ConstraintKind::Symmetric {
+                        point1: *old,
+                        point2: *new,
+                        line: reference,
+                    }
+                } else {
+                    ConstraintKind::SymmetricAboutPoint {
+                        point1: *old,
+                        point2: *new,
+                        center: reference,
+                    }
+                });
+            }
+            Some(GeometryElement::Circle(_) | GeometryElement::Arc(_)) => {
+                sketch.add_constraint(ConstraintKind::EqualRadius {
+                    circle1: *old,
+                    circle2: *new,
+                });
+            }
+            Some(GeometryElement::Ellipse(_)) => {
+                sketch.add_constraint(ConstraintKind::EqualEllipse {
+                    ellipse1: *old,
+                    ellipse2: *new,
+                });
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn mirror(
@@ -687,11 +809,34 @@ pub(super) fn mirror(
     cursor: Vec2D,
     snap_tol: f32,
     selected: &HashSet<Uuid>,
+    params: &super::ToolParams,
 ) -> ToolEffect {
+    if params.mirror_center {
+        // One click: the centre, an existing point where there is one.
+        let point = match snap::snap_to_point(sketch, cursor, snap_tol, &[]) {
+            snap::SnapTarget::Existing(id) => Some(id),
+            _ => None,
+        };
+        let at = point
+            .and_then(|id| sketch.point_position(id))
+            .unwrap_or_else(|| snapped_pos(sketch, cursor, snap_tol));
+        return mirror_now(
+            state,
+            sketch,
+            selected,
+            MirrorAbout::Point { at, point },
+            params,
+        );
+    }
     match *state {
         ToolState::MirrorAxisFrom { a } => {
             let b = snapped_pos(sketch, cursor, snap_tol);
-            mirror_now(state, sketch, selected, a, b)
+            let about = MirrorAbout::Line {
+                a,
+                b,
+                element: None,
+            };
+            mirror_now(state, sketch, selected, about, params)
         }
         _ => {
             // A clicked point starts a two-point axis; otherwise a clicked
@@ -703,8 +848,13 @@ pub(super) fn mirror(
                 *state = ToolState::MirrorAxisFrom { a: pos };
                 return ToolEffect::none();
             }
-            if let Some((a, b)) = line_under_cursor(sketch, cursor, snap_tol) {
-                return mirror_now(state, sketch, selected, a, b);
+            if let Some((a, b, element)) = line_under_cursor(sketch, cursor, snap_tol) {
+                let about = MirrorAbout::Line {
+                    a,
+                    b,
+                    element: Some(element),
+                };
+                return mirror_now(state, sketch, selected, about, params);
             }
             *state = ToolState::MirrorAxisFrom { a: cursor };
             ToolEffect::none()

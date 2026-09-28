@@ -2077,7 +2077,17 @@ fn a_polyline_chains_lines_and_a_tangent_arc_into_a_closed_shape() {
     // Leaving (10, 0) heading +x and ending at (10, 10): a left half turn
     // about (10, 5).
     assert!(click(&mut state, &mut sketch, 10.0, 10.0));
-    assert!(toggle_polyline_arc(&mut state), "lines again");
+    // M cycles: a square arc, a reversed arc, then lines again.
+    for _ in 0..3 {
+        assert!(toggle_polyline_arc(&mut state));
+    }
+    assert!(matches!(
+        state,
+        ToolState::PolylineFrom {
+            segment: PolySegment::Line,
+            ..
+        }
+    ));
     assert!(click(&mut state, &mut sketch, 0.0, 10.0));
     assert!(click(&mut state, &mut sketch, 0.0, 0.0));
     assert!(state.is_idle(), "a click on the start closes the polyline");
@@ -3061,4 +3071,194 @@ fn a_turned_or_mirrored_conic_keeps_its_ends_on_it() {
         "{}",
         worst_end_miss(&sketch)
     );
+}
+
+#[test]
+fn a_mirror_about_a_point_can_move_the_original_or_keep_a_linked_image() {
+    let subject = |sketch: &mut Sketch| {
+        let a = pt(sketch, 2.0, 2.0);
+        let b = pt(sketch, 8.0, 5.0);
+        let l = line_between(sketch, a, b);
+        (a, l)
+    };
+    let find = |sketch: &Sketch, x: f32, y: f32| {
+        sketch.geometry.iter().find_map(|g| match g {
+            GeometryElement::Point(p)
+                if (p.position.to_glam() - glam::Vec2::new(x, y)).length() < 1e-3 =>
+            {
+                Some(p.id)
+            }
+            _ => None,
+        })
+    };
+    // Through the origin, the original taken away: it has moved.
+    let mut sketch = Sketch::new("t");
+    let (_, l) = subject(&mut sketch);
+    let selected: HashSet<Uuid> = [l].into();
+    let params = ToolParams {
+        mirror_center: true,
+        mirror_keep: false,
+        ..ToolParams::default()
+    };
+    let mut state = ToolState::default();
+    let fx = click_sel(
+        &mut state,
+        "sketch.mirror",
+        &mut sketch,
+        Vec2D::new(0.0, 0.0),
+        0.1,
+        &params,
+        &selected,
+    );
+    assert!(fx.changed);
+    assert_eq!(lines(&sketch), 1, "only the image is left");
+    assert!(find(&sketch, -2.0, -2.0).is_some() && find(&sketch, 2.0, 2.0).is_none());
+
+    // Linked: moving the original's end moves the image's with it.
+    let mut sketch = Sketch::new("t");
+    let (a, l) = subject(&mut sketch);
+    let selected: HashSet<Uuid> = [l].into();
+    let params = ToolParams {
+        mirror_center: true,
+        mirror_linked: true,
+        ..ToolParams::default()
+    };
+    let mut state = ToolState::default();
+    click_sel(
+        &mut state,
+        "sketch.mirror",
+        &mut sketch,
+        Vec2D::new(0.0, 0.0),
+        0.1,
+        &params,
+        &selected,
+    );
+    let image = find(&sketch, -2.0, -2.0).expect("the image of the first end");
+    sketch.add_constraint(ConstraintKind::FixedPoint {
+        point: a,
+        position: Vec2D::new(3.0, 1.0),
+    });
+    crate::solver::solve(&mut sketch);
+    let moved = sketch.point_position(image).unwrap().to_glam();
+    assert!(
+        (moved - glam::Vec2::new(-3.0, -1.0)).length() < 1e-3,
+        "the image followed: {moved:?}"
+    );
+}
+
+#[test]
+fn a_scale_with_copies_keeps_the_original_and_scales_each_copy_again() {
+    let mut sketch = Sketch::new("t");
+    let center = pt(&mut sketch, 4.0, 0.0);
+    let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
+    let selected: HashSet<Uuid> = [circle].into();
+    let params = ToolParams {
+        copies: 2,
+        ..ToolParams::default()
+    };
+    let mut state = ToolState::default();
+    for x in [0.0, 10.0, 20.0] {
+        click_sel(
+            &mut state,
+            "sketch.scale",
+            &mut sketch,
+            Vec2D::new(x, 0.0),
+            0.1,
+            &params,
+            &selected,
+        );
+    }
+    let mut radii: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Circle(c) => Some(c.radius),
+            _ => None,
+        })
+        .collect();
+    radii.sort_by(f32::total_cmp);
+    assert_eq!(radii.len(), 3, "the original and two copies");
+    for (got, want) in radii.iter().zip([2.0, 4.0, 8.0]) {
+        assert!((got - want).abs() < 1e-3, "{radii:?}");
+    }
+}
+
+#[test]
+fn a_polyline_arc_can_leave_square_to_the_last_segment_or_back_along_it() {
+    let arc_center = |segment: PolySegment| {
+        let mut sketch = Sketch::new("t");
+        let mut state = ToolState::default();
+        let click = |state: &mut ToolState, sketch: &mut Sketch, x: f32, y: f32| {
+            handle_click(state, "sketch.polyline", sketch, Vec2D::new(x, y), 0.2).changed
+        };
+        click(&mut state, &mut sketch, 0.0, 0.0);
+        click(&mut state, &mut sketch, 10.0, 0.0);
+        set_polyline_segment(&mut state, segment);
+        assert!(click(&mut state, &mut sketch, 20.0, 0.0));
+        let arc = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Arc(a) => Some(a.clone()),
+                _ => None,
+            })
+            .expect("an arc");
+        (
+            sketch.point_position(arc.center).unwrap(),
+            arc.radius,
+            sketch,
+        )
+    };
+    // Leaving (10, 0) straight up and ending at (20, 0): a half circle
+    // about (15, 0).
+    let (c, r, sketch) = arc_center(PolySegment::Perpendicular);
+    assert!((c.x - 15.0).abs() < 1e-4 && c.y.abs() < 1e-4 && (r - 5.0).abs() < 1e-4);
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::AngleAtPoint { angle_rad, .. } if (angle_rad.to_degrees().abs() - 90.0).abs() < 1e-3)),
+        "held square to the line"
+    );
+    // Leaving (10, 0) back along -x and ending at (10, 8): a turn about
+    // (10, 4).
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    handle_click(
+        &mut state,
+        "sketch.polyline",
+        &mut sketch,
+        Vec2D::new(0.0, 0.0),
+        0.2,
+    );
+    handle_click(
+        &mut state,
+        "sketch.polyline",
+        &mut sketch,
+        Vec2D::new(10.0, 0.0),
+        0.2,
+    );
+    set_polyline_segment(&mut state, PolySegment::Reverse);
+    let made = handle_click(
+        &mut state,
+        "sketch.polyline",
+        &mut sketch,
+        Vec2D::new(10.0, 8.0),
+        0.2,
+    );
+    assert!(made.changed);
+    let arc = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.clone()),
+            _ => None,
+        })
+        .expect("a reversed arc");
+    let c = sketch.point_position(arc.center).unwrap();
+    assert!(
+        (c.x - 10.0).abs() < 1e-4 && (c.y - 4.0).abs() < 1e-4,
+        "{c:?}"
+    );
+    assert!((arc.radius - 4.0).abs() < 1e-4);
 }

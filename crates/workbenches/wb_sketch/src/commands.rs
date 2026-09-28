@@ -217,6 +217,17 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("items", ParamKind::List, "The elements to drag")
         .param("by", ParamKind::List, "The step, {x, y}"),
     );
+    context.register_command(sketch(
+        CommandSpec::new(
+            "sketch.restore",
+            "Put the sketch back as `data` holds it: an editing session cancelled",
+        )
+        .param(
+            "data",
+            ParamKind::Any,
+            "The sketch as doc.feature lists its data",
+        ),
+    ));
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.set_plane",
@@ -484,6 +495,16 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "sketch.merge" => {
             let with = feature_ids(args.get("with"), "with")?;
             return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.restore" => {
+            let data = args
+                .get("data")
+                .ok_or_else(|| CommandError::bad("data", "is needed"))?;
+            let restored = SketchFeature::from_json(data)
+                .map_err(|e| CommandError::bad("data", e.to_string()))?;
+            ctx.document
+                .set_feature_dependencies(sketch_id, restored.dependencies());
+            return save(ctx, sketch_id, restored, Value::Null);
         }
         "sketch.set_plane" => {
             let plane = custom_plane(&a)?;
@@ -1407,12 +1428,9 @@ fn draw(
     for event in events {
         match event {
             Value::String(word) => match word.as_str() {
-                "arc" | "line" => {
-                    let want = word == "arc";
-                    if let crate::tools::ToolState::PolylineFrom { arc, .. } = &state
-                        && *arc != want
-                    {
-                        crate::tools::toggle_polyline_arc(&mut state);
+                w if crate::tools::PolySegment::of_word(w).is_some() => {
+                    if let Some(segment) = crate::tools::PolySegment::of_word(w) {
+                        crate::tools::set_polyline_segment(&mut state, segment);
                     }
                 }
                 "finish" => {
@@ -1425,7 +1443,10 @@ fn draw(
                 other => {
                     return Err(CommandError::bad(
                         "points",
-                        format!("has `{other}`; a word there is arc, line or finish"),
+                        format!(
+                            "has `{other}`; a word there is line, arc, perpendicular_arc, \
+                             reverse_arc or finish"
+                        ),
                     ));
                 }
             },
