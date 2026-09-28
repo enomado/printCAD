@@ -20,6 +20,7 @@ mod panel;
 mod params;
 pub mod profile;
 pub mod render;
+mod selection;
 pub mod sketch;
 pub mod snap;
 mod solver;
@@ -297,6 +298,9 @@ pub struct SketchOptions {
     pub min_wall: f32,
     /// A dimension a tool adds opens its value editor at once.
     pub ask_dimension_value: bool,
+    /// What dimensions' labels show.
+    #[serde(default)]
+    pub dimension_labels: glyphs::DimensionLabels,
 }
 
 impl Default for SketchOptions {
@@ -314,6 +318,7 @@ impl Default for SketchOptions {
             construction_on_top: false,
             min_wall: walls::DEFAULT_MINIMUM_MM,
             ask_dimension_value: true,
+            dimension_labels: glyphs::DimensionLabels::Value,
         }
     }
 }
@@ -373,7 +378,7 @@ pub struct SketchWorkbench {
     /// In-progress drawing-tool state.
     tool_state: ToolState,
     /// Selected geometry ids (select mode; click toggles).
-    selected: HashSet<Uuid>,
+    selected: selection::Selection,
     /// Geometry under the cursor (select mode).
     hovered: Option<Uuid>,
     /// Cursor position in sketch coordinates (for previews), updated on
@@ -2698,6 +2703,16 @@ impl Workbench for SketchWorkbench {
             ("block", "Block", "constraint-block"),
         ] {
             let mut tool = constraint(id, label, icon, "constraints.geometric");
+            if id == "horizontal" {
+                tool = tool.variants(vec![
+                    ToolVariant::new("horizontal", "Horizontal", "constraint-horizontal"),
+                    ToolVariant::new(
+                        "horizontal_vertical",
+                        "Horizontal or vertical, whichever is nearer",
+                        "constraint-horizontal",
+                    ),
+                ]);
+            }
             if id == "point_on_object" {
                 tool = tool.variants(vec![
                     ToolVariant::new(
@@ -2755,6 +2770,12 @@ impl Workbench for SketchWorkbench {
                         ToolVariant::new(
                             "angle_at_point",
                             "Where two curves meet",
+                            "constraint-angle",
+                        ),
+                        ToolVariant::new("arc_angle", "An arc's opening", "constraint-angle"),
+                        ToolVariant::new(
+                            "angle_three_points",
+                            "By three points (arm, corner, arm)",
                             "constraint-angle",
                         ),
                     ]);
@@ -2824,6 +2845,16 @@ impl Workbench for SketchWorkbench {
                 "sketch.select_dof",
                 "Elements with DoF",
                 "select-elements-with-dof",
+            ),
+            (
+                "sketch.select_constraints",
+                "Constraints of the selection",
+                "dimensional-constraint",
+            ),
+            (
+                "sketch.select_elements",
+                "Elements of the selected constraints",
+                "select",
             ),
         ] {
             context.register_tool(
@@ -2991,6 +3022,8 @@ impl Workbench for SketchWorkbench {
                 "sketch.select_malformed" => return self.select_malformed(ctx),
                 "sketch.select_unconstrained" => return self.select_free(ctx, true),
                 "sketch.select_dof" => return self.select_free(ctx, false),
+                "sketch.select_constraints" => return self.select_constraints_of(ctx),
+                "sketch.select_elements" => return self.select_elements_of(ctx),
                 "sketch.reorient" => {
                     let rotate = tool_variant(tool) == Some("rotate");
                     return self.reorient(ctx, rotate);
@@ -3269,7 +3302,11 @@ impl Workbench for SketchWorkbench {
                 self.section_view = feature.section_view;
                 let selected: Vec<Uuid> = self.selected.iter().copied().collect();
                 self.internal_target = !internal::curves_of(&feature.sketch, &selected).is_empty();
-                constrain::SelectionShape::of(&feature.sketch, &self.selected)
+                constrain::SelectionShape::picked_in(
+                    &feature.sketch,
+                    &self.selected,
+                    self.selected.in_order(),
+                )
             }
             None => constrain::SelectionShape::default(),
         };
@@ -3305,6 +3342,8 @@ impl Workbench for SketchWorkbench {
             "sketch.toggle_driving" | "sketch.toggle_active" | "sketch.park_constraints" => {
                 editing && !self.selected_constraints.is_empty()
             }
+            "sketch.select_constraints" => editing && !self.selected.is_empty(),
+            "sketch.select_elements" => editing && !self.selected_constraints.is_empty(),
             "sketch.select_conflicting" => {
                 editing
                     && self
@@ -3597,6 +3636,7 @@ impl SketchWorkbench {
             &self.bound_dimensions(ctx),
             &ctx.sketch_palette,
             self.parked_layer,
+            self.options.dimension_labels,
         )
     }
 
@@ -3802,10 +3842,14 @@ impl SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let shape = constrain::SelectionShape::of(&feature.sketch, &self.selected);
+        let shape = constrain::SelectionShape::picked_in(
+            &feature.sketch,
+            &self.selected,
+            self.selected.in_order(),
+        );
         // "dimension" is whichever dimensional tool the selection takes.
         let which = if which == "dimension" {
-            match dimension_for(&shape) {
+            match constrain::dimension_in(&shape, &feature.sketch) {
                 Some(tool) => tool,
                 None => {
                     ctx.log_warn("Select a line, circles, or two items to dimension");
@@ -4251,6 +4295,35 @@ impl SketchWorkbench {
         if !same {
             self.wall_check = None;
         }
+    }
+
+    /// Select the constraints on the selected elements (a curve's own
+    /// points count as the curve), leaving the elements.
+    fn select_constraints_of(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        self.selected_constraints = constraints_on(&feature.sketch, &self.selected);
+        self.selected.clear();
+        ctx.log_info(format!(
+            "{} constraint(s) on the selection",
+            self.selected_constraints.len()
+        ));
+        InputResult::consumed()
+    }
+
+    /// Select the elements the selected constraints hold, leaving the
+    /// constraints.
+    fn select_elements_of(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let elements = elements_of(&feature.sketch, &self.selected_constraints);
+        self.selected_constraints.clear();
+        self.selected.clear();
+        self.selected.extend(elements);
+        ctx.log_info(format!("{} element(s) selected", self.selected.len()));
+        InputResult::consumed()
     }
 
     /// Select the constraints whose geometry is gone.
@@ -5011,6 +5084,36 @@ impl SketchWorkbench {
 
 /// Tools that create geometry from clicks, for which object snapping can
 /// be switched off.
+/// The constraints on `elements` (a curve's own points count as the curve).
+fn constraints_on(sketch: &Sketch, elements: &HashSet<Uuid>) -> HashSet<Uuid> {
+    let mut touched = elements.clone();
+    for id in elements {
+        if let Some(geom) = sketch.get_geometry(*id) {
+            touched.extend(Sketch::curve_point_ids(geom));
+        }
+    }
+    sketch
+        .constraints
+        .iter()
+        .filter(|c| {
+            sketch::constraint_refs(&c.kind)
+                .iter()
+                .any(|r| touched.contains(r))
+        })
+        .map(|c| c.id)
+        .collect()
+}
+
+/// The elements `constraints` hold.
+fn elements_of(sketch: &Sketch, constraints: &HashSet<Uuid>) -> Vec<Uuid> {
+    sketch
+        .constraints
+        .iter()
+        .filter(|c| constraints.contains(&c.id))
+        .flat_map(|c| sketch::constraint_refs(&c.kind))
+        .collect()
+}
+
 /// The dimensional constraint tool a selection takes, if any.
 pub(crate) fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'static str> {
     constrain::dimension_for(shape)
@@ -5306,6 +5409,34 @@ pub(crate) fn carbon_copy_log(
 mod constraint_filter {
     use super::*;
     use sketch::{ConstraintKind, Line, Point};
+
+    #[test]
+    fn from_elements_to_their_constraints_and_back() {
+        let mut sketch = Sketch::new("t");
+        let point = |sketch: &mut Sketch, x: f32| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))))
+        };
+        let (a, b, c) = (
+            point(&mut sketch, 0.0),
+            point(&mut sketch, 5.0),
+            point(&mut sketch, 9.0),
+        );
+        let first = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let second = sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        let level = sketch.add_constraint(ConstraintKind::Horizontal { element: second });
+        let pinned = sketch.add_constraint(ConstraintKind::DistanceX {
+            a,
+            b: None,
+            value: 0.0,
+        });
+        let _other = sketch.add_constraint(ConstraintKind::Vertical { element: first });
+        // The first line's own point carries the distance: it counts.
+        let on_first = constraints_on(&sketch, &HashSet::from([first]));
+        assert!(on_first.contains(&pinned) && !on_first.contains(&level));
+        assert_eq!(on_first.len(), 2, "its vertical and its point's distance");
+        let held = elements_of(&sketch, &HashSet::from([level]));
+        assert_eq!(held, [second]);
+    }
 
     #[test]
     fn each_filter_lists_its_own() {

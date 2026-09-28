@@ -71,8 +71,9 @@ pub struct Gap {
 }
 
 /// The shortest distance between two items (see [`Item`]), for the pairs a
-/// gap constraint takes: a point, line or circle against a circle, and a
-/// point against a line. A line crossing a circle, or two circles
+/// gap constraint takes: a point, line or circle against a circle, a point
+/// against a line, and two lines, read as parallel (the second's midpoint
+/// from the first's line). A line crossing a circle, or two circles
 /// crossing, are a gap of zero.
 pub fn gap(sketch: &Sketch, id1: Uuid, id2: Uuid) -> Option<Gap> {
     let (i1, i2) = (item(sketch, id1)?, item(sketch, id2)?);
@@ -115,6 +116,15 @@ fn gap_ordered(i1: Item, i2: Item) -> Option<Gap> {
                 distance: (d - r).abs(),
                 a: p,
                 b: c + unit_or_x(p - c) * r,
+            }
+        }
+        (Item::Line(s1, e1), Item::Line(s2, e2)) => {
+            let middle = (s2 + e2) * 0.5;
+            let foot = foot_on_line(middle, s1, e1);
+            Gap {
+                distance: (middle - foot).length(),
+                a: foot,
+                b: middle,
             }
         }
         (Item::Line(s, e), Item::Circle(c, r)) => {
@@ -161,6 +171,38 @@ fn gap_ordered(i1: Item, i2: Item) -> Option<Gap> {
         }
         _ => return None,
     })
+}
+
+/// The angle an arc sweeps counter-clockwise from its start to its end, in
+/// radians (0 to a whole turn).
+pub fn arc_sweep(sketch: &Sketch, arc: Uuid) -> Option<f32> {
+    let crate::sketch::GeometryElement::Arc(a) = sketch.get_geometry(arc)? else {
+        return None;
+    };
+    let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
+    let (c, s, e) = (pos(a.center)?, pos(a.start)?, pos(a.end)?);
+    Some(crate::snap::arc_angles(s - c, e - c).1)
+}
+
+/// The angle at `vertex` counter-clockwise from the arm to `point1` to the
+/// arm to `point2`, in radians (0 to a whole turn).
+pub fn angle_three_points(
+    sketch: &Sketch,
+    point1: Uuid,
+    vertex: Uuid,
+    point2: Uuid,
+) -> Option<f32> {
+    let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
+    let (a, v, b) = (pos(point1)?, pos(vertex)?, pos(point2)?);
+    let (d1, d2) = (a - v, b - v);
+    if d1.length_squared() < 1e-12 || d2.length_squared() < 1e-12 {
+        return None;
+    }
+    Some(
+        (d1.perp_dot(d2))
+            .atan2(d1.dot(d2))
+            .rem_euclid(std::f32::consts::TAU),
+    )
 }
 
 /// The unit tangent of a curve at `at`: a line's direction start to end, a
@@ -270,7 +312,8 @@ mod tests {
         assert!((g.b - Vec2::new(0.0, 2.0)).length() < 1e-5);
         let g = gap(&sketch, c, line).unwrap();
         assert!((g.a - Vec2::new(0.0, 2.0)).length() < 1e-5, "order kept");
-        assert!(gap(&sketch, line, line).is_none(), "two lines take no gap");
+        let g = gap(&sketch, line, line).unwrap();
+        assert!(g.distance.abs() < 1e-5, "a line is no distance from itself");
     }
 
     #[test]

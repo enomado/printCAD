@@ -193,7 +193,10 @@ fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
             element_anchor(sketch, line1)?,
             element_anchor(sketch, line2)?,
         )),
-        ConstraintKind::ArcLength { arc, .. } => element_anchor(sketch, arc),
+        ConstraintKind::ArcLength { arc, .. } | ConstraintKind::ArcAngle { arc, .. } => {
+            element_anchor(sketch, arc)
+        }
+        ConstraintKind::AngleThreePoints { vertex, .. } => sketch.point_position(vertex),
         ConstraintKind::Gap { item1, item2, .. } => {
             let gap = crate::measure::gap(sketch, item1, item2)?;
             Some(Vec2D::from_glam((gap.a + gap.b) * 0.5))
@@ -202,6 +205,34 @@ fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
             sketch.point_position(point)
         }
         _ => None,
+    }
+}
+
+/// What a dimension's label shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum DimensionLabels {
+    #[default]
+    Value,
+    /// Its name, where it has one; its value where it has none.
+    Name,
+    NameAndValue,
+}
+
+impl DimensionLabels {
+    pub const ALL: [(DimensionLabels, &'static str); 3] = [
+        (DimensionLabels::Value, "Value"),
+        (DimensionLabels::Name, "Name"),
+        (DimensionLabels::NameAndValue, "Name and value"),
+    ];
+}
+
+/// A dimension's label as `labels` asks: its value, its name, or both.
+fn label_text(sketch: &Sketch, constraint: &sketch::Constraint, labels: DimensionLabels) -> String {
+    let value = dim_text(sketch, constraint);
+    match (labels, constraint.name.as_deref().filter(|n| !n.is_empty())) {
+        (DimensionLabels::Name, Some(name)) => name.to_string(),
+        (DimensionLabels::NameAndValue, Some(name)) => format!("{name} = {value}"),
+        _ => value,
     }
 }
 
@@ -220,7 +251,9 @@ fn dim_text(sketch: &Sketch, constraint: &sketch::Constraint) -> String {
         ConstraintKind::Diameter { .. } => format!("Ø {val}"),
         ConstraintKind::Angle { .. }
         | ConstraintKind::AngleToAxis { .. }
-        | ConstraintKind::AngleAtPoint { .. } => format!("{val}°"),
+        | ConstraintKind::AngleAtPoint { .. }
+        | ConstraintKind::ArcAngle { .. }
+        | ConstraintKind::AngleThreePoints { .. } => format!("{val}°"),
         ConstraintKind::ArcLength { .. } => format!("◠ {val}"),
         ConstraintKind::Refraction { .. } => format!("n {val}"),
         _ => val,
@@ -239,6 +272,7 @@ fn pair_refs(kind: &ConstraintKind) -> Option<[Uuid; 2]> {
         ConstraintKind::Perpendicular { line1, line2 } => Some([line1, line2]),
         ConstraintKind::EqualLength { line1, line2 } => Some([line1, line2]),
         ConstraintKind::EqualRadius { circle1, circle2 } => Some([circle1, circle2]),
+        ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => Some([ellipse1, ellipse2]),
         ConstraintKind::Tangent {
             line_or_circle1,
             item2,
@@ -496,7 +530,22 @@ fn curve_dimension_lines(
         (dot(d, d).sqrt() > LEADER_MIN_PX).then_some((from, label))
     };
     Some(match *kind {
-        ConstraintKind::ArcLength { arc, .. } => {
+        ConstraintKind::AngleThreePoints {
+            point1,
+            vertex,
+            point2,
+            ..
+        } => {
+            let pos = |id: Uuid| sketch.point_position(id).map(Vec2D::to_glam);
+            let (Some(a), Some(at), Some(b)) = (pos(point1), pos(vertex), pos(point2)) else {
+                return Some(Vec::new());
+            };
+            let (Some(pa), Some(v), Some(pb)) = (px(a), px(at), px(b)) else {
+                return Some(Vec::new());
+            };
+            polyline(Some(angle_arc_points(v, sub(pa, v), sub(pb, v), label)))
+        }
+        ConstraintKind::ArcLength { arc, .. } | ConstraintKind::ArcAngle { arc, .. } => {
             let Some(GeometryElement::Arc(a)) = sketch.get_geometry(arc) else {
                 return Some(Vec::new());
             };
@@ -590,6 +639,7 @@ pub fn build(
     bound: &HashSet<Uuid>,
     pal: &SketchPalette,
     parked: bool,
+    labels: DimensionLabels,
 ) -> Vec<Glyph> {
     let shown = || sketch.constraints.iter().filter(|c| c.parked == parked);
     // Repeated relational kinds get a shared 1-based index suffix.
@@ -636,9 +686,9 @@ pub fn build(
                 anchor: anchor_px,
                 visual: GlyphVisual::Pill {
                     text: if bound.contains(&c.id) {
-                        format!("ƒ {}", dim_text(sketch, c))
+                        format!("ƒ {}", label_text(sketch, c, labels))
                     } else {
-                        dim_text(sketch, c)
+                        label_text(sketch, c, labels)
                     },
                 },
                 color,
@@ -672,6 +722,11 @@ pub fn build(
             }
             ConstraintKind::Coincident { point1, .. } => {
                 symbol_at(corner_off(sketch, point1), None);
+            }
+            ConstraintKind::HorizontalPoints { point1, point2 }
+            | ConstraintKind::VerticalPoints { point1, point2 } => {
+                symbol_at(corner_off(sketch, point1), None);
+                symbol_at(corner_off(sketch, point2), None);
             }
             ConstraintKind::PointOnLine { point, .. }
             | ConstraintKind::PointOnCircle { point, .. }
@@ -907,6 +962,33 @@ mod tests {
         assert!(
             mid[0] > 0.0 && mid[1] > 0.0,
             "arc passes the first quadrant: {mid:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use crate::sketch::{Constraint, ConstraintKind};
+
+    #[test]
+    fn a_label_shows_the_value_the_name_or_both() {
+        let sketch = Sketch::new("t");
+        let mut c = Constraint::new(ConstraintKind::Length {
+            line: uuid::Uuid::new_v4(),
+            length: 12.0,
+        });
+        assert_eq!(
+            label_text(&sketch, &c, DimensionLabels::Name),
+            "12",
+            "no name: the value"
+        );
+        c.name = Some("width".into());
+        assert_eq!(label_text(&sketch, &c, DimensionLabels::Value), "12");
+        assert_eq!(label_text(&sketch, &c, DimensionLabels::Name), "width");
+        assert_eq!(
+            label_text(&sketch, &c, DimensionLabels::NameAndValue),
+            "width = 12"
         );
     }
 }

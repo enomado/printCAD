@@ -23,9 +23,39 @@ pub struct SelectionShape {
     /// The arcs among `circles`.
     pub arcs: Vec<Uuid>,
     pub ellipses: Vec<Uuid>,
+    /// Everything selected in the order it was picked; where that is not
+    /// known, in sketch order.
+    pub picked: Vec<Uuid>,
 }
 
 impl SelectionShape {
+    /// The selection as it was picked, `order` first (ids it does not name
+    /// follow in sketch order).
+    pub fn picked_in(sketch: &Sketch, selected: &HashSet<Uuid>, order: &[Uuid]) -> Self {
+        let mut shape = Self::of(sketch, selected);
+        let mut picked: Vec<Uuid> = order
+            .iter()
+            .copied()
+            .filter(|id| shape.all.contains(id))
+            .collect();
+        for id in &shape.all {
+            if !picked.contains(id) {
+                picked.push(*id);
+            }
+        }
+        shape.picked = picked;
+        shape
+    }
+
+    /// The selected points in the order they were picked.
+    fn points_picked(&self) -> Vec<Uuid> {
+        self.picked
+            .iter()
+            .copied()
+            .filter(|id| self.points.contains(id))
+            .collect()
+    }
+
     pub fn of(sketch: &Sketch, selected: &HashSet<Uuid>) -> Self {
         let mut shape = Self::default();
         for g in &sketch.geometry {
@@ -59,6 +89,7 @@ impl SelectionShape {
                 _ => shape.lines.push(id),
             }
         }
+        shape.picked = shape.all.clone();
         shape
     }
 
@@ -83,6 +114,7 @@ pub const TOOLS: &[&str] = &[
     "midpoint",
     "vertical",
     "horizontal",
+    "horizontal_vertical",
     "parallel",
     "perpendicular",
     "tangent",
@@ -99,6 +131,8 @@ pub const TOOLS: &[&str] = &[
     "angle_x",
     "angle_y",
     "arc_length",
+    "arc_angle",
+    "angle_three_points",
     "gap",
     "radius_diameter",
     "angle_at_point",
@@ -123,11 +157,25 @@ pub fn kinds_for(
 ) -> Option<Vec<ConstraintKind>> {
     let measured = |kind: &ConstraintKind| sketch::measured_value(sketch, kind).unwrap_or(0.0);
     let (p, l, c, e) = (&shape.points, &shape.lines, &shape.circles, &shape.ellipses);
+    // The first element and each other one after it: one constraint
+    // chained across a selection of many.
+    let chain =
+        |ids: &[Uuid], make: &dyn Fn(Uuid, Uuid) -> ConstraintKind| -> Vec<ConstraintKind> {
+            ids[1..].iter().map(|other| make(ids[0], *other)).collect()
+        };
     let kinds = match tool {
-        "coincident" if shape.only(2, 0, 0, 0) => vec![ConstraintKind::Coincident {
-            point1: p[0],
-            point2: p[1],
-        }],
+        "coincident" if p.len() >= 2 && shape.only(p.len(), 0, 0, 0) => {
+            chain(p, &|a, b| ConstraintKind::Coincident {
+                point1: a,
+                point2: b,
+            })
+        }
+        // A point and a curve: coincident with the curve is the point on it.
+        "coincident"
+            if shape.only(1, 1, 0, 0) || shape.only(1, 0, 1, 0) || shape.only(1, 0, 0, 1) =>
+        {
+            return kinds_for("point_on_object", shape, sketch);
+        }
         "point_on_object" if shape.only(1, 1, 0, 0) => vec![ConstraintKind::PointOnLine {
             point: p[0],
             line: l[0],
@@ -152,10 +200,45 @@ pub fn kinds_for(
             .iter()
             .map(|line| ConstraintKind::Vertical { element: *line })
             .collect(),
-        "parallel" if shape.only(0, 2, 0, 0) => vec![ConstraintKind::Parallel {
-            line1: l[0],
-            line2: l[1],
+        "horizontal" if shape.only(2, 0, 0, 0) => vec![ConstraintKind::HorizontalPoints {
+            point1: p[0],
+            point2: p[1],
         }],
+        "vertical" if shape.only(2, 0, 0, 0) => vec![ConstraintKind::VerticalPoints {
+            point1: p[0],
+            point2: p[1],
+        }],
+        // Whichever of the two each line, or the two points, is nearer.
+        "horizontal_vertical" if !l.is_empty() && shape.only(0, l.len(), 0, 0) => l
+            .iter()
+            .map(|line| {
+                if nearer_horizontal(sketch, *line) {
+                    ConstraintKind::Horizontal { element: *line }
+                } else {
+                    ConstraintKind::Vertical { element: *line }
+                }
+            })
+            .collect(),
+        "horizontal_vertical" if shape.only(2, 0, 0, 0) => {
+            let level = match (sketch.point_position(p[0]), sketch.point_position(p[1])) {
+                (Some(a), Some(b)) => (b.x - a.x).abs() >= (b.y - a.y).abs(),
+                _ => true,
+            };
+            vec![if level {
+                ConstraintKind::HorizontalPoints {
+                    point1: p[0],
+                    point2: p[1],
+                }
+            } else {
+                ConstraintKind::VerticalPoints {
+                    point1: p[0],
+                    point2: p[1],
+                }
+            }]
+        }
+        "parallel" if l.len() >= 2 && shape.only(0, l.len(), 0, 0) => {
+            chain(l, &|a, b| ConstraintKind::Parallel { line1: a, line2: b })
+        }
         "perpendicular" if shape.only(0, 2, 0, 0) => vec![ConstraintKind::Perpendicular {
             line1: l[0],
             line2: l[1],
@@ -168,33 +251,57 @@ pub fn kinds_for(
             line_or_circle1: l[0],
             item2: c[0],
         }],
-        "equal" if shape.only(0, 2, 0, 0) => vec![ConstraintKind::EqualLength {
-            line1: l[0],
-            line2: l[1],
-        }],
-        "equal" if shape.only(0, 0, 2, 0) => vec![ConstraintKind::EqualRadius {
-            circle1: c[0],
-            circle2: c[1],
-        }],
+        "equal" if l.len() >= 2 && shape.only(0, l.len(), 0, 0) => chain(l, &|a, b| {
+            ConstraintKind::EqualLength { line1: a, line2: b }
+        }),
+        "equal" if e.len() >= 2 && shape.only(0, 0, 0, e.len()) => {
+            chain(e, &|a, b| ConstraintKind::EqualEllipse {
+                ellipse1: a,
+                ellipse2: b,
+            })
+        }
+        "equal" if c.len() >= 2 && shape.only(0, 0, c.len(), 0) => {
+            chain(c, &|a, b| ConstraintKind::EqualRadius {
+                circle1: a,
+                circle2: b,
+            })
+        }
         "symmetric" if shape.only(2, 1, 0, 0) => vec![ConstraintKind::Symmetric {
             point1: p[0],
             point2: p[1],
             line: l[0],
         }],
-        "symmetric" if shape.only(3, 0, 0, 0) => vec![ConstraintKind::SymmetricAboutPoint {
-            point1: p[0],
-            point2: p[1],
-            center: p[2],
-        }],
+        // The centre is the point picked last.
+        "symmetric" if shape.only(3, 0, 0, 0) => {
+            let p = shape.points_picked();
+            vec![ConstraintKind::SymmetricAboutPoint {
+                point1: p[0],
+                point2: p[1],
+                center: p[2],
+            }]
+        }
         "block" if shape.total() >= 1 => shape
             .all
             .iter()
             .map(|id| ConstraintKind::Block { element: *id })
             .collect(),
-        "lock" if shape.only(1, 0, 0, 0) => vec![ConstraintKind::FixedPoint {
-            point: p[0],
-            position: sketch.point_position(p[0]).unwrap_or(Vec2D::new(0.0, 0.0)),
-        }],
+        // Where the point is, as two distances from the origin that show,
+        // edit and take formulas like any dimension.
+        "lock" if shape.only(1, 0, 0, 0) => {
+            let at = sketch.point_position(p[0]).unwrap_or(Vec2D::new(0.0, 0.0));
+            vec![
+                ConstraintKind::DistanceX {
+                    a: p[0],
+                    b: None,
+                    value: at.x.abs(),
+                },
+                ConstraintKind::DistanceY {
+                    a: p[0],
+                    b: None,
+                    value: at.y.abs(),
+                },
+            ]
+        }
         "distance_x" | "distance_y" if shape.only(1, 0, 0, 0) || shape.only(2, 0, 0, 0) => {
             let horizontal = tool == "distance_x";
             let b = p.get(1).copied();
@@ -284,6 +391,42 @@ pub fn kinds_for(
             });
             kinds
         }
+        "arc_angle" if !shape.arcs.is_empty() && shape.only(0, 0, shape.arcs.len(), 0) => shape
+            .arcs
+            .iter()
+            .map(|arc| {
+                let kind = ConstraintKind::ArcAngle {
+                    arc: *arc,
+                    angle_rad: 0.0,
+                };
+                ConstraintKind::ArcAngle {
+                    arc: *arc,
+                    angle_rad: measured(&kind).to_radians(),
+                }
+            })
+            .collect(),
+        // Picked arm, corner, arm; the angle is taken the short way round.
+        "angle_three_points" if shape.only(3, 0, 0, 0) => {
+            let p = shape.points_picked();
+            let (mut point1, vertex, mut point2) = (p[0], p[1], p[2]);
+            let probe = ConstraintKind::AngleThreePoints {
+                point1,
+                vertex,
+                point2,
+                angle_rad: 0.0,
+            };
+            let mut degrees = measured(&probe);
+            if degrees > 180.0 {
+                std::mem::swap(&mut point1, &mut point2);
+                degrees = 360.0 - degrees;
+            }
+            vec![ConstraintKind::AngleThreePoints {
+                point1,
+                vertex,
+                point2,
+                angle_rad: degrees.to_radians(),
+            }]
+        }
         "arc_length" if !shape.arcs.is_empty() && shape.only(0, 0, shape.arcs.len(), 0) => shape
             .arcs
             .iter()
@@ -299,7 +442,8 @@ pub fn kinds_for(
             })
             .collect(),
         "distance" | "gap"
-            if shape.only(1, 1, 0, 0)
+            if shape.only(0, 2, 0, 0)
+                || shape.only(1, 1, 0, 0)
                 || shape.only(1, 0, 1, 0)
                 || shape.only(0, 1, 1, 0)
                 || shape.only(0, 0, 2, 0) =>
@@ -502,6 +646,39 @@ pub fn dimension_for(shape: &SelectionShape) -> Option<&'static str> {
     .find(|tool| fits(tool, shape))
 }
 
+/// Whether a line lies nearer level than upright (a line not in the sketch
+/// counts as level).
+fn nearer_horizontal(sketch: &Sketch, line: Uuid) -> bool {
+    match crate::measure::item(sketch, line) {
+        Some(crate::measure::Item::Line(s, e)) => (e.x - s.x).abs() >= (e.y - s.y).abs(),
+        _ => true,
+    }
+}
+
+/// [`dimension_for`], reading the sketch: two parallel lines take the
+/// distance between them, since the angle they make is none.
+pub fn dimension_in(shape: &SelectionShape, sketch: &Sketch) -> Option<&'static str> {
+    if shape.only(0, 2, 0, 0) && parallel(sketch, shape.lines[0], shape.lines[1]) {
+        return Some("distance");
+    }
+    dimension_for(shape)
+}
+
+/// Whether two lines run the same way, within half a degree.
+fn parallel(sketch: &Sketch, a: Uuid, b: Uuid) -> bool {
+    use crate::measure::Item;
+    match (
+        crate::measure::item(sketch, a),
+        crate::measure::item(sketch, b),
+    ) {
+        (Some(Item::Line(s1, e1)), Some(Item::Line(s2, e2))) => {
+            let (d1, d2) = ((e1 - s1).normalize_or_zero(), (e2 - s2).normalize_or_zero());
+            d1.perp_dot(d2).abs() < 0.5f32.to_radians().sin()
+        }
+        _ => false,
+    }
+}
+
 /// Whether `tool` applies to `shape` at all.
 pub fn fits(tool: &str, shape: &SelectionShape) -> bool {
     kinds_for(tool, shape, &Sketch::new("")).is_some()
@@ -601,15 +778,111 @@ mod tests {
             matches!(kinds[0], ConstraintKind::Gap { distance, .. } if (distance - 3.0).abs() < 1e-4),
             "the circle at (5, 5) with radius 2 stands 3 off the line: {kinds:?}"
         );
-        let two_lines = {
-            let mut sketch = sketch.clone();
-            let p = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 9.0))));
-            let other = sketch.add_geometry(GeometryElement::Line(Line::new(b, p)));
-            SelectionShape::of(&sketch, &HashSet::from([line, other]))
-        };
+        let mut crossing = sketch.clone();
+        let p = crossing.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 9.0))));
+        let other = crossing.add_geometry(GeometryElement::Line(Line::new(b, p)));
+        let two_lines = SelectionShape::of(&crossing, &HashSet::from([line, other]));
+        assert_eq!(
+            dimension_in(&two_lines, &crossing),
+            Some("angle"),
+            "two crossing lines take an angle from the dimension tool"
+        );
+    }
+
+    #[test]
+    fn a_locked_point_is_two_distances_from_the_origin_and_stays() {
+        let mut sketch = Sketch::new("t");
+        let p = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-5.0, -3.0))));
+        let kinds = kinds_for(
+            "lock",
+            &SelectionShape::of(&sketch, &HashSet::from([p])),
+            &sketch,
+        )
+        .unwrap();
+        assert!(matches!(
+            kinds[..],
+            [
+                ConstraintKind::DistanceX { value: x, .. },
+                ConstraintKind::DistanceY { value: y, .. },
+            ] if (x - 5.0).abs() < 1e-6 && (y - 3.0).abs() < 1e-6
+        ));
+        for kind in kinds {
+            sketch.add_constraint(kind);
+        }
+        assert!(matches!(
+            crate::solver::solve(&mut sketch),
+            crate::solver::SolveOutcome::Converged { .. }
+        ));
+        let at = sketch.point_position(p).unwrap();
         assert!(
-            !fits("gap", &two_lines),
-            "two lines take an angle, not a gap"
+            (at.x + 5.0).abs() < 1e-4 && (at.y + 3.0).abs() < 1e-4,
+            "{at:?}"
+        );
+    }
+
+    #[test]
+    fn two_points_level_or_plumb_and_the_nearer_of_the_two() {
+        let mut sketch = Sketch::new("t");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 1.0))));
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(1.0, 10.0))));
+        let pair = |x, y| SelectionShape::of(&sketch, &HashSet::from([x, y]));
+        assert!(matches!(
+            kinds_for("horizontal", &pair(a, b), &sketch).unwrap()[..],
+            [ConstraintKind::HorizontalPoints { .. }]
+        ));
+        assert!(matches!(
+            kinds_for("vertical", &pair(a, c), &sketch).unwrap()[..],
+            [ConstraintKind::VerticalPoints { .. }]
+        ));
+        assert!(matches!(
+            kinds_for("horizontal_vertical", &pair(a, b), &sketch).unwrap()[..],
+            [ConstraintKind::HorizontalPoints { .. }]
+        ));
+        assert!(matches!(
+            kinds_for("horizontal_vertical", &pair(a, c), &sketch).unwrap()[..],
+            [ConstraintKind::VerticalPoints { .. }]
+        ));
+        let slanted = sketch.add_geometry(GeometryElement::Line(Line::new(a, c)));
+        assert!(matches!(
+            kinds_for(
+                "horizontal_vertical",
+                &SelectionShape::of(&sketch, &HashSet::from([slanted])),
+                &sketch
+            )
+            .unwrap()[..],
+            [ConstraintKind::Vertical { .. }]
+        ));
+    }
+
+    #[test]
+    fn one_constraint_chains_across_many_and_coincident_falls_to_on_object() {
+        let mut sketch = Sketch::new("t");
+        let mut circles = Vec::new();
+        let mut points = Vec::new();
+        for i in 0..4 {
+            let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
+                i as f32 * 10.0,
+                0.0,
+            ))));
+            points.push(center);
+            circles.push(
+                sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0 + i as f32))),
+            );
+        }
+        let many = |ids: &[Uuid]| SelectionShape::of(&sketch, &ids.iter().copied().collect());
+        let equal = kinds_for("equal", &many(&circles), &sketch).unwrap();
+        assert_eq!(equal.len(), 3, "each held equal to the first: {equal:?}");
+        assert!(equal.iter().all(|k| matches!(
+            k,
+            ConstraintKind::EqualRadius { circle1, .. } if *circle1 == circles[0]
+        )));
+        let coincident = kinds_for("coincident", &many(&points), &sketch).unwrap();
+        assert_eq!(coincident.len(), 3);
+        let on = kinds_for("coincident", &many(&[points[0], circles[1]]), &sketch).unwrap();
+        assert!(
+            matches!(on[..], [ConstraintKind::PointOnCircle { .. }]),
+            "a point and a curve: on it: {on:?}"
         );
     }
 

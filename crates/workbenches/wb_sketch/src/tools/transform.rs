@@ -201,6 +201,24 @@ pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: 
                     None => dropped.push(constraint.id),
                 }
             }
+            // Two points' alignment turns with them: kept or swapped with
+            // the axes, gone at any other angle.
+            ConstraintKind::HorizontalPoints { point1, point2 }
+            | ConstraintKind::VerticalPoints { point1, point2 } => {
+                let horizontal = matches!(constraint.kind, ConstraintKind::HorizontalPoints { .. });
+                if keeps_axes {
+                    continue;
+                }
+                if swaps_axes {
+                    constraint.kind = if horizontal {
+                        ConstraintKind::VerticalPoints { point1, point2 }
+                    } else {
+                        ConstraintKind::HorizontalPoints { point1, point2 }
+                    };
+                    continue;
+                }
+                dropped.push(constraint.id);
+            }
             // A pin to the origin or an axis the move took the point off
             // would pull it back: it goes.
             ConstraintKind::Coincident { point1, point2 }

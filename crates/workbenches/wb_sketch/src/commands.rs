@@ -122,10 +122,11 @@ pub fn register(context: &mut WorkbenchContext) {
         .param(
             "kind",
             ParamKind::String,
-            "coincident, point_on_object, midpoint, horizontal, vertical, parallel, \
-             perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, \
+            "coincident, point_on_object, midpoint, horizontal, vertical, \
+             horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, \
              distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, \
-             angle, angle_x, angle_y, angle_at_point or refraction",
+             angle, angle_x, angle_y, angle_at_point, arc_angle, angle_three_points (items: \
+             arm, corner, arm) or refraction",
         )
         .param(
             "items",
@@ -1540,9 +1541,9 @@ pub(crate) fn constrain(
     value: Option<f64>,
 ) -> Result<Vec<String>, CommandError> {
     let selected: std::collections::HashSet<Uuid> = items.iter().copied().collect();
-    let shape = crate::constrain::SelectionShape::of(sketch, &selected);
+    let shape = crate::constrain::SelectionShape::picked_in(sketch, &selected, items);
     let tool = if kind == "dimension" {
-        crate::dimension_for(&shape)
+        crate::constrain::dimension_in(&shape, sketch)
             .ok_or_else(|| CommandError::failed("dimension takes a line, circles, or two items"))?
     } else {
         kind

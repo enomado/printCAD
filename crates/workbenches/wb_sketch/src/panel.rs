@@ -7,7 +7,7 @@ use uuid::Uuid;
 use core_document::{TaskOutcome, TaskRequest, WorkbenchRuntimeContext};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Note, QtyField, check_row, mono_label, note_card, planned, secondary_button, section_header,
+    Note, QtyField, check_row, mono_label, note_card, secondary_button, section_header,
     select_field,
 };
 use ui_kit::{mono, sans};
@@ -523,16 +523,13 @@ impl SketchWorkbench {
                         .width(90.0)
                         .show(ui);
                 });
-                planned(ui, "draws construction or normal geometry on top", |ui| {
-                    let mut order = 0u8;
-                    select_field(
-                        ui,
-                        "sketch_render_order",
-                        &mut order,
-                        &[(0, "Normal")],
-                        110.0,
-                    );
-                });
+                select_field(
+                    ui,
+                    "sketch_render_order",
+                    &mut self.options.construction_on_top,
+                    &[(false, "Normal on top"), (true, "Construction on top")],
+                    130.0,
+                );
                 ui.end_row();
             });
     }
@@ -566,6 +563,20 @@ impl SketchWorkbench {
                 "sketch_constraint_filter",
                 &mut self.constraint_kind_filter,
                 &ConstraintFilter::ALL,
+                130.0,
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Labels show")
+                    .font(sans(FONT_XS))
+                    .color(TEXT2),
+            );
+            select_field(
+                ui,
+                "sketch_dimension_labels",
+                &mut self.options.dimension_labels,
+                &crate::glyphs::DimensionLabels::ALL,
                 130.0,
             );
         });

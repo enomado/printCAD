@@ -27,6 +27,8 @@ fn value_field(kind: &ConstraintKind) -> Option<(&'static str, &'static str)> {
         ConstraintKind::ArcLength { .. } => ("ArcLength", "length"),
         ConstraintKind::Gap { .. } => ("Gap", "distance"),
         ConstraintKind::AngleAtPoint { .. } => ("AngleAtPoint", "angle_rad"),
+        ConstraintKind::ArcAngle { .. } => ("ArcAngle", "angle_rad"),
+        ConstraintKind::AngleThreePoints { .. } => ("AngleThreePoints", "angle_rad"),
         ConstraintKind::Refraction { .. } => ("Refraction", "ratio"),
         _ => return None,
     })

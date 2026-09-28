@@ -560,7 +560,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.sketch.constrain`: Constrain elements, as the constraint's toolbar button does for a selection.
 
 - `sketch` (id): The sketch to draw in
-- `kind` (string): coincident, point_on_object, midpoint, horizontal, vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, angle, angle_x, angle_y, angle_at_point or refraction
+- `kind` (string): coincident, point_on_object, midpoint, horizontal, vertical, horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, angle, angle_x, angle_y, angle_at_point, arc_angle, angle_three_points (items: arm, corner, arm) or refraction
 - `items` (list): Element ids, or "origin", "x_axis" and "y_axis"
 - `value` (number, optional): A dimension's value (mm, degrees for an angle, the ratio of indices for a refraction); the measured one when left out
 - `remove_redundant` (boolean, optional): Take away the older constraints the new ones make redundant

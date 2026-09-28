@@ -13,13 +13,16 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Coincident { .. } => "constraint-coincident",
         ConstraintKind::Parallel { .. } => "constraint-parallel",
         ConstraintKind::Perpendicular { .. } => "constraint-perpendicular",
-        ConstraintKind::EqualLength { .. } | ConstraintKind::EqualRadius { .. } => {
-            "constraint-equal"
-        }
+        ConstraintKind::EqualLength { .. }
+        | ConstraintKind::EqualRadius { .. }
+        | ConstraintKind::EqualEllipse { .. } => "constraint-equal",
         ConstraintKind::Length { .. }
         | ConstraintKind::Distance { .. }
         | ConstraintKind::Gap { .. } => "constraint-distance",
         ConstraintKind::ArcLength { .. } => "constraint-arc-length",
+        ConstraintKind::ArcAngle { .. } | ConstraintKind::AngleThreePoints { .. } => {
+            "constraint-angle"
+        }
         ConstraintKind::Refraction { .. } => "constraint-refraction",
         ConstraintKind::Radius { .. } => "constraint-radius",
         ConstraintKind::Diameter { .. } => "constraint-diameter",
@@ -27,8 +30,12 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         | ConstraintKind::PointOnCircle { .. }
         | ConstraintKind::PointOnEllipse { .. }
         | ConstraintKind::Midpoint { .. } => "constraint-point-on-object",
-        ConstraintKind::Horizontal { .. } => "constraint-horizontal",
-        ConstraintKind::Vertical { .. } => "constraint-vertical",
+        ConstraintKind::Horizontal { .. } | ConstraintKind::HorizontalPoints { .. } => {
+            "constraint-horizontal"
+        }
+        ConstraintKind::Vertical { .. } | ConstraintKind::VerticalPoints { .. } => {
+            "constraint-vertical"
+        }
         ConstraintKind::Block { .. } => "constraint-block",
         ConstraintKind::DistanceX { .. } => "constraint-distance-x",
         ConstraintKind::DistanceY { .. } => "constraint-distance-y",

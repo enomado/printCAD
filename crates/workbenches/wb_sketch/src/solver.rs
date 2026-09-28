@@ -403,6 +403,24 @@ enum ResidualSpec {
         r: usize,
         len: f64,
     },
+    /// The major radii equal, then the minor ones: `a` and `b` index each
+    /// ellipse's shape (major x, major y, minor radius).
+    EqualEllipse { a: usize, b: usize },
+    /// sweep - angle, the sweep counter-clockwise from the start point's
+    /// angle about the center to the end point's.
+    ArcAngle {
+        c: usize,
+        s: usize,
+        e: usize,
+        angle: f64,
+    },
+    /// wrap(angle at v from the arm to a to the arm to b - angle).
+    AngleThreePoints {
+        a: usize,
+        v: usize,
+        b: usize,
+        angle: f64,
+    },
     /// |perpendicular distance(p, infinite line)| - d.
     GapPointLine {
         p: usize,
@@ -417,6 +435,15 @@ enum ResidualSpec {
         c: usize,
         r: usize,
         inside: bool,
+        d: f64,
+    },
+    /// |perpendicular distance(midpoint of s2-e2, line s1-e1)| - d: two
+    /// parallel lines apart.
+    GapLines {
+        s1: usize,
+        e1: usize,
+        s2: usize,
+        e2: usize,
         d: f64,
     },
     /// |perpendicular distance(center, infinite line)| - r - d.
@@ -558,6 +585,7 @@ impl ResidualSpec {
             | ResidualSpec::Coincident { .. }
             | ResidualSpec::Symmetric { .. }
             | ResidualSpec::Midpoint { .. }
+            | ResidualSpec::EqualEllipse { .. }
             | ResidualSpec::Internal { .. } => 2,
             _ => 1,
         }
@@ -691,6 +719,27 @@ impl ResidualSpec {
             ResidualSpec::GapPointLine { p, s, e, d } => {
                 out.push(point_line_distance(v, p, s, e).abs() - d);
             }
+            ResidualSpec::EqualEllipse { a, b } => {
+                let major = |k: usize| (v[k] * v[k] + v[k + 1] * v[k + 1]).sqrt();
+                out.push(major(a) - major(b));
+                out.push(v[a + 2] - v[b + 2]);
+            }
+            ResidualSpec::ArcAngle { c, s, e, angle } => {
+                let a0 = (v[s + 1] - v[c + 1]).atan2(v[s] - v[c]);
+                let a1 = (v[e + 1] - v[c + 1]).atan2(v[e] - v[c]);
+                let mut sweep = (a1 - a0) % std::f64::consts::TAU;
+                if sweep <= 0.0 {
+                    sweep += std::f64::consts::TAU;
+                }
+                out.push(sweep - angle);
+            }
+            ResidualSpec::AngleThreePoints { a, v: at, b, angle } => {
+                let (x1, y1) = (v[a] - v[at], v[a + 1] - v[at + 1]);
+                let (x2, y2) = (v[b] - v[at], v[b + 1] - v[at + 1]);
+                let now = (x1 * y2 - y1 * x2).atan2(x1 * x2 + y1 * y2);
+                let pi = std::f64::consts::PI;
+                out.push((now - angle + pi).rem_euclid(2.0 * pi) - pi);
+            }
             ResidualSpec::GapPointCircle { p, c, r, inside, d } => {
                 let from_center = segment_length(v, c, p);
                 out.push(if inside {
@@ -701,6 +750,13 @@ impl ResidualSpec {
             }
             ResidualSpec::GapLineCircle { s, e, c, r, d } => {
                 out.push(point_line_distance(v, c, s, e).abs() - v[r] - d);
+            }
+            ResidualSpec::GapLines { s1, e1, s2, e2, d } => {
+                let (mx, my) = ((v[s2] + v[e2]) * 0.5, (v[s2 + 1] + v[e2 + 1]) * 0.5);
+                let (dx, dy) = (v[e1] - v[s1], v[e1 + 1] - v[s1 + 1]);
+                let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+                let across = ((mx - v[s1]) * dy - (my - v[s1 + 1]) * dx) / len;
+                out.push(across.abs() - d);
             }
             ResidualSpec::GapCircles {
                 c1,
@@ -877,9 +933,11 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         .constraints
         .iter()
         .filter(|c| c.is_solved() && exclude != Some(c.id))
-        .filter_map(|c| match c.kind {
-            ConstraintKind::InternalAlignment { curve, .. } => Some(curve),
-            _ => None,
+        .flat_map(|c| match c.kind {
+            ConstraintKind::InternalAlignment { curve, .. } => vec![curve],
+            // Equal ellipses size each other, so their shapes are free.
+            ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => vec![ellipse1, ellipse2],
+            _ => Vec::new(),
         })
         .collect();
     let mut shape_vars = HashMap::new();
@@ -1093,6 +1151,17 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                     specs.push(ResidualSpec::Vertical { s, e });
                 }
             }
+            // Two points level or plumb: the line between them is.
+            ConstraintKind::HorizontalPoints { point1, point2 } => {
+                if let (Some(s), Some(e)) = (point_var(point1), point_var(point2)) {
+                    specs.push(ResidualSpec::Horizontal { s, e });
+                }
+            }
+            ConstraintKind::VerticalPoints { point1, point2 } => {
+                if let (Some(s), Some(e)) = (point_var(point1), point_var(point2)) {
+                    specs.push(ResidualSpec::Vertical { s, e });
+                }
+            }
             ConstraintKind::Block { element } => {
                 if let Some(geom) = sketch.get_geometry(element) {
                     // Fix every referenced point (and the element itself,
@@ -1274,6 +1343,42 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                     });
                 }
             }
+            ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => {
+                if let (Some(&a), Some(&b)) = (shape_vars.get(&ellipse1), shape_vars.get(&ellipse2))
+                {
+                    specs.push(ResidualSpec::EqualEllipse { a, b });
+                }
+            }
+            ConstraintKind::ArcAngle { arc, angle_rad } => {
+                if let Some(GeometryElement::Arc(a)) = sketch.get_geometry(arc)
+                    && let (Some(c), Some(s), Some(e)) =
+                        (point_var(a.center), point_var(a.start), point_var(a.end))
+                {
+                    specs.push(ResidualSpec::ArcAngle {
+                        c,
+                        s,
+                        e,
+                        angle: f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::AngleThreePoints {
+                point1,
+                vertex,
+                point2,
+                angle_rad,
+            } => {
+                if let (Some(a), Some(v), Some(b)) =
+                    (point_var(point1), point_var(vertex), point_var(point2))
+                {
+                    specs.push(ResidualSpec::AngleThreePoints {
+                        a,
+                        v,
+                        b,
+                        angle: f64::from(angle_rad),
+                    });
+                }
+            }
             ConstraintKind::Gap {
                 item1,
                 item2,
@@ -1297,6 +1402,9 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                             ),
                             d,
                         })
+                    }
+                    (Some(ItemVars::Line(s1, e1)), Some(ItemVars::Line(s2, e2))) => {
+                        Some(ResidualSpec::GapLines { s1, e1, s2, e2, d })
                     }
                     (Some(ItemVars::Line(s, e)), Some(ItemVars::Circle(c, r)))
                     | (Some(ItemVars::Circle(c, r)), Some(ItemVars::Line(s, e))) => {
@@ -2953,6 +3061,155 @@ mod curve_constraints {
         let end = sketch.point_position(e).unwrap();
         near(end.x, -5.0 / 2f32.sqrt());
         near(end.y, 5.0 / 2f32.sqrt());
+    }
+
+    #[test]
+    fn an_arc_opens_to_its_angle_and_three_points_hold_theirs() {
+        let mut sketch = Sketch::new("t");
+        let c = point(&mut sketch, 0.0, 0.0);
+        let s = point(&mut sketch, 5.0, 0.0);
+        let e = point(&mut sketch, 0.0, 5.0);
+        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
+        fix(&mut sketch, c);
+        fix(&mut sketch, s);
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: arc,
+            radius: 5.0,
+        });
+        sketch.add_constraint(ConstraintKind::ArcAngle {
+            arc,
+            angle_rad: 135f32.to_radians(),
+        });
+        converged(&mut sketch);
+        near(
+            measure::arc_sweep(&sketch, arc).unwrap().to_degrees(),
+            135.0,
+        );
+
+        // Picked arm, corner, arm: the corner is the vertex, and a reflex
+        // pick is turned round to the short way.
+        let mut sketch = Sketch::new("t");
+        let arm1 = point(&mut sketch, 10.0, 0.0);
+        let corner = point(&mut sketch, 0.0, 0.0);
+        let arm2 = point(&mut sketch, 0.0, 10.0);
+        let selected: std::collections::HashSet<Uuid> = [arm1, corner, arm2].into();
+        let shape =
+            crate::constrain::SelectionShape::picked_in(&sketch, &selected, &[arm2, corner, arm1]);
+        let kinds = crate::constrain::kinds_for("angle_three_points", &shape, &sketch).unwrap();
+        let [
+            ConstraintKind::AngleThreePoints {
+                vertex, angle_rad, ..
+            },
+        ] = kinds[..]
+        else {
+            panic!("{kinds:?}");
+        };
+        assert_eq!(vertex, corner);
+        near(angle_rad.to_degrees(), 90.0);
+        fix(&mut sketch, arm1);
+        fix(&mut sketch, corner);
+        sketch.add_constraint(with_dimension_value_kind(&kinds[0], 60.0));
+        sketch.add_constraint(ConstraintKind::Distance {
+            point1: corner,
+            point2: arm2,
+            distance: 10.0,
+        });
+        converged(&mut sketch);
+        let at = sketch.point_position(arm2).unwrap();
+        near(at.y.atan2(at.x).to_degrees(), 60.0);
+    }
+
+    fn with_dimension_value_kind(kind: &ConstraintKind, v: f32) -> ConstraintKind {
+        crate::sketch::with_dimension_value(kind, v)
+    }
+
+    #[test]
+    fn two_ellipses_are_held_the_same_size() {
+        let mut sketch = Sketch::new("t");
+        let c1 = point(&mut sketch, 0.0, 0.0);
+        let c2 = point(&mut sketch, 20.0, 0.0);
+        let e1 = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
+            c1,
+            Vec2D::new(6.0, 0.0),
+            0.5,
+        )));
+        let e2 = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
+            c2,
+            Vec2D::new(0.0, 4.0),
+            0.25,
+        )));
+        sketch.add_constraint(ConstraintKind::EqualEllipse {
+            ellipse1: e1,
+            ellipse2: e2,
+        });
+        converged(&mut sketch);
+        let size = |id: Uuid| match sketch.get_geometry(id) {
+            Some(GeometryElement::Ellipse(e)) => {
+                let major = e.major.to_glam().length();
+                (major, major * e.ratio)
+            }
+            _ => panic!("not an ellipse"),
+        };
+        let ((a1, b1), (a2, b2)) = (size(e1), size(e2));
+        near(a1, a2);
+        near(b1, b2);
+    }
+
+    #[test]
+    fn two_points_are_held_level_and_plumb() {
+        let mut sketch = Sketch::new("t");
+        let a = point(&mut sketch, 0.0, 0.0);
+        let b = point(&mut sketch, 10.0, 2.0);
+        let c = point(&mut sketch, 3.0, 8.0);
+        fix(&mut sketch, a);
+        sketch.add_constraint(ConstraintKind::HorizontalPoints {
+            point1: a,
+            point2: b,
+        });
+        sketch.add_constraint(ConstraintKind::VerticalPoints {
+            point1: a,
+            point2: c,
+        });
+        converged(&mut sketch);
+        near(sketch.point_position(b).unwrap().y, 0.0);
+        near(sketch.point_position(c).unwrap().x, 0.0);
+    }
+
+    #[test]
+    fn a_gap_holds_two_parallel_lines_apart_and_the_dimension_tool_picks_it() {
+        let mut sketch = Sketch::new("t");
+        let (a, b) = (point(&mut sketch, 0.0, 0.0), point(&mut sketch, 10.0, 0.0));
+        let (c, d) = (point(&mut sketch, 0.0, 3.0), point(&mut sketch, 10.0, 3.0));
+        let (bottom, top) = (line(&mut sketch, a, b), line(&mut sketch, c, d));
+        fix(&mut sketch, a);
+        fix(&mut sketch, b);
+        sketch.add_constraint(ConstraintKind::Parallel {
+            line1: bottom,
+            line2: top,
+        });
+        let shape = crate::constrain::SelectionShape::of(
+            &sketch,
+            &std::collections::HashSet::from([bottom, top]),
+        );
+        assert_eq!(
+            crate::constrain::dimension_in(&shape, &sketch),
+            Some("distance"),
+            "parallel lines take a distance, not an angle"
+        );
+        let kinds = crate::constrain::kinds_for("distance", &shape, &sketch).unwrap();
+        assert!(
+            matches!(kinds[0], ConstraintKind::Gap { distance, .. } if (distance - 3.0).abs() < 1e-4),
+            "{kinds:?}"
+        );
+        sketch.add_constraint(ConstraintKind::Gap {
+            item1: bottom,
+            item2: top,
+            distance: 5.0,
+        });
+        converged(&mut sketch);
+        near(measure::gap(&sketch, bottom, top).unwrap().distance, 5.0);
+        near(sketch.point_position(c).unwrap().y, 5.0);
+        near(sketch.point_position(d).unwrap().y, 5.0);
     }
 
     #[test]

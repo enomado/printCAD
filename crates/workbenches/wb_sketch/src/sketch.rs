@@ -338,6 +338,7 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         | ConstraintKind::EqualLength { line1, line2 } => vec![*line1, *line2],
         ConstraintKind::Length { line, .. } => vec![*line],
         ConstraintKind::EqualRadius { circle1, circle2 } => vec![*circle1, *circle2],
+        ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => vec![*ellipse1, *ellipse2],
         ConstraintKind::Radius { circle, .. } | ConstraintKind::Diameter { circle, .. } => {
             vec![*circle]
         }
@@ -347,6 +348,8 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         ConstraintKind::Horizontal { element }
         | ConstraintKind::Vertical { element }
         | ConstraintKind::Block { element } => vec![*element],
+        ConstraintKind::HorizontalPoints { point1, point2 }
+        | ConstraintKind::VerticalPoints { point1, point2 } => vec![*point1, *point2],
         ConstraintKind::Distance { point1, point2, .. } => vec![*point1, *point2],
         ConstraintKind::DistanceX { a, b, .. } | ConstraintKind::DistanceY { a, b, .. } => {
             let mut refs = vec![*a];
@@ -370,7 +373,15 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
             center,
         } => vec![*point1, *point2, *center],
         ConstraintKind::Midpoint { point, line } => vec![*point, *line],
-        ConstraintKind::ArcLength { arc, .. } => vec![*arc],
+        ConstraintKind::ArcLength { arc, .. } | ConstraintKind::ArcAngle { arc, .. } => {
+            vec![*arc]
+        }
+        ConstraintKind::AngleThreePoints {
+            point1,
+            vertex,
+            point2,
+            ..
+        } => vec![*point1, *vertex, *point2],
         ConstraintKind::Gap { item1, item2, .. } => vec![*item1, *item2],
         ConstraintKind::AngleAtPoint {
             curve1,
@@ -399,13 +410,18 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::EqualLength { .. } => "Equal length".to_string(),
         ConstraintKind::Length { .. } => "Length".to_string(),
         ConstraintKind::EqualRadius { .. } => "Equal radius".to_string(),
+        ConstraintKind::EqualEllipse { .. } => "Equal ellipse".to_string(),
         ConstraintKind::Radius { .. } => "Radius".to_string(),
         ConstraintKind::Diameter { .. } => "Diameter".to_string(),
         ConstraintKind::PointOnLine { .. } => "Point on line".to_string(),
         ConstraintKind::PointOnCircle { .. } => "Point on circle".to_string(),
         ConstraintKind::PointOnEllipse { .. } => "Point on ellipse".to_string(),
-        ConstraintKind::Horizontal { .. } => "Horizontal".to_string(),
-        ConstraintKind::Vertical { .. } => "Vertical".to_string(),
+        ConstraintKind::Horizontal { .. } | ConstraintKind::HorizontalPoints { .. } => {
+            "Horizontal".to_string()
+        }
+        ConstraintKind::Vertical { .. } | ConstraintKind::VerticalPoints { .. } => {
+            "Vertical".to_string()
+        }
         ConstraintKind::Block { .. } => "Block".to_string(),
         ConstraintKind::Distance { .. } => "Distance".to_string(),
         ConstraintKind::DistanceX { .. } => "Distance X".to_string(),
@@ -426,6 +442,8 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::ArcLength { .. } => "Arc length".to_string(),
         ConstraintKind::Gap { .. } => "Gap".to_string(),
         ConstraintKind::AngleAtPoint { .. } => "Angle at point".to_string(),
+        ConstraintKind::ArcAngle { .. } => "Arc angle".to_string(),
+        ConstraintKind::AngleThreePoints { .. } => "Angle by three points".to_string(),
         ConstraintKind::Refraction { .. } => "Refraction".to_string(),
         ConstraintKind::InternalAlignment { role, .. } => {
             format!("Internal alignment ({})", role.label())
@@ -492,6 +510,17 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
         ConstraintKind::Gap { item1, item2, .. } => {
             crate::measure::gap(sketch, item1, item2).map(|g| g.distance)
         }
+        ConstraintKind::ArcAngle { arc, .. } => {
+            crate::measure::arc_sweep(sketch, arc).map(f32::to_degrees)
+        }
+        ConstraintKind::AngleThreePoints {
+            point1,
+            vertex,
+            point2,
+            ..
+        } => {
+            crate::measure::angle_three_points(sketch, point1, vertex, point2).map(f32::to_degrees)
+        }
         ConstraintKind::AngleAtPoint {
             curve1,
             curve2,
@@ -522,7 +551,9 @@ pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
         }
         ConstraintKind::Angle { angle_rad, .. }
         | ConstraintKind::AngleToAxis { angle_rad, .. }
-        | ConstraintKind::AngleAtPoint { angle_rad, .. } => Some(angle_rad.to_degrees()),
+        | ConstraintKind::AngleAtPoint { angle_rad, .. }
+        | ConstraintKind::ArcAngle { angle_rad, .. }
+        | ConstraintKind::AngleThreePoints { angle_rad, .. } => Some(angle_rad.to_degrees()),
         ConstraintKind::ArcLength { length, .. } => Some(length),
         ConstraintKind::Gap { distance, .. } => Some(distance),
         ConstraintKind::Refraction { ratio, .. } => Some(ratio),
@@ -544,7 +575,9 @@ pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
         }
         ConstraintKind::Angle { angle_rad, .. }
         | ConstraintKind::AngleToAxis { angle_rad, .. }
-        | ConstraintKind::AngleAtPoint { angle_rad, .. } => *angle_rad = v.to_radians(),
+        | ConstraintKind::AngleAtPoint { angle_rad, .. }
+        | ConstraintKind::ArcAngle { angle_rad, .. }
+        | ConstraintKind::AngleThreePoints { angle_rad, .. } => *angle_rad = v.to_radians(),
         ConstraintKind::ArcLength { length, .. } => *length = v,
         ConstraintKind::Gap { distance, .. } => *distance = v,
         ConstraintKind::Refraction { ratio, .. } => *ratio = v,
@@ -574,7 +607,9 @@ pub fn dimension_unit(kind: &ConstraintKind) -> DimensionUnit {
     match kind {
         ConstraintKind::Angle { .. }
         | ConstraintKind::AngleToAxis { .. }
-        | ConstraintKind::AngleAtPoint { .. } => DimensionUnit::Angle,
+        | ConstraintKind::AngleAtPoint { .. }
+        | ConstraintKind::ArcAngle { .. }
+        | ConstraintKind::AngleThreePoints { .. } => DimensionUnit::Angle,
         ConstraintKind::Refraction { .. } => DimensionUnit::Ratio,
         _ => DimensionUnit::Length,
     }
@@ -1138,10 +1173,14 @@ pub enum ConstraintKind {
     PointOnCircle { point: Uuid, circle: Uuid },
     /// Point lies on an ellipse.
     PointOnEllipse { point: Uuid, ellipse: Uuid },
-    /// Horizontal constraint (line is horizontal, or two points have same Y).
+    /// A line is horizontal.
     Horizontal { element: Uuid },
-    /// Vertical constraint (line is vertical, or two points have same X).
+    /// A line is vertical.
     Vertical { element: Uuid },
+    /// Two points level with each other: the same y.
+    HorizontalPoints { point1: Uuid, point2: Uuid },
+    /// Two points one above the other: the same x.
+    VerticalPoints { point1: Uuid, point2: Uuid },
     /// Freeze every point (and the radius) of one element where it is now.
     Block { element: Uuid },
     /// Distance between two points.
@@ -1198,8 +1237,10 @@ pub enum ConstraintKind {
     ArcLength { arc: Uuid, length: f32 },
     /// The shortest distance between two items that are not both points:
     /// a point, line, circle or arc (an arc as its whole circle) against a
-    /// circle or arc, or a point against a line. Two circles one inside the
-    /// other measure the gap between them inside.
+    /// circle or arc, a point against a line, or two lines held parallel
+    /// (the second's midpoint from the first's line: a wall's thickness).
+    /// Two circles one inside the other measure the gap between them
+    /// inside.
     Gap {
         item1: Uuid,
         item2: Uuid,
@@ -1213,6 +1254,20 @@ pub enum ConstraintKind {
         curve1: Uuid,
         curve2: Uuid,
         point: Uuid,
+        angle_rad: f32,
+    },
+    /// Two ellipses (or arcs of them) the same size: equal major and minor
+    /// radii.
+    EqualEllipse { ellipse1: Uuid, ellipse2: Uuid },
+    /// An arc's opening: the angle it sweeps counter-clockwise from its
+    /// start to its end.
+    ArcAngle { arc: Uuid, angle_rad: f32 },
+    /// The angle at `vertex` counter-clockwise from the arm to `point1` to
+    /// the arm to `point2`.
+    AngleThreePoints {
+        point1: Uuid,
+        vertex: Uuid,
+        point2: Uuid,
         angle_rad: f32,
     },
     /// Refraction at an interface: `ray1` arrives at `point` on the
@@ -1290,6 +1345,8 @@ impl ConstraintKind {
                 | ConstraintKind::ArcLength { .. }
                 | ConstraintKind::Gap { .. }
                 | ConstraintKind::AngleAtPoint { .. }
+                | ConstraintKind::ArcAngle { .. }
+                | ConstraintKind::AngleThreePoints { .. }
                 | ConstraintKind::Refraction { .. }
         )
     }
