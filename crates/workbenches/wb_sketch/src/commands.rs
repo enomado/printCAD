@@ -220,6 +220,15 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(sketch(
         CommandSpec::new(
+            "sketch.external_from",
+            "Bring another sketch's curves and points, or a datum, into this sketch as \
+             external geometry that follows them",
+        )
+        .param("from", ParamKind::Id, "A sketch or a datum")
+        .returns("the external elements made"),
+    ));
+    context.register_command(sketch(
+        CommandSpec::new(
             "sketch.external_defining",
             "Count external geometry in the sketch's profiles, or leave it only guiding",
         )
@@ -537,6 +546,23 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "sketch.merge" => {
             let with = feature_ids(args.get("with"), "with")?;
             return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.external_from" => {
+            let from = FeatureId(a.id("from")?);
+            if from == sketch_id {
+                return Err(CommandError::bad("from", "must be another sketch"));
+            }
+            let sources = reference_sources(ctx.document, from)
+                .ok_or_else(|| CommandError::bad("from", "must be a sketch or a datum"))?;
+            let before = ids_of(&feature.sketch);
+            let placed = crate::placed_plane(
+                &feature.plane,
+                &crate::sketch_placement(ctx.document, sketch_id),
+            );
+            add_external(ctx, &placed, &mut feature.sketch, &sources)
+                .map_err(CommandError::failed)?;
+            let made = made_since(&feature.sketch, &before);
+            return save(ctx, sketch_id, feature, made);
         }
         "sketch.external_defining" => {
             let items = ids(args.get("items"), "items", &feature.sketch)?;
@@ -1391,6 +1417,7 @@ fn external_sources(
                 direction: v("direction")?,
                 section: false,
                 defining: false,
+                reference: None,
             })
         })
         .collect()
@@ -1419,6 +1446,7 @@ fn section_sources(
                 direction: v("normal")?,
                 section: true,
                 defining: false,
+                reference: None,
             })
         })
         .collect()
@@ -1451,7 +1479,43 @@ pub(crate) fn add_external(
     }
 }
 
-/// Named arguments from a JSON object.
+/// What `from` brings as external geometry: each curve and loose point of a
+/// sketch (its construction left out), or a datum; `None` for anything
+/// else.
+pub(crate) fn reference_sources(
+    document: &core_document::Document,
+    from: FeatureId,
+) -> Option<Vec<crate::sketch::ExternalSource>> {
+    use crate::sketch::{ExternalReference, ExternalSource};
+    let node = document.get_feature_meta(from)?;
+    if node.workbench_id.as_str() == core_document::DATUM_KIND {
+        return Some(vec![ExternalSource::of_reference(
+            ExternalReference::Datum { datum: from.0 },
+        )]);
+    }
+    let other = crate::stored_sketch(document, from)?;
+    let sketch = &other.sketch;
+    let on_curves: std::collections::HashSet<Uuid> = sketch
+        .geometry
+        .iter()
+        .flat_map(Sketch::curve_point_ids)
+        .collect();
+    Some(
+        sketch
+            .geometry
+            .iter()
+            .filter(|g| !sketch.is_construction(g.id()) && !sketch.is_external(g.id()))
+            .filter(|g| !matches!(g, GeometryElement::Point(p) if on_curves.contains(&p.id)))
+            .map(|g| {
+                ExternalSource::of_reference(ExternalReference::SketchElement {
+                    sketch: from.0,
+                    element: g.id(),
+                })
+            })
+            .collect(),
+    )
+}
+
 /// Mark `items` of the sketch's external geometry as counting in its
 /// profiles, or not.
 pub(crate) fn set_external_defining(sketch: &mut Sketch, items: &[Uuid], on: bool) {
@@ -1462,6 +1526,7 @@ pub(crate) fn set_external_defining(sketch: &mut Sketch, items: &[Uuid], on: boo
     }
 }
 
+/// Named arguments from a JSON object.
 pub(crate) fn args(value: Value) -> CommandArgs {
     match value {
         Value::Object(map) => map,
@@ -1914,6 +1979,117 @@ mod tests {
             .filter(|g| g["kind"] == "point")
             .count();
         assert_eq!(points, 3);
+    }
+
+    #[test]
+    fn another_sketch_and_a_datum_come_in_as_external_geometry_that_follows_them() {
+        use core_document::{
+            AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape,
+        };
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let first = call(&mut doc, "sketch.new", json!({"body": body.0.to_string()})).unwrap();
+        for (x1, y1, x2, y2) in [(0, 0, 10, 0), (10, 0, 10, 6), (10, 6, 0, 6), (0, 6, 0, 0)] {
+            call(
+                &mut doc,
+                "sketch.line",
+                json!({"sketch": first, "x1": x1, "y1": y1, "x2": x2, "y2": y2}),
+            )
+            .unwrap();
+        }
+        let second = call(&mut doc, "sketch.new", json!({"body": body.0.to_string()})).unwrap();
+        let made = call(
+            &mut doc,
+            "sketch.external_from",
+            json!({"sketch": second, "from": first}),
+        )
+        .unwrap();
+        assert_eq!(
+            made["elements"].as_array().map(Vec::len),
+            Some(12),
+            "four lines and their points: {made}"
+        );
+        let copied = sketch_of(&doc, &second);
+        assert_eq!(
+            copied.external.len(),
+            4,
+            "the lines; their points go with them"
+        );
+        assert!(copied.external.values().all(|s| s.reference.is_some()));
+        let corner = copied.geometry.iter().any(|g| matches!(
+            g,
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4
+        ));
+        assert!(
+            corner,
+            "the far corner lands where it is in the other sketch"
+        );
+
+        // A datum plane standing on the XZ plane crosses this one along x.
+        let datum = doc
+            .add_feature_in_body(
+                DatumFeature {
+                    shape: DatumShape::Plane { size: 20.0 },
+                    attachment: DatumAttachment::BasePlane(BasePlane::XZ),
+                    offset: AttachmentOffset::default(),
+                },
+                "Datum".into(),
+                Some(body),
+            )
+            .unwrap();
+        call(
+            &mut doc,
+            "sketch.external_from",
+            json!({"sketch": second, "from": datum.0.to_string()}),
+        )
+        .unwrap();
+        let with_datum = sketch_of(&doc, &second);
+        let crossing = with_datum.geometry.iter().any(|g| matches!(
+            g,
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(10.0, 0.0)).length() < 1e-3
+        ));
+        assert!(
+            crossing,
+            "the crossing runs along x, 20 long about the origin"
+        );
+        assert!(
+            call(
+                &mut doc,
+                "sketch.external_from",
+                json!({"sketch": second, "from": second})
+            )
+            .is_err(),
+            "not from itself"
+        );
+
+        // The first sketch's far corner moves; brought up to it again, the
+        // copy follows.
+        let first_id = FeatureId(Uuid::parse_str(first.as_str().unwrap()).unwrap());
+        let mut data = doc.get_feature_data(first_id).unwrap().clone();
+        let mut edited = SketchFeature::from_json(&data).unwrap();
+        for g in &mut edited.sketch.geometry {
+            if let GeometryElement::Point(p) = g
+                && (p.position.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4
+            {
+                p.position = crate::sketch::Vec2D::new(12.0, 7.0);
+            }
+        }
+        data = edited.to_json();
+        doc.update_feature_data(first_id, data).unwrap();
+        let second_id = FeatureId(Uuid::parse_str(second.as_str().unwrap()).unwrap());
+        let mut feature =
+            SketchFeature::from_json(doc.get_feature_data(second_id).unwrap()).unwrap();
+        let placed = crate::placed_plane(&feature.plane, &crate::sketch_placement(&doc, second_id));
+        for (source, group) in crate::external::groups(&feature.sketch) {
+            let projected =
+                crate::external_ref::project(&doc, &placed, source.reference.unwrap()).unwrap();
+            crate::external::refresh_group(&mut feature.sketch, source, &group, &projected);
+        }
+        let moved = feature.sketch.geometry.iter().any(|g| matches!(
+            g,
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(12.0, 7.0)).length() < 1e-4
+        ));
+        assert!(moved, "the copy's corner followed");
     }
 
     fn sketch_of(doc: &Document, id: &Value) -> Sketch {

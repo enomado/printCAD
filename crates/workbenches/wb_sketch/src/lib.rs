@@ -7,6 +7,7 @@ pub mod conic;
 mod constrain;
 mod dxf;
 mod external;
+mod external_ref;
 mod feature;
 pub mod generator;
 mod geom2d;
@@ -334,6 +335,8 @@ pub(crate) enum SketchPickerMode {
     CarbonCopy,
     /// Make a new sketch of the edited one and the ticked others.
     Merge,
+    /// Bring another sketch or a datum in as external geometry.
+    ExternalFrom,
 }
 
 /// The panel's list of the document's other sketches, open for carbon copy
@@ -2625,6 +2628,15 @@ impl Workbench for SketchWorkbench {
                 ));
                 context.register_tool(
                     ToolDescriptor::new_action(
+                        "sketch.external_from",
+                        "External from a sketch or datum",
+                        Some("geometry.external"),
+                    )
+                    .icon("carbon-copy")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new_action(
                         "sketch.external_defining",
                         "Toggle external geometry in profiles",
                         Some("geometry.external"),
@@ -3066,6 +3078,9 @@ impl Workbench for SketchWorkbench {
                 "sketch.array" => return self.array_selection(ctx),
                 "sketch.join" => return self.join_selection(ctx),
                 "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
+                "sketch.external_from" => {
+                    return self.open_sketch_picker(SketchPickerMode::ExternalFrom);
+                }
                 "sketch.carbon_copy" => {
                     return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
                 }
@@ -4727,6 +4742,7 @@ impl SketchWorkbench {
                     direction: local.direction,
                     section: false,
                     defining: false,
+                    reference: None,
                 }
             })
             .collect();
@@ -4801,6 +4817,7 @@ impl SketchWorkbench {
             direction: local.normal,
             section: true,
             defining: false,
+            reference: None,
         };
         let before = commands::ids_of(&feature.sketch);
         let added =
@@ -4842,12 +4859,17 @@ impl SketchWorkbench {
             return;
         };
         let groups = external::groups(&feature.sketch);
-        if groups.is_empty() || ctx.kernel.is_none() {
+        if groups.is_empty() {
             return;
         }
         let before = feature.sketch.clone();
         let mut lost = 0;
         for (source, group) in groups {
+            // A solid's edge needs the kernel; another sketch or a datum
+            // does not.
+            if source.reference.is_none() && ctx.kernel.is_none() {
+                continue;
+            }
             match project_source(ctx, &feature.plane, &source) {
                 Ok(projected) => {
                     external::refresh_group(&mut feature.sketch, source, &group, &projected);
@@ -5373,6 +5395,9 @@ pub(crate) fn project_source(
     plane: &SketchPlane,
     source: &sketch::ExternalSource,
 ) -> Result<Vec<kernel_api::ProjectedEdge>, String> {
+    if let Some(reference) = source.reference {
+        return external_ref::project(ctx.document, plane, reference);
+    }
     let kernel = ctx.kernel.ok_or("no kernel to project with")?;
     let body = BodyId(source.body);
     let brep = ctx

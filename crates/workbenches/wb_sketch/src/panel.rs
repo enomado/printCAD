@@ -121,6 +121,10 @@ impl SketchWorkbench {
         let Some(mode) = self.sketch_picker.as_ref().map(|p| p.mode) else {
             return;
         };
+        if mode == crate::SketchPickerMode::ExternalFrom {
+            self.external_from_section(ui, ctx);
+            return;
+        }
         let merging = mode == crate::SketchPickerMode::Merge;
         let title = if merging {
             "Merge sketches"
@@ -183,6 +187,59 @@ impl SketchWorkbench {
                 .clicked()
             {
                 self.merge_sketches(ctx);
+            }
+        }
+        if secondary_button(ui, "Close").clicked() {
+            self.sketch_picker = None;
+        }
+        ui.add_space(SPACE_2);
+    }
+
+    /// The document's other sketches and its datums, one click bringing
+    /// one in as external geometry that follows it.
+    fn external_from_section(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        if !section_header(ui, "sketch_external_from", "External from", None, true) {
+            return;
+        }
+        let mut choices: Vec<(core_document::FeatureId, String)> = self
+            .other_sketches(ctx)
+            .into_iter()
+            .map(|(id, name, _)| (id, name))
+            .collect();
+        let mut datums: Vec<(u64, core_document::FeatureId, String)> = ctx
+            .document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == core_document::DATUM_KIND)
+            .map(|(id, n)| (n.seq, *id, n.name.clone()))
+            .collect();
+        datums.sort_by_key(|(seq, id, _)| (*seq, *id));
+        choices.extend(datums.into_iter().map(|(_, id, name)| (id, name)));
+        if choices.is_empty() {
+            note_card(
+                ui,
+                Note::Info,
+                None,
+                "There is no other sketch and no datum in the document.",
+            );
+        }
+        let mut chosen = None;
+        for (id, name) in &choices {
+            if ui.button(name.as_str()).clicked() {
+                chosen = Some(*id);
+            }
+        }
+        if let (Some(from), Some(sketch)) = (chosen, self.active_sketch_id) {
+            let args = crate::commands::args(serde_json::json!({
+                "sketch": sketch.0.to_string(),
+                "from": from.0.to_string(),
+            }));
+            match crate::commands::run("sketch.external_from", &args, ctx) {
+                Ok(made) => {
+                    ctx.record("sketch.external_from", args, made);
+                    self.sketch_picker = None;
+                }
+                Err(err) => ctx.log_warn(err.to_string()),
             }
         }
         if secondary_button(ui, "Close").clicked() {

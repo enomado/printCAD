@@ -591,6 +591,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `items` (list): The elements to drag
 - `by` (list): The step, {x, y}
 
+`pc.sketch.external_from`: Bring another sketch's curves and points, or a datum, into this sketch as external geometry that follows them.
+
+- `from` (id): A sketch or a datum
+- `sketch` (id): The sketch to draw in
+- Returns the external elements made
+
 `pc.sketch.external_defining`: Count external geometry in the sketch's profiles, or leave it only guiding.
 
 - `items` (list): External elements' ids

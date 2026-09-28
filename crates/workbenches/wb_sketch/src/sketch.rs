@@ -119,6 +119,33 @@ pub struct ExternalSource {
     /// than only guiding it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub defining: bool,
+    /// Another sketch's element or a datum it comes from; then `body`,
+    /// `point` and `direction` say nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<ExternalReference>,
+}
+
+/// What external geometry refers to when it is not a solid's edge or face.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ExternalReference {
+    /// An element of another sketch.
+    SketchElement { sketch: Uuid, element: Uuid },
+    /// A datum line, point, plane or coordinate system.
+    Datum { datum: Uuid },
+}
+
+impl ExternalSource {
+    /// External geometry from another sketch's element or a datum.
+    pub fn of_reference(reference: ExternalReference) -> Self {
+        Self {
+            body: Uuid::nil(),
+            point: [0.0; 3],
+            direction: [0.0; 3],
+            section: false,
+            defining: false,
+            reference: Some(reference),
+        }
+    }
 }
 
 impl Sketch {

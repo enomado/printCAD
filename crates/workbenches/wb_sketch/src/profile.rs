@@ -700,6 +700,7 @@ mod external_profile_tests {
                 direction: [1.0, 0.0, 0.0],
                 section: false,
                 defining: false,
+                reference: None,
             },
         );
         assert!(

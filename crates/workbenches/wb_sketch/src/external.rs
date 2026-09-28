@@ -207,6 +207,17 @@ pub fn groups(sketch: &Sketch) -> Vec<(ExternalSource, Vec<Uuid>)> {
             k.extend(c.to_bits().to_le_bytes());
         }
         k.push(u8::from(s.section));
+        k.push(u8::from(s.defining));
+        match s.reference {
+            Some(crate::sketch::ExternalReference::SketchElement { sketch, element }) => {
+                k.extend(sketch.as_u128().to_le_bytes());
+                k.extend(element.as_u128().to_le_bytes());
+            }
+            Some(crate::sketch::ExternalReference::Datum { datum }) => {
+                k.extend(datum.as_u128().to_le_bytes());
+            }
+            None => {}
+        }
         k
     };
     let mut by_source: BTreeMap<Vec<u8>, (ExternalSource, Vec<Uuid>)> = BTreeMap::new();
@@ -260,6 +271,7 @@ mod tests {
             direction: [0.0, 0.0, 1.0],
             section: false,
             defining: false,
+            reference: None,
         }
     }
 
@@ -356,6 +368,7 @@ mod tests {
         let face = ExternalSource {
             section: true,
             defining: false,
+            reference: None,
             ..source()
         };
         let mut sketch = Sketch::new("t");
@@ -379,6 +392,7 @@ mod tests {
             ExternalSource {
                 section: false,
                 defining: false,
+                reference: None,
                 ..face
             },
         );

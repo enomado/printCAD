@@ -62,7 +62,7 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **External geometry in profiles** (missing, M). Projected curves are
   always left out of profiles; a per-element switch lets one close a
   profile (`Sketch::external`, `profile::extract_wires`).
-- [ ] **External geometry from sketches and datums** (missing, M).
+- [x] **External geometry from sketches and datums** (missing, M).
   Another sketch's curves and points, datum lines and points, a datum
   plane's crossing, followed as they change (`ExternalSource`).
 
