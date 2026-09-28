@@ -10,7 +10,10 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, QtyField, check_row, destructive_button, note_card};
 use ui_kit::{sans, sans_semibold};
 
-use crate::{AssemblyWorkbench, JointFeature, JointKind, Task, body_name, restore_placements};
+use crate::{
+    AssemblyWorkbench, Coupling, Gearing, JointFeature, JointKind, Task, body_name,
+    restore_placements,
+};
 
 /// Frames in a recorded sweep: there and back in four seconds.
 const SWEEP_FRAMES: usize = 60;
@@ -81,6 +84,11 @@ impl AssemblyWorkbench {
                 before,
                 placements,
             }) => self.joint_panel(ui, ctx, request, id, before, &placements),
+            Some(Task::Coupling {
+                id,
+                before,
+                placements,
+            }) => self.coupling_panel(ui, ctx, request, id, before, &placements),
             Some(Task::Move { body, placements }) => {
                 self.move_panel(ui, ctx, request, body, &placements)
             }
@@ -600,6 +608,9 @@ impl AssemblyWorkbench {
                 ),
             }
         });
+        for (key, formula) in formula_edits {
+            let _ = ctx.document.set_feature_formula(id, &key, formula);
+        }
         if changed {
             let _ = ctx.document.update_feature_data(id, joint.to_json());
             ctx.document.clear_feature_dirty(id);
@@ -641,6 +652,213 @@ impl AssemblyWorkbench {
             ctx.active_document_object = None;
             return TaskOutcome::Accepted {
                 label: "Delete joint".to_string(),
+            };
+        }
+        TaskOutcome::Open
+    }
+
+    /// A coupling's settings: its two joints, what ties them, the ratio.
+    /// Each change is made as `asm.set` makes it and solves at once.
+    fn coupling_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        id: FeatureId,
+        before: Option<serde_json::Value>,
+        placements: &[(BodyId, BodyPlacement)],
+    ) -> TaskOutcome {
+        let created = before.is_none();
+        if request.cancel {
+            match &before {
+                Some(data) => {
+                    let _ = ctx.document.update_feature_data(id, data.clone());
+                    ctx.document.clear_feature_dirty(id);
+                }
+                None => {
+                    let _ = ctx.document.remove_feature(id);
+                    ctx.active_document_object = None;
+                }
+            }
+            restore_placements(ctx, placements);
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        }
+        if request.accept {
+            crate::commands::record_coupling(ctx, id, before.as_ref());
+            self.task = None;
+            ctx.active_document_object = None;
+            return TaskOutcome::Accepted {
+                label: if created {
+                    "Add coupling"
+                } else {
+                    "Edit coupling"
+                }
+                .to_string(),
+            };
+        }
+        let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        };
+        let Ok(coupling) = Coupling::from_json(&node.data) else {
+            note_card(
+                ui,
+                Note::Error,
+                Some("Unreadable coupling"),
+                "The stored coupling does not parse.",
+            );
+            return TaskOutcome::Open;
+        };
+        header(ui, "involute-gear", &node.name);
+        ui.add_space(SPACE_2);
+        // Only hinges and sliders move in a way a coupling can tie.
+        let movable: Vec<crate::Joint> = crate::joints(ctx.document)
+            .into_iter()
+            .filter(|j| {
+                matches!(
+                    j.feature.kind,
+                    JointKind::Hinge { .. } | JointKind::Slider { .. }
+                )
+            })
+            .collect();
+        let named = |id: FeatureId| {
+            movable
+                .iter()
+                .find(|j| j.id == id)
+                .map_or("a removed joint".to_string(), |j| {
+                    format!("{} ({})", j.name, j.feature.kind.label())
+                })
+        };
+        let kind_of = |id: FeatureId| movable.iter().find(|j| j.id == id).map(|j| j.feature.kind);
+        let mut args = serde_json::Map::new();
+        let document: &core_document::Document = ctx.document;
+        let mut formula_edits: Vec<(String, Option<String>)> = Vec::new();
+        let mut ratio = coupling.ratio;
+        let mut reverse = coupling.reverse;
+        Card::new().padding(SPACE_3).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for (label, key, current) in [
+                ("Driving", "driver", coupling.driver),
+                ("Driven", "driven", coupling.driven),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [90.0, INPUT],
+                        egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+                    );
+                    egui::ComboBox::from_id_salt(("coupling_joint", id, key))
+                        .selected_text(RichText::new(named(current)).font(sans(FONT_SM)))
+                        .width(ui.available_width() - 2.0 * ui.spacing().button_padding.x)
+                        .show_ui(ui, |ui| {
+                            for joint in &movable {
+                                let on = joint.id == current;
+                                if ui
+                                    .selectable_label(
+                                        on,
+                                        RichText::new(named(joint.id)).font(sans(FONT_SM)),
+                                    )
+                                    .clicked()
+                                    && !on
+                                {
+                                    args.insert(key.into(), joint.id.0.to_string().into());
+                                }
+                            }
+                        });
+                });
+            }
+            let (driver, driven) = (kind_of(coupling.driver), kind_of(coupling.driven));
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [90.0, INPUT],
+                    egui::Label::new(RichText::new("Kind").font(sans(FONT_SM)).color(TEXT2)),
+                );
+                egui::ComboBox::from_id_salt(("coupling_kind", id))
+                    .selected_text(RichText::new(coupling.gearing.label()).font(sans(FONT_SM)))
+                    .width(ui.available_width() - 2.0 * ui.spacing().button_padding.x)
+                    .show_ui(ui, |ui| {
+                        for gearing in Gearing::ALL {
+                            let fits = driver
+                                .zip(driven)
+                                .is_some_and(|(a, b)| gearing.fits(&a, &b));
+                            let on = gearing == coupling.gearing;
+                            let clicked = ui
+                                .add_enabled(
+                                    fits,
+                                    egui::Button::selectable(
+                                        on,
+                                        RichText::new(gearing.label()).font(sans(FONT_SM)),
+                                    ),
+                                )
+                                .on_hover_text(gearing.summary())
+                                .clicked();
+                            if clicked && !on {
+                                args.insert("gearing".into(), gearing.word().into());
+                            }
+                        }
+                    });
+            });
+            let (ratio_label, length) = coupling.gearing.ratio_label();
+            let dim = if length {
+                core_document::expr::Dim::LENGTH
+            } else {
+                core_document::expr::Dim::NUMBER
+            };
+            if number_row(
+                ui,
+                (document, id, &mut formula_edits),
+                (ratio_label, coupling.gearing.summary()),
+                "/ratio",
+                dim,
+                &mut ratio,
+            ) && ratio > 0.0
+            {
+                args.insert("ratio".into(), serde_json::json!(ratio));
+            }
+            if check_row(ui, &mut reverse, "Reverse")
+                .on_hover_text("The driven joint moves the other way")
+                .changed()
+            {
+                args.insert("reverse".into(), reverse.into());
+            }
+            note(
+                ui,
+                "Move the driving joint (drag its body, or drive it) and the driven \
+                 one follows.",
+            );
+        });
+        for (key, formula) in formula_edits {
+            let _ = ctx.document.set_feature_formula(id, &key, formula);
+        }
+        if !args.is_empty() {
+            args.insert("joint".into(), id.0.to_string().into());
+            match crate::commands::run("asm.set", &args, ctx) {
+                Ok(_) => self.verdict = None,
+                Err(err) => self.verdict = Some(Err(err.to_string())),
+            }
+        }
+        ui.add_space(SPACE_2);
+        self.verdict_card(ui);
+        if let Some(body) = node.body {
+            freedom_line(ui, ctx, body);
+        }
+        ui.add_space(SPACE_2);
+        if destructive_button(ui, "Delete coupling")
+            .on_hover_text("Remove the coupling; the joints move apart again")
+            .clicked()
+            && ctx.document.remove_feature(id).is_ok()
+        {
+            if !created {
+                ctx.record(
+                    "doc.delete",
+                    crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
+                    serde_json::Value::Null,
+                );
+            }
+            self.task = None;
+            ctx.active_document_object = None;
+            return TaskOutcome::Accepted {
+                label: "Delete coupling".to_string(),
             };
         }
         TaskOutcome::Open
@@ -959,7 +1177,13 @@ fn formula_field(
         slot.and_then(|s| s.result.as_ref().err())
             .map(String::as_str),
     )
-    .unit(if angle { "°" } else { "mm" })
+    .unit(if angle {
+        "°"
+    } else if dim == core_document::expr::Dim::LENGTH {
+        "mm"
+    } else {
+        ""
+    })
     .speed(if angle { 1.0 } else { 0.1 })
     .show(ui);
     match edit {

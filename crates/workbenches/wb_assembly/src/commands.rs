@@ -13,11 +13,17 @@ use core_document::{
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 
-use crate::joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Takes};
+use crate::coupling::{COUPLING_KIND, Coupling, Gearing};
+use crate::joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
 use crate::solve::joints;
 
 const DRIVE: &str = "A hinge's angle (degrees from where it was made) or a slider's \
     position (mm) to hold it at; false lets it move again";
+const GEARING: &str = "gears (hinges turning opposite ways), belt (the same way), \
+    rack (a hinge and a slider, by the pinion's pitch radius) or screw (by the lead); \
+    the first that suits the two joints when left out";
+const RATIO: &str = "Turns of the driven hinge per turn of the driver for gears and a \
+    belt, the pitch radius in mm for a rack, the lead in mm a turn for a screw";
 const LIMITS: &str = "{low, high}: the range a hinge's angle or a slider's position stays \
     in while not driven; false takes the limits away";
 
@@ -124,18 +130,48 @@ pub fn register(context: &mut WorkbenchContext) {
         context.register_command(spec.returns("the joint's id"));
     }
     context.register_command(
-        CommandSpec::new("asm.set", "Change a joint's gap, side, angle or radius")
-            .param("joint", ParamKind::Id, "")
-            .optional(
-                "offset",
-                ParamKind::Number,
-                "A mate's gap, a hinge's height or a distance, mm",
-            )
-            .optional("flip", ParamKind::Bool, "A mate's side")
-            .optional("degrees", ParamKind::Number, "An angle joint's angle")
-            .optional("radius", ParamKind::Number, "A tangent's radius, mm")
-            .optional("drive", ParamKind::Any, DRIVE)
-            .optional("limits", ParamKind::Any, LIMITS),
+        CommandSpec::new(
+            "asm.couple",
+            "Tie two joints' motions together: gears or a belt between two hinges, a \
+             rack and pinion or a screw between a hinge and a slider",
+        )
+        .param("driver", ParamKind::Id, "The hinge or slider that leads")
+        .param("driven", ParamKind::Id, "The hinge or slider that follows")
+        .optional("gearing", ParamKind::String, GEARING)
+        .optional("ratio", ParamKind::Number, RATIO)
+        .optional(
+            "reverse",
+            ParamKind::Bool,
+            "The driven joint moves the other way",
+        )
+        .optional("name", ParamKind::String, "Its name in the tree")
+        .returns("the coupling's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.set",
+            "Change a joint's gap, side, angle or radius, or a coupling's joints and ratio",
+        )
+        .param("joint", ParamKind::Id, "A joint or a coupling")
+        .optional("gearing", ParamKind::String, GEARING)
+        .optional("ratio", ParamKind::Number, RATIO)
+        .optional(
+            "reverse",
+            ParamKind::Bool,
+            "A coupling's driven joint moves the other way",
+        )
+        .optional("driver", ParamKind::Id, "A coupling's leading joint")
+        .optional("driven", ParamKind::Id, "A coupling's following joint")
+        .optional(
+            "offset",
+            ParamKind::Number,
+            "A mate's gap, a hinge's height or a distance, mm",
+        )
+        .optional("flip", ParamKind::Bool, "A mate's side")
+        .optional("degrees", ParamKind::Number, "An angle joint's angle")
+        .optional("radius", ParamKind::Number, "A tangent's radius, mm")
+        .optional("drive", ParamKind::Any, DRIVE)
+        .optional("limits", ParamKind::Any, LIMITS),
     );
     context.register_command(
         CommandSpec::new(
@@ -236,6 +272,15 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     let a = Args(args);
     match id {
         id if JointTool::of_command(id).is_some() => make_joint(id, &a, ctx),
+        "asm.couple" => couple(&a, ctx),
+        "asm.set"
+            if ctx
+                .document
+                .get_feature_meta(FeatureId(a.id("joint")?))
+                .is_some_and(|n| n.workbench_id.as_str() == COUPLING_KIND) =>
+        {
+            set_coupling(&a, ctx)
+        }
         "asm.set" => {
             let joint = FeatureId(a.id("joint")?);
             let not_a_joint = || CommandError::bad("joint", "is not a joint");
@@ -623,6 +668,187 @@ pub(crate) fn record_joint(
                 return;
             };
             let (was, now) = (object(settings(&old.kind)), object(settings(&joint.kind)));
+            let mut args = object(json!({"joint": id.0.to_string()}));
+            for (name, value) in now {
+                if was.get(&name) != Some(&value) {
+                    args.insert(name, value);
+                }
+            }
+            if args.len() > 1 {
+                ctx.record("asm.set", args, Value::Null);
+            }
+        }
+    }
+}
+
+/// Every body's placement, in double precision.
+fn placements(document: &core_document::Document) -> std::collections::HashMap<BodyId, Rigid> {
+    document
+        .bodies()
+        .iter()
+        .map(|b| (b.id, Rigid::from(b.placement)))
+        .collect()
+}
+
+/// A coupling of two joints where they stand, from a command's
+/// arguments; `keep` supplies what the arguments leave out.
+fn build_coupling(
+    a: &Args,
+    ctx: &WorkbenchRuntimeContext,
+    keep: Option<&Coupling>,
+) -> Result<Coupling, CommandError> {
+    let all = joints(ctx.document);
+    let joint = |name: &str, kept: Option<FeatureId>| -> Result<crate::Joint, CommandError> {
+        let id = match a.opt_id(name)? {
+            Some(id) => FeatureId(id),
+            None => kept.ok_or_else(|| CommandError::bad(name, "is needed"))?,
+        };
+        all.iter()
+            .find(|j| j.id == id)
+            .cloned()
+            .filter(|j| {
+                matches!(
+                    j.feature.kind,
+                    JointKind::Hinge { .. } | JointKind::Slider { .. }
+                )
+            })
+            .ok_or_else(|| CommandError::bad(name, "must be a hinge or a slider"))
+    };
+    let driver = joint("driver", keep.map(|c| c.driver))?;
+    let driven = joint("driven", keep.map(|c| c.driven))?;
+    if driver.id == driven.id {
+        return Err(CommandError::bad("driven", "must be another joint"));
+    }
+    let gearing = match a.opt_string("gearing")? {
+        Some(word) => Gearing::of_word(word)
+            .ok_or_else(|| CommandError::bad("gearing", "must be gears, belt, rack or screw"))?,
+        None => keep
+            .map(|c| c.gearing)
+            .filter(|g| g.fits(&driver.feature.kind, &driven.feature.kind))
+            .or_else(|| Gearing::suiting(&driver.feature.kind, &driven.feature.kind))
+            .ok_or_else(|| CommandError::bad("driven", "cannot be tied to the driver"))?,
+    };
+    if !gearing.fits(&driver.feature.kind, &driven.feature.kind) {
+        return Err(CommandError::bad(
+            "gearing",
+            "does not suit these joints: gears and a belt tie two hinges, a rack and a \
+             screw a hinge and a slider",
+        ));
+    }
+    let ratio = match a.opt_number("ratio")? {
+        Some(r) => r as f32,
+        // A kept ratio reads the same way only in a kind of the same sort.
+        None => keep
+            .filter(|c| c.gearing.ratio_label().1 == gearing.ratio_label().1)
+            .map_or(gearing.default_ratio(), |c| c.ratio),
+    };
+    if !(ratio.is_finite() && ratio > 0.0) {
+        return Err(CommandError::bad("ratio", "must be above zero"));
+    }
+    let reverse = match a.opt_bool("reverse")? {
+        Some(r) => r,
+        None => keep.is_some_and(|c| c.reverse),
+    };
+    let same_joints = keep.is_some_and(|c| c.driver == driver.id && c.driven == driven.id);
+    match keep {
+        // The same two joints keep where they were tied, so a new ratio
+        // moves nothing at that place.
+        Some(kept) if same_joints => Ok(Coupling {
+            gearing,
+            ratio,
+            reverse,
+            ..kept.clone()
+        }),
+        _ => Coupling::new(
+            gearing,
+            &driver,
+            &driven,
+            ratio,
+            reverse,
+            &placements(ctx.document),
+        )
+        .ok_or_else(|| CommandError::failed("the joints' bodies are not there")),
+    }
+}
+
+fn couple(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let coupling = build_coupling(a, ctx, None)?;
+    let body = joints(ctx.document)
+        .into_iter()
+        .find(|j| j.id == coupling.driven)
+        .map(|j| j.body)
+        .ok_or_else(|| CommandError::bad("driven", "is not a joint"))?;
+    let name = match a.opt_string("name")? {
+        Some(name) => name.to_string(),
+        None => next_name(ctx.document, coupling.gearing.label()),
+    };
+    let id = ctx
+        .document
+        .add_feature_in_body(coupling, name, Some(body))
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.clear_feature_dirty(id);
+    solved(ctx, json!(id.0.to_string()))
+}
+
+fn set_coupling(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let id = FeatureId(a.id("joint")?);
+    let kept = ctx
+        .document
+        .get_feature_data(id)
+        .and_then(|d| serde_json::from_value::<Coupling>(d.clone()).ok())
+        .ok_or_else(|| CommandError::bad("joint", "is not a coupling"))?;
+    let coupling = build_coupling(a, ctx, Some(&kept))?;
+    let data = serde_json::to_value(&coupling).map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document
+        .update_feature_data(id, data)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.clear_feature_dirty(id);
+    solved(ctx, Value::Null)
+}
+
+/// `label` numbered past every coupling already named so.
+pub(crate) fn next_name(document: &core_document::Document, label: &str) -> String {
+    let taken = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == COUPLING_KIND && n.name.starts_with(label))
+        .count();
+    format!("{label} {}", taken + 1)
+}
+
+/// A coupling's settings, as `asm.couple` and `asm.set` take them.
+fn coupling_settings(c: &Coupling) -> CommandArgs {
+    object(json!({
+        "driver": c.driver.0.to_string(),
+        "driven": c.driven.0.to_string(),
+        "gearing": c.gearing.word(),
+        "ratio": c.ratio,
+        "reverse": c.reverse,
+    }))
+}
+
+/// A coupling's task accepted, as a recording says it: a new one as the
+/// command that makes it, an edit as the settings it changed.
+pub(crate) fn record_coupling(
+    ctx: &mut WorkbenchRuntimeContext,
+    id: FeatureId,
+    before: Option<&Value>,
+) {
+    let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
+        return;
+    };
+    let Ok(coupling) = serde_json::from_value::<Coupling>(node.data.clone()) else {
+        return;
+    };
+    let now = coupling_settings(&coupling);
+    match before.and_then(|b| serde_json::from_value::<Coupling>(b.clone()).ok()) {
+        None => {
+            let mut args = now;
+            args.insert("name".into(), json!(node.name));
+            ctx.record("asm.couple", args, json!(id.0.to_string()));
+        }
+        Some(old) => {
+            let was = coupling_settings(&old);
             let mut args = object(json!({"joint": id.0.to_string()}));
             for (name, value) in now {
                 if was.get(&name) != Some(&value) {

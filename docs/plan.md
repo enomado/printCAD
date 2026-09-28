@@ -49,17 +49,14 @@ written in Rust.
 
 ## Roadmap
 
-Built: the sketcher, Part Design, assembly joints between bodies, STEP,
-IGES and mesh import, STEP, STL and 3MF export, tabs, the document server,
-undo, configurable keyboard shortcuts, sending a part to the slicer,
-6-DoF navigation, and the command API: typed commands registered by the
-application and the workbenches, run from Lua scripts.
-
-Next:
-
-- More joint kinds: gears, limits on a slide or a turn
-- Stable face and edge identity across rebuilds, so references do not have
-  to be matched by geometry
+Built: the sketcher, Part Design, assembly joints between bodies (driven
+and limited hinges and sliders, and gears, belts, racks and screws tying
+two of them), STEP, IGES and mesh import, STEP, STL and 3MF export, tabs,
+the document server, undo, configurable keyboard shortcuts, sending a
+part to the slicer, 6-DoF navigation, faces and edges named through
+rebuilds, workbench packages, releases for Linux, Windows and macOS, and
+the command API: typed commands registered by the application and the
+workbenches, run from Lua scripts.
 
 ### Command API
 
@@ -110,8 +107,8 @@ Built (the `agents` crate and the Assistant panel, see [AI agents](AI.md)):
   per call. Changes wait for the user's approval unless the chat says
   otherwise; commands declared read-only never wait.
 
-Next: attaching the selection or a picture of the view to a prompt by
-hand, and the document as MCP resources.
+Built as well: pictures of the view and files attached to a prompt, and
+the rules, the document's context and the guides as MCP resources.
 
 ### Variables and formulas
 

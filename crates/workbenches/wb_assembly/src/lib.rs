@@ -12,6 +12,7 @@
 
 mod collide;
 mod commands;
+mod coupling;
 mod interference;
 mod joint;
 #[cfg(feature = "egui")]
@@ -25,10 +26,13 @@ use core_document::{
     WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
+pub use coupling::{COUPLING_KIND, Coupling, Gearing};
 pub use interference::{Clash, Interference, interference};
 pub use joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
 pub use parts::{Part, parts_csv, parts_list};
-pub use solve::{HOLDS_MM, Joint, Motion, SolveError, drag, draggable, freedom, joints, solve};
+pub use solve::{
+    HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints, solve,
+};
 
 /// A joint being made: the kind, and the first face once picked.
 #[derive(Debug, Clone)]
@@ -44,6 +48,12 @@ enum Task {
     /// A joint's settings. `before` is its data when the task opened, or
     /// `None` for a joint the tool just made.
     Joint {
+        id: FeatureId,
+        before: Option<serde_json::Value>,
+        placements: Vec<(BodyId, BodyPlacement)>,
+    },
+    /// A coupling's settings, as a joint's.
+    Coupling {
         id: FeatureId,
         before: Option<serde_json::Value>,
         placements: Vec<(BodyId, BodyPlacement)>,
@@ -425,8 +435,8 @@ impl AssemblyWorkbench {
                 }
             }
         };
-        for (body, placement) in moves.into_iter().flatten() {
-            ctx.document.set_body_placement(body, placement);
+        if let Some(moves) = moves {
+            place_bodies(ctx.document, &moves);
         }
         InputResult::redraw_only()
     }
@@ -526,13 +536,27 @@ pub fn sweep_frames(
         }
         if let Ok(moves) = solve(&copy) {
             moved_any |= !moves.is_empty();
-            for (body, placement) in moves {
-                copy.set_body_placement(body, placement);
-            }
+            place_bodies(&mut copy, &moves);
         }
         frames.push(copy.bodies().iter().map(|b| (b.id, b.placement)).collect());
     }
     if moved_any { frames } else { Vec::new() }
+}
+
+/// Put bodies where `moves` say, the couplings whose drivers they turn
+/// past a whole turn counting it.
+pub(crate) fn place_bodies(
+    document: &mut core_document::Document,
+    moves: &[(BodyId, BodyPlacement)],
+) {
+    for (id, coupling) in counted_couplings(document, moves) {
+        if document.update_feature_data(id, coupling.to_json()).is_ok() {
+            document.clear_feature_dirty(id);
+        }
+    }
+    for (body, placement) in moves {
+        document.set_body_placement(*body, *placement);
+    }
 }
 
 /// Every body's placement, to put back when a task is cancelled.
@@ -565,9 +589,7 @@ pub(crate) fn apply_solve(ctx: &mut WorkbenchRuntimeContext) -> Result<String, S
     match solve(ctx.document) {
         Ok(moves) => {
             let count = moves.len();
-            for (body, placement) in moves {
-                ctx.document.set_body_placement(body, placement);
-            }
+            place_bodies(ctx.document, &moves);
             Ok(match count {
                 0 => "Every joint holds".to_string(),
                 1 => "Moved 1 body; every joint holds".to_string(),
@@ -703,9 +725,83 @@ impl AssemblyWorkbench {
 
     /// The joint the tree has selected, if a joint is selected.
     fn selected_joint(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
+        Self::selected_of(ctx, JOINT_KIND)
+    }
+
+    /// The feature of `kind` the tree has selected.
+    fn selected_of(ctx: &WorkbenchRuntimeContext, kind: &str) -> Option<FeatureId> {
         let id = ctx.active_document_object?;
         let node = ctx.document.get_feature_meta(id)?;
-        (node.workbench_id.as_str() == JOINT_KIND).then_some(id)
+        (node.workbench_id.as_str() == kind).then_some(id)
+    }
+
+    /// Couple two joints: the selected one leading, when it is a hinge or
+    /// a slider, else the first pair that can be tied; then open its
+    /// settings.
+    fn make_coupling(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let all = joints(ctx.document);
+        let movable: Vec<&Joint> = all
+            .iter()
+            .filter(|j| {
+                matches!(
+                    j.feature.kind,
+                    JointKind::Hinge { .. } | JointKind::Slider { .. }
+                )
+            })
+            .collect();
+        let selected = Self::selected_joint(ctx);
+        let mut pairs: Vec<(&Joint, &Joint)> = movable
+            .iter()
+            .flat_map(|a| movable.iter().map(move |b| (*a, *b)))
+            .filter(|(a, b)| {
+                a.id != b.id && Gearing::suiting(&a.feature.kind, &b.feature.kind).is_some()
+            })
+            .collect();
+        pairs.sort_by_key(|(a, _)| Some(a.id) != selected);
+        let Some((driver, driven)) = pairs.first().copied() else {
+            ctx.log_warn("Couple joints needs two hinges, or a hinge and a slider");
+            return;
+        };
+        let placements: std::collections::HashMap<BodyId, Rigid> = ctx
+            .document
+            .bodies()
+            .iter()
+            .map(|b| (b.id, Rigid::from(b.placement)))
+            .collect();
+        let gearing =
+            Gearing::suiting(&driver.feature.kind, &driven.feature.kind).unwrap_or(Gearing::Gears);
+        let Some(coupling) = Coupling::new(
+            gearing,
+            driver,
+            driven,
+            gearing.default_ratio(),
+            false,
+            &placements,
+        ) else {
+            ctx.log_warn("These joints cannot be coupled where they stand");
+            return;
+        };
+        let body = driven.body;
+        let before = all_placements(ctx);
+        let name = commands::next_name(ctx.document, gearing.label());
+        match ctx
+            .document
+            .add_feature_in_body(coupling, name.clone(), Some(body))
+        {
+            Ok(id) => {
+                ctx.document.clear_feature_dirty(id);
+                ctx.active_document_object = Some(id);
+                self.picking = None;
+                self.task = Some(Task::Coupling {
+                    id,
+                    before: None,
+                    placements: before,
+                });
+                self.solve_and_apply(ctx);
+                ctx.log_info(format!("Added {name}"));
+            }
+            Err(err) => ctx.log_error(format!("Could not add the coupling: {err}")),
+        }
     }
 
     /// The body the Move tool moves: the selected one, else the one the
@@ -729,6 +825,16 @@ impl Workbench for AssemblyWorkbench {
     fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
         use core_document::Parameter;
         use core_document::expr::Dim;
+        if node.workbench_id.as_str() == COUPLING_KIND {
+            return match Coupling::from_json(&node.data) {
+                Ok(c) => {
+                    let (label, length) = c.gearing.ratio_label();
+                    let dim = if length { Dim::LENGTH } else { Dim::NUMBER };
+                    vec![Parameter::new("ratio", label, dim, "/ratio")]
+                }
+                Err(_) => Vec::new(),
+            };
+        }
         match JointFeature::from_json(&node.data).map(|j| j.kind) {
             Ok(JointKind::Mate { .. }) => {
                 vec![Parameter::new(
@@ -782,7 +888,7 @@ impl Workbench for AssemblyWorkbench {
         let joint_moved = moved.iter().any(|id| {
             ctx.document
                 .get_feature_meta(*id)
-                .is_some_and(|n| n.workbench_id.as_str() == JOINT_KIND)
+                .is_some_and(|n| matches!(n.workbench_id.as_str(), JOINT_KIND | COUPLING_KIND))
         });
         if joint_moved {
             self.solve_and_apply(ctx);
@@ -796,7 +902,7 @@ impl Workbench for AssemblyWorkbench {
             "Place bodies against each other with joints",
         )
         .icon("workbench-assembly")
-        .feature_kinds([JOINT_KIND])
+        .feature_kinds([JOINT_KIND, COUPLING_KIND])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -811,6 +917,7 @@ impl Workbench for AssemblyWorkbench {
                 tool(joint.command(), joint.label(), joint.icon()).shortcut(joint.shortcut()),
             );
         }
+        context.register_tool(tool("asm.couple", "Couple joints", "involute-gear").shortcut("K"));
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
         context.register_tool(
             tool("asm.interference", "Check interference", "check-geometry").shortcut("I"),
@@ -834,6 +941,15 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == COUPLING_KIND {
+            let gearing = Coupling::from_json(&node.data).map(|c| c.gearing).ok();
+            return FeatureInfo {
+                icon: "involute-gear",
+                kind_label: gearing.map_or("Coupling", Gearing::label).to_string(),
+                family_label: "Assembly coupling".to_string(),
+                builds_solid: false,
+            };
+        }
         let kind = JointFeature::from_json(&node.data).map(|j| j.kind).ok();
         FeatureInfo {
             icon: kind.map_or("joint-mate", |k| k.icon()),
@@ -896,6 +1012,14 @@ impl Workbench for AssemblyWorkbench {
             "asm.collisions" => true,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
+            "asm.couple" => {
+                let all = joints(ctx.document);
+                all.iter().any(|a| {
+                    all.iter().any(|b| {
+                        a.id != b.id && Gearing::suiting(&a.feature.kind, &b.feature.kind).is_some()
+                    })
+                })
+            }
             _ => false,
         }
     }
@@ -937,6 +1061,7 @@ impl Workbench for AssemblyWorkbench {
                 self.picking = None;
                 self.check_interference(ctx);
             }
+            Some("asm.couple") => self.make_coupling(ctx),
             Some("asm.explode") => {
                 self.picking = None;
                 let placements = all_placements(ctx);
@@ -1028,14 +1153,31 @@ impl Workbench for AssemblyWorkbench {
         {
             self.task = None;
         }
+        if let Some(Task::Coupling { id, .. }) = &self.task
+            && Self::selected_of(ctx, COUPLING_KIND) != Some(*id)
+        {
+            self.task = None;
+        }
     }
 
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
-        let is_joint = ctx
+        let kind = ctx
             .document
             .get_feature_meta(id)
-            .is_some_and(|n| n.workbench_id.as_str() == JOINT_KIND);
-        if !is_joint || self.picking.is_some() {
+            .map(|n| n.workbench_id.as_str().to_string());
+        if self.picking.is_some() {
+            return;
+        }
+        if kind.as_deref() == Some(COUPLING_KIND) {
+            self.task = Some(Task::Coupling {
+                id,
+                before: ctx.document.get_feature_data(id).cloned(),
+                placements: all_placements(ctx),
+            });
+            self.verdict = None;
+            return;
+        }
+        if kind.as_deref() != Some(JOINT_KIND) {
             return;
         }
         self.task = Some(Task::Joint {
@@ -1069,6 +1211,17 @@ impl Workbench for AssemblyWorkbench {
                     stepwise: false,
                 })
             }
+            Task::Coupling { id, .. } => Some(core_document::TaskInfo {
+                title: ctx
+                    .document
+                    .get_feature_data(*id)
+                    .and_then(|d| Coupling::from_json(d).ok())
+                    .map_or("Coupling", |c| c.gearing.label())
+                    .to_string(),
+                icon: "involute-gear",
+                confirmable: true,
+                stepwise: false,
+            }),
             Task::Move { .. } => Some(core_document::TaskInfo {
                 title: "Move body".to_string(),
                 icon: "move-geometry",
@@ -1202,6 +1355,7 @@ mod tests {
     use super::*;
     use core_document::{Document, FaceRef, ImportedGeometry, TriMesh};
     use kernel_api::FaceSurface;
+    use serde_json::json;
     use std::sync::Arc;
 
     /// Two bodies, each a flat square facing up at its own height.
@@ -1346,6 +1500,106 @@ mod tests {
         for i in 0..4 {
             assert!((a.rotation[i] - b.rotation[i]).abs() < 1e-4, "{a:?} {b:?}");
         }
+    }
+
+    #[test]
+    fn the_couple_tool_ties_two_hinges_records_as_the_command_and_follows_a_ratio() {
+        let (mut doc, base, part) = scene();
+        let third = doc.create_body(Some("Third".into()));
+        let run = |doc: &mut Document, id: &str, args: serde_json::Value| {
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            AssemblyWorkbench::default()
+                .run_command(id, &commands::object(args), &mut ctx)
+                .unwrap()
+        };
+        run(&mut doc, "asm.ground", json!({"body": base.0.to_string()}));
+        let axis = |x: f32| json!({"axis": {"point": [x, 0.0, 0.0], "direction": [0.0, 0.0, 1.0]}});
+        let mut hinges = Vec::new();
+        for (body, x) in [(part, 0.0), (third, 30.0)] {
+            let placed = doc.body_placement(body).point([0.0; 3]);
+            let id = run(
+                &mut doc,
+                "asm.hinge",
+                json!({
+                    "body": body.0.to_string(),
+                    "face": {"axis": {"point": placed, "direction": [0.0, 0.0, 1.0]}},
+                    "other": base.0.to_string(),
+                    "other_face": axis(x),
+                }),
+            );
+            hinges.push(FeatureId(
+                uuid::Uuid::parse_str(id.as_str().unwrap()).unwrap(),
+            ));
+        }
+        let before = doc.clone();
+
+        let mut wb = AssemblyWorkbench::default();
+        {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            assert!(wb.is_tool_enabled("asm.couple", &ctx));
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some("asm.couple"),
+                &mut ctx,
+            );
+        }
+        let Some(Task::Coupling { id, .. }) = wb.task.clone() else {
+            panic!("the tool opens the coupling's settings: {:?}", wb.task);
+        };
+        let coupling = Coupling::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        assert_eq!(coupling.gearing, Gearing::Gears, "gears suit two hinges");
+        let recorded = task_frame(
+            &mut wb,
+            &mut doc,
+            core_document::TaskRequest {
+                accept: true,
+                cancel: false,
+            },
+        );
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert_eq!(recorded[0].id, "asm.couple");
+        let mut replay = before;
+        let made = run(
+            &mut replay,
+            &recorded[0].id,
+            recorded[0].args.clone().into(),
+        );
+        let made = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
+        let again = Coupling::from_json(replay.get_feature_data(made).unwrap()).unwrap();
+        assert_eq!(
+            (again.gearing, again.driver, again.driven, again.ratio),
+            (
+                coupling.gearing,
+                coupling.driver,
+                coupling.driven,
+                coupling.ratio
+            )
+        );
+
+        run(
+            &mut doc,
+            "asm.set",
+            json!({"joint": id.0.to_string(), "ratio": 0.5}),
+        );
+        run(
+            &mut doc,
+            "asm.set",
+            json!({"joint": coupling.driver.0.to_string(), "drive": 60.0}),
+        );
+        let travel = |doc: &Document, joint: FeatureId| {
+            let j = joints(doc).into_iter().find(|j| j.id == joint).unwrap();
+            let at = |b: BodyId| -> Rigid { doc.body_placement(b).into() };
+            j.feature
+                .travel(&at(j.body), &at(j.feature.other_body))
+                .unwrap()
+        };
+        let driven = travel(&doc, coupling.driven);
+        assert!(
+            (driven + 30.0).abs() < 1e-2,
+            "half the turn, the other way: {driven}"
+        );
+        assert!(hinges.contains(&coupling.driver) && hinges.contains(&coupling.driven));
     }
 
     #[test]

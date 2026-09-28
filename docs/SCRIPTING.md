@@ -1118,9 +1118,24 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `radius` (number, optional): The round face's radius, mm; the face's own when left out
 - Returns the joint's id
 
-`pc.asm.set`: Change a joint's gap, side, angle or radius.
+`pc.asm.couple`: Tie two joints' motions together: gears or a belt between two hinges, a rack and pinion or a screw between a hinge and a slider.
 
-- `joint` (id)
+- `driver` (id): The hinge or slider that leads
+- `driven` (id): The hinge or slider that follows
+- `gearing` (string, optional): gears (hinges turning opposite ways), belt (the same way), rack (a hinge and a slider, by the pinion's pitch radius) or screw (by the lead); the first that suits the two joints when left out
+- `ratio` (number, optional): Turns of the driven hinge per turn of the driver for gears and a belt, the pitch radius in mm for a rack, the lead in mm a turn for a screw
+- `reverse` (boolean, optional): The driven joint moves the other way
+- `name` (string, optional): Its name in the tree
+- Returns the coupling's id
+
+`pc.asm.set`: Change a joint's gap, side, angle or radius, or a coupling's joints and ratio.
+
+- `joint` (id): A joint or a coupling
+- `gearing` (string, optional): gears (hinges turning opposite ways), belt (the same way), rack (a hinge and a slider, by the pinion's pitch radius) or screw (by the lead); the first that suits the two joints when left out
+- `ratio` (number, optional): Turns of the driven hinge per turn of the driver for gears and a belt, the pitch radius in mm for a rack, the lead in mm a turn for a screw
+- `reverse` (boolean, optional): A coupling's driven joint moves the other way
+- `driver` (id, optional): A coupling's leading joint
+- `driven` (id, optional): A coupling's following joint
 - `offset` (number, optional): A mate's gap, a hinge's height or a distance, mm
 - `flip` (boolean, optional): A mate's side
 - `degrees` (number, optional): An angle joint's angle

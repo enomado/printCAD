@@ -5,8 +5,9 @@ What is built, by area. The plan for what comes next is in
 
 ## Application
 
-- Wayland or X11 window, Vulkan renderer with MSAA, GPU picking and a cached
-  scene, frames drawn only when something changes.
+- Linux (Wayland or X11), Windows and macOS; Vulkan renderer with MSAA,
+  GPU picking and a cached scene, frames drawn only when something
+  changes.
 - Tabs, one document each, and a start page with recent documents,
   previews, examples and release notes.
 - Command palette, Preferences with a page per workbench, log panel.
@@ -57,6 +58,12 @@ What is built, by area. The plan for what comes next is in
 - Joints between bodies: mate two flat faces (with a gap, or facing the same
   way), align two round faces on one axis, and hold two faces at an angle,
   solved into placements.
+- Hinges and sliders driven to a value or kept within limits, played and
+  recorded as an animation.
+- Couplings: gears, a belt, a rack and pinion or a screw tying two joints'
+  motions by a ratio.
+- Dragging bodies on their joints, stopping at collisions, interference
+  checks, an exploded view and a parts list.
 - Move a body by numbers.
 
 ## Scripting
@@ -67,4 +74,4 @@ What is built, by area. The plan for what comes next is in
 
 ## Not built yet
 
-- More joint kinds: gears, limits.
+Nothing on the roadmap is waiting; see [docs/plan.md](docs/plan.md).

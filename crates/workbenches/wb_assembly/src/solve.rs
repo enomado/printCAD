@@ -13,6 +13,7 @@ use std::collections::{BTreeSet, HashMap};
 use core_document::{BodyId, BodyPlacement, Document, FeatureId};
 use glam::{DQuat, DVec3};
 
+use crate::coupling::{Coupling, Link, links};
 use crate::joint::{JOINT_KIND, JointFeature, JointKind, Rigid};
 
 /// A joint as the solver reads it.
@@ -113,6 +114,8 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
         })
         .collect();
 
+    let tied = tied(document, &all, &free, &starts);
+
     // One body at a time, against what is placed.
     let mut placed: BTreeSet<BodyId> = placements
         .keys()
@@ -145,13 +148,13 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
         pending.retain(|b| *b != next);
     }
 
-    // Every free body together, against every joint.
-    refine(&mut placements, &free, &holding);
+    // Every free body together, against every joint and coupling.
+    refine(&mut placements, &free, &holding, &tied);
 
     // Joints still apart: the first free body with one, and every one at
     // either end of it.
     for body in &free {
-        let left_apart: Vec<String> = holding
+        let mut left_apart: Vec<String> = holding
             .iter()
             .filter(|j| j.body == *body || j.feature.other_body == *body)
             .filter(|j| {
@@ -163,6 +166,16 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
             })
             .map(|j| j.name.clone())
             .collect();
+        left_apart.extend(
+            tied.iter()
+                .filter(|l| l.driven.body == *body)
+                .filter(|l| {
+                    let mut r = Vec::new();
+                    l.residual(&placements, &mut r);
+                    r.iter().any(|v| v.abs() > HOLDS_MM)
+                })
+                .map(|l| l.name.clone()),
+        );
         if !left_apart.is_empty() {
             return Err(SolveError::Conflict {
                 body: *body,
@@ -215,15 +228,16 @@ pub fn drag(
         .iter()
         .map(|b| (b.id, Rigid::from(b.placement)))
         .collect();
+    let tied = tied(document, &all, &free, &starts);
     let mut placements = starts.clone();
     let pull = Pull {
         body,
         point: DVec3::from_array(point.map(f64::from)),
         target: DVec3::from_array(target.map(f64::from)),
     };
-    refine_pulled(&mut placements, &free, &holding, Some(&pull));
+    refine_pulled(&mut placements, &free, &holding, &tied, Some(&pull));
     // The pull traded a little of each joint for reach; let them close.
-    refine(&mut placements, &free, &holding);
+    refine(&mut placements, &free, &holding, &tied);
     free.iter()
         .filter_map(|b| {
             let before = BodyPlacement::from(starts[b]);
@@ -285,8 +299,9 @@ fn stepped(at: Rigid, pivot: DVec3, turn: DVec3, step: DVec3) -> Rigid {
     }
 }
 
-/// Every joint's residuals with the bodies at `placements`.
-fn residuals_of(placements: &HashMap<BodyId, Rigid>, joints: &[&Joint]) -> Vec<f64> {
+/// Every joint's residuals, then every coupling's, with the bodies at
+/// `placements`.
+fn residuals_of(placements: &HashMap<BodyId, Rigid>, joints: &[&Joint], tied: &[Link]) -> Vec<f64> {
     let mut r = Vec::new();
     for j in joints {
         j.feature.residuals(
@@ -295,7 +310,45 @@ fn residuals_of(placements: &HashMap<BodyId, Rigid>, joints: &[&Joint]) -> Vec<f
             &mut r,
         );
     }
+    for link in tied {
+        link.residual(placements, &mut r);
+    }
     r
+}
+
+/// The couplings a solve holds: both joints usable, and a body the solve
+/// moves at either end of the driven one.
+fn tied(
+    document: &Document,
+    all: &[Joint],
+    free: &BTreeSet<BodyId>,
+    starts: &HashMap<BodyId, Rigid>,
+) -> Vec<Link> {
+    links(document, all, starts)
+        .into_iter()
+        .filter(|l| free.contains(&l.driven.body) || free.contains(&l.driven.feature.other_body))
+        .collect()
+}
+
+/// The couplings whose driver `moves` carry past a whole turn, with their
+/// counts moved: to store alongside the moves, before they are made.
+pub fn counted_couplings(
+    document: &Document,
+    moves: &[(BodyId, BodyPlacement)],
+) -> Vec<(FeatureId, Coupling)> {
+    let starts: HashMap<BodyId, Rigid> = document
+        .bodies()
+        .iter()
+        .map(|b| (b.id, Rigid::from(b.placement)))
+        .collect();
+    let mut after = starts.clone();
+    for (body, placement) in moves {
+        after.insert(*body, Rigid::from(*placement));
+    }
+    links(document, &usable(document), &starts)
+        .into_iter()
+        .filter_map(|l| Some((l.id, l.counted(&after)?)))
+        .collect()
 }
 
 /// A point of a body pulled toward a target, gently: joints give way to it
@@ -316,9 +369,10 @@ const PULL_WEIGHT: f64 = 0.1;
 fn residuals_with(
     placements: &HashMap<BodyId, Rigid>,
     joints: &[&Joint],
+    tied: &[Link],
     pull: Option<&Pull>,
 ) -> Vec<f64> {
-    let mut r = residuals_of(placements, joints);
+    let mut r = residuals_of(placements, joints, tied);
     if let Some(pull) = pull {
         let at = &placements[&pull.body];
         let apart = at.rotation * pull.point + at.translation - pull.target;
@@ -328,8 +382,13 @@ fn residuals_with(
 }
 
 /// Damped least squares over every free body's six freedoms at once.
-fn refine(placements: &mut HashMap<BodyId, Rigid>, free: &BTreeSet<BodyId>, joints: &[&Joint]) {
-    refine_pulled(placements, free, joints, None);
+fn refine(
+    placements: &mut HashMap<BodyId, Rigid>,
+    free: &BTreeSet<BodyId>,
+    joints: &[&Joint],
+    tied: &[Link],
+) {
+    refine_pulled(placements, free, joints, tied, None);
 }
 
 /// [`refine`], with a body's point pulled toward a target as well.
@@ -337,6 +396,7 @@ fn refine_pulled(
     placements: &mut HashMap<BodyId, Rigid>,
     free: &BTreeSet<BodyId>,
     joints: &[&Joint],
+    tied: &[Link],
     pull: Option<&Pull>,
 ) {
     let bodies: Vec<BodyId> = free.iter().copied().collect();
@@ -361,7 +421,7 @@ fn refine_pulled(
         out
     };
     let cost = |r: &[f64]| r.iter().map(|v| v * v).sum::<f64>();
-    let mut r0 = residuals_with(placements, joints, pull);
+    let mut r0 = residuals_with(placements, joints, tied, pull);
     let mut c0 = cost(&r0);
     let mut damping = 1e-3;
     for _ in 0..200 {
@@ -375,9 +435,9 @@ fn refine_pulled(
         let mut x = vec![0.0; n];
         for k in 0..n {
             x[k] = h;
-            let rp = residuals_with(&apply(placements, &pivots, &x), joints, pull);
+            let rp = residuals_with(&apply(placements, &pivots, &x), joints, tied, pull);
             x[k] = -h;
-            let rm = residuals_with(&apply(placements, &pivots, &x), joints, pull);
+            let rm = residuals_with(&apply(placements, &pivots, &x), joints, tied, pull);
             x[k] = 0.0;
             for row in 0..r0.len() {
                 jac[row * n + k] = (rp[row] - rm[row]) / (2.0 * h);
@@ -410,7 +470,7 @@ fn refine_pulled(
                 continue;
             };
             let trial = apply(placements, &pivots, &step);
-            let rt = residuals_with(&trial, joints, pull);
+            let rt = residuals_with(&trial, joints, tied, pull);
             let ct = cost(&rt);
             if ct < c0 {
                 *placements = trial;
@@ -574,12 +634,20 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
         .map(|b| (b.id, Rigid::from(b.placement)))
         .collect();
     let pivots = pivots(&placements, &free, &holding);
+    // A coupling holds the body its driven joint moves: that body follows
+    // the driver, which keeps its own motion.
+    let tied = links(document, &all, &placements);
     free.iter()
         .map(|body| {
             let own: Vec<&Joint> = holding
                 .iter()
                 .copied()
                 .filter(|j| j.body == *body || j.feature.other_body == *body)
+                .collect();
+            let own_tied: Vec<Link> = tied
+                .iter()
+                .filter(|l| l.driven.body == *body)
+                .cloned()
                 .collect();
             // This body's six columns, turns first, by central
             // differences: both sides go through the same steps (a stored
@@ -597,7 +665,7 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
                         DVec3::new(x[3], x[4], x[5]),
                     ),
                 );
-                residuals_of(&moved, &own)
+                residuals_of(&moved, &own, &own_tied)
             };
             let mut columns = vec![[0.0f64; 6]; at([0.0; 6]).len()];
             for k in 0..6 {

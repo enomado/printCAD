@@ -44,6 +44,30 @@ driven joint through its limits (or a whole turn, or 25 mm either way) to
 show the motion, and puts it back when stopped. Record saves the same
 sweep, there and back, as an animated PNG seen from the current view.
 
+## Gears, belts, racks and screws
+
+Couple joints (K) ties two joints' motions: the driven joint follows the
+driving one. It takes the selected hinge or slider as the driver and the
+first joint it can tie to it, and its settings let you pick others:
+
+| Kind | Ties | The driven joint moves |
+| --- | --- | --- |
+| Gears | two hinges | the other way, `ratio` turns per turn |
+| Belt | two hinges | the same way, `ratio` turns per turn |
+| Rack and pinion | a hinge and a slider | the pinion's pitch circle: 2π × radius a turn |
+| Screw | a hinge and a slider | the lead for each whole turn |
+
+For meshed gears the ratio is the driver's teeth over the driven gear's:
+a 20-tooth gear driving a 40-tooth one is 0.5. Reverse turns the driven
+motion the other way (a crossed belt, a left-hand screw). The ratio, the
+pitch radius and the lead take formulas.
+
+A coupling is made where the two joints stand, so making it, or changing
+its ratio, moves nothing there. Drive or drag the driving joint and the
+driven one follows; the status bar shows the driven body as placed. A
+coupling counts its driver's whole turns: after one turn of a driver at
+1:2 the driven gear is half a turn round, not back where it started.
+
 ## Dragging
 
 Drag a jointed body with the left mouse button: it follows the mouse as
@@ -82,6 +106,7 @@ writes it to a file.
 
 Every joint tool is a command (`asm.mate`, `asm.hinge`, ...) taking faces
 as `pc.doc.faces` lists them. `asm.set` changes a joint's settings,
-`drive` and `limits` included; `asm.travel` reads a hinge's angle or a
+`drive` and `limits` included, and a coupling's joints, kind and ratio;
+`asm.couple` ties two joints; `asm.travel` reads a hinge's angle or a
 slider's position; `asm.freedom`, `asm.interference` and `asm.parts` read
 the assembly. [SCRIPTING.md](SCRIPTING.md) lists them all.

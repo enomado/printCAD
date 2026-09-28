@@ -264,7 +264,16 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   cached per edit for the status bar), and task panels for picking,
   joint settings and moving a body by numbers. Solves run inside the
   gesture that made or edited a joint and record ordinary
-  `SetBodyPlacement` ops.
+  `SetBodyPlacement` ops. Couplings (`coupling.rs`, their own kind
+  `wb.assembly.coupling`, stored on the driven joint's body) tie two
+  hinges or sliders by a `Gearing` (gears, belt, rack and pinion, screw)
+  and a ratio, taken from where both joints stand when made (`driver_at`,
+  `driven_at`); a `Link` is one residual in the refinement and counts
+  against the driven body in `freedom`. A hinge's travel wraps at ±180°,
+  so a coupling counts its driver's whole turns (`turns`), continued from
+  where each solve starts; `place_bodies` stores the new count
+  (`counted_couplings`) with every solve, drag and sweep that crosses the
+  wrap.
 - `render_vk`: data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
   The Vulkan library is loaded at run time (`load_vulkan`; on macOS the
