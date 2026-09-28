@@ -16,9 +16,9 @@ use ui_kit::widgets::{
 
 use crate::build::part_features_of_body;
 use crate::feature::{
-    BorrowedRef, ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick,
-    HelixMode, MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis,
-    RevolveMode, SketchAxis, TransformStep,
+    ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
+    MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
+    SketchAxis, TransformStep,
 };
 
 mod borrow;
@@ -346,7 +346,7 @@ fn extrude_mode_combo(
     id_salt: impl egui::AsIdSalt,
     mode: &mut ExtrudeMode,
     first_feature: bool,
-    borrowed: &[(BorrowedRef, String)],
+    borrowed: &[(ExtrudeMode, String)],
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -370,33 +370,71 @@ fn extrude_mode_combo(
     changed
 }
 
-/// The end conditions offered: `modes`, then one per face the body
-/// borrows.
+/// The end conditions offered: `modes`, then the ones that name what they
+/// stop on (a borrowed face, a plane).
 fn mode_choices(
     modes: &[ExtrudeMode],
-    borrowed: &[(BorrowedRef, String)],
+    targets: &[(ExtrudeMode, String)],
 ) -> Vec<(ExtrudeMode, String)> {
     modes
         .iter()
         .map(|m| (*m, m.label().to_string()))
-        .chain(
-            borrowed
-                .iter()
-                .map(|(r, name)| (ExtrudeMode::UpToBorrowed(*r), format!("Up to {name}"))),
-        )
+        .chain(targets.iter().cloned())
         .collect()
 }
 
-/// What an end condition is called: a borrowed face by the face.
-fn mode_name(mode: ExtrudeMode, borrowed: &[(BorrowedRef, String)]) -> String {
-    match mode {
-        ExtrudeMode::UpToBorrowed(r) => borrowed
-            .iter()
-            .find(|(c, _)| *c == r)
-            .map(|(_, name)| format!("Up to {name}"))
-            .unwrap_or_else(|| mode.label().to_string()),
-        _ => mode.label().to_string(),
+/// What an end condition is called: one that names what it stops on by
+/// it.
+fn mode_name(mode: ExtrudeMode, targets: &[(ExtrudeMode, String)]) -> String {
+    targets
+        .iter()
+        .find(|(c, _)| *c == mode)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| mode.label().to_string())
+}
+
+/// The end conditions that name what they stop on, for `body`: each face
+/// it borrows, its own planes, and its datum planes (a coordinate system
+/// by each of its planes).
+fn end_targets(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<(ExtrudeMode, String)> {
+    use crate::feature::PlaneTarget;
+    use core_document::{BasePlane, DatumShape};
+    let mut out: Vec<(ExtrudeMode, String)> = crate::borrow::faces_of_body(ctx.document, body)
+        .into_iter()
+        .map(|(r, name)| (ExtrudeMode::UpToBorrowed(r), format!("Up to {name}")))
+        .collect();
+    for plane in BasePlane::ALL {
+        out.push((
+            ExtrudeMode::UpToPlane(PlaneTarget::Base(plane)),
+            format!("Up to the {} plane", plane.label()),
+        ));
     }
+    for (datum, name, made) in core_document::datums_of_body(ctx.document, body) {
+        match made.shape {
+            DatumShape::Plane { .. } => out.push((
+                ExtrudeMode::UpToPlane(PlaneTarget::Datum { datum, plane: None }),
+                format!("Up to {name}"),
+            )),
+            DatumShape::CoordinateSystem { .. } => {
+                for plane in BasePlane::ALL {
+                    let key = match plane {
+                        BasePlane::XY => "XY",
+                        BasePlane::XZ => "XZ",
+                        BasePlane::YZ => "YZ",
+                    };
+                    out.push((
+                        ExtrudeMode::UpToPlane(PlaneTarget::Datum {
+                            datum,
+                            plane: Some(plane),
+                        }),
+                        format!("Up to {name} {key}"),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// "Use selected face" picker row. Shows the current pick and captures the
@@ -633,6 +671,49 @@ fn edge_pick_row(
     changed
 }
 
+/// The datums of `body` (a line along itself, a plane square to it) and the
+/// lines of its sketches, as ways an extrusion may run.
+fn direction_references(
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+) -> Vec<(ExtrudeDirection, String)> {
+    let mut out: Vec<(ExtrudeDirection, String)> =
+        core_document::datums_of_body(ctx.document, body)
+            .into_iter()
+            .filter(|(_, _, d)| !matches!(d.shape, core_document::DatumShape::Point))
+            .map(|(id, name, _)| (ExtrudeDirection::Datum(id), name))
+            .collect();
+    let mut sketches: Vec<(u64, FeatureId, String)> = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.body == Some(body))
+        .map(|(id, n)| (n.seq, *id, n.name.clone()))
+        .collect();
+    sketches.sort_by_key(|(seq, ..)| *seq);
+    for (_, sketch, name) in sketches {
+        let Some(feature) = ctx.document.feature_values(sketch).and_then(|data| {
+            <wb_sketch::SketchFeature as core_document::WorkbenchFeature>::from_json(data).ok()
+        }) else {
+            continue;
+        };
+        let mut n = 0;
+        for element in &feature.sketch.geometry {
+            if let wb_sketch::sketch::GeometryElement::Line(line) = element {
+                n += 1;
+                out.push((
+                    ExtrudeDirection::SketchLine {
+                        sketch,
+                        element: line.id,
+                    },
+                    format!("{name} › line {n}"),
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// Which way a pad or pocket runs: the profile's normal, a vector typed
 /// in, or a picked edge.
 fn extrude_direction_editor(
@@ -650,6 +731,13 @@ fn extrude_direction_editor(
             .find(|(c, _)| c == r)
             .map(|(_, name)| name.clone())
             .unwrap_or_else(|| direction.label().to_string()),
+        ExtrudeDirection::Datum(_) | ExtrudeDirection::SketchLine { .. } => {
+            direction_references(ctx, body)
+                .into_iter()
+                .find(|(c, _)| c == direction)
+                .map(|(_, name)| name)
+                .unwrap_or_else(|| direction.label().to_string())
+        }
         _ => direction.label().to_string(),
     };
     ui.horizontal(|ui| {
@@ -680,14 +768,18 @@ fn extrude_direction_editor(
                         .iter()
                         .map(|(r, name)| (ExtrudeDirection::Borrowed(*r), name.clone())),
                 );
+                candidates.extend(
+                    crate::feature::BaseAxis::ALL
+                        .into_iter()
+                        .map(|axis| (ExtrudeDirection::Axis(axis), axis.label().to_string())),
+                );
+                candidates.extend(direction_references(ctx, body));
                 for (candidate, name) in candidates {
                     let is_current = match (&*direction, &candidate) {
-                        (ExtrudeDirection::Borrowed(_), ExtrudeDirection::Borrowed(_)) => {
-                            *direction == candidate
-                        }
-                        _ => {
-                            std::mem::discriminant(direction) == std::mem::discriminant(&candidate)
-                        }
+                        (ExtrudeDirection::Custom(_), ExtrudeDirection::Custom(_))
+                        | (ExtrudeDirection::Edge(_), ExtrudeDirection::Edge(_))
+                        | (ExtrudeDirection::Normal, ExtrudeDirection::Normal) => true,
+                        _ => *direction == candidate,
                     };
                     if ui.selectable_label(is_current, name).clicked() && !is_current {
                         // A picked edge starts from the one picked now.
@@ -704,7 +796,11 @@ fn extrude_direction_editor(
             });
     });
     match direction {
-        ExtrudeDirection::Normal | ExtrudeDirection::Borrowed(_) => {}
+        ExtrudeDirection::Normal
+        | ExtrudeDirection::Borrowed(_)
+        | ExtrudeDirection::Datum(_)
+        | ExtrudeDirection::SketchLine { .. }
+        | ExtrudeDirection::Axis(_) => {}
         ExtrudeDirection::Custom(v) => {
             ui.horizontal(|ui| {
                 label_cell(ui, "Vector");
@@ -722,6 +818,34 @@ fn extrude_direction_editor(
                 changed = true;
             }
         }
+    }
+    changed
+}
+
+/// A pad's or pocket's less used settings: where it starts, the second
+/// side's own taper, and a slanted length measured along the normal.
+fn extrude_extras_rows(
+    ui: &mut Ui,
+    fx: &mut Formulas,
+    extras: &mut crate::feature::ExtrudeExtras,
+    two_sided: bool,
+    direction: ExtrudeDirection,
+) -> bool {
+    let mut changed = mm_drag(ui, fx, &mut extras.start_offset, "Start offset:");
+    if two_sided {
+        let mut own = extras.taper2_deg.is_some();
+        if check_row(ui, &mut own, "Second side's own taper").changed() {
+            extras.taper2_deg = own.then_some(0.0);
+            changed = true;
+        }
+        if let Some(taper) = &mut extras.taper2_deg {
+            changed |= deg_drag(ui, fx, taper, "Second taper:", -85.0..=85.0);
+        }
+    }
+    if direction != ExtrudeDirection::Normal {
+        changed |= check_row(ui, &mut extras.along_normal, "Length along the normal")
+            .on_hover_text("With a slanted direction, the length is measured square to the profile")
+            .changed();
     }
     changed
 }
@@ -748,7 +872,7 @@ fn extrude_side_rows(
             changed |= face_pick_row(ui, ctx, face, "Target face:");
             changed |= mm_drag(ui, fx, offset.0, offset.1);
         }
-        ExtrudeMode::UpToBorrowed(_) => {
+        ExtrudeMode::UpToBorrowed(_) | ExtrudeMode::UpToPlane(_) => {
             changed |= mm_drag(ui, fx, offset.0, offset.1);
         }
         ExtrudeMode::UpToShape => {
@@ -768,7 +892,7 @@ fn second_side_combo(
     first: ExtrudeMode,
     mode2: &mut Option<ExtrudeMode>,
     first_feature: bool,
-    borrowed: &[(BorrowedRef, String)],
+    borrowed: &[(ExtrudeMode, String)],
 ) -> bool {
     let mut changed = false;
     let required = first == ExtrudeMode::TwoLengths;
@@ -1621,8 +1745,9 @@ pub fn feature_editor(
             up_to_face2,
             up_to_offset2,
             up_to_shape2,
+            extras,
         } => {
-            let borrowed = crate::borrow::faces_of_body(ctx.document, body);
+            let borrowed = end_targets(ctx, body);
             changed |=
                 extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature, &borrowed);
             changed |= extrude_side_rows(
@@ -1663,6 +1788,8 @@ pub fn feature_editor(
             changed |= extrude_direction_editor(ui, ctx, body, direction, ("pad_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
+            let two_sided = mode.sides(*mode2).1.is_some();
+            changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
         }
         PartFeature::Pocket {
             refine: _,
@@ -1683,6 +1810,7 @@ pub fn feature_editor(
             up_to_face2,
             up_to_offset2,
             up_to_shape2,
+            extras,
         } => {
             // The flag and the ThroughAll mode are one setting: a file that
             // has only the flag set opens in that mode, and the flag
@@ -1691,7 +1819,7 @@ pub fn feature_editor(
                 *mode = ExtrudeMode::ThroughAll;
                 changed = true;
             }
-            let borrowed = crate::borrow::faces_of_body(ctx.document, body);
+            let borrowed = end_targets(ctx, body);
             changed |= extrude_mode_combo(
                 ui,
                 ("pocket_mode", feature_id),
@@ -1741,6 +1869,8 @@ pub fn feature_editor(
                 .on_hover_text("Cut along the sketch normal instead of against it")
                 .changed();
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
+            let two_sided = mode.sides(*mode2).1.is_some();
+            changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
         }
         PartFeature::Revolution {
             refine: _,

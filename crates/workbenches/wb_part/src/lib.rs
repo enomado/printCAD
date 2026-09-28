@@ -27,11 +27,11 @@ pub use build::{
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel,
-    ExtrudeDirection, ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace, HelixMode,
-    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation,
-    RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep, primitive_icon,
-    primitive_preset,
+    BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel,
+    ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace,
+    HelixMode, HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, PipeCorner,
+    PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep,
+    primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -265,6 +265,7 @@ impl PartDesignWorkbench {
                 let (sketch, profile_face) = extrude_profile()?;
                 (
                     PartFeature::Pad {
+                        extras: Default::default(),
                         refine: false,
                         sketch,
                         length: 10.0,
@@ -291,6 +292,7 @@ impl PartDesignWorkbench {
                 let (sketch, profile_face) = extrude_profile()?;
                 (
                     PartFeature::Pocket {
+                        extras: Default::default(),
                         refine: false,
                         sketch,
                         depth: 5.0,
@@ -1932,6 +1934,7 @@ mod icon_coverage {
         let node = core_document::FeatureNode::new(
             FeatureId(uuid::Uuid::new_v4()),
             &PartFeature::Pad {
+                extras: Default::default(),
                 refine: false,
                 sketch: Some(FeatureId(uuid::Uuid::new_v4())),
                 length: 10.0,

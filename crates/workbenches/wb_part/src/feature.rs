@@ -89,6 +89,43 @@ pub enum ExtrudeDirection {
     Edge(EdgePick),
     /// Along a straight edge another body lends this one.
     Borrowed(BorrowedRef),
+    /// Along a datum line, or square to a datum plane.
+    Datum(FeatureId),
+    /// Along a line of a sketch, by its element id.
+    SketchLine {
+        sketch: FeatureId,
+        element: uuid::Uuid,
+    },
+    /// Along one of the body's own axes.
+    Axis(BaseAxis),
+}
+
+/// One of a body's own axes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BaseAxis {
+    X,
+    Y,
+    Z,
+}
+
+impl BaseAxis {
+    pub const ALL: [BaseAxis; 3] = [BaseAxis::X, BaseAxis::Y, BaseAxis::Z];
+
+    pub fn vector(&self) -> [f64; 3] {
+        match self {
+            BaseAxis::X => [1.0, 0.0, 0.0],
+            BaseAxis::Y => [0.0, 1.0, 0.0],
+            BaseAxis::Z => [0.0, 0.0, 1.0],
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            BaseAxis::X => "X axis",
+            BaseAxis::Y => "Y axis",
+            BaseAxis::Z => "Z axis",
+        }
+    }
 }
 
 impl ExtrudeDirection {
@@ -98,19 +135,47 @@ impl ExtrudeDirection {
             ExtrudeDirection::Custom(_) => "Custom vector",
             ExtrudeDirection::Edge(_) => "Picked edge",
             ExtrudeDirection::Borrowed(_) => "Borrowed edge",
+            ExtrudeDirection::Datum(_) => "Datum",
+            ExtrudeDirection::SketchLine { .. } => "Sketch line",
+            ExtrudeDirection::Axis(axis) => axis.label(),
         }
     }
 
     /// The direction set, in the body's own frame; `None` along the normal.
-    /// A borrowed edge's is where its body has it, which the build works
-    /// out.
+    /// A borrowed edge's, a datum's and a sketch line's are where they
+    /// stand, which the build works out.
     pub fn vector(&self) -> Option<[f64; 3]> {
         match self {
-            ExtrudeDirection::Normal | ExtrudeDirection::Borrowed(_) => None,
+            ExtrudeDirection::Normal
+            | ExtrudeDirection::Borrowed(_)
+            | ExtrudeDirection::Datum(_)
+            | ExtrudeDirection::SketchLine { .. } => None,
             ExtrudeDirection::Custom(v) => Some(v.map(f64::from)),
             ExtrudeDirection::Edge(edge) => Some(edge.direction.map(f64::from)),
+            ExtrudeDirection::Axis(axis) => Some(axis.vector()),
         }
     }
+
+    /// The feature it runs along, when it runs along another feature.
+    pub fn reference(&self) -> Option<FeatureId> {
+        match self {
+            ExtrudeDirection::Datum(datum) => Some(*datum),
+            ExtrudeDirection::SketchLine { sketch, .. } => Some(*sketch),
+            _ => None,
+        }
+    }
+}
+
+/// A plane an extrusion stops on: one of the body's own planes, or a datum
+/// plane (for a coordinate system, the plane of it named).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum PlaneTarget {
+    Base(core_document::BasePlane),
+    Datum {
+        datum: FeatureId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plane: Option<core_document::BasePlane>,
+    },
 }
 
 /// A planar face picked in the viewport, identified geometrically.
@@ -166,6 +231,8 @@ pub enum ExtrudeMode {
     UpToShape,
     /// Stop on a face another body lends (plus offset).
     UpToBorrowed(BorrowedRef),
+    /// Stop on one of the body's planes or a datum plane (plus offset).
+    UpToPlane(PlaneTarget),
 }
 
 impl ExtrudeMode {
@@ -199,6 +266,15 @@ impl ExtrudeMode {
             ExtrudeMode::UpToFace => "Up to face",
             ExtrudeMode::UpToShape => "Up to shape",
             ExtrudeMode::UpToBorrowed(_) => "Up to borrowed face",
+            ExtrudeMode::UpToPlane(_) => "Up to plane",
+        }
+    }
+
+    /// The datum it stops on, when it stops on one.
+    pub fn datum(&self) -> Option<FeatureId> {
+        match self {
+            ExtrudeMode::UpToPlane(PlaneTarget::Datum { datum, .. }) => Some(*datum),
+            _ => None,
         }
     }
 
@@ -224,6 +300,26 @@ impl ExtrudeMode {
             ),
             mode => (mode, mode2),
         }
+    }
+}
+
+/// A pad's or pocket's less used settings.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExtrudeExtras {
+    /// Millimetres the extrusion starts away from the profile's plane,
+    /// along the way it runs.
+    pub start_offset: f32,
+    /// The second side's taper, when it differs from the first's.
+    pub taper2_deg: Option<f32>,
+    /// With a slanted direction, the length is measured along the
+    /// profile's normal rather than along the slant.
+    pub along_normal: bool,
+}
+
+impl ExtrudeExtras {
+    pub fn is_plain(&self) -> bool {
+        *self == Self::default()
     }
 }
 
@@ -877,6 +973,8 @@ pub enum PartFeature {
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
+        #[serde(default)]
+        extras: ExtrudeExtras,
     },
     /// Extrude the sketch profile (or a flat face of the solid) and
     /// subtract it (cuts against the sketch normal by default: a face
@@ -926,6 +1024,8 @@ pub enum PartFeature {
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
+        #[serde(default)]
+        extras: ExtrudeExtras,
     },
     /// Revolve the sketch profile about an in-plane axis, adding material.
     Revolution {
@@ -1185,7 +1285,7 @@ pub enum PartFeature {
         /// The geometry as it was frozen; `None` follows the source.
         #[serde(default)]
         frozen: Option<FrozenBorrow>,
-        #[serde(default, skip_serializing_if = "BorrowOptions::is_plain")]
+        #[serde(default)]
         options: BorrowOptions,
     },
 }
@@ -1559,6 +1659,32 @@ impl WorkbenchFeature for PartFeature {
         for reference in axes.into_iter().filter_map(PatternAxis::reference) {
             if !deps.contains(&reference) {
                 deps.push(reference);
+            }
+        }
+        if let PartFeature::Pad {
+            mode,
+            mode2,
+            direction,
+            ..
+        }
+        | PartFeature::Pocket {
+            mode,
+            mode2,
+            direction,
+            ..
+        } = self
+        {
+            for reference in [
+                mode.datum(),
+                mode2.and_then(|m| m.datum()),
+                direction.reference(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !deps.contains(&reference) {
+                    deps.push(reference);
+                }
             }
         }
         for borrow in self.borrows() {

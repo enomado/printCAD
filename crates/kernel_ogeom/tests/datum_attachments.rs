@@ -162,6 +162,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
         .unwrap();
     doc.add_feature_in_body(
         PartFeature::Pad {
+            extras: Default::default(),
             refine: false,
             sketch: Some(sketch),
             length: 3.0,
@@ -396,6 +397,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
 
 fn pad(sketch: FeatureId, length: f32) -> PartFeature {
     PartFeature::Pad {
+        extras: Default::default(),
         refine: false,
         sketch: Some(sketch),
         length,
@@ -418,6 +420,7 @@ fn pad(sketch: FeatureId, length: f32) -> PartFeature {
 
 fn pocket(sketch: FeatureId, depth: f32) -> PartFeature {
     PartFeature::Pocket {
+        extras: Default::default(),
         refine: false,
         sketch: Some(sketch),
         depth,

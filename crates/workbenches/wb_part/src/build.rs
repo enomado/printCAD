@@ -536,7 +536,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     additive_boolean
                 };
                 plan.ops
-                    .push(extrude_op(document, &feature, boolean).map_err(&fail)?);
+                    .extend(extrude_op(document, &feature, boolean).map_err(&fail)?);
             }
             PartFeature::Revolution {
                 sketch,
@@ -1027,7 +1027,53 @@ fn side_termination(
                 offset: side.offset as f64,
             })
         }
+        ExtrudeMode::UpToPlane(target) => {
+            let (point, normal) = target_plane(document, &target)?;
+            Ok(ExtrudeTermination::UpToPlane {
+                point,
+                normal,
+                offset: side.offset as f64,
+            })
+        }
     }
+}
+
+/// Where a plane target stands in the body's frame: a point of it and its
+/// normal.
+pub(crate) fn target_plane(
+    document: &Document,
+    target: &crate::feature::PlaneTarget,
+) -> Result<([f64; 3], [f64; 3]), String> {
+    use crate::feature::PlaneTarget;
+    let frame = match target {
+        PlaneTarget::Base(plane) => {
+            let (origin, normal, _) = plane.frame();
+            return Ok((origin.map(f64::from), normal.map(f64::from)));
+        }
+        PlaneTarget::Datum { datum, plane } => {
+            let data = document
+                .feature_values(*datum)
+                .ok_or("the datum it stops on is gone")?;
+            let made = core_document::DatumFeature::from_json(data)
+                .map_err(|_| "what it stops on is not a datum".to_string())?;
+            let frame = made.frame();
+            match (made.shape, plane) {
+                (core_document::DatumShape::Plane { .. }, _) => frame,
+                (core_document::DatumShape::CoordinateSystem { .. }, which) => {
+                    let which = which.unwrap_or(core_document::BasePlane::XY);
+                    frame
+                        .planes()
+                        .into_iter()
+                        .zip(core_document::BasePlane::ALL)
+                        .find(|(_, p)| *p == which)
+                        .map(|((_, f), _)| f)
+                        .unwrap_or(frame)
+                }
+                _ => return Err("the datum it stops on is not a plane".into()),
+            }
+        }
+    };
+    Ok((frame.origin.map(f64::from), frame.normal.map(f64::from)))
 }
 
 fn face_probe(pick: &FacePick) -> FaceProbe {
@@ -1043,13 +1089,14 @@ fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// The kernel op of a pad or a pocket: its profile (a sketch's, or a face
-/// of the solid), each side's end and the way it runs.
+/// The kernel ops of a pad or a pocket: its profile (a sketch's, or a face
+/// of the solid), each side's end and the way it runs. One op, or two when
+/// the second side takes its own taper: each side swept on its own.
 fn extrude_op(
     document: &Document,
     feature: &PartFeature,
     boolean: BooleanOp,
-) -> Result<SolidOp, String> {
+) -> Result<Vec<SolidOp>, String> {
     let (sketch, profile_face, reversed, symmetric, taper_deg, direction, mode, mode2) =
         match feature {
             PartFeature::Pad {
@@ -1137,9 +1184,13 @@ fn extrude_op(
         ),
         _ => return Err("not a pad or a pocket".into()),
     };
+    let extras = match feature {
+        PartFeature::Pad { extras, .. } | PartFeature::Pocket { extras, .. } => *extras,
+        _ => Default::default(),
+    };
     let (first_mode, second_mode) = mode.sides(mode2);
-    let termination = side_termination(document, first_mode, &first)?;
-    let second_side = second_mode
+    let mut termination = side_termination(document, first_mode, &first)?;
+    let mut second_side = second_mode
         .map(|mode| side_termination(document, mode, &second))
         .transpose()?;
 
@@ -1152,15 +1203,36 @@ fn extrude_op(
         ExtrudeDirection::Borrowed(r) => {
             Some(crate::borrow::edge(document, r)?.direction.map(f64::from))
         }
+        ExtrudeDirection::Datum(datum) => Some(datum_direction(document, *datum)?),
+        ExtrudeDirection::SketchLine { sketch, element } => {
+            Some(sketch_line_direction(document, *sketch, *element)?)
+        }
         other => other.vector(),
     };
     if let Some(d) = custom {
         let d = normalize(d).map_err(|_| "the extrusion direction is zero".to_string())?;
         let n = normalize(normal).map_err(|_| "the profile has no normal".to_string())?;
-        if dot3(d, n).abs() < 1e-3 {
+        let slant = dot3(d, n).abs();
+        if slant < 1e-3 {
             return Err("the extrusion direction lies in the profile's plane".into());
         }
+        // A length along the normal goes further along a slant.
+        if extras.along_normal {
+            for end in [Some(&mut termination), second_side.as_mut()]
+                .into_iter()
+                .flatten()
+            {
+                if let ExtrudeTermination::Blind { distance } = end {
+                    *distance /= slant;
+                }
+            }
+        }
     }
+    let reversed = if boolean == BooleanOp::Cut && custom.is_none() {
+        !reversed
+    } else {
+        reversed
+    };
     let kind = SweepKind::Extrude {
         termination,
         second_side,
@@ -1169,27 +1241,125 @@ fn extrude_op(
         // A pocket along the normal cuts against it: a sketch on a solid's
         // face has its normal pointing out of the material, so the default
         // digs in. A direction set is the way the cut runs.
-        reversed: if boolean == BooleanOp::Cut && custom.is_none() {
-            !reversed
-        } else {
-            reversed
-        },
+        reversed,
         taper_deg: taper_deg as f64,
         direction: custom,
     };
+    // The second side on its own, with its own taper.
+    let split = match (&kind, extras.taper2_deg) {
+        (
+            SweepKind::Extrude {
+                second_side: Some(_),
+                ..
+            },
+            Some(taper2),
+        ) if f64::from(taper2) != taper_deg as f64 => Some(taper2),
+        _ => None,
+    };
+    let (kind, second) = match (split, kind) {
+        (
+            Some(taper2),
+            SweepKind::Extrude {
+                termination,
+                second_side: Some(back),
+                reversed,
+                taper_deg,
+                direction,
+                ..
+            },
+        ) => (
+            SweepKind::Extrude {
+                termination,
+                second_side: None,
+                symmetric: false,
+                reversed,
+                taper_deg,
+                direction,
+            },
+            Some(SweepKind::Extrude {
+                termination: back,
+                second_side: None,
+                symmetric: false,
+                reversed: !reversed,
+                taper_deg: f64::from(taper2),
+                direction,
+            }),
+        ),
+        (_, kind) => (kind, None),
+    };
+    let then = if boolean == BooleanOp::NewSolid {
+        BooleanOp::Fuse
+    } else {
+        boolean
+    };
     Ok(match (profile_face, sketch) {
-        (Some(face), _) => SolidOp::SweepFace {
+        (Some(_), _) if extras.start_offset != 0.0 => {
+            return Err("a start offset takes a sketch's profile, not a face".into());
+        }
+        (Some(_), _) if second.is_some() => {
+            return Err("a second side's own taper takes a sketch's profile, not a face".into());
+        }
+        (Some(face), _) => vec![SolidOp::SweepFace {
             face: face_probe(face),
             kind,
             op: boolean,
-        },
-        (None, Some(sketch)) => SolidOp::Sweep {
-            profile: sketch_profile(document, sketch)?,
-            kind,
-            op: boolean,
-        },
+        }],
+        (None, Some(sketch)) => {
+            let mut profile = sketch_profile(document, sketch)?;
+            if extras.start_offset != 0.0 {
+                // Along the way the first side runs.
+                let way = normalize(custom.unwrap_or(profile.plane.normal))
+                    .map_err(|_| "the extrusion direction is zero".to_string())?;
+                let s = f64::from(extras.start_offset) * if reversed { -1.0 } else { 1.0 };
+                for (o, w) in profile.plane.origin.iter_mut().zip(way) {
+                    *o += w * s;
+                }
+            }
+            let mut ops = vec![SolidOp::Sweep {
+                profile: profile.clone(),
+                kind,
+                op: boolean,
+            }];
+            if let Some(kind) = second {
+                ops.push(SolidOp::Sweep {
+                    profile,
+                    kind,
+                    op: then,
+                });
+            }
+            ops
+        }
         (None, None) => unreachable!("a profile was required above"),
     })
+}
+
+/// The way a datum runs: a line along itself, a plane or coordinate
+/// system square to it.
+fn datum_direction(document: &Document, datum: FeatureId) -> Result<[f64; 3], String> {
+    let data = document
+        .feature_values(datum)
+        .ok_or("the datum it runs along is gone")?;
+    let made = core_document::DatumFeature::from_json(data)
+        .map_err(|_| "what it runs along is not a datum".to_string())?;
+    let frame = made.frame();
+    Ok(match made.shape {
+        core_document::DatumShape::Line { .. } => frame.x_axis,
+        _ => frame.normal,
+    }
+    .map(f64::from))
+}
+
+/// The way a sketch's line runs, in the body's frame.
+fn sketch_line_direction(
+    document: &Document,
+    sketch: FeatureId,
+    element: uuid::Uuid,
+) -> Result<[f64; 3], String> {
+    let points = crate::datum_refs::sketch_points(document, sketch, element)
+        .ok_or("the sketch line it runs along is gone")?;
+    let [a, b] = <[[f32; 3]; 2]>::try_from(points)
+        .map_err(|_| "what it runs along is not a line".to_string())?;
+    Ok([b[0] - a[0], b[1] - a[1], b[2] - a[2]].map(f64::from))
 }
 
 /// Where a revolution's (or helix's) axis lies in its sketch: a point and a
@@ -2503,6 +2673,7 @@ mod tests {
 
     fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         PartFeature::Pad {
+            extras: Default::default(),
             refine: false,
             sketch: Some(sketch),
             length,
@@ -2525,6 +2696,7 @@ mod tests {
 
     fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> PartFeature {
         PartFeature::Pocket {
+            extras: Default::default(),
             refine: false,
             sketch: Some(sketch),
             depth,
@@ -3847,6 +4019,7 @@ mod tests {
         let pocket = doc
             .add_feature_in_body(
                 PartFeature::Pocket {
+                    extras: Default::default(),
                     refine: false,
                     sketch: Some(cut_sketch),
                     depth: 2.0,

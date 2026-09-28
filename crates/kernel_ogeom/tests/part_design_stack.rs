@@ -63,6 +63,7 @@ fn setup(width: f32, height: f32) -> (Document, BodyId, FeatureId) {
 
 fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) -> PartFeature {
     PartFeature::Pad {
+        extras: Default::default(),
         refine: false,
         sketch: Some(sketch),
         length,
@@ -85,6 +86,7 @@ fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) 
 
 fn pocket_feature(sketch: FeatureId, depth: f32) -> PartFeature {
     PartFeature::Pocket {
+        extras: Default::default(),
         refine: false,
         sketch: Some(sketch),
         depth,
@@ -763,6 +765,7 @@ fn bore_rim_fillets() {
         .unwrap();
     doc.add_feature_in_body(
         PartFeature::Pocket {
+            extras: Default::default(),
             refine: false,
             sketch: Some(bore),
             depth: 12.0,
@@ -1324,6 +1327,7 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
             .unwrap();
         doc.add_feature_in_body(
             PartFeature::Pocket {
+                extras: Default::default(),
                 refine: false,
                 sketch: Some(hole),
                 depth: 4.0,
@@ -3626,5 +3630,215 @@ fn a_fillet_follows_its_edge_by_name_when_the_pad_grows() {
     assert!(
         built_named(&unnamed, body).is_err(),
         "the point alone misses it"
+    );
+}
+
+/// Build `features` on a 10 × 20 rectangle at the XY plane in a new body,
+/// after `datums`, and answer the solid's bounds and volume.
+fn extrude_with(
+    datums: &[core_document::DatumFeature],
+    feature: impl Fn(FeatureId, &[FeatureId]) -> PartFeature,
+) -> (([f32; 3], [f32; 3]), f64) {
+    let (mut doc, body, sketch) = setup(10.0, 20.0);
+    let ids: Vec<FeatureId> = datums
+        .iter()
+        .map(|d| {
+            doc.add_feature_in_body(*d, "Datum".into(), Some(body))
+                .unwrap()
+        })
+        .collect();
+    doc.add_feature_in_body(feature(sketch, &ids), "Pad".into(), Some(body))
+        .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("it builds");
+    let volume = kernel
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    (result.bounds_mm.unwrap(), volume)
+}
+
+fn edited(mut pad: PartFeature, set: impl FnOnce(&mut PartFeature)) -> PartFeature {
+    set(&mut pad);
+    pad
+}
+
+#[test]
+fn a_pad_stops_on_a_datum_plane_or_a_base_plane() {
+    use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    let lid = DatumFeature {
+        shape: DatumShape::Plane { size: 30.0 },
+        attachment: DatumAttachment::BasePlane(BasePlane::XY),
+        offset: AttachmentOffset {
+            translation: [0.0, 0.0, 7.0],
+            ..Default::default()
+        },
+    };
+    let ((lo, hi), _) = extrude_with(&[lid], |sketch, datums| {
+        edited(pad_feature(sketch, 1.0, false, false), |f| {
+            if let PartFeature::Pad { mode, .. } = f {
+                *mode = wb_part::ExtrudeMode::UpToPlane(wb_part::PlaneTarget::Datum {
+                    datum: datums[0],
+                    plane: None,
+                });
+            }
+        })
+    });
+    assert!((hi[2] - lo[2] - 7.0).abs() < 1e-3, "{lo:?}..{hi:?}");
+    // A sketch 10 above the XY plane, padded down to it.
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let raised = wb_sketch::sketch::SketchPlane::from_frame(
+        [0.0, 0.0, 10.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 0.0],
+    );
+    let sketch = doc
+        .add_feature_in_body(rect_sketch_on(raised, 10.0, 20.0), "s".into(), Some(body))
+        .unwrap();
+    let pad = edited(pad_feature(sketch, 1.0, true, false), |f| {
+        if let PartFeature::Pad { mode, .. } = f {
+            *mode = wb_part::ExtrudeMode::UpToPlane(wb_part::PlaneTarget::Base(BasePlane::XY));
+        }
+    });
+    doc.add_feature_in_body(pad, "Pad".into(), Some(body))
+        .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let (lo, hi) = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("it builds")
+        .bounds_mm
+        .unwrap();
+    assert!(
+        lo[2].abs() < 1e-3 && (hi[2] - 10.0).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
+    );
+}
+
+#[test]
+fn a_pad_starts_away_from_its_profile_and_measures_a_slant_along_the_normal() {
+    let ((lo, hi), _) = extrude_with(&[], |sketch, _| {
+        edited(pad_feature(sketch, 5.0, false, false), |f| {
+            if let PartFeature::Pad { extras, .. } = f {
+                extras.start_offset = 3.0;
+            }
+        })
+    });
+    assert!(
+        (lo[2] - 3.0).abs() < 1e-3 && (hi[2] - 8.0).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
+    );
+    let ((lo, hi), volume) = extrude_with(&[], |sketch, _| {
+        edited(pad_feature(sketch, 5.0, false, false), |f| {
+            if let PartFeature::Pad {
+                extras, direction, ..
+            } = f
+            {
+                *direction = wb_part::ExtrudeDirection::Custom([1.0, 0.0, 1.0]);
+                extras.along_normal = true;
+            }
+        })
+    });
+    assert!((hi[2] - lo[2] - 5.0).abs() < 1e-3, "{lo:?}..{hi:?}");
+    assert!(
+        (volume - 1000.0).abs() < 1e-2,
+        "a slanted prism as tall: {volume}"
+    );
+    let ((lo, hi), _) = extrude_with(&[], |sketch, _| {
+        edited(pad_feature(sketch, 4.0, false, false), |f| {
+            if let PartFeature::Pad { direction, .. } = f {
+                *direction = wb_part::ExtrudeDirection::Axis(wb_part::BaseAxis::Z);
+            }
+        })
+    });
+    assert!((hi[2] - lo[2] - 4.0).abs() < 1e-3, "{lo:?}..{hi:?}");
+}
+
+#[test]
+fn each_side_of_a_pad_takes_its_own_taper() {
+    let two_sided = |taper2: Option<f32>| {
+        extrude_with(&[], |sketch, _| {
+            edited(pad_feature(sketch, 5.0, false, false), |f| {
+                if let PartFeature::Pad {
+                    mode,
+                    length2,
+                    taper_deg,
+                    extras,
+                    ..
+                } = f
+                {
+                    *mode = wb_part::ExtrudeMode::TwoLengths;
+                    *length2 = 5.0;
+                    *taper_deg = -10.0;
+                    extras.taper2_deg = taper2;
+                }
+            })
+        })
+        .1
+    };
+    let both = two_sided(None);
+    let one = two_sided(Some(0.0));
+    // The side with no taper is the plain prism, 200 × 5.
+    assert!(
+        (one - (both / 2.0 + 1000.0)).abs() < 1e-2,
+        "{one} vs {both}"
+    );
+}
+
+#[test]
+fn a_pad_runs_along_a_datum_or_a_sketch_line() {
+    use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    // Square to a datum plane tilted 45° about x: a prism leaning in y.
+    let leaning = DatumFeature {
+        shape: DatumShape::Plane { size: 30.0 },
+        attachment: DatumAttachment::BasePlane(BasePlane::XY),
+        offset: AttachmentOffset {
+            tilt: [45.0, 0.0],
+            ..Default::default()
+        },
+    };
+    let ((lo, hi), volume) = extrude_with(&[leaning], |sketch, datums| {
+        edited(pad_feature(sketch, 5.0, false, false), |f| {
+            if let PartFeature::Pad { direction, .. } = f {
+                *direction = wb_part::ExtrudeDirection::Datum(datums[0]);
+            }
+        })
+    });
+    let rise = 5.0 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!((hi[2] - lo[2] - rise).abs() < 1e-3, "{lo:?}..{hi:?}");
+    assert!((volume - 200.0 * f64::from(rise)).abs() < 1e-2, "{volume}");
+    // Along the profile's own edge the direction lies in its plane.
+    let (mut doc, body, sketch) = setup(10.0, 20.0);
+    let edge = {
+        let data = doc.feature_values(sketch).unwrap();
+        let feature = <SketchFeature as core_document::WorkbenchFeature>::from_json(data).unwrap();
+        feature
+            .sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Line(l) => Some(l.id),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let pad = edited(pad_feature(sketch, 5.0, false, false), |f| {
+        if let PartFeature::Pad { direction, .. } = f {
+            *direction = wb_part::ExtrudeDirection::SketchLine {
+                sketch,
+                element: edge,
+            };
+        }
+    });
+    doc.add_feature_in_body(pad, "Pad".into(), Some(body))
+        .unwrap();
+    let error = wb_part::body_build_ops(&doc, body).err().map(|e| e.message);
+    assert_eq!(
+        error.as_deref(),
+        Some("the extrusion direction lies in the profile's plane")
     );
 }

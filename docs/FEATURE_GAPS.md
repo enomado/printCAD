@@ -144,14 +144,14 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Features
 
-- [ ] **Datum and base planes as targets** (partial, S). Up to a datum,
+- [x] **Datum and base planes as targets** (partial, S). Up to a datum,
   base or coordinate system plane (`ExtrudeMode::UpToFace`).
-- [ ] **Extrusion direction** (partial, S). A datum line, a sketch
+- [x] **Extrusion direction** (partial, S). A datum line, a sketch
   line, a base axis, and length measured along the sketch normal for a
   slanted direction (`ExtrudeDirection`).
-- [ ] **Start offset** (missing, S). Start the extrusion away from the
+- [x] **Start offset** (missing, S). Start the extrusion away from the
   profile plane.
-- [ ] **A taper per side** (partial, S). Needs a second taper in the
+- [x] **A taper per side** (partial, S). Needs a second taper in the
   kernel's extrude.
 - [ ] **Revolution and helix about the base axes** (partial, S), and a
   helix about the sketch normal.

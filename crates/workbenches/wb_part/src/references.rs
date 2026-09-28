@@ -192,6 +192,7 @@ mod tests {
 
     fn pad(sketch: FeatureId) -> PartFeature {
         PartFeature::Pad {
+            extras: Default::default(),
             refine: false,
             sketch: Some(sketch),
             length: 5.0,
