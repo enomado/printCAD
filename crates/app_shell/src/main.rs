@@ -1,3 +1,7 @@
+// A release build on Windows is a windowed program: no console opens beside
+// it. `--mcp` still speaks over the pipes its agent hands it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod camera;
 mod console;

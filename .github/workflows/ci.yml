@@ -45,3 +45,32 @@ jobs:
 
       - name: The host names no workbench
         run: "! git grep -nE 'wb_part|wb_sketch|\"wb\\.(part|sketch)\"|core\\.datum' -- crates/app_shell/src ':!crates/app_shell/src/app/seam_lint.rs'"
+
+  platforms:
+    # Windows and macOS: the same build, lints and tests as Linux. The shader
+    # compiler comes from Homebrew on macOS and is built from its sources on
+    # Windows (slow the first time, then cached).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the shader compiler (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install shaderc
+          echo "SHADERC_LIB_DIR=$(brew --prefix shaderc)/lib" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
