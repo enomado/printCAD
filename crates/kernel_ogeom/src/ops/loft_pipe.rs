@@ -1,6 +1,6 @@
 //! Loft through section profiles and sweep along a sketch spine.
 
-use kernel_api::{PipeCorner, PipeFrame, Profile};
+use kernel_api::{LoftSection, PipeCorner, PipeFrame, Profile};
 use ogeom::algo::transformed;
 use ogeom::geom::Curve3d;
 use ogeom::math::{Axis, Direction, Point, Transform, Vector};
@@ -46,7 +46,99 @@ pub fn loft_tool(
         .iter()
         .map(|p| single_region(model, p, "a loft section"))
         .collect::<Result<_, _>>()?;
+    loft_sections(model, built, ruled, closed)
+}
 
+/// A loft through sections that may be profiles, flat faces of `base` or
+/// points (the first or the last).
+pub fn loft_through_tool(
+    model: &mut Model,
+    base: Option<&Shape>,
+    sections: &[LoftSection],
+    ruled: bool,
+    closed: bool,
+) -> Result<Shape, String> {
+    if sections.len() < 2 {
+        return Err("loft needs at least two sections".into());
+    }
+    let last = sections.len() - 1;
+    let mut built = Vec::with_capacity(sections.len());
+    for (i, section) in sections.iter().enumerate() {
+        built.push(match section {
+            LoftSection::Profile(p) => single_region(model, p, "a loft section")?,
+            LoftSection::Face(probe) => face_section(model, base, probe)?,
+            LoftSection::Point(p) => {
+                if i != 0 && i != last {
+                    return Err(
+                        "only the first or the last section of a loft may be a point".into(),
+                    );
+                }
+                if closed {
+                    return Err("a closed loop of sections takes no point".into());
+                }
+                Section {
+                    outer: model
+                        .add_vertex(ogeom::topo::VertexData::new(Point::new(p[0], p[1], p[2]))),
+                    holes: Vec::new(),
+                }
+            }
+        });
+    }
+    // The kernel closes to a point at the end: a first point goes last.
+    if matches!(sections[0], LoftSection::Point(_)) {
+        built.reverse();
+    }
+    loft_sections(model, built, ruled, closed)
+}
+
+/// The boundaries of the flat face of `base` the probe finds.
+fn face_section(
+    model: &mut Model,
+    base: Option<&Shape>,
+    probe: &kernel_api::FaceProbe,
+) -> Result<Section, String> {
+    let base = base.ok_or("a face section needs a solid to take the face from")?;
+    let face = super::sweep::face_by_name(
+        model,
+        base,
+        probe.name,
+        Point::new(probe.point[0], probe.point[1], probe.point[2]),
+    )?
+    .ok_or("no face of the solid lies where the section's face was picked")?;
+    let mut wires: Vec<(f64, Shape)> = model
+        .children_of(&face)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|c| model.kind_of(c) == Ok(ogeom::topo::ShapeType::Wire))
+        .map(|w| {
+            let size = crate::tess::robust_bounds(model, &w)
+                .map(|(lo, hi)| (hi - lo).magnitude())
+                .unwrap_or(0.0);
+            (size, w)
+        })
+        .collect();
+    wires.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut wires = wires.into_iter().map(|(_, w)| w);
+    let outer = wires.next().ok_or("the section's face has no boundary")?;
+    Ok(Section {
+        outer,
+        holes: wires.collect(),
+    })
+}
+
+fn loft_sections(
+    model: &mut Model,
+    built: Vec<Section>,
+    ruled: bool,
+    closed: bool,
+) -> Result<Shape, String> {
+    let points = built
+        .iter()
+        .filter(|s| model.kind_of(&s.outer) == Ok(ogeom::topo::ShapeType::Vertex))
+        .count();
+    if points > 0 && built.iter().any(|s| !s.holes.is_empty()) {
+        return Err("a loft to a point takes sections without holes".into());
+    }
     let hole_count = built[0].holes.len();
     if built.iter().any(|s| s.holes.len() != hole_count) {
         return Err("loft sections must have matching hole counts".into());
@@ -76,7 +168,12 @@ fn loft_wires(
             .map(|b| b.shape)
             .map_err(|e| format!("closed loft failed: {e}"));
     }
-    if ruled {
+    // Two sections, one a point: the smooth loft is the ruled one, a cone
+    // or a pyramid, built exactly.
+    let to_point = wires
+        .iter()
+        .any(|w| model.kind_of(w) == Ok(ogeom::topo::ShapeType::Vertex));
+    if ruled || (to_point && wires.len() == 2) {
         // Chain of two-section ruled lofts, fused.
         let mut parts = Vec::with_capacity(wires.len() - 1);
         for pair in wires.windows(2) {

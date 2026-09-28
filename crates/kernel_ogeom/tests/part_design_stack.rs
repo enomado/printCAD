@@ -3962,3 +3962,134 @@ fn a_fixed_pipe_says_what_the_kernel_lacks() {
     });
     assert!(built_body(&doc, body).is_err());
 }
+
+fn loft_of(sections: Vec<wb_part::LoftSection>) -> PartFeature {
+    PartFeature::Loft {
+        sections,
+        ruled: false,
+        closed: false,
+        subtractive: false,
+        refine: false,
+    }
+}
+
+fn raised(z: f32) -> wb_sketch::sketch::SketchPlane {
+    wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
+}
+
+/// A rectangle lofted to a datum point is a pyramid; so is one lofted from
+/// a sketch holding a single point.
+#[test]
+fn a_loft_closes_to_a_point() {
+    use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    use wb_part::LoftSection;
+    let pyramid = 200.0 * 10.0 / 3.0;
+    let apex = DatumFeature {
+        shape: DatumShape::Point,
+        attachment: DatumAttachment::BasePlane(BasePlane::XY),
+        offset: AttachmentOffset {
+            translation: [5.0, 10.0, 10.0],
+            ..Default::default()
+        },
+    };
+    let (_, volume) = extrude_with(&[apex], |sketch, datums| {
+        loft_of(vec![
+            LoftSection::Feature(sketch),
+            LoftSection::Feature(datums[0]),
+        ])
+    });
+    assert!((volume - pyramid).abs() < 1e-3 * pyramid, "{volume}");
+
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let mut dot = Sketch::new("apex");
+    dot.plane = raised(-10.0);
+    dot.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 10.0))));
+    let plane = dot.plane;
+    let apex = doc
+        .add_feature_in_body(SketchFeature::new(dot, plane), "apex".into(), Some(body))
+        .unwrap();
+    let base = doc
+        .add_feature_in_body(rect_sketch(10.0, 20.0), "base".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        loft_of(vec![LoftSection::Feature(apex), LoftSection::Feature(base)]),
+        "Loft".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, min, _) = built_body(&doc, body).unwrap();
+    assert!((volume - pyramid).abs() < 1e-3 * pyramid, "{volume}");
+    assert!((min[2] + 10.0).abs() < 1e-3);
+}
+
+/// A loft from a flat face of the solid: the top of a block lofted up to a
+/// rectangle above it, the same size, stands a prism on the block.
+#[test]
+fn a_loft_starts_from_a_face_of_the_solid() {
+    use wb_part::LoftSection;
+    let (mut doc, body, sketch) = setup(10.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(sketch, 5.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let top = doc
+        .add_feature_in_body(
+            rect_sketch_on(raised(15.0), 10.0, 20.0),
+            "top".into(),
+            Some(body),
+        )
+        .unwrap();
+    let face = wb_part::FacePick {
+        point: [5.0, 10.0, 5.0],
+        normal: [0.0, 0.0, 1.0],
+        name: 0,
+    };
+    doc.add_feature_in_body(
+        loft_of(vec![LoftSection::Face(face), LoftSection::Feature(top)]),
+        "Loft".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, _, max) = built_body(&doc, body).unwrap();
+    assert!((volume - 3000.0).abs() < 1.0, "{volume}");
+    assert!((max[2] - 15.0).abs() < 1e-3);
+}
+
+/// Through a middle section to a point: circles narrowing to an apex on
+/// their axis.
+#[test]
+#[ignore = "kernel: make_loft_skinned through several sections to a point misses its skin tolerance (ogeom-rs#91)"]
+fn a_loft_through_sections_closes_to_a_point() {
+    use wb_part::LoftSection;
+    let circles = |r: f32, z: f32| circle_sketch_on(raised(z), 0.0, 0.0, r);
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let a = doc
+        .add_feature_in_body(circles(5.0, 0.0), "a".into(), Some(body))
+        .unwrap();
+    let b = doc
+        .add_feature_in_body(circles(3.0, 5.0), "b".into(), Some(body))
+        .unwrap();
+    let mut dot = Sketch::new("apex");
+    dot.plane = raised(10.0);
+    dot.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let plane = dot.plane;
+    let c = doc
+        .add_feature_in_body(SketchFeature::new(dot, plane), "apex".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        loft_of(vec![
+            LoftSection::Feature(a),
+            LoftSection::Feature(b),
+            LoftSection::Feature(c),
+        ]),
+        "Loft".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (_, _, max) = built_body(&doc, body).unwrap();
+    assert!((max[2] - 10.0).abs() < 1e-3);
+}

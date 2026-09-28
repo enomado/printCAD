@@ -108,6 +108,12 @@ fn build_tool_op(model: &mut Model, base: Option<&Shape>, op: &SolidOp) -> Resul
             closed,
             ..
         } => super::loft_pipe::loft_tool(model, sections, *ruled, *closed),
+        SolidOp::LoftThrough {
+            sections,
+            ruled,
+            closed,
+            ..
+        } => super::loft_pipe::loft_through_tool(model, base, sections, *ruled, *closed),
         SolidOp::Pipe {
             profile,
             spine,
@@ -356,6 +362,34 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
             op,
         } => SolidOp::Loft {
             sections: sections.iter().map(|s| map_profile(m, s)).collect(),
+            ruled: *ruled,
+            closed: *closed,
+            op: *op,
+        },
+        SolidOp::LoftThrough {
+            sections,
+            ruled,
+            closed,
+            op,
+        } => SolidOp::LoftThrough {
+            sections: sections
+                .iter()
+                .map(|s| match s {
+                    kernel_api::LoftSection::Profile(p) => {
+                        kernel_api::LoftSection::Profile(map_profile(m, p))
+                    }
+                    kernel_api::LoftSection::Face(probe) => {
+                        kernel_api::LoftSection::Face(kernel_api::FaceProbe {
+                            name: probe.name,
+                            point: map_point(m, probe.point),
+                            normal: map_vector(m, probe.normal),
+                        })
+                    }
+                    kernel_api::LoftSection::Point(p) => {
+                        kernel_api::LoftSection::Point(map_point(m, *p))
+                    }
+                })
+                .collect(),
             ruled: *ruled,
             closed: *closed,
             op: *op,

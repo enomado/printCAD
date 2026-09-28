@@ -29,7 +29,7 @@ pub use build::{
 pub use feature::{
     BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel,
     ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace,
-    HelixMode, HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, PipeCorner,
+    HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane, PartFeature, PatternAxis, PipeCorner,
     PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep,
     primitive_icon, primitive_preset,
 };
@@ -354,7 +354,7 @@ impl PartDesignWorkbench {
                 (
                     PartFeature::Loft {
                         refine: false,
-                        sections: vec![need_sketch(sketch)?],
+                        sections: vec![crate::feature::LoftSection::Feature(need_sketch(sketch)?)],
                         ruled: false,
                         closed: false,
                         subtractive,

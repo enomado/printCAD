@@ -1965,14 +1965,21 @@ pub fn feature_editor(
             closed,
             subtractive,
         } => {
+            use crate::feature::LoftSection;
             label_cell(ui, "Sections (in order)");
             let mut remove = None;
             for (i, section) in sections.iter().enumerate() {
-                let name = ctx
-                    .document
-                    .get_feature_meta(*section)
-                    .map(|n| n.name.clone())
-                    .unwrap_or_else(|| "(missing)".into());
+                let name = match section {
+                    LoftSection::Feature(id) => ctx
+                        .document
+                        .get_feature_meta(*id)
+                        .map(|n| n.name.clone())
+                        .unwrap_or_else(|| "(missing)".into()),
+                    LoftSection::Face(pick) => format!(
+                        "face at ({:.1}, {:.1}, {:.1})",
+                        pick.point[0], pick.point[1], pick.point[2]
+                    ),
+                };
                 ui.horizontal(|ui| {
                     mono_label(ui, format!("{}. {name}", i + 1), FONT_XS, TEXT1);
                     if small_secondary_button(ui, "✕").clicked() && sections.len() > 1 {
@@ -1991,11 +1998,52 @@ pub fn feature_editor(
                 ("loft_add", feature_id),
                 None,
                 "Add section:",
-            ) && !sections.contains(&new)
+            ) && !sections.contains(&LoftSection::Feature(new))
             {
-                sections.push(new);
+                sections.push(LoftSection::Feature(new));
                 changed = true;
             }
+            // A datum point closes the loft to it, at either end.
+            let points: Vec<(FeatureId, String)> =
+                core_document::datums_of_body(ctx.document, body)
+                    .into_iter()
+                    .filter(|(_, _, d)| matches!(d.shape, core_document::DatumShape::Point))
+                    .map(|(id, name, _)| (id, name))
+                    .collect();
+            if !points.is_empty() {
+                ui.horizontal(|ui| {
+                    label_cell(ui, "Add point:");
+                    egui::ComboBox::from_id_salt(("loft_point", feature_id))
+                        .selected_text("A datum point…")
+                        .show_ui(ui, |ui| {
+                            for (id, name) in &points {
+                                let section = LoftSection::Feature(*id);
+                                if ui.selectable_label(false, name).clicked()
+                                    && !sections.contains(&section)
+                                {
+                                    sections.push(section);
+                                    changed = true;
+                                }
+                            }
+                        });
+                });
+            }
+            let picked = ctx.selected_face_in(body).map(FacePick::of);
+            ui.horizontal(|ui| {
+                label_cell(ui, "Add face:");
+                if ui
+                    .add_enabled_ui(picked.is_some(), |ui| {
+                        accent_outline_button(ui, "Use selected face")
+                    })
+                    .inner
+                    .on_hover_text("Click a flat face of the solid first, then press this")
+                    .clicked()
+                    && let Some(pick) = picked
+                {
+                    sections.push(LoftSection::Face(pick));
+                    changed = true;
+                }
+            });
             changed |= check_row(ui, ruled, "Ruled (straight transitions)").changed();
             changed |= check_row(ui, closed, "Closed (loop back)").changed();
             changed |= check_row(ui, subtractive, "Subtractive").changed();

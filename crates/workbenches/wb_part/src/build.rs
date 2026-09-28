@@ -603,17 +603,34 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 subtractive,
             } => {
                 if sections.len() < 2 {
-                    return Err(fail("a loft needs at least two section sketches".into()));
+                    return Err(fail("a loft needs at least two sections".into()));
                 }
-                let mut profiles = Vec::with_capacity(sections.len());
+                let mut through = Vec::with_capacity(sections.len());
                 for section in sections {
-                    profiles.push(sketch_profile(document, *section).map_err(&fail)?);
+                    through.push(loft_section(document, section).map_err(&fail)?);
                 }
-                plan.ops.push(SolidOp::Loft {
-                    sections: profiles,
-                    ruled: *ruled,
-                    closed: *closed,
-                    op: shape_boolean(*subtractive),
+                // Profiles alone go as the plain loft, which names its faces
+                // after the first section's curves.
+                let profiles: Option<Vec<Profile>> = through
+                    .iter()
+                    .map(|s| match s {
+                        kernel_api::LoftSection::Profile(p) => Some(p.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                plan.ops.push(match profiles {
+                    Some(sections) => SolidOp::Loft {
+                        sections,
+                        ruled: *ruled,
+                        closed: *closed,
+                        op: shape_boolean(*subtractive),
+                    },
+                    None => SolidOp::LoftThrough {
+                        sections: through,
+                        ruled: *ruled,
+                        closed: *closed,
+                        op: shape_boolean(*subtractive),
+                    },
                 });
             }
             PartFeature::Pipe {
@@ -1984,6 +2001,63 @@ fn thread_cut(
         },
         op: BooleanOp::Cut,
     }
+}
+
+/// A loft's section as the kernel takes it: a sketch's profile, a point
+/// (a datum point, or a sketch holding only one point), or a face.
+fn loft_section(
+    document: &Document,
+    section: &crate::feature::LoftSection,
+) -> Result<kernel_api::LoftSection, String> {
+    use crate::feature::LoftSection;
+    let id = match section {
+        LoftSection::Face(pick) => return Ok(kernel_api::LoftSection::Face(face_probe(pick))),
+        LoftSection::Feature(id) => *id,
+    };
+    let node = document
+        .get_feature_meta(id)
+        .ok_or("a loft section is missing")?;
+    if node.workbench_id.as_str() == core_document::DATUM_KIND {
+        let data = document
+            .feature_values(id)
+            .ok_or("a loft section is missing")?;
+        let datum = core_document::DatumFeature::from_json(data)
+            .map_err(|_| "a loft section is not a datum".to_string())?;
+        if !matches!(datum.shape, core_document::DatumShape::Point) {
+            return Err("a datum section of a loft must be a point".into());
+        }
+        return Ok(kernel_api::LoftSection::Point(
+            datum.frame().origin.map(f64::from),
+        ));
+    }
+    let sketch = load_sketch(document, id)?;
+    let curves = sketch
+        .sketch
+        .geometry
+        .iter()
+        .filter(|g| !matches!(g, wb_sketch::sketch::GeometryElement::Point(_)))
+        .count();
+    if curves == 0 {
+        let points: Vec<_> = sketch
+            .sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                wb_sketch::sketch::GeometryElement::Point(p) => Some(p.position),
+                _ => None,
+            })
+            .collect();
+        if let [p] = points.as_slice() {
+            let plane = profile::plane_of(&sketch.plane);
+            let at = |i: usize| {
+                plane.origin[i]
+                    + plane.x_axis[i] * f64::from(p.x)
+                    + plane.y_axis[i] * f64::from(p.y)
+            };
+            return Ok(kernel_api::LoftSection::Point([at(0), at(1), at(2)]));
+        }
+    }
+    Ok(kernel_api::LoftSection::Profile(profile_of(&sketch)?))
 }
 
 fn load_sketch(document: &Document, sketch_id: FeatureId) -> Result<SketchFeature, String> {

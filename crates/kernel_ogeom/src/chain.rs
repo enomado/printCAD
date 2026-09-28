@@ -251,6 +251,26 @@ pub fn execute_named(
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
+            SolidOp::LoftThrough {
+                sections,
+                ruled,
+                closed,
+                op,
+            } => {
+                let tool = ops::loft_pipe::loft_through_tool(
+                    &mut model,
+                    base.as_ref(),
+                    sections,
+                    *ruled,
+                    *closed,
+                )
+                .map_err(&err)?;
+                tool_names = Some(tool_names_fresh(&model, &tool, tag));
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
+                keep(&tool, *op);
+
+                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+            }
             SolidOp::Loft {
                 sections,
                 ruled,

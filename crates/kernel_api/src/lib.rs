@@ -675,6 +675,17 @@ pub enum ProfileSegment {
     },
 }
 
+/// One section of a [`SolidOp::LoftThrough`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LoftSection {
+    Profile(Profile),
+    /// The flat face of the running solid the probe finds, by its outer
+    /// and inner boundaries.
+    Face(FaceProbe),
+    /// A point the loft closes to, in the body's frame.
+    Point([f64; 3]),
+}
+
 /// A closed loop of profile segments. Consecutive segments share endpoints;
 /// a single `Circle` segment is a wire by itself.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -1095,6 +1106,15 @@ pub enum SolidOp {
         kind: SweepKind,
         op: BooleanOp,
     },
+    /// Skin through two or more sections (in order), each a profile, a
+    /// flat face of the running solid (its boundary) or a point, which
+    /// only the first or last may be.
+    LoftThrough {
+        sections: Vec<LoftSection>,
+        ruled: bool,
+        closed: bool,
+        op: BooleanOp,
+    },
     /// Skin through two or more section profiles (in order).
     Loft {
         sections: Vec<Profile>,
@@ -1196,6 +1216,7 @@ impl SolidOp {
             SolidOp::Sweep { op, .. }
             | SolidOp::SweepFace { op, .. }
             | SolidOp::Loft { op, .. }
+            | SolidOp::LoftThrough { op, .. }
             | SolidOp::Pipe { op, .. }
             | SolidOp::Primitive { op, .. } => Some(*op),
             // A snapshot is a solid in itself: it begins a chain.

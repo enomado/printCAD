@@ -157,7 +157,9 @@ and noted on its item, and the rest of the item is built around it.
   helix about the sketch normal. The helix about the normal is wired and
   waits on the kernel's screw sweep of a profile off the axis's plane
   (ogeom-rs#89).
-- [ ] **Loft to a point, faces as sections** (partial, M).
+- [x] **Loft to a point, faces as sections** (partial, M). Through more
+  than two sections to a point waits on the kernel's skinned loft
+  (ogeom-rs#91).
 - [ ] **Pipe along solid or borrowed edges, a face as the profile, a point at
   the end** (partial, M).
 - [x] **Fixed pipe orientation** (partial, S). The section keeps its

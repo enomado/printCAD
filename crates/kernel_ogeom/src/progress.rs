@@ -78,7 +78,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         },
         SolidOp::SweepFace { .. } if subtractive => "Pocket",
         SolidOp::SweepFace { .. } => "Pad",
-        SolidOp::Loft { .. } => "Loft",
+        SolidOp::Loft { .. } | SolidOp::LoftThrough { .. } => "Loft",
         SolidOp::Pipe { .. } => "Pipe",
         SolidOp::Primitive { .. } => "Primitive",
         SolidOp::Fillet { .. } => "Fillet",

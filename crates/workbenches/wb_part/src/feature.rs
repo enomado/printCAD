@@ -310,6 +310,26 @@ impl ExtrudeMode {
     }
 }
 
+/// One section of a loft: a feature (a sketch's profile; a datum point or a
+/// sketch holding a single point, where the loft closes to it) or a flat
+/// face of the solid, picked. A file listing sections by id reads each as
+/// a feature.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LoftSection {
+    Feature(FeatureId),
+    Face(FacePick),
+}
+
+impl LoftSection {
+    pub fn feature(&self) -> Option<FeatureId> {
+        match self {
+            LoftSection::Feature(id) => Some(*id),
+            LoftSection::Face(_) => None,
+        }
+    }
+}
+
 /// A pad's or pocket's less used settings.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -1077,9 +1097,11 @@ pub enum PartFeature {
         #[serde(default)]
         up_to_face: Option<FacePick>,
     },
-    /// Skin through two or more section sketches.
+    /// Skin through two or more sections: sketches, datum points (or
+    /// sketches of a single point) at either end, and flat faces of the
+    /// solid.
     Loft {
-        sections: Vec<FeatureId>,
+        sections: Vec<LoftSection>,
         ruled: bool,
         closed: bool,
         subtractive: bool,
@@ -1358,7 +1380,9 @@ impl PartFeature {
     /// Every sketch referenced by this feature.
     pub fn sketches(&self) -> Vec<FeatureId> {
         match self {
-            PartFeature::Loft { sections, .. } => sections.clone(),
+            PartFeature::Loft { sections, .. } => {
+                sections.iter().filter_map(LoftSection::feature).collect()
+            }
             PartFeature::Pipe {
                 profile,
                 spine,
