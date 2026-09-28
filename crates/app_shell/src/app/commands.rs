@@ -771,6 +771,7 @@ impl PrintCadApp {
                     app_log::info(format!("Selected feature {:?}", id));
                 }
                 self.session.active_document_object = Some(id);
+                self.move_in_time_to(id);
             }
             TreeItemId::ImportedObject(node_id) => {
                 self.session.active_document_object = None;
@@ -779,6 +780,36 @@ impl PrintCadApp {
                 self.session.selected_body = self.session.active_body_id.map(|id| id.0);
             }
         }
+    }
+
+    /// Show `feature`'s body as it stands at `feature`: the body's tip
+    /// moves there (off it, to the whole history, when `feature` is the
+    /// last), and what comes after draws muted until something later is
+    /// selected. A new feature goes in right there. Moving through history
+    /// is not an edit: it is no undo step of its own.
+    pub(crate) fn move_in_time_to(&mut self, feature: core_document::FeatureId) {
+        let document = &self.session.document;
+        let Some(body) = document.get_feature_meta(feature).and_then(|n| n.body) else {
+            return;
+        };
+        let last = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.body == Some(body))
+            .max_by_key(|(id, n)| (n.seq, **id))
+            .map(|(id, _)| *id);
+        let tip = (last != Some(feature)).then_some(feature);
+        let now = document
+            .bodies()
+            .iter()
+            .find(|b| b.id == body)
+            .and_then(|b| b.tip);
+        if now == tip {
+            return;
+        }
+        let _ =
+            crate::app::scripts::set_tip(&mut self.session.document, &self.registry, feature, tip);
+        self.close_gesture();
     }
 
     /// A double click on a row: a feature opens for editing in the bench

@@ -41,6 +41,9 @@ version first.
 - Constraint symbols park on a second layer, and the constraint list filters by kind, name, reference, selection and relation.
 - Remove axis alignment turns horizontal and vertical constraints into parallel and perpendicular ones so a group turns as a whole.
 ### Part Design
+- The model tree is the body's history in order. Selecting a feature shows the body as it stood there, and a feature made then goes in at that point; selecting the last feature shows everything again. Moving through history is not an undo step.
+- A click in the tree selects; a double click opens the feature's settings. A feature stays selected after its settings close.
+- A feature's profile is changed in the property panel's Inputs group, which keeps the settings panel to the operation itself.
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, additive and subtractive, and booleans between bodies.
 - Holes to standard sizes, fillets and chamfers on picked edges, draft, thickness, and linear, polar and mirrored patterns.
 - Datum points, lines and planes, and local coordinate systems whose planes carry sketches.

@@ -3337,3 +3337,68 @@ fn an_intersection_reference_is_where_a_face_crosses_the_sketch_plane() {
     let [_, high] = line_ends(&stored(&doc));
     assert!((high.y - 16.0).abs() < 1e-4, "{high:?}");
 }
+
+/// A pocket made with the tip back on the pad goes in before the boss
+/// that came after the pad: while the tip stands there the body is the pad
+/// alone less the pocket, and with the tip back at the end the boss builds
+/// on the pocketed pad.
+#[test]
+fn a_feature_made_at_an_earlier_point_builds_there() {
+    let (mut doc, body, rect_id) = setup(20.0, 20.0);
+    let pad = doc
+        .add_feature_in_body(
+            pad_feature(rect_id, 6.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    let top = wb_sketch::sketch::SketchPlane::from_face([10.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
+    let boss_sketch = doc
+        .add_feature_in_body(
+            circle_sketch_on(top, 10.0, 10.0, 3.0),
+            "boss".into(),
+            Some(body),
+        )
+        .unwrap();
+    let boss = doc
+        .add_feature_in_body(
+            pad_feature(boss_sketch, 4.0, false, false),
+            "Boss".into(),
+            Some(body),
+        )
+        .unwrap();
+
+    // Back at the pad, a pocket goes in: after the pad, before the boss.
+    doc.set_body_tip(body, Some(pad));
+    let hole = doc
+        .add_feature_in_body(
+            circle_sketch_on(top, 10.0, 10.0, 5.0),
+            "hole".into(),
+            Some(body),
+        )
+        .unwrap();
+    let pocket = doc
+        .add_feature_in_body(pocket_feature(hole, 6.0), "Pocket".into(), Some(body))
+        .unwrap();
+    let pi = std::f64::consts::PI;
+    let plan = wb_part::body_build_ops(&doc, body).unwrap();
+    assert_eq!(
+        plan.op_features,
+        [pad, pocket],
+        "the boss waits past the tip"
+    );
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    assert_near(volume, 2400.0 - 150.0 * pi, 5e-3, "pad less pocket");
+
+    // The tip back at the end: the boss builds on the pocketed pad.
+    doc.set_body_tip(body, None);
+    let plan = wb_part::body_build_ops(&doc, body).unwrap();
+    assert_eq!(plan.op_features, [pad, pocket, boss]);
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    assert_near(
+        volume,
+        2400.0 - 150.0 * pi + 36.0 * pi,
+        5e-3,
+        "with the boss",
+    );
+}

@@ -787,7 +787,13 @@ renderer's blended pass: any `BodySubmission` with `opacity < 1` draws
 after the opaque bodies and their edges, depth-tested, never writing depth,
 and the pick pass skips it: an overlay is never what the cursor is over.
 While editing a sketch the view is locked planar (orbit + cube rotation
-disabled; pan/zoom/roll allowed). In the tree, bodies and features start
+disabled; pan/zoom/roll allowed). The tree reads as the body's history in
+order: selecting a feature moves the body's tip to it (off it, when it is
+the last; `move_in_time_to`), later features draw muted and out of the
+solid, and a feature made then goes in right after the tip, which follows
+it (`Document::insert_at_tip`, a seq swap per step, like Move up). A tip
+move on its own is navigation: `OpJournal` makes no undo step of a gesture
+that only moves tips. In the tree, bodies and features start
 open and imported assemblies start closed; the filter looks through closed
 branches, a double click or "Show in tree" opens a body's way to itself,
 and a body row's double click or "Select body" selects the whole body.

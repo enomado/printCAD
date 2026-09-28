@@ -78,6 +78,16 @@ impl OpJournal {
         if pairs.is_empty() {
             return;
         }
+        // Moving a body's tip alone is moving through its history, as
+        // selecting a feature does: not an edit to undo. A tip moved along
+        // with an edit (a feature inserted at it) goes with the edit.
+        if pairs
+            .iter()
+            .all(|(op, _)| matches!(op, DocumentOp::SetBodyTip { .. }))
+        {
+            self.pending_label = None;
+            return;
+        }
         let label = self
             .pending_label
             .take()

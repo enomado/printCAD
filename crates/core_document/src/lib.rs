@@ -936,7 +936,48 @@ impl Document {
             made_by: None,
             package_source: None,
         });
+        self.insert_at_tip(id);
         Ok(id)
+    }
+
+    /// A feature just added to a body whose tip stands before the end of
+    /// its history goes in right after the tip, and the tip moves onto it:
+    /// new work lands at the point in history on show, and what came after
+    /// the tip builds on it once the tip moves on. A feature that reads
+    /// something past the tip stops just after that, and the tip moves onto
+    /// it all the same.
+    fn insert_at_tip(&mut self, id: FeatureId) {
+        let Some(body) = self.feature_tree.get_node(id).and_then(|n| n.body) else {
+            return;
+        };
+        let Some(tip) = self
+            .bodies
+            .iter()
+            .find(|b| b.id == body)
+            .and_then(|b| b.tip)
+            .filter(|tip| self.feature_tree.get_node(*tip).is_some())
+        else {
+            return;
+        };
+        loop {
+            let mut history: Vec<(u64, FeatureId)> = self
+                .feature_tree
+                .all_nodes()
+                .filter(|(_, n)| n.body == Some(body))
+                .map(|(fid, n)| (n.seq, *fid))
+                .collect();
+            history.sort();
+            let Some(at) = history.iter().position(|(_, fid)| *fid == id) else {
+                return;
+            };
+            if at == 0 || history[at - 1].1 == tip {
+                break;
+            }
+            if self.try_move_feature_in_history(id, true).is_err() {
+                break;
+            }
+        }
+        self.set_body_tip(body, Some(id));
     }
 
     /// Add a feature of kind `kind` whose data a workbench package owns,
@@ -969,6 +1010,7 @@ impl Document {
             made_by,
             package_source,
         });
+        self.insert_at_tip(id);
         id
     }
 
