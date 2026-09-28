@@ -181,7 +181,7 @@ pub(crate) fn run_helper(
             "the package has no helper `{name}` for this system"
         ));
     }
-    let mut child = Command::new(&path)
+    let mut child = local_ipc::background(&mut Command::new(&path))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

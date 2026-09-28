@@ -42,11 +42,11 @@ pub fn socket_path_for(document: &std::path::Path) -> PathBuf {
 /// gives the document a real identity, and never shared by two untitled
 /// tabs of one app.
 pub fn socket_path_for_untitled(tab: uuid::Uuid) -> PathBuf {
-    runtime_dir().join(format!(
-        "untitled-{}-{}.sock",
-        std::process::id(),
-        tab.simple()
-    ))
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    (std::process::id(), tab).hash(&mut hasher);
+    runtime_dir().join(format!("untitled-{:016x}.sock", hasher.finish()))
 }
 
 pub(crate) fn runtime_dir_for_logs() -> PathBuf {
@@ -54,8 +54,5 @@ pub(crate) fn runtime_dir_for_logs() -> PathBuf {
 }
 
 fn runtime_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("printcad")
+    local_ipc::runtime_dir()
 }

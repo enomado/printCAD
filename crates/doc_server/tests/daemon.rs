@@ -44,7 +44,7 @@ fn daemon_env() {
         let mut path = std::env::current_exe().expect("test exe");
         path.pop(); // deps/
         path.pop(); // <profile>/
-        path.push("printcad-serverd");
+        path.push(local_ipc::program_name("printcad-serverd"));
         // Sound because every test calls this before it first reads the
         // variable through the client, and `Once` orders those reads after
         // the single write; a test-local process could still race a

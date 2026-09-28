@@ -178,11 +178,18 @@ pub fn prompt_blocks(
 
 /// A `file://` URI for `path`, its bytes outside the plain ones escaped.
 fn file_uri(path: &std::path::Path) -> String {
-    use std::os::unix::ffi::OsStrExt as _;
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    #[cfg(unix)]
+    let bytes = {
+        use std::os::unix::ffi::OsStrExt as _;
+        absolute.as_os_str().as_bytes().to_vec()
+    };
+    // `C:\dir\file` is `/C:/dir/file` in a URI.
+    #[cfg(not(unix))]
+    let bytes = format!("/{}", absolute.to_string_lossy().replace('\\', "/")).into_bytes();
     let mut out = String::from("file://");
-    for &b in absolute.as_os_str().as_bytes() {
-        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+    for &b in &bytes {
+        if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
             out.push(b as char);
         } else {
             out.push_str(&format!("%{b:02X}"));
@@ -492,14 +499,15 @@ type Pipes = (
 );
 
 fn spawn(agent: &Program) -> Result<Pipes, String> {
-    let mut child = Command::new(&agent.command)
-        .args(&agent.args)
-        .envs(agent.env.iter().map(|(k, v)| (k, v)))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not start `{}`: {e}", agent.command))?;
+    let mut child =
+        local_ipc::background(&mut Command::new(local_ipc::find_program(&agent.command)))
+            .args(&agent.args)
+            .envs(agent.env.iter().map(|(k, v)| (k, v)))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("could not start `{}`: {e}", agent.command))?;
     let (Some(stdout), Some(stdin), Some(stderr)) =
         (child.stdout.take(), child.stdin.take(), child.stderr.take())
     else {
@@ -1084,7 +1092,7 @@ fn update_event(update: &Value) -> Option<ChatEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
+    use local_ipc::Stream as UnixStream;
 
     /// A made-up agent on the other end of `stream`: it opens a session,
     /// and each prompt gets a thought, a tool call that asks permission,

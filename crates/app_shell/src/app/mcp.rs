@@ -16,7 +16,7 @@
 //! A change waits for the user's OK when the chat that asked for it (or,
 //! for a client outside any chat, the Preferences) says to ask first.
 
-use std::os::unix::net::UnixListener;
+use local_ipc::Listener as UnixListener;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -58,11 +58,7 @@ impl Drop for McpServer {
 
 /// Where this process's socket goes.
 fn socket_path() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("printcad");
-    dir.join(format!("mcp-{}.sock", std::process::id()))
+    local_ipc::runtime_dir().join(format!("mcp-{}.sock", std::process::id()))
 }
 
 /// The socket of a running application, for `printcad --mcp`: the one
@@ -81,7 +77,7 @@ pub(crate) fn find_socket() -> Option<PathBuf> {
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("mcp-") && n.ends_with(".sock"))
         })
-        .filter(|p| std::os::unix::net::UnixStream::connect(p).is_ok())
+        .filter(|p| local_ipc::Stream::connect(p).is_ok())
         .filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)))
         .collect();
     found.sort();
@@ -118,7 +114,7 @@ impl McpServer {
 }
 
 fn serve_client(
-    stream: std::os::unix::net::UnixStream,
+    stream: local_ipc::Stream,
     tx: Sender<ToolRequest>,
     wake: Arc<dyn Fn() + Send + Sync>,
 ) {

@@ -240,7 +240,7 @@ fn read_loop(mut reader: impl BufRead, waiting: Waiting, incoming: Sender<Incomi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
+    use local_ipc::Stream as UnixStream;
     use std::time::Duration;
 
     type Side = (Connection, Receiver<Incoming>);

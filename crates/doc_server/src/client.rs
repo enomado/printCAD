@@ -3,8 +3,8 @@
 //! per frame — the same shape as the kernel worker, so the app's frame loop
 //! treats both alike.
 
+use local_ipc::Stream as UnixStream;
 use std::io::Write as _;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
@@ -250,7 +250,7 @@ impl Drop for DaemonClient {
 
 fn spawn_daemon(socket: &Path) -> std::io::Result<std::process::Child> {
     let binary = daemon_binary_path();
-    std::process::Command::new(&binary)
+    local_ipc::background(&mut std::process::Command::new(&binary))
         .arg("--socket")
         .arg(socket)
         .spawn()
@@ -270,8 +270,11 @@ fn daemon_binary_path() -> PathBuf {
     }
     std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("printcad-serverd")))
-        .unwrap_or_else(|| PathBuf::from("printcad-serverd"))
+        .and_then(|exe| {
+            exe.parent()
+                .map(|dir| dir.join(local_ipc::program_name("printcad-serverd")))
+        })
+        .unwrap_or_else(|| PathBuf::from(local_ipc::program_name("printcad-serverd")))
 }
 
 fn wait_for_socket(socket: &Path, timeout: Duration) -> std::io::Result<UnixStream> {

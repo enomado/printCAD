@@ -11,6 +11,7 @@ default = ["egui"]
 egui = ["core_document/egui", "dep:egui"]
 
 [dependencies]
+local_ipc = { path = "../../local_ipc" }
 core_document = { path = "../../core_document" }
 kernel_api = { path = "../../kernel_api" }
 bench_api = { path = "../../bench_api" }

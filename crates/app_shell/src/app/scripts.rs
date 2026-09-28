@@ -1016,7 +1016,7 @@ impl PrintCadApp {
                 dir
             }
         };
-        if let Err(err) = std::process::Command::new("xdg-open").arg(&target).spawn() {
+        if let Err(err) = local_ipc::open_with_system(&target) {
             crate::app_log::error(format!("Could not open {}: {err}", target.display()));
         }
     }

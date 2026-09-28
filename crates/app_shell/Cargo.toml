@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+local_ipc = { path = "../local_ipc" }
 anyhow.workspace = true
 doc_server = { path = "../doc_server" }
 scripting = { path = "../scripting" }

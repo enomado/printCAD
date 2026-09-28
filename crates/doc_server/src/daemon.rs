@@ -10,9 +10,9 @@
 //! op envelopes, so daemon and app can be versions apart and still
 //! cooperate. The daemon exits when its last client disconnects.
 
+use local_ipc::{Listener as UnixListener, Stream as UnixStream};
 use std::collections::HashMap;
 use std::io::Write as _;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

@@ -7,5 +7,6 @@ rust-version.workspace = true
 description = "AI agents: the Agent Client Protocol client and the MCP server the application offers them."
 
 [dependencies]
+local_ipc = { path = "../local_ipc" }
 base64.workspace = true
 serde_json.workspace = true

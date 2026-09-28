@@ -385,7 +385,7 @@ fn command_words(command: &str) -> Vec<String> {
 fn slicer_invocation(command: &str, file: &Path) -> (String, Vec<String>) {
     let mut words = command_words(command);
     if words.is_empty() {
-        words.push("xdg-open".to_string());
+        words.push(local_ipc::SYSTEM_OPENER.to_string());
     }
     let file = file.display().to_string();
     let program = words.remove(0);
@@ -403,7 +403,7 @@ fn slicer_invocation(command: &str, file: &Path) -> (String, Vec<String>) {
 /// Start the slicer on `file` beside the app, and say which program ran.
 fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
     let (program, args) = slicer_invocation(command, file);
-    let mut child = std::process::Command::new(&program)
+    let mut child = local_ipc::background(&mut std::process::Command::new(&program))
         .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -497,7 +497,7 @@ mod tests {
     fn the_slicer_command_takes_the_file_where_it_says_or_last() {
         let file = Path::new("/tmp/printcad/slicer/part.3mf");
         let (program, args) = slicer_invocation("", file);
-        assert_eq!(program, "xdg-open");
+        assert_eq!(program, local_ipc::SYSTEM_OPENER);
         assert_eq!(args, ["/tmp/printcad/slicer/part.3mf"]);
         let (program, args) = slicer_invocation("\"/opt/My Slicer/run\" --single", file);
         assert_eq!(program, "/opt/My Slicer/run");

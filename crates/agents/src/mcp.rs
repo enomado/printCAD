@@ -298,7 +298,7 @@ pub fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
+    use local_ipc::Stream as UnixStream;
     use std::time::Duration;
 
     struct Adder;

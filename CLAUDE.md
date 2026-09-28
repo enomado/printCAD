@@ -157,6 +157,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   inside (`framing.rs`, `server::Payload`), since a document as JSON numbers is
   four times its size and overran the frame cap outright, integration-tested against the
   real spawned daemon (`tests/daemon.rs`).
+- `local_ipc`: what the app needs of the system to talk to its own
+  processes, on every platform: path-named local sockets (`Stream`,
+  `Listener`: the standard UNIX sockets, on Windows its AF_UNIX ones; names
+  stay short, since a socket path holds about a hundred bytes),
+  `runtime_dir`, `open_with_system` (`xdg-open`, `open`, `explorer`),
+  `background` (no console window for a helper on Windows), `find_program`
+  (`PATHEXT` lookup, so npm's `.cmd` shims start) and `program_name`.
 - `ui_kit`: the design system, below the workbenches so their panel code
   can use it (behind their `egui` feature): `tokens` (the palette and
   size constants, named after the design's variables), `theme`

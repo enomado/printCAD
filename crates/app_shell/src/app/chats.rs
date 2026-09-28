@@ -552,7 +552,7 @@ impl PrintCadApp {
 impl Chat {
     /// A chat with these entries whose agent never answers.
     pub(crate) fn for_test(id: &str, status: ChatStatus, entries: Vec<ChatEntry>) -> Self {
-        let (ours, _theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (ours, _theirs) = local_ipc::Stream::pair().unwrap();
         Chat {
             id: id.into(),
             title: "Chat 1".into(),
@@ -747,7 +747,7 @@ mod tests {
     use super::*;
 
     fn chat() -> Chat {
-        let (ours, _theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (ours, _theirs) = local_ipc::Stream::pair().unwrap();
         Chat {
             id: "c".into(),
             title: "Chat 1".into(),

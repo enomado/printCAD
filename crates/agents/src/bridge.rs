@@ -8,8 +8,8 @@
 //! it copies stdin to the socket and the socket to stdout until either
 //! ends.
 
+use local_ipc::Stream as UnixStream;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use serde_json::{Value, json};
