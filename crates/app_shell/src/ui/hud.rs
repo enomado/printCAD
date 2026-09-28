@@ -26,6 +26,26 @@ fn corner(viewport: egui::Rect, id: &str, align: Align2, offset: Vec2) -> Area {
         .interactable(false)
 }
 
+/// Where a top-corner card of the id `id` stands: in the corner, or, when
+/// it would reach the view toolbar across the top, just below the toolbar.
+/// Both sizes are the ones drawn last frame.
+fn top_offset(ctx: &Context, viewport: egui::Rect, id: &str, left: bool) -> Vec2 {
+    let rect_of = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id)));
+    let (Some(bar), Some(card)) = (rect_of("view_toolbar"), rect_of(id)) else {
+        return Vec2::new(MARGIN, MARGIN);
+    };
+    let clear = if left {
+        viewport.left() + MARGIN + card.width() + MARGIN <= bar.left()
+    } else {
+        viewport.right() - MARGIN - card.width() - MARGIN >= bar.right()
+    };
+    if clear {
+        Vec2::new(MARGIN, MARGIN)
+    } else {
+        Vec2::new(MARGIN, bar.bottom() - viewport.top() + SPACE_2)
+    }
+}
+
 /// Draw every part of `hud` that is present. `footer_extra` are readouts
 /// the shell contributes to the bottom-right line (projection, draw style).
 pub fn draw_viewport_hud(
@@ -42,11 +62,14 @@ pub fn draw_viewport_hud(
             viewport,
             "hud_tool_hint",
             Align2::LEFT_TOP,
-            Vec2::new(MARGIN, MARGIN),
+            top_offset(ctx, viewport, "hud_tool_hint", true),
         )
         .show(ctx, |ui| {
+            // A narrow viewport wraps the keys onto a second line rather
+            // than running the card past its edge.
+            ui.set_max_width(viewport.width() - 2.0 * MARGIN);
             Card::floating().padding(6.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = SPACE_2;
                     ui_kit::icon::draw(ui, tool.icon, 16.0, ACCENT);
                     ui.label(
@@ -72,7 +95,7 @@ pub fn draw_viewport_hud(
             viewport,
             "hud_badge",
             Align2::RIGHT_TOP,
-            Vec2::new(MARGIN, MARGIN),
+            top_offset(ctx, viewport, "hud_badge", false),
         )
         .show(ctx, |ui| {
             Card::floating()
@@ -317,5 +340,82 @@ mod toast_tests {
             "centred: {card:?}"
         );
         assert!(card.top() < 100.0, "at the top: {card:?}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_document::ToolHint;
+
+    /// A pill the view toolbar's size, where it stands, under its id.
+    fn stand_in_toolbar(ctx: &Context, viewport: egui::Rect) {
+        Area::new(egui::Id::new("view_toolbar"))
+            .order(Order::Foreground)
+            .pivot(Align2::CENTER_TOP)
+            .fixed_pos(viewport.center_top() + Vec2::new(0.0, 10.0))
+            .show(ctx, |ui| {
+                ui.allocate_exact_size(Vec2::new(560.0, 36.0), egui::Sense::hover());
+            });
+    }
+
+    fn hud() -> ViewportHud {
+        ViewportHud {
+            tool: Some(ToolHint {
+                icon: "select",
+                name: "Select".into(),
+                prompt: "Click to select · drag for a box".into(),
+                keys: vec![
+                    ("Click".into(), "add to selection"),
+                    ("Empty click".into(), "clear"),
+                    ("Del".into(), "delete"),
+                ],
+            }),
+            badge: Some(([0.3, 0.8, 0.5], "Fully constrained".into())),
+            ..Default::default()
+        }
+    }
+
+    /// Where the hint and the badge stand once the layout has settled.
+    fn settle(width: f32) -> (egui::Rect, egui::Rect, egui::Rect) {
+        let ctx = Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 40.0), Vec2::new(width, 700.0));
+        let hud = hud();
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(width, 800.0),
+                )),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                stand_in_toolbar(ui.ctx(), viewport);
+                draw_viewport_hud(ui.ctx(), viewport, Some(&hud), &[]);
+            });
+            out.textures_delta.clear();
+        }
+        let rect = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
+        (
+            rect("view_toolbar"),
+            rect("hud_tool_hint"),
+            rect("hud_badge"),
+        )
+    }
+
+    #[test]
+    fn corner_cards_stay_clear_of_the_view_toolbar() {
+        // Wide: both in their corners, level with the toolbar.
+        let (bar, hint, badge) = settle(2400.0);
+        assert!(!hint.intersects(bar) && !badge.intersects(bar));
+        assert!(hint.top() < bar.bottom(), "the hint stays in its corner");
+        // Narrow: the hint would reach the toolbar, so it stands below it,
+        // and neither runs past the viewport.
+        let (bar, hint, badge) = settle(1000.0);
+        assert!(!hint.intersects(bar), "{hint:?} against {bar:?}");
+        assert!(!badge.intersects(bar), "{badge:?} against {bar:?}");
+        assert!(hint.top() >= bar.bottom());
+        assert!(hint.right() <= 1000.0 && badge.left() >= 0.0);
     }
 }
