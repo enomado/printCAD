@@ -10,7 +10,7 @@ use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{Chamfer, chamfer_edges_with, fillet_edges};
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
-use ogeom::offset::{apply_draft, make_thick_solid};
+use ogeom::offset::{Join, apply_draft, make_thick_solid_with};
 use ogeom::topo::{EdgeRepr, Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
 
 use super::tol;
@@ -456,13 +456,6 @@ pub fn thickness(
     inward: bool,
     join: ThicknessJoin,
 ) -> Result<Shape, String> {
-    if join == ThicknessJoin::Arc {
-        return Err(
-            "the kernel cannot round a thickness's walls where they meet yet; \
-             use the intersection join"
-                .into(),
-        );
-    }
     let mut removed = Vec::with_capacity(open_face_points.len());
     for p in open_face_points {
         removed.push(nearest_of(model, solid, ShapeType::Face, point3(*p))?);
@@ -470,7 +463,11 @@ pub fn thickness(
     // Positive thickness hollows inward; negative builds the walls outward
     // around the solid.
     let signed = if inward { value } else { -value };
-    make_thick_solid(model, solid, &removed, signed, tol())
+    let join = match join {
+        ThicknessJoin::Arc => Join::Arc,
+        ThicknessJoin::Intersection => Join::Intersection,
+    };
+    make_thick_solid_with(model, solid, &removed, signed, join, tol())
         .map(|b| b.shape)
         .map_err(|e| format!("thickness failed: {e}"))
 }

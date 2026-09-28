@@ -862,19 +862,18 @@ on the start page (`Screen::Start`); the recent list lives in
   surface, so flat and curved targets alike stop exactly on the face.
 - Helix: the height + turns + growth mode sends `SweepKind::Helix` its
   turns and growth per turn (in place of the cone angle); at height 0 it
-  asks for a flat spiral, which the kernel's helical sweep refuses (a pitch
-  of 0), so the feature carries that error. A subtractive helix with
-  "keep inside" is `BooleanOp::Common` (a pattern cannot repeat it).
+  is a flat spiral. A subtractive helix with "keep inside" is
+  `BooleanOp::Common` (a pattern cannot repeat it).
 - Pipe: `SolidOp::Pipe` carries a `PipeFrame` (rotation-minimizing,
   Frenet, auxiliary path, binormal; files with the old `frenet` flag read
   as the first two), a `PipeCorner` and further `sections`; an open path
-  runs from the end its profile sits by (`sketch_spine`). The kernel's
-  pipe shell knows only the first two frames and mitred (transformed)
-  corners: a binormal square to a planar path's plane or off a straight
-  one builds as the rotation-minimizing frame, which it equals, and right
-  or round corners build on a path without sharp corners; the rest, and
-  any extra section, fail on the feature with the kernel named. The
-  `kernel:` ignored tests in `part_design_stack.rs` are the wanted cases.
+  runs from the end its profile sits by (`sketch_spine`). `pipe_tool`
+  (`ops/loft_pipe.rs`) hands the frame to the kernel's `PipeLaw` and the
+  corner to `PipeCorners` (`make_pipe_shell_with`), and extra sections to
+  `make_pipe_sections`, the profile placed at the path's start and each
+  section where it stands. A revolution up to a face whose plane holds its
+  axis stops at one angle; any other face goes to `make_revolution_until`.
+  A thickness's arc join is the kernel's `Join::Arc`.
 - Hole threads: `wb_part/src/hole_tables.rs` holds the thread standards
   (ISO metric coarse and fine, UNC/UNF/UNEF, BSW/BSF, BSP G and Rc, NPT),
   their classes, the ISO 4762/10642 seats and the user's `hole_cuts.json`

@@ -16,6 +16,7 @@ use ogeom::algo::{make_natural_face, make_prism, make_prism_tapered, make_revolu
 use ogeom::geom::{PlaneSurface, SurfaceGeometry, Transformable};
 use ogeom::math::{Axis, Direction, Plane, Point, Transform, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
+use ogeom::offset::make_revolution_until;
 use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
 
 use super::{fuse_all, tol};
@@ -731,8 +732,19 @@ fn revolve(
             let base = base.ok_or_else(|| {
                 "a revolution that stops on a face needs existing material".to_string()
             })?;
-            let angle = revolve_stop_angle(model, base, built, &axis, stop)?;
-            (angle.to_degrees(), 0.0)
+            match revolve_stop(model, base, built, &axis, stop)? {
+                RevolveStop::Angle(angle) => (angle.to_degrees(), 0.0),
+                RevolveStop::Face(limit) => {
+                    // Each point turns until its own circle meets the face.
+                    let mut parts = Vec::with_capacity(built.faces.len());
+                    for face in &built.faces {
+                        let part = make_revolution_until(model, face, axis, &limit, tol())
+                            .map_err(|e| format!("revolve up to the face failed: {e}"))?;
+                        parts.push(part.shape);
+                    }
+                    return fuse_all(model, parts);
+                }
+            }
         }
     };
     let total = forward + backward;
@@ -771,16 +783,23 @@ fn revolve(
     fuse_all(model, parts)
 }
 
-/// How far the profile turns about `axis` before it reaches the target of
-/// `stop`, in radians: a flat face whose plane holds the axis, which every
-/// point of the profile meets at the same angle.
-fn revolve_stop_angle(
+/// Where a revolution that stops on a face stops.
+enum RevolveStop {
+    /// A flat face whose plane holds the axis: every point of the profile
+    /// meets it at this angle, in radians.
+    Angle(f64),
+    /// Any other face: each point meets it at an angle of its own.
+    Face(Shape),
+}
+
+/// Where the profile turning about `axis` stops on the target of `stop`.
+fn revolve_stop(
     model: &mut Model,
     base: &Shape,
     built: &BuiltProfile,
     axis: &Axis,
     stop: &RevolveTermination,
-) -> Result<f64, String> {
+) -> Result<RevolveStop, String> {
     let a = axis.direction.vector();
     let from_axis = |p: Point| {
         let v = p - axis.location;
@@ -810,11 +829,7 @@ fn revolve_stop_angle(
         n.dot(axis.direction).abs() <= 1e-6 && (axis.location - p).dot(n.vector()).abs() <= 1e-4
     });
     if !holds_axis {
-        return Err(
-            "a revolution stops only on a flat face whose plane holds its axis; the kernel \
-             cannot turn a profile up to any other surface"
-                .into(),
-        );
+        return Ok(RevolveStop::Face(face));
     }
     let end = from_axis(met_at);
     if end.magnitude() <= 1e-9 {
@@ -827,7 +842,7 @@ fn revolve_stop_angle(
     if angle >= TAU - 1e-9 {
         return Err("the profile already lies on the target face".into());
     }
-    Ok(angle)
+    Ok(RevolveStop::Angle(angle))
 }
 
 /// Where a point turning about an axis first meets a face.

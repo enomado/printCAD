@@ -1476,7 +1476,6 @@ fn half_space_at(
 
 /// A plane well clear of a box sections nothing from it.
 #[test]
-#[ignore = "kernel: section with a half space whose plane misses the solid returns the edges its stand-in box's far face cuts (ogeom-rs#83)"]
 fn a_half_space_clear_of_a_solid_sections_nothing() {
     use ogeom::math::{Direction, Frame, Point};
     use ogeom::topo::{Model, ShapeType, explore_unique};
@@ -1501,7 +1500,6 @@ fn a_half_space_clear_of_a_solid_sections_nothing() {
 /// A face on its own is sectioned by a half space into the curves the
 /// plane crosses it along, as its solid is.
 #[test]
-#[ignore = "kernel: section refuses a face or shell argument, only solids are taken (ogeom-rs#84)"]
 fn a_face_on_its_own_is_sectioned_by_a_half_space() {
     use ogeom::math::{Direction, Frame, Point};
     use ogeom::topo::{Model, ShapeType, explore_unique};
@@ -2620,7 +2618,6 @@ fn a_revolution_stops_on_a_face_whose_plane_holds_its_axis() {
 /// turns until its circle meets the wall's plane, x = -2, at
 /// acos(-2 / r). The kernel has no sweep bounded that way.
 #[test]
-#[ignore = "kernel: no revolution bounded by a surface that does not hold its axis (ogeom-rs#73)"]
 fn a_revolution_stops_on_a_wall_beside_its_axis() {
     let wall = blind_pad(
         vec![rect_wire(-20.0, 0.0, -2.0, 20.0)],
@@ -2698,7 +2695,6 @@ fn a_pattern_repeats_a_face_swept_off_the_solid() {
 /// A thread groove cuts into a blind bore made by the cylinder primitive as
 /// it does into the same bore extruded.
 #[test]
-#[ignore = "kernel: a helical groove of 2 or more turns fails to cut into a blind bore made by make_cylinder, 'edge 3 ends where edge 4 does not begin' (ogeom-rs#74)"]
 fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
     use kernel_api::{Placement, PrimitiveKind};
     let pitch = 1.0;

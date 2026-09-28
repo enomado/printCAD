@@ -2593,7 +2593,6 @@ fn a_thickness_joins_its_walls_by_intersection() {
 /// below its open top, radius 1: the block grown by a ball of radius 1,
 /// cut flush at the top, less the block itself.
 #[test]
-#[ignore = "kernel: make_thick_solid has no arc join (ogeom-rs#75)"]
 fn a_thickness_joins_its_walls_by_intersection_or_arc() {
     use kernel_api::ThicknessJoin::Arc;
     let pi = std::f64::consts::PI;
@@ -2850,7 +2849,6 @@ fn a_pipe_holding_the_binormal_of_its_paths_plane_builds() {
 /// about the path: the square that starts square to Z ends turned 45°
 /// about the path, reaching √2 out of the plane.
 #[test]
-#[ignore = "kernel: make_pipe_shell has no frame law holding a fixed binormal (ogeom-rs#76)"]
 fn a_pipe_holding_a_leaning_binormal_turns_its_section() {
     use wb_part::{PipeCorner, PipeOrientation};
     let (doc, body) = pipe_body(square_section(), quarter_arc_sketch(), &[], |p, s, _| {
@@ -2874,7 +2872,6 @@ fn a_pipe_holding_a_leaning_binormal_turns_its_section() {
 /// spine from +X at its start round to +Z at its end, so the square turns a
 /// quarter turn along the way, reaching √2 out along X halfway.
 #[test]
-#[ignore = "kernel: make_pipe_shell has no frame law following an auxiliary spine (ogeom-rs#76)"]
 fn a_pipe_oriented_by_an_auxiliary_path_turns_toward_it() {
     use wb_part::{PipeCorner, PipeOrientation};
     // The auxiliary line from (5, 0, 0) to (0, 20, 5), on the plane through
@@ -2936,7 +2933,6 @@ fn a_pipe_with_transformed_corners_mitres_its_path() {
 /// The same tube from the L's far end: the profile sits there, so the path
 /// runs from there, and the circle is turned onto the first leg.
 #[test]
-#[ignore = "kernel: make_pipe_shell misses its skin tolerance on this placement of the circle's seam (ogeom-rs#82)"]
 fn a_pipe_from_the_far_end_of_its_path_mitres_it_alike() {
     use wb_part::{PipeCorner, PipeOrientation};
     let far = circle_sketch_on(
@@ -2973,26 +2969,12 @@ fn corner_modes_leave_a_smooth_path_alone() {
         let pi = std::f64::consts::PI;
         assert_near(volume, 10.0 * pi * pi, 5e-3, &format!("{corner:?}"));
     }
-    // A sharp corner in either of the other modes waits on the kernel, and
-    // says so on the feature.
-    let (doc, body) = pipe_body(unit_circle_section(), l_path(), &[], |p, s, _| {
-        pipe_of(
-            p,
-            s,
-            PipeOrientation::Standard,
-            PipeCorner::Round,
-            Vec::new(),
-        )
-    });
-    let refused = built_body(&doc, body).unwrap_err();
-    assert!(refused.contains("round"), "{refused}");
 }
 
 /// Right corners run each leg of the L on past the corner by the section's
 /// radius and fuse the two: two 11 mm cylinders less the bicylinder they
 /// share (16/3 for a unit radius).
 #[test]
-#[ignore = "kernel: make_pipe_shell has no corner mode other than the mitre (ogeom-rs#77)"]
 fn a_pipe_with_right_corners_runs_its_legs_on_and_fuses_them() {
     use wb_part::{PipeCorner, PipeOrientation};
     let (doc, body) = pipe_body(unit_circle_section(), l_path(), &[], |p, s, _| {
@@ -3013,7 +2995,6 @@ fn a_pipe_with_right_corners_runs_its_legs_on_and_fuses_them() {
 /// about it: the two 10 mm cylinders, less the quarter bicylinder they
 /// share, and the quarter ball outside the corner.
 #[test]
-#[ignore = "kernel: make_pipe_shell has no corner mode other than the mitre (ogeom-rs#77)"]
 fn a_pipe_with_round_corners_turns_its_section_about_them() {
     use wb_part::{PipeCorner, PipeOrientation};
     let (doc, body) = pipe_body(unit_circle_section(), l_path(), &[], |p, s, _| {
@@ -3038,7 +3019,6 @@ fn a_pipe_with_round_corners_turns_its_section_about_them() {
 /// A pipe through a second section: a circle of radius 2 at the start of a
 /// straight 20 mm path growing to radius 3 at its end, the frustum between.
 #[test]
-#[ignore = "kernel: no sweep of several sections along a spine (ogeom-rs#78)"]
 fn a_pipe_through_two_sections_changes_its_shape_down_the_path() {
     use wb_part::{PipeCorner, PipeOrientation};
     let straight = polyline_sketch(
@@ -3127,7 +3107,6 @@ fn a_helix_grows_by_its_growth_per_turn() {
 /// A helix of no height is a flat spiral, each turn 2 mm further out than
 /// the last.
 #[test]
-#[ignore = "kernel: make_helical_sweep refuses a pitch of 0, so a flat spiral cannot be swept (ogeom-rs#79)"]
 fn a_helix_of_no_height_is_a_flat_spiral() {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
@@ -3247,7 +3226,6 @@ fn a_subtractive_helix_kept_inside_leaves_what_it_shares() {
 
 /// The measured volume of what a helix keeps inside a body.
 #[test]
-#[ignore = "kernel: volume_properties reads a helical sweep's walls trimmed by a boolean about 3% out (ogeom-rs#80)"]
 fn the_measured_volume_of_a_helix_kept_inside_is_its_own() {
     let (doc, body) = block_and_coil(-3.0, true);
     assert_near(
@@ -3260,7 +3238,6 @@ fn the_measured_volume_of_a_helix_kept_inside_is_its_own() {
 
 /// A block whose face holds the helix's axis keeps half of every turn.
 #[test]
-#[ignore = "kernel: a boolean of a helical sweep with a solid whose face holds the helix axis does not close its shell (ogeom-rs#81)"]
 fn a_helix_kept_inside_a_block_on_its_axis_keeps_half_of_it() {
     let (doc, body) = block_and_coil(0.0, true);
     let (volume, _) = fine_mesh_volume(&doc, body);

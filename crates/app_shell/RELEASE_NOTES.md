@@ -54,7 +54,8 @@ version first.
 - Datums attach tangent to a face, through three points, square to or along an edge, through two points, where two planes meet, at a circle's centre, and at a body's centre of mass and inertia axes; one picked on its body's solid follows it.
 - Borrow takes another body's sketch, faces or edges into a body, live or frozen: a hole through two bodies, one master sketch for several, a pad up to another body's face.
 - Patterns run along a picked edge, a datum line or a sketch's axis, with uneven spacing or a step angle; fillets and chamfers follow tangent edges.
-- Pipes take an orientation (standard, Frenet, a guide path, a binormal), a corner mode and extra sections; helices grow per turn, and a subtractive helix can keep what is inside it.
+- Pipes take an orientation (standard, Frenet, a guide path, a binormal), a corner mode (transformed, right or round) and extra sections the shape changes through; helices grow per turn, a helix of no height is a flat spiral, and a subtractive helix can keep what is inside it.
+- Revolution and Groove stop on any face, curved or flat, and Thickness joins its walls sharp or rounded.
 
 ### Assembly
 - Bodies can be moved and turned, and keep their own geometry as it was made.
