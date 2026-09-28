@@ -521,3 +521,96 @@ fn a_sketch_on_a_face_follows_the_face_when_the_pad_grows() {
         "the pocket went up with the top"
     );
 }
+
+/// A sketch placed on a face another body lends follows the face: body B's
+/// top, borrowed by body A, rises when B's pad grows, and A's post drawn
+/// on it rises with it.
+#[test]
+fn a_sketch_on_a_lent_face_follows_the_lender() {
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let b = doc.create_body(Some("B".into()));
+    let base = doc
+        .add_feature_in_body(rect_sketch(20.0, 20.0), "base".into(), Some(b))
+        .unwrap();
+    let block = doc
+        .add_feature_in_body(pad(base, 10.0), "Block".into(), Some(b))
+        .unwrap();
+    doc.mark_feature_dirty(block);
+    settle(&registry, &mut doc, b);
+
+    let mesh = doc.imported_geometry(b).unwrap().mesh.clone();
+    let top_id = mesh
+        .face_surfaces
+        .iter()
+        .position(|s| {
+            matches!(s, kernel_api::FaceSurface::Plane { origin, normal }
+                if normal[2] > 0.99 && (origin[2] - 10.0).abs() < 1e-3)
+        })
+        .expect("a top face");
+    let a = doc.create_body(Some("A".into()));
+    let lent = doc
+        .add_feature_in_body(
+            PartFeature::Borrow {
+                source: wb_part::BorrowSource::Solid {
+                    body: b,
+                    faces: vec![wb_part::FacePick {
+                        point: [10.0, 10.0, 10.0],
+                        normal: [0.0, 0.0, 1.0],
+                        name: mesh.face_names[top_id],
+                    }],
+                    edges: Vec::new(),
+                },
+                frozen: None,
+            },
+            "Borrowed".into(),
+            Some(a),
+        )
+        .unwrap();
+    let top = core_document::FaceRef {
+        point: [10.0, 10.0, 10.0],
+        normal: [0.0, 0.0, 1.0],
+        surface: None,
+        name: mesh.face_names[top_id],
+    };
+    let plane = wb_sketch::sketch::SketchPlane::from_face(top.point, top.normal);
+    let mut post = Sketch::new("post");
+    post.plane = plane;
+    let centre = post.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
+    post.add_geometry(GeometryElement::Circle(wb_sketch::sketch::Circle::new(
+        centre, 3.0,
+    )));
+    let mut post = SketchFeature::new(post, plane);
+    post.face = wb_sketch::FaceSupport::from_origin(
+        &top,
+        core_document::FaceOrigin::Lent {
+            borrow: lent,
+            index: 0,
+        },
+        plane,
+    );
+    let post = doc
+        .add_feature_in_body(post, "post".into(), Some(a))
+        .unwrap();
+    let post_pad = doc
+        .add_feature_in_body(pad(post, 5.0), "Post".into(), Some(a))
+        .unwrap();
+    doc.mark_feature_dirty(post_pad);
+    let (low, high) = settle(&registry, &mut doc, a);
+    assert!(
+        (low[2] - 10.0).abs() < 1e-3 && (high[2] - 15.0).abs() < 1e-3,
+        "{low:?} {high:?}"
+    );
+
+    // B's block grows: its top rises to 20, and A's post with it.
+    let mut data = doc.get_feature_data(block).unwrap().clone();
+    data["Pad"]["length"] = serde_json::json!(20.0);
+    doc.update_feature_data(block, data).unwrap();
+    doc.mark_feature_dirty(block);
+    settle(&registry, &mut doc, b);
+    let (low, high) = settle(&registry, &mut doc, a);
+    assert!(
+        (low[2] - 20.0).abs() < 1e-3 && (high[2] - 25.0).abs() < 1e-3,
+        "{low:?} {high:?}"
+    );
+}

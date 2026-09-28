@@ -54,9 +54,9 @@ pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
 pub use rebuild::{BuildError, BuildPlan, PlanProbe, ProbedReferences, RebuildJob};
 pub use runtime::{
-    CameraOrientRequest, EdgeCircle, EdgeRef, FaceRef, HookOutcome, HostRequest, InputResult,
-    KeyCode, LogEntry, LogLevel, MouseButton, SketchAttachRequest, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    CameraOrientRequest, EdgeCircle, EdgeRef, FaceOrigin, FaceRef, HookOutcome, HostRequest,
+    InputResult, KeyCode, LogEntry, LogLevel, MouseButton, SketchAttachRequest,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};

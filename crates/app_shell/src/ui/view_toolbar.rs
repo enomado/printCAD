@@ -24,7 +24,7 @@ enum Item {
         binding: &'static str,
         on: bool,
         planned: Option<&'static str>,
-        command: Option<UiCommand>,
+        command: Option<Box<UiCommand>>,
     },
     Sep,
 }
@@ -41,7 +41,7 @@ fn button(
         binding,
         on: false,
         planned: None,
-        command: Some(command),
+        command: Some(Box::new(command)),
     }
 }
 
@@ -58,7 +58,7 @@ fn toggled(
         binding,
         on,
         planned: None,
-        command: Some(command),
+        command: Some(Box::new(command)),
     }
 }
 
@@ -236,7 +236,7 @@ pub fn draw_view_toolbar(
                                     .clicked()
                                         && let Some(command) = command
                                     {
-                                        commands.push(command);
+                                        commands.push(*command);
                                     }
                                 }
                             }

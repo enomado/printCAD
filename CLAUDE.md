@@ -266,7 +266,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `with_tab` turn must not touch it. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `workbench_host.rs` (ctx
-  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive),
+  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive; keeps
+  the last few solids per body by what they were built from, so moving a
+  body's tip back and forth through its history, or undo and redo, finds
+  them built),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
   which `camera::apply_device_motion` integrates once per frame).
   `ui/` is one module per region: `menu_bar`, `toolbar` (rows from
@@ -868,7 +871,11 @@ on the start page (`Screen::Start`); the recent list lives in
   back to the stored point + normal. A sketch placed on its body's face
   follows it: Part Design's plan asks where the face stands at the
   sketch's place in history, and `Workbench::derive_on_solid` moves the
-  plane from the placement it recorded. `TriMesh.edge_ids` names the kernel edge of every
+  plane from the placement it recorded. One on a face a borrow lends
+  (`FaceSupport::lent_by`) is answered from the borrow instead
+  (`answer_lent_faces`, which finds the face in the lender's mesh by
+  name); `SketchAttachRequest::face_origin` says which a face is, and a
+  face of another body is not followed at all. `TriMesh.edge_ids` names the kernel edge of every
   outline segment (the tessellator draws the outline from the kernel's own
   edges, each to the chord the faces agreed on; triangle boundaries are only
   the fallback), so a click within a few pixels of an outline picks the

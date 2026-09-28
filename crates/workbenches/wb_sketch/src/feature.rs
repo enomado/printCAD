@@ -56,6 +56,18 @@ pub struct FaceSupport {
     pub name: kernel_api::TopoName,
     /// The sketch's plane when it was placed.
     pub placed: SketchPlane,
+    /// The borrow that lends the face, and which of its faces it is: the
+    /// face is on another body's solid, and found where the borrow finds
+    /// it rather than on the sketch's own body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lent_by: Option<LentFace>,
+}
+
+/// A face a borrow lends: the borrow, and which of its faces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LentFace {
+    pub borrow: FeatureId,
+    pub index: usize,
 }
 
 impl FaceSupport {
@@ -66,6 +78,24 @@ impl FaceSupport {
             normal: face.normal,
             name: face.name,
             placed,
+            lent_by: None,
+        }
+    }
+
+    /// The support a sketch placed with `placed` on `face` gets, by where
+    /// the face comes from: none on a face no rebuild finds again.
+    pub fn from_origin(
+        face: &core_document::FaceRef,
+        origin: core_document::FaceOrigin,
+        placed: SketchPlane,
+    ) -> Option<Self> {
+        match origin {
+            core_document::FaceOrigin::Elsewhere => None,
+            core_document::FaceOrigin::OwnSolid => Some(Self::on(face, placed)),
+            core_document::FaceOrigin::Lent { borrow, index } => Some(Self {
+                lent_by: Some(LentFace { borrow, index }),
+                ..Self::on(face, placed)
+            }),
         }
     }
 
@@ -173,7 +203,8 @@ impl WorkbenchFeature for SketchFeature {
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {
-        self.support.iter().map(|s| s.datum).collect()
+        let lent = self.face.and_then(|f| f.lent_by).map(|l| l.borrow);
+        self.support.iter().map(|s| s.datum).chain(lent).collect()
     }
 
     fn name(&self) -> &str {

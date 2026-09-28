@@ -1281,14 +1281,33 @@ impl Workbench for PartDesignWorkbench {
                 // for this body (offering the clicked face when the selection
                 // landed on solid geometry), and finishing the sketch returns
                 // here (the host tracks the return bench).
-                // A borrow selected in the tree offers its first flat face.
-                let face = ctx
-                    .active_document_object
-                    .and_then(|id| borrow::flat_face_in_world(ctx.document, id))
-                    .or(ctx.selected_face);
+                // A borrow selected in the tree offers its first flat face,
+                // which a sketch placed on it follows as the borrow does; a
+                // face clicked on the body's own solid is followed too, one
+                // of another body's is not.
+                let lent = ctx.active_document_object.and_then(|id| {
+                    borrow::flat_face_in_world(ctx.document, id).map(|(face, index)| {
+                        (face, core_document::FaceOrigin::Lent { borrow: id, index })
+                    })
+                });
+                let (face, face_origin) = match lent {
+                    Some((face, origin)) => (Some(face), origin),
+                    None => (
+                        ctx.selected_face,
+                        if ctx.selected_body_id == Some(body.0) {
+                            core_document::FaceOrigin::OwnSolid
+                        } else {
+                            core_document::FaceOrigin::Elsewhere
+                        },
+                    ),
+                };
                 ctx.request(HostRequest::StartOn {
                     workbench: WorkbenchId::from("wb.sketch"),
-                    attach: core_document::SketchAttachRequest { body: body.0, face },
+                    attach: core_document::SketchAttachRequest {
+                        body: body.0,
+                        face,
+                        face_origin,
+                    },
                 });
                 InputResult::consumed()
             }

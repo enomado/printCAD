@@ -9,9 +9,6 @@ listed here is built; see the release notes for what is.
   are not yet numbers a formula can set.
 - **Borrowed faces:** as up-to-shape faces and revolution targets, and
   an existing sketch mapped onto one.
-- **Sketches on borrowed faces follow them:** a sketch placed on a face
-  another body lends stays where it was put (one on its own body's face
-  follows it).
 - **Tangent-chain chamfers by two distances:** the reference face may
   change sides along the chain.
 - **Generators:** ring gears, undercut on small pinions, keyways, and a

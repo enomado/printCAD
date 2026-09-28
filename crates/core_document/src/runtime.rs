@@ -222,6 +222,26 @@ impl FaceRef {
 pub struct SketchAttachRequest {
     pub body: uuid::Uuid,
     pub face: Option<FaceRef>,
+    /// Where `face` comes from, which decides whether a sketch placed on
+    /// it follows it.
+    pub face_origin: FaceOrigin,
+}
+
+/// Where a face offered for a new sketch comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FaceOrigin {
+    /// Another body's solid, or nowhere a rebuild finds it again: a sketch
+    /// placed on it stays where it is put.
+    #[default]
+    Elsewhere,
+    /// The solid of the body the sketch is for: the sketch follows it.
+    OwnSolid,
+    /// The `index`th face the borrow `borrow` of that body lends: the
+    /// sketch follows it as the borrow does.
+    Lent {
+        borrow: crate::FeatureId,
+        index: usize,
+    },
 }
 
 /// Request to orient camera to a specific plane.

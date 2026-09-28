@@ -299,7 +299,7 @@ pub(crate) fn seen(document: &Document, borrow: &Borrow) -> (Vec<SeenFace>, Vec<
 fn moved_face(face: SeenFace, placement: &BodyPlacement) -> SeenFace {
     SeenFace {
         pick: FacePick {
-            name: 0,
+            name: face.pick.name,
             point: placement.point(face.pick.point),
             normal: placement.direction(face.pick.normal),
         },
@@ -489,27 +489,47 @@ fn feature_name(document: &Document, id: FeatureId) -> String {
 }
 
 /// The first flat face the borrow `id` lends, in world space, for a sketch
-/// to be drawn on.
+/// to be drawn on, and which of the borrow's faces it is.
 pub(crate) fn flat_face_in_world(
     document: &Document,
     id: FeatureId,
-) -> Option<core_document::FaceRef> {
+) -> Option<(core_document::FaceRef, usize)> {
     let borrow = borrow_of(document, id)?;
-    let (faces, _) = seen(document, &borrow);
     let placement = document.body_placement(borrow.body);
-    faces.into_iter().find_map(|face| {
-        let (point, normal) = match face.surface {
-            Some(FaceSurface::Plane { normal, .. }) => (face.pick.point, normal),
-            Some(_) => return None,
-            None => (face.pick.point, face.pick.normal),
-        };
-        Some(core_document::FaceRef {
+    let (index, point, normal) = (0..)
+        .zip(seen(document, &borrow).0)
+        .find_map(|(index, face)| flat(&face).map(|(p, n)| (index, p, n)))?;
+    Some((
+        core_document::FaceRef {
             name: 0,
             point: placement.point(point),
             normal: placement.direction(normal),
             surface: None,
-        })
-    })
+        },
+        index,
+    ))
+}
+
+/// Where a lent face lies, when it is flat: a point on it and its normal.
+fn flat(face: &SeenFace) -> Option<([f32; 3], [f32; 3])> {
+    match face.surface {
+        Some(FaceSurface::Plane { normal, .. }) => Some((face.pick.point, normal)),
+        Some(_) => None,
+        None => Some((face.pick.point, face.pick.normal)),
+    }
+}
+
+/// Where the `index`th face the borrow `id` lends lies now, in the
+/// borrowing body's frame, when it is flat: what a sketch placed on it
+/// follows.
+pub(crate) fn lent_face(
+    document: &Document,
+    id: FeatureId,
+    index: usize,
+) -> Option<([f32; 3], [f32; 3])> {
+    let borrow = borrow_of(document, id)?;
+    let (faces, _) = seen(document, &borrow);
+    flat(faces.get(index)?)
 }
 
 /// What the borrow draws in its body's frame: the sketch's curves, or the
@@ -629,15 +649,31 @@ fn mesh_face(mesh: &TriMesh, pick: &FacePick) -> Option<SeenFace> {
         (at(0), at(1), at(2))
     };
     let count = mesh.indices.len() / 3;
-    let (nearest, distance) = (0..count)
-        .map(|t| {
+    // The face bearing the pick's name, wherever it went; else the face
+    // under the point it was picked at.
+    let named: Option<u32> = (pick.name != 0)
+        .then(|| mesh.face_names.iter().position(|n| *n == pick.name))
+        .flatten()
+        .map(|face| face as u32);
+    let candidates: Vec<usize> = match named {
+        Some(face) => (0..count)
+            .filter(|t| mesh.faces.get(*t) == Some(&face))
+            .collect(),
+        None => (0..count).collect(),
+    };
+    let (nearest, distance) = candidates
+        .iter()
+        .map(|&t| {
             let (a, b, c) = triangle(t);
             (t, triangle_distance(pick.point, a, b, c))
         })
         .min_by(|x, y| x.1.total_cmp(&y.1))?;
-    if distance > PICK_REACH_MM {
+    if named.is_none() && distance > PICK_REACH_MM {
         return None;
     }
+    // Where the face is now: its point nearest the pick.
+    let (a, b, c) = triangle(nearest);
+    let point = nearest_on_triangle(pick.point, a, b, c);
     let members: Vec<usize> = match mesh.faces.get(nearest) {
         Some(face) => (0..count)
             .filter(|t| mesh.faces.get(*t) == Some(face))
@@ -669,11 +705,42 @@ fn mesh_face(mesh: &TriMesh, pick: &FacePick) -> Option<SeenFace> {
             outline.push(v);
         }
     }
+    let normal = match surface {
+        Some(FaceSurface::Plane { normal, .. }) => normal,
+        _ => pick.normal,
+    };
     Some(SeenFace {
-        pick: *pick,
+        pick: FacePick {
+            point,
+            normal,
+            name: pick.name,
+        },
         surface,
         outline,
     })
+}
+
+/// The point of triangle `abc` nearest `p`.
+fn nearest_on_triangle(p: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
+    let n = cross(sub(b, a), sub(c, a));
+    let len = length(n);
+    if len > 1e-12 {
+        let n = n.map(|v| v / len);
+        let d = dot(sub(p, a), n);
+        let q = [p[0] - n[0] * d, p[1] - n[1] * d, p[2] - n[2] * d];
+        // Inside the triangle when on the inner side of all three sides.
+        let inside = [(a, b), (b, c), (c, a)]
+            .iter()
+            .all(|(u, v)| dot(cross(sub(*v, *u), sub(q, *u)), n) >= 0.0);
+        if inside {
+            return q;
+        }
+    }
+    [(a, b), (b, c), (c, a)]
+        .into_iter()
+        .map(|(u, v)| nearest_on_segment(p, u, v))
+        .min_by(|x, y| length(sub(*x, p)).total_cmp(&length(sub(*y, p))))
+        .unwrap_or(a)
 }
 
 /// The edge of `mesh`'s outline a pick names: a point of it nearest the

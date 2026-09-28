@@ -180,6 +180,7 @@ impl SketchWorkbench {
         };
         let body = pending.body;
         let face = pending.face;
+        let face_origin = pending.face_origin;
         type Choice = (
             SketchPlane,
             Option<crate::feature::DatumSupport>,
@@ -210,8 +211,11 @@ impl SketchWorkbench {
                     .clicked()
             {
                 let plane = SketchPlane::from_face(face.point, face.normal);
-                // A face of the sketch's own body is followed.
-                let follows = body.map(|_| crate::feature::FaceSupport::on(&face, plane));
+                // A face of the sketch's own body, or one it borrows, is
+                // followed.
+                let follows = body.and_then(|_| {
+                    crate::feature::FaceSupport::from_origin(&face, face_origin, plane)
+                });
                 chosen = Some((plane, None, follows));
             }
             ui.horizontal(|ui| {

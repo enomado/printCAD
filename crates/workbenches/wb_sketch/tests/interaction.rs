@@ -348,7 +348,11 @@ fn cross_workbench_sketch_request_is_consumed() {
     let body = uuid::Uuid::new_v4();
     let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
     ctx.view_proj = Some(h.vp);
-    ctx.attach_request = Some(core_document::SketchAttachRequest { body, face: None });
+    ctx.attach_request = Some(core_document::SketchAttachRequest {
+        body,
+        face: None,
+        face_origin: core_document::FaceOrigin::Elsewhere,
+    });
     h.wb.on_input(
         &WorkbenchInputEvent::KeyPress { key: KeyCode::A },
         None,

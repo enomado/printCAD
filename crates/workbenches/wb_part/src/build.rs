@@ -126,6 +126,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
             for (datum, asks) in following_datums(document, body) {
                 document.note_built_against(datum, asks);
             }
+            answer_lent_faces(document, body);
             for (feature, seen) in borrow_inputs(document, body) {
                 document.note_built_against(feature, seen);
             }
@@ -155,6 +156,43 @@ fn following_datums(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> 
         .collect()
 }
 
+/// Tell each sketch of `body` placed on a face a borrow lends where the
+/// face is now, as the borrow finds it on its source, the way a build
+/// answers a sketch on the body's own solid.
+fn answer_lent_faces(document: &mut Document, body: BodyId) {
+    let lent: Vec<(FeatureId, wb_sketch::FaceSupport)> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.body == Some(body) && n.workbench_id.as_str() == "wb.sketch")
+        .filter_map(|(id, n)| {
+            let face = wb_sketch::SketchFeature::from_json(&n.data).ok()?.face?;
+            face.lent_by.is_some().then_some((*id, face))
+        })
+        .collect();
+    for (sketch, face) in lent {
+        let Some(lent_by) = face.lent_by else {
+            continue;
+        };
+        let answer = crate::borrow::lent_face(document, lent_by.borrow, lent_by.index)
+            .map(|(point, normal)| kernel_api::ProbeAnswer::Face {
+                point: point.map(f64::from),
+                normal: normal.map(f64::from),
+                surface: kernel_api::FaceSurface::Plane {
+                    origin: point,
+                    normal,
+                },
+            })
+            .ok_or_else(|| "the borrow no longer lends a flat face there".to_string());
+        document.set_probed_references(
+            sketch,
+            core_document::ProbedReferences {
+                probes: vec![face.probe()],
+                answers: vec![answer],
+            },
+        );
+    }
+}
+
 /// The datums of `body`, and its sketches placed on its faces, with
 /// references to find again on its solid: id, place in the history and
 /// the probes.
@@ -171,9 +209,16 @@ fn datums_asking(
                 core_document::DATUM_KIND => core_document::DatumFeature::from_json(&n.data)
                     .ok()?
                     .probes(),
+                // A face a borrow lends is on another body's solid:
+                // `answer_lent_faces` finds it, not this body's build.
                 "wb.sketch" => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
-                    sketch.face.iter().map(|face| face.probe()).collect()
+                    sketch
+                        .face
+                        .iter()
+                        .filter(|face| face.lent_by.is_none())
+                        .map(|face| face.probe())
+                        .collect()
                 }
                 _ => return None,
             };
