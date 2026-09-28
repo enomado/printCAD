@@ -49,18 +49,43 @@ pub fn fuse_or_compound(model: &mut Model, a: &Shape, b: &Shape) -> Result<Shape
     }
 }
 
-/// Fuse a list of region solids into one (multi-region profiles).
-pub fn fuse_all(model: &mut Model, mut parts: Vec<Shape>) -> Result<Shape, String> {
-    let first = parts
-        .drain(..1)
-        .next()
-        .ok_or_else(|| "operation produced no solid".to_string())?;
-    let mut acc = first;
-    for part in parts {
-        acc = fuse_or_compound(model, &acc, &part)
-            .map_err(|e| format!("fusing profile regions failed: {e}"))?;
+/// Fuse a list of region solids into one (multi-region profiles): each
+/// region fuses with the solids its bounds meet, one at a time, and what
+/// stays apart is compounded at the end, since a boolean takes solids and
+/// never a compound.
+pub fn fuse_all(model: &mut Model, parts: Vec<Shape>) -> Result<Shape, String> {
+    if parts.is_empty() {
+        return Err("operation produced no solid".to_string());
     }
-    Ok(acc)
+    let mut solids: Vec<Shape> = Vec::new();
+    for part in parts {
+        let mut pending = vec![part];
+        while let Some(piece) = pending.pop() {
+            let Some(i) = solids.iter().position(|s| bounds_overlap(model, s, &piece)) else {
+                solids.push(piece);
+                continue;
+            };
+            let other = solids.remove(i);
+            let fused = ogeom::boolean::fuse(model, &other, &piece, tol())
+                .map(|built| {
+                    crate::naming::record(&built.history);
+                    built.shape
+                })
+                .map_err(|e| format!("fusing profile regions failed: fuse failed: {e}"))?;
+            match solids_of(model, &fused).as_slice() {
+                // One solid: it may meet others yet.
+                [one] => pending.push(one.clone()),
+                // Their boxes met but they did not: both stay as they are.
+                several => solids.extend(several.iter().cloned()),
+            }
+        }
+    }
+    if solids.len() == 1 {
+        return Ok(solids.remove(0));
+    }
+    model
+        .add_compound(&solids)
+        .map_err(|e| format!("compounding disjoint solids failed: {e}"))
 }
 
 /// Unwrap a compound holding exactly one solid — boolean results sometimes

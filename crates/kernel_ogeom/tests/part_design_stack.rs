@@ -693,6 +693,52 @@ fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
     );
 }
 
+/// Text pads as any profile does: letters with holes keep them, and a
+/// letter apart from the rest makes a solid of its own.
+#[test]
+fn text_pads_to_raised_letters() {
+    let mut sketch = Sketch::new("label");
+    let spec = wb_sketch::text::TextSpec {
+        text: "Oi".into(),
+        size: 10.0,
+        ..Default::default()
+    };
+    wb_sketch::text::add(&mut sketch, Vec2D::new(0.0, 0.0), &spec).unwrap();
+    let plane = sketch.plane;
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch, plane),
+            "sketch".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(sketch_id, 1.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the text pads");
+    let (lo, hi) = result.bounds_mm.expect("bounds");
+    assert!((hi[2] - lo[2] - 1.0).abs() < 1e-3);
+    assert!(hi[0] - lo[0] > 8.0 && hi[1] - lo[1] > 6.0, "{lo:?}..{hi:?}");
+    let props = kernel.physical_properties(&result.brep_blob).unwrap();
+    let volume = props.volume_mm3.expect("closed solids");
+    // Raised letters cover far less than their box: the O's counter and
+    // the space around the i are open.
+    let box_volume = f64::from((hi[0] - lo[0]) * (hi[1] - lo[1]));
+    assert!(
+        volume > 0.05 * box_volume && volume < 0.6 * box_volume,
+        "{volume}"
+    );
+}
+
 /// A block with a bore through it, the bore's top rim rounded: the fillet
 /// a printed part's hole mouth takes most often.
 #[test]

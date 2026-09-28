@@ -649,6 +649,27 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `linked` (boolean, optional): Copies stay the originals' size, spaced by one pitch along the rows and one down the columns (false)
 - Returns {elements}: what it made
 
+`pc.sketch.text`: Lay out text as closed outlines standing on a new point: the start of its first line on the baseline.
+
+- `sketch` (id): The sketch to draw in
+- `text` (string): What it says; a new line starts a line
+- `at` (list): Where its point goes, {x, y}
+- `font` (string, optional): IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, or a font file's path (IBM Plex Sans)
+- `size` (number, optional): The font's em, mm (10)
+- `spacing` (number, optional): Added between letters, mm (0)
+- `angle` (number, optional): Degrees it turns about its point (0)
+- Returns {text, point}: the block and the point it stands on
+
+`pc.sketch.text_edit`: Change a text block, its outlines made again where its point stands.
+
+- `sketch` (id): The sketch to draw in
+- `block` (id): The text block, or its point
+- `text` (string, optional)
+- `font` (string, optional)
+- `size` (number, optional): mm
+- `spacing` (number, optional): mm
+- `angle` (number, optional): degrees
+
 `pc.sketch.to_bspline`: Make lines, arcs, circles, ellipses and conics into splines that are exactly them.
 
 - `sketch` (id): The sketch to draw in

@@ -41,6 +41,7 @@ const LOCAL = new Set([
   "script",
   "console",
   "constraint-arc-length",
+  "sketch-text",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

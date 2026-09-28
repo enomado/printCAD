@@ -76,6 +76,34 @@ pub struct Sketch {
     /// How the solver works on this sketch.
     #[serde(default, skip_serializing_if = "SolverSettings::is_default")]
     pub solver: SolverSettings,
+    /// Text laid out as outlines, each block standing on a point.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<TextBlock>,
+}
+
+/// A string in a font, laid out as closed outlines standing on `anchor`
+/// (the start of its first line on the baseline). The outlines' elements
+/// are the block's own: made from the rest, carried along with the point.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextBlock {
+    pub id: Uuid,
+    pub text: String,
+    /// A font the application carries, by name, or a font file's path.
+    pub font: String,
+    /// The font's em, in millimetres.
+    pub size: f32,
+    /// Millimetres added between letters.
+    #[serde(default)]
+    pub spacing: f32,
+    /// Degrees it turns counter-clockwise about its point.
+    #[serde(default)]
+    pub angle: f32,
+    pub anchor: Uuid,
+    /// The outlines' curves and points.
+    #[serde(default)]
+    pub elements: Vec<Uuid>,
+    /// Where the point stood when the outlines were last placed.
+    pub placed: Vec2D,
 }
 
 /// How far the solver goes on a sketch: how many steps it takes at most,
@@ -160,6 +188,7 @@ impl Sketch {
             construction: std::collections::HashSet::new(),
             external: std::collections::HashMap::new(),
             solver: SolverSettings::default(),
+            texts: Vec::new(),
         }
     }
 
@@ -263,6 +292,19 @@ impl Sketch {
     pub fn remove_geometry_cascade(&mut self, ids: &[Uuid]) -> Vec<Uuid> {
         use std::collections::HashSet;
         let mut doomed: HashSet<Uuid> = ids.iter().copied().collect();
+        // Text goes whole: its point or any piece of its outlines takes
+        // the rest of it.
+        let texts: Vec<Uuid> = self
+            .texts
+            .iter()
+            .filter(|b| doomed.contains(&b.anchor) || b.elements.iter().any(|e| doomed.contains(e)))
+            .map(|b| b.id)
+            .collect();
+        for block in self.texts.iter().filter(|b| texts.contains(&b.id)) {
+            doomed.insert(block.anchor);
+            doomed.extend(block.elements.iter().copied());
+        }
+        self.texts.retain(|b| !texts.contains(&b.id));
 
         // Curves that reference a doomed point are doomed too.
         for geom in &self.geometry {

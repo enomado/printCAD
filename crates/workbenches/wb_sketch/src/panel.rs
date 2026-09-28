@@ -98,6 +98,7 @@ impl SketchWorkbench {
         self.attachment_section(ui, ctx, support.as_ref());
         self.array_section(ui, ctx);
         self.spline_section(ui, ctx, &sketch);
+        self.text_section(ui, ctx, &sketch);
         self.solver_section(ui, ctx, &sketch);
         self.edit_controls_section(ui);
         self.constraints_section(ui, ctx, &sketch);
@@ -539,6 +540,7 @@ impl SketchWorkbench {
                     | "sketch.bspline"
                     | "sketch.rect_rounded"
                     | "sketch.rect_frame"
+                    | "sketch.text"
             )
         );
         if !has_settings {
@@ -565,6 +567,9 @@ impl SketchWorkbench {
                             params.polygon_sides = sides.round() as u32;
                         }
                         ui.end_row();
+                    }
+                    Some("sketch.text") => {
+                        text_fields(ui, "sketch_text_draft", &mut self.text_draft);
                     }
                     Some("sketch.slot" | "sketch.arc_slot") => {
                         ui_kit::widgets::field_label(ui, "Width");
@@ -675,6 +680,48 @@ impl SketchWorkbench {
                     _ => {}
                 }
             });
+    }
+
+    /// With a piece of a text block selected: what it says and how, made
+    /// again when a field is changed.
+    fn text_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
+        let Some(block) = self
+            .selected
+            .iter()
+            .find_map(|id| crate::text::block_of(sketch, *id))
+        else {
+            return;
+        };
+        if !section_header(ui, "sketch_text", "Text", None, true) {
+            return;
+        }
+        let id = block.id;
+        let mut spec = crate::text::TextSpec::of(block);
+        let mut changed = false;
+        egui::Grid::new("sketch_text_grid")
+            .num_columns(2)
+            .spacing([SPACE_2, SPACE_1])
+            .show(ui, |ui| {
+                changed = text_fields(ui, "sketch_text_block", &mut spec);
+            });
+        if changed {
+            let mut args = crate::text_args(&spec, None);
+            args["block"] = serde_json::json!(id.to_string());
+            self.sketch_edit(
+                ctx,
+                "sketch.text_edit",
+                args,
+                |s| match crate::text::change(s, id, &spec) {
+                    Ok(()) => crate::tools::ToolEffect::changed("Text changed"),
+                    Err(why) => crate::tools::ToolEffect::log(why),
+                },
+            );
+        }
     }
 
     /// With one spline selected: its degree and its knots, each with how
@@ -1829,4 +1876,75 @@ fn corner_row(ui: &mut egui::Ui, keep: &mut bool) {
         "The corner stays as a construction point on both curves, with its constraints",
     );
     ui.end_row();
+}
+
+/// A text's string, font, size, spacing and turn as grid rows. Whether one
+/// was changed: the string once its field is left, the rest at once.
+fn text_fields(ui: &mut egui::Ui, salt: &str, spec: &mut crate::text::TextSpec) -> bool {
+    let mut changed = false;
+    ui_kit::widgets::field_label(ui, "Text");
+    let mut draft = spec.text.clone();
+    let edit = ui.add(
+        egui::TextEdit::multiline(&mut draft)
+            .id_salt((salt, "text"))
+            .desired_rows(1)
+            .desired_width(160.0),
+    );
+    if edit.changed() {
+        spec.text = draft;
+    }
+    changed |= edit.lost_focus();
+    ui.end_row();
+    ui_kit::widgets::field_label(ui, "Font");
+    let fonts = crate::text::FONTS;
+    let mut which = fonts
+        .iter()
+        .position(|(name, _)| *name == spec.font)
+        .unwrap_or(usize::MAX);
+    let mut options: Vec<(usize, &str)> = fonts
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| (i, *name))
+        .collect();
+    options.push((usize::MAX, "A font file"));
+    if select_field(ui, (salt, "font"), &mut which, &options, 160.0) && which != usize::MAX {
+        spec.font = fonts[which].0.to_string();
+        changed = true;
+    }
+    ui.end_row();
+    if which == usize::MAX {
+        ui_kit::widgets::field_label(ui, "File");
+        let mut path = if fonts.iter().any(|(n, _)| *n == spec.font) {
+            String::new()
+        } else {
+            spec.font.clone()
+        };
+        let edit = ui.add(
+            egui::TextEdit::singleline(&mut path)
+                .id_salt((salt, "path"))
+                .hint_text("/path/to/font.ttf")
+                .desired_width(160.0),
+        );
+        if edit.changed() {
+            spec.font = path;
+        }
+        changed |= edit.lost_focus();
+        ui.end_row();
+    }
+    for (label, value, angle) in [
+        ("Size", &mut spec.size, false),
+        ("Spacing", &mut spec.spacing, false),
+        ("Angle", &mut spec.angle, true),
+    ] {
+        ui_kit::widgets::field_label(ui, label);
+        let field = if angle {
+            QtyField::degrees(value)
+        } else {
+            QtyField::mm(value)
+        };
+        changed |= field.show(ui);
+        ui.end_row();
+    }
+    spec.size = spec.size.max(0.1);
+    changed
 }

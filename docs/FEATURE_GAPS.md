@@ -23,7 +23,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Geometry
 
-- [ ] **Text** (missing, L). A string in a chosen font as closed outlines
+- [x] **Text** (missing, L). A string in a chosen font as closed outlines
   (lines, arcs, splines) that can be padded or pocketed, with size,
   spacing and an anchor point constraints can hold, editable afterwards. A
   generated sketch element (`src/generator/`) regenerated from its

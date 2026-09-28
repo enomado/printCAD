@@ -324,6 +324,49 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.text",
+            "Lay out text as closed outlines standing on a new point: the start of its first \
+             line on the baseline",
+        ))
+        .param(
+            "text",
+            ParamKind::String,
+            "What it says; a new line starts a line",
+        )
+        .param("at", ParamKind::List, "Where its point goes, {x, y}")
+        .optional(
+            "font",
+            ParamKind::String,
+            "IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, or a font file's path \
+             (IBM Plex Sans)",
+        )
+        .optional("size", ParamKind::Number, "The font's em, mm (10)")
+        .optional(
+            "spacing",
+            ParamKind::Number,
+            "Added between letters, mm (0)",
+        )
+        .optional(
+            "angle",
+            ParamKind::Number,
+            "Degrees it turns about its point (0)",
+        )
+        .returns("{text, point}: the block and the point it stands on"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.text_edit",
+            "Change a text block, its outlines made again where its point stands",
+        ))
+        .param("block", ParamKind::Id, "The text block, or its point")
+        .optional("text", ParamKind::String, "")
+        .optional("font", ParamKind::String, "")
+        .optional("size", ParamKind::Number, "mm")
+        .optional("spacing", ParamKind::Number, "mm")
+        .optional("angle", ParamKind::Number, "degrees"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.to_bspline",
             "Make lines, arcs, circles, ellipses and conics into splines that are exactly them",
         ))
@@ -909,6 +952,46 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             }
             made_since(sketch, &before)
         }
+        "sketch.text" => {
+            let mut spec = crate::text::TextSpec {
+                text: a.string("text")?.to_string(),
+                ..Default::default()
+            };
+            text_options(&a, &mut spec)?;
+            let at = points(Some(&json!([args
+                .get("at")
+                .cloned()
+                .unwrap_or(Value::Null)])))
+            .map_err(|_| CommandError::bad("at", "must be {x, y}"))?[0];
+            let block = crate::text::add(sketch, at, &spec).map_err(CommandError::failed)?;
+            let point = sketch
+                .texts
+                .iter()
+                .find(|b| b.id == block)
+                .map(|b| b.anchor)
+                .unwrap_or_default();
+            json!({"text": block.to_string(), "point": point.to_string()})
+        }
+        "sketch.text_edit" => {
+            let text = args
+                .get("block")
+                .and_then(Value::as_str)
+                .and_then(|t| Uuid::parse_str(t).ok())
+                .ok_or_else(|| CommandError::bad("block", "must be a text block's id"))?;
+            let block = sketch
+                .texts
+                .iter()
+                .find(|b| b.id == text || b.anchor == text)
+                .ok_or_else(|| CommandError::bad("block", "is no text block"))?;
+            let id = block.id;
+            let mut spec = crate::text::TextSpec::of(block);
+            if let Some(t) = a.opt_string("text")? {
+                spec.text = t.to_string();
+            }
+            text_options(&a, &mut spec)?;
+            crate::text::change(sketch, id, &spec).map_err(CommandError::failed)?;
+            Value::Null
+        }
         "sketch.to_bspline" => {
             let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
                 .into_iter()
@@ -1419,6 +1502,26 @@ fn unit(v: [f64; 3], name: &str) -> Result<[f64; 3], CommandError> {
 
 /// Ids named in a list: element and constraint ids, and the names of the
 /// sketch's origin and axes.
+/// A text's font, size, spacing and angle where `a` gives them.
+fn text_options(a: &Args, spec: &mut crate::text::TextSpec) -> Result<(), CommandError> {
+    if let Some(font) = a.opt_string("font")? {
+        spec.font = font.to_string();
+    }
+    if let Some(size) = a.opt_number("size")? {
+        if size <= 0.0 {
+            return Err(CommandError::bad("size", "must be more than 0"));
+        }
+        spec.size = size as f32;
+    }
+    if let Some(v) = a.opt_number("spacing")? {
+        spec.spacing = v as f32;
+    }
+    if let Some(v) = a.opt_number("angle")? {
+        spec.angle = v as f32;
+    }
+    Ok(())
+}
+
 /// The one id `args` gives as `name`.
 fn one_id(
     args: &serde_json::Map<String, Value>,
@@ -2197,6 +2300,46 @@ mod tests {
         let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
         assert_eq!(feature.support, None);
         assert!(doc.feature_tree().dependencies(id).is_empty());
+    }
+
+    #[test]
+    fn scripted_text_is_laid_out_and_changed() {
+        let mut doc = Document::new("t");
+        let sketch = call(&mut doc, "sketch.new", json!({"plane": "XY"})).unwrap();
+        let made = call(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": sketch, "text": "Hi", "at": [2, 3], "size": 8}),
+        )
+        .unwrap();
+        let id = FeatureId(uuid::Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
+        let read = |doc: &Document| {
+            SketchFeature::from_json(doc.get_feature_data(id).unwrap())
+                .unwrap()
+                .sketch
+        };
+        let s = read(&doc);
+        assert_eq!(s.texts.len(), 1);
+        assert_eq!(made["point"], json!(s.texts[0].anchor.to_string()));
+        let wires = crate::profile::extract_wires(&s).unwrap().len();
+        assert!(wires >= 3, "an H and an i: {wires}");
+        call(
+            &mut doc,
+            "sketch.text_edit",
+            json!({"sketch": sketch, "block": made["text"], "text": "HHH"}),
+        )
+        .unwrap();
+        let s = read(&doc);
+        assert_eq!(s.texts[0].text, "HHH");
+        assert_eq!(crate::profile::extract_wires(&s).unwrap().len(), 3);
+        assert!(
+            call(
+                &mut doc,
+                "sketch.text",
+                json!({"sketch": sketch, "text": "x", "at": [0, 0], "font": "/no/such.ttf"}),
+            )
+            .is_err()
+        );
     }
 
     #[test]

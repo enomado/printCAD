@@ -31,6 +31,7 @@ pub mod spline;
 pub mod spline_edit;
 mod step;
 pub mod style;
+pub mod text;
 mod tools;
 mod walls;
 
@@ -404,6 +405,8 @@ pub struct SketchWorkbench {
     /// Panel-editable tool parameters (polygon sides, slot width, fillet
     /// radius).
     tool_params: ToolParams,
+    /// What the text tool lays out at its next click.
+    text_draft: text::TextSpec,
     /// Most recent sketch tool seen in `on_input`; used by the left panel to
     /// show the matching tool settings.
     last_tool: Option<String>,
@@ -521,6 +524,7 @@ const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
     ("sketch.rect", "Rectangle", "rectangle"),
     ("sketch.polygon", "Regular polygon", "regular-polygon"),
     ("sketch.slot", "Slot", "slot"),
+    ("sketch.text", "Text", "sketch-text"),
     ("sketch.fillet", "Fillet", "sketch-fillet"),
     ("sketch.trim", "Trim", "trim"),
     ("sketch.extend", "Extend", "extend"),
@@ -663,6 +667,7 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.polygon" => ("Polygon", "Click the center"),
         "sketch.slot" => ("Slot", "Click the centerline start"),
         "sketch.arc_slot" => ("Arc slot", "Click the arc center"),
+        "sketch.text" => ("Text", "Click where the text starts"),
         "sketch.fillet" => ("Fillet", "Click a corner, or two curves"),
         "sketch.chamfer" => ("Chamfer", "Click a corner, or two curves"),
         "sketch.trim" => ("Trim", "Click the span to remove, or drag across spans"),
@@ -1066,6 +1071,18 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let (cursor, tol) = self.landing(ctx, &feature, tool, cursor);
+        if tool == "sketch.text" {
+            let spec = self.text_draft.clone();
+            return self.sketch_edit(
+                ctx,
+                "sketch.text",
+                text_args(&spec, Some(cursor)),
+                move |s| match text::add(s, cursor, &spec) {
+                    Ok(_) => tools::ToolEffect::changed(format!("Text \"{}\"", spec.text)),
+                    Err(why) => tools::ToolEffect::log(why),
+                },
+            );
+        }
         // The copy tool is the move tool with at least one copy.
         let params = ToolParams {
             copies: if self.copy_mode {
@@ -5467,6 +5484,22 @@ pub(crate) fn is_transform_tool(tool: &str) -> bool {
     )
 }
 
+/// The arguments of `sketch.text` (with `at`) or `sketch.text_edit` that
+/// make `spec`.
+pub(crate) fn text_args(spec: &text::TextSpec, at: Option<Vec2D>) -> serde_json::Value {
+    let mut args = serde_json::json!({
+        "text": spec.text,
+        "font": spec.font,
+        "size": spec.size,
+        "spacing": spec.spacing,
+        "angle": spec.angle,
+    });
+    if let Some(at) = at {
+        args["at"] = serde_json::json!([at.x, at.y]);
+    }
+    args
+}
+
 pub(crate) fn is_draw_tool(tool: &str) -> bool {
     matches!(
         tool,
@@ -5491,6 +5524,7 @@ pub(crate) fn is_draw_tool(tool: &str) -> bool {
             | "sketch.polygon"
             | "sketch.slot"
             | "sketch.arc_slot"
+            | "sketch.text"
     )
 }
 

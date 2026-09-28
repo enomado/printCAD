@@ -395,6 +395,7 @@ pub const ICONS: &[(&str, &str)] = &[
         "sketch-stop-operation",
         include_str!("../icons/sketch-stop-operation.svg"),
     ),
+    ("sketch-text", include_str!("../icons/sketch-text.svg")),
     (
         "sketch-validate",
         include_str!("../icons/sketch-validate.svg"),

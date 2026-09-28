@@ -5352,6 +5352,7 @@ dependencies = [
  "scripting",
  "serde",
  "serde_json",
+ "ttf-parser",
  "ui_kit",
  "uuid",
 ]

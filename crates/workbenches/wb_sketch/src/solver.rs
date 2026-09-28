@@ -58,6 +58,7 @@ pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
     let sys = build_system(sketch);
     let outcome = solve_system(sketch, sys);
     crate::spline::refit_splines(sketch);
+    crate::text::follow(sketch);
     outcome
 }
 
@@ -78,6 +79,7 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
         }
         outcome => {
             crate::spline::refit_splines(sketch);
+            crate::text::follow(sketch);
             outcome
         }
     }
@@ -1286,6 +1288,12 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
     // A spline drawn through points has its control points worked out from
     // them after the solve: the solver leaves them be.
     for id in crate::spline::derived_points(sketch) {
+        if let Some(&v) = point_vars.get(&id) {
+            pinned.extend([v, v + 1]);
+        }
+    }
+    // Text outlines follow their point after the solve.
+    for id in crate::text::outline_points(sketch) {
         if let Some(&v) = point_vars.get(&id) {
             pinned.extend([v, v + 1]);
         }
