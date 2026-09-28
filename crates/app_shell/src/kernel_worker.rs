@@ -384,12 +384,69 @@ fn watch_for(activity: &Arc<Mutex<Activity>>) -> Watch {
     })
 }
 
+/// How many built solids the worker keeps per body, and in all.
+const KEPT_PER_BODY: usize = 8;
+const KEPT: usize = 48;
+
+/// Solids built lately, each with the body and what it was built from:
+/// moving a body's tip back and forth through its history, or undoing and
+/// redoing, finds each solid built already.
+#[derive(Default)]
+struct BuiltSolids {
+    kept: std::collections::VecDeque<(Uuid, u64, SolidBuildResult)>,
+}
+
+impl BuiltSolids {
+    /// What a build is made from, as one number: the ops, the features
+    /// they build, the detail, the preview and the probes.
+    fn key(
+        ops: &[SolidOp],
+        op_features: &[Uuid],
+        detail: &TessellationSettings,
+        preview: &Option<std::ops::Range<usize>>,
+        asked: &[kernel_api::ChainProbe],
+    ) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_vec(&(ops, op_features, detail, preview, asked))
+            .ok()?
+            .hash(&mut hasher);
+        Some(hasher.finish())
+    }
+
+    fn get(&mut self, body: Uuid, key: u64) -> Option<SolidBuildResult> {
+        let at = self
+            .kept
+            .iter()
+            .position(|(b, k, _)| *b == body && *k == key)?;
+        // The newest used last goes to the back, the last to be dropped.
+        let entry = self.kept.remove(at)?;
+        let result = entry.2.clone();
+        self.kept.push_back(entry);
+        Some(result)
+    }
+
+    fn keep(&mut self, body: Uuid, key: u64, result: &SolidBuildResult) {
+        self.kept.retain(|(b, k, _)| !(*b == body && *k == key));
+        self.kept.push_back((body, key, result.clone()));
+        if self.kept.iter().filter(|(b, ..)| *b == body).count() > KEPT_PER_BODY
+            && let Some(oldest) = self.kept.iter().position(|(b, ..)| *b == body)
+        {
+            self.kept.remove(oldest);
+        }
+        while self.kept.len() > KEPT {
+            self.kept.pop_front();
+        }
+    }
+}
+
 fn worker_loop(
     rx: Receiver<KernelRequest>,
     tx: Sender<KernelResponse>,
     activity: Arc<Mutex<Activity>>,
 ) {
     let mut kernel = OgeomKernel::new();
+    let mut built = BuiltSolids::default();
     while let Ok(request) = rx.recv() {
         let watch = watch_for(&activity);
         {
@@ -461,7 +518,19 @@ fn worker_loop(
                     .iter()
                     .map(|f| kernel_api::naming::name_of_id(f.as_bytes()))
                     .collect();
-                match kernel.execute_solid_chain_named(&ops, &tags, &detail, range, &asked) {
+                let key = BuiltSolids::key(&ops, &op_features, &detail, &range, &asked);
+                let outcome = match key.and_then(|key| built.get(body_id, key)) {
+                    Some(result) => Ok(result),
+                    None => {
+                        let outcome =
+                            kernel.execute_solid_chain_named(&ops, &tags, &detail, range, &asked);
+                        if let (Ok(result), Some(key)) = (&outcome, key) {
+                            built.keep(body_id, key, result);
+                        }
+                        outcome
+                    }
+                };
+                match outcome {
                     Ok(result) => KernelResponse::SolidBuilt {
                         body_id,
                         result,
@@ -535,6 +604,32 @@ fn worker_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_solid_built_once_is_found_again_by_what_it_was_built_from() {
+        let mut built = BuiltSolids::default();
+        let body = Uuid::new_v4();
+        let detail = TessellationSettings::default();
+        let key = |ops: &[SolidOp]| BuiltSolids::key(ops, &[], &detail, &None, &[]).unwrap();
+        let refine = [SolidOp::Refine];
+        let result = SolidBuildResult {
+            brep_blob: b"solid".to_vec(),
+            ..Default::default()
+        };
+        built.keep(body, key(&refine), &result);
+        assert_eq!(built.get(body, key(&refine)).unwrap().brep_blob, b"solid");
+        assert!(built.get(body, key(&[])).is_none(), "other ops, not built");
+        assert!(
+            built.get(Uuid::new_v4(), key(&refine)).is_none(),
+            "another body"
+        );
+        // A body keeps its latest few.
+        for n in 0..KEPT_PER_BODY as u64 + 2 {
+            built.keep(body, 1000 + n, &result);
+        }
+        assert_eq!(built.kept.len(), KEPT_PER_BODY);
+        assert!(built.get(body, key(&refine)).is_none(), "the oldest went");
+    }
 
     fn activity(context: Option<&str>, detail: Option<&str>) -> Activity {
         Activity {
