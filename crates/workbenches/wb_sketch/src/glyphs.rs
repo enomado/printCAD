@@ -277,6 +277,8 @@ fn pair_refs(kind: &ConstraintKind) -> Option<[Uuid; 2]> {
             line_or_circle1,
             item2,
         } => Some([line_or_circle1, item2]),
+        ConstraintKind::TangentCurves { curve1, curve2 }
+        | ConstraintKind::PerpendicularCurves { curve1, curve2 } => Some([curve1, curve2]),
         _ => None,
     }
 }
@@ -731,6 +733,7 @@ pub fn build(
             ConstraintKind::PointOnLine { point, .. }
             | ConstraintKind::PointOnCircle { point, .. }
             | ConstraintKind::PointOnEllipse { point, .. }
+            | ConstraintKind::PointOnCurve { point, .. }
             | ConstraintKind::Midpoint { point, .. } => {
                 symbol_at(corner_off(sketch, point), None);
             }

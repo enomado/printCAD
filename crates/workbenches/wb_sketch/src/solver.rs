@@ -294,8 +294,169 @@ pub fn superseded(sketch: &Sketch, new: &[Uuid]) -> Vec<Uuid> {
     removed
 }
 
+/// A curve as the system moves it, to find its point at a parameter: a
+/// line, a circle or arc, an ellipse, a hyperbola or parabola, a spline
+/// over its control points.
+#[derive(Debug, Clone)]
+enum CurveVars {
+    Line {
+        s: usize,
+        e: usize,
+    },
+    Circle {
+        c: usize,
+        r: usize,
+    },
+    Ellipse {
+        c: usize,
+        shape: CurveShape,
+    },
+    Hyperbola {
+        c: usize,
+        shape: CurveShape,
+    },
+    Parabola {
+        c: usize,
+        shape: CurveShape,
+    },
+    Spline {
+        basis: crate::spline::Basis,
+        control: Vec<usize>,
+    },
+}
+
+impl CurveVars {
+    /// The curve's frame from its shape: the axis direction, its length and
+    /// the minor radius.
+    fn frame(v: &[f64], shape: CurveShape) -> ([f64; 2], f64, f64) {
+        let (x, y, minor) = shape.get(v);
+        let a = (x * x + y * y).sqrt().max(MIN_LEN);
+        ([x / a, y / a], a, minor)
+    }
+
+    /// Its point at `t`.
+    fn at(&self, v: &[f64], t: f64) -> [f64; 2] {
+        let along = |c: usize, u: [f64; 2], x: f64, y: f64| {
+            [v[c] + u[0] * x - u[1] * y, v[c + 1] + u[1] * x + u[0] * y]
+        };
+        match self {
+            CurveVars::Line { s, e } => [
+                v[*s] + t * (v[*e] - v[*s]),
+                v[*s + 1] + t * (v[*e + 1] - v[*s + 1]),
+            ],
+            CurveVars::Circle { c, r } => [v[*c] + v[*r] * t.cos(), v[*c + 1] + v[*r] * t.sin()],
+            CurveVars::Ellipse { c, shape } => {
+                let (u, a, b) = Self::frame(v, *shape);
+                along(*c, u, a * t.cos(), b * t.sin())
+            }
+            CurveVars::Hyperbola { c, shape } => {
+                let (u, a, b) = Self::frame(v, *shape);
+                along(*c, u, a * t.cosh(), b * t.sinh())
+            }
+            // The vertex at `c`, the focus `f` along the axis: y² = 4fx.
+            CurveVars::Parabola { c, shape } => {
+                let (u, f, _) = Self::frame(v, *shape);
+                along(*c, u, t * t / (4.0 * f), t)
+            }
+            CurveVars::Spline { basis, control } => {
+                let pts: Vec<[f64; 2]> = control.iter().map(|&k| [v[k], v[k + 1]]).collect();
+                basis.eval(&pts, t)
+            }
+        }
+    }
+
+    /// Its unit direction at `t`, by a small step either way.
+    fn direction(&self, v: &[f64], t: f64) -> [f64; 2] {
+        let h = 1e-6;
+        let (a, b) = (self.at(v, t - h), self.at(v, t + h));
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-300);
+        [dx / len, dy / len]
+    }
+
+    /// The parameters worth searching for a first guess.
+    fn range(&self, v: &[f64]) -> (f64, f64) {
+        match self {
+            // A line's own length and as much again either side.
+            CurveVars::Line { .. } => (-1.0, 2.0),
+            CurveVars::Circle { .. } | CurveVars::Ellipse { .. } => (0.0, std::f64::consts::TAU),
+            CurveVars::Hyperbola { .. } => (-4.0, 4.0),
+            CurveVars::Parabola { shape, .. } => {
+                let (_, f, _) = Self::frame(v, *shape);
+                (-20.0 * f, 20.0 * f)
+            }
+            CurveVars::Spline { basis, .. } => basis.domain(),
+        }
+    }
+}
+
+/// The parameter where `curve` comes nearest `target`: sampled, then
+/// narrowed.
+fn nearest_param(curve: &CurveVars, v: &[f64], target: [f64; 2]) -> f64 {
+    let d = |t: f64| {
+        let p = curve.at(v, t);
+        (p[0] - target[0]).powi(2) + (p[1] - target[1]).powi(2)
+    };
+    let (mut lo, mut hi) = curve.range(v);
+    let mut best = lo;
+    for _ in 0..4 {
+        let n = 64;
+        let step = (hi - lo) / n as f64;
+        best = (0..=n)
+            .map(|i| lo + step * i as f64)
+            .min_by(|a, b| d(*a).total_cmp(&d(*b)))
+            .unwrap_or(lo);
+        lo = best - step;
+        hi = best + step;
+    }
+    best
+}
+
+/// The parameters where two curves come nearest each other: sampled, then
+/// each narrowed against the other.
+fn nearest_params(a: &CurveVars, b: &CurveVars, v: &[f64]) -> (f64, f64) {
+    let (a0, a1) = a.range(v);
+    let (b0, b1) = b.range(v);
+    let n = 48;
+    let mut best = (a0, b0, f64::INFINITY);
+    for i in 0..=n {
+        let ta = a0 + (a1 - a0) * i as f64 / n as f64;
+        let pa = a.at(v, ta);
+        for j in 0..=n {
+            let tb = b0 + (b1 - b0) * j as f64 / n as f64;
+            let pb = b.at(v, tb);
+            let d = (pa[0] - pb[0]).powi(2) + (pa[1] - pb[1]).powi(2);
+            if d < best.2 {
+                best = (ta, tb, d);
+            }
+        }
+    }
+    let (mut ta, mut tb) = (best.0, best.1);
+    for _ in 0..4 {
+        tb = nearest_param(b, v, a.at(v, ta));
+        ta = nearest_param(a, v, b.at(v, tb));
+    }
+    (ta, tb)
+}
+
 /// One resolved constraint residual, expressed in variable indices.
 enum ResidualSpec {
+    /// p - curve(t) (2 residuals), `t` a variable of its own.
+    PointOnCurve {
+        p: usize,
+        curve: CurveVars,
+        t: usize,
+    },
+    /// Where two curves meet, a(ta) - b(tb) (2 residuals), and their
+    /// directions there: the sine between them for tangent, the cosine for
+    /// square.
+    CurvesMeet {
+        a: CurveVars,
+        ta: usize,
+        b: CurveVars,
+        tb: usize,
+        square: bool,
+    },
     /// p - pos (2 residuals).
     FixedPoint { p: usize, x: f64, y: f64 },
     /// p1 - p2 (2 residuals).
@@ -586,13 +747,43 @@ impl ResidualSpec {
             | ResidualSpec::Symmetric { .. }
             | ResidualSpec::Midpoint { .. }
             | ResidualSpec::EqualEllipse { .. }
+            | ResidualSpec::PointOnCurve { .. }
             | ResidualSpec::Internal { .. } => 2,
+            ResidualSpec::CurvesMeet { .. } => 3,
             _ => 1,
         }
     }
 
     fn eval(&self, v: &[f64], out: &mut Vec<f64>) {
+        match self {
+            ResidualSpec::PointOnCurve { p, curve, t } => {
+                let q = curve.at(v, v[*t]);
+                out.push(v[*p] - q[0]);
+                out.push(v[*p + 1] - q[1]);
+                return;
+            }
+            ResidualSpec::CurvesMeet {
+                a,
+                ta,
+                b,
+                tb,
+                square,
+            } => {
+                let (pa, pb) = (a.at(v, v[*ta]), b.at(v, v[*tb]));
+                out.push(pa[0] - pb[0]);
+                out.push(pa[1] - pb[1]);
+                let (da, db) = (a.direction(v, v[*ta]), b.direction(v, v[*tb]));
+                out.push(if *square {
+                    da[0] * db[0] + da[1] * db[1]
+                } else {
+                    da[0] * db[1] - da[1] * db[0]
+                });
+                return;
+            }
+            _ => {}
+        }
         match *self {
+            ResidualSpec::PointOnCurve { .. } | ResidualSpec::CurvesMeet { .. } => {}
             ResidualSpec::FixedPoint { p, x, y } => {
                 out.push(v[p] - x);
                 out.push(v[p + 1] - y);
@@ -1066,12 +1257,75 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         )
     };
 
+    // Any curve, to be read at a parameter.
+    let curve_of = |id: Uuid| -> Option<CurveVars> {
+        if let Some((s, e)) = line_vars(id) {
+            return Some(CurveVars::Line { s, e });
+        }
+        if let Some((c, r)) = circle_vars(id) {
+            return Some(CurveVars::Circle { c, r });
+        }
+        match sketch.get_geometry(id)? {
+            GeometryElement::Ellipse(e) => Some(CurveVars::Ellipse {
+                c: point_var(e.center)?,
+                shape: curve_shape(sketch, &shape_vars, e.id),
+            }),
+            GeometryElement::Conic(k) => {
+                let c = point_var(k.center)?;
+                let shape = curve_shape(sketch, &shape_vars, k.id);
+                Some(match k.kind {
+                    crate::sketch::ConicKind::Hyperbola => CurveVars::Hyperbola { c, shape },
+                    crate::sketch::ConicKind::Parabola => CurveVars::Parabola { c, shape },
+                })
+            }
+            GeometryElement::BSpline(b) => Some(CurveVars::Spline {
+                basis: crate::spline::Basis::of(b)?,
+                control: b
+                    .control_points
+                    .iter()
+                    .map(|p| point_var(*p))
+                    .collect::<Option<Vec<_>>>()?,
+            }),
+            _ => None,
+        }
+    };
+    // The parameters a constraint on a curve adds, past the geometry's
+    // variables: each where the curve is nearest now.
+    let base = vars.len();
+    let mut aux: Vec<f64> = Vec::new();
+
     let mut specs = Vec::new();
     for constraint in &sketch.constraints {
         if !constraint.is_solved() || exclude == Some(constraint.id) {
             continue;
         }
         match constraint.kind {
+            ConstraintKind::PointOnCurve { point, curve } => {
+                if let (Some(p), Some(curve)) = (point_var(point), curve_of(curve)) {
+                    let t0 = nearest_param(&curve, &vars, [vars[p], vars[p + 1]]);
+                    let t = base + aux.len();
+                    aux.push(t0);
+                    specs.push(ResidualSpec::PointOnCurve { p, curve, t });
+                }
+            }
+            ConstraintKind::TangentCurves { curve1, curve2 }
+            | ConstraintKind::PerpendicularCurves { curve1, curve2 } => {
+                if let (Some(a), Some(b)) = (curve_of(curve1), curve_of(curve2)) {
+                    let (t1, t2) = nearest_params(&a, &b, &vars);
+                    let ta = base + aux.len();
+                    aux.extend([t1, t2]);
+                    specs.push(ResidualSpec::CurvesMeet {
+                        a,
+                        ta,
+                        b,
+                        tb: ta + 1,
+                        square: matches!(
+                            constraint.kind,
+                            ConstraintKind::PerpendicularCurves { .. }
+                        ),
+                    });
+                }
+            }
             ConstraintKind::FixedPoint { point, position } => {
                 if let Some(p) = point_var(point) {
                     specs.push(ResidualSpec::FixedPoint {
@@ -1494,6 +1748,7 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
         }
     }
 
+    vars.extend(aux);
     specs.extend(conic_end_residuals(sketch, &point_var, &shape_vars));
     specs.extend(internal_residuals(sketch, exclude, &point_var, &shape_vars));
 
@@ -3121,6 +3376,206 @@ mod curve_constraints {
 
     fn with_dimension_value_kind(kind: &ConstraintKind, v: f32) -> ConstraintKind {
         crate::sketch::with_dimension_value(kind, v)
+    }
+
+    /// The distance from `p` to the nearest of `samples`.
+    fn off(samples: &[glam::Vec2], p: glam::Vec2) -> f32 {
+        samples
+            .iter()
+            .map(|q| (*q - p).length())
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    fn spline_samples(sketch: &Sketch, spline: Uuid) -> Vec<glam::Vec2> {
+        let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline) else {
+            panic!("not a spline");
+        };
+        let basis = crate::spline::Basis::of(b).unwrap();
+        let control: Vec<[f64; 2]> = b
+            .control_points
+            .iter()
+            .map(|id| {
+                let p = sketch.point_position(*id).unwrap();
+                [f64::from(p.x), f64::from(p.y)]
+            })
+            .collect();
+        basis
+            .sample(&control, 2000)
+            .into_iter()
+            .map(|p| p.to_glam())
+            .collect()
+    }
+
+    #[test]
+    fn a_point_is_held_on_a_spline_and_on_a_parabola() {
+        let mut sketch = Sketch::new("t");
+        let control: Vec<Uuid> = [(0.0, 0.0), (5.0, 8.0), (10.0, -4.0), (15.0, 3.0)]
+            .iter()
+            .map(|(x, y)| point(&mut sketch, *x, *y))
+            .collect();
+        for p in &control {
+            fix(&mut sketch, *p);
+        }
+        let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+            control, false,
+        )));
+        let p = point(&mut sketch, 7.0, 9.0);
+        sketch.add_constraint(ConstraintKind::PointOnCurve {
+            point: p,
+            curve: spline,
+        });
+        converged(&mut sketch);
+        let at = sketch.point_position(p).unwrap().to_glam();
+        assert!(off(&spline_samples(&sketch, spline), at) < 0.02, "{at:?}");
+
+        // y² = 4·2·x about the origin, opening along +x.
+        let mut sketch = Sketch::new("t");
+        let vertex = point(&mut sketch, 0.0, 0.0);
+        let s = point(&mut sketch, 2.0, -4.0);
+        let e = point(&mut sketch, 8.0, 8.0);
+        fix(&mut sketch, vertex);
+        let conic = sketch.add_geometry(GeometryElement::Conic(crate::sketch::Conic::new(
+            crate::sketch::ConicKind::Parabola,
+            vertex,
+            Vec2D::new(2.0, 0.0),
+            0.0,
+            s,
+            e,
+        )));
+        let p = point(&mut sketch, 5.0, 1.0);
+        sketch.add_constraint(ConstraintKind::PointOnCurve {
+            point: p,
+            curve: conic,
+        });
+        converged(&mut sketch);
+        let at = sketch.point_position(p).unwrap();
+        near(at.y * at.y, 8.0 * at.x);
+    }
+
+    #[test]
+    fn a_line_touches_an_ellipse_and_crosses_a_spline_square() {
+        let mut sketch = Sketch::new("t");
+        let c = point(&mut sketch, 0.0, 0.0);
+        fix(&mut sketch, c);
+        let ellipse = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
+            c,
+            Vec2D::new(6.0, 0.0),
+            0.5,
+        )));
+        let (a, b) = (
+            point(&mut sketch, -10.0, 5.0),
+            point(&mut sketch, 10.0, 4.0),
+        );
+        let l = line(&mut sketch, a, b);
+        fix(&mut sketch, a);
+        sketch.add_constraint(ConstraintKind::TangentCurves {
+            curve1: l,
+            curve2: ellipse,
+        });
+        converged(&mut sketch);
+        // The line's nearest approach to the ellipse is a touch.
+        let (pa, pb) = (
+            sketch.point_position(a).unwrap().to_glam(),
+            sketch.point_position(b).unwrap().to_glam(),
+        );
+        let ring: Vec<glam::Vec2> = (0..4000)
+            .map(|i| {
+                let t = i as f32 / 4000.0 * std::f32::consts::TAU;
+                glam::Vec2::new(6.0 * t.cos(), 3.0 * t.sin())
+            })
+            .collect();
+        let dir = (pb - pa).normalize();
+        let gap = ring
+            .iter()
+            .map(|q| (*q - pa).perp_dot(dir).abs())
+            .fold(f32::INFINITY, f32::min);
+        assert!(gap < 0.01, "touches: {gap}");
+
+        let mut sketch = Sketch::new("t");
+        let control: Vec<Uuid> = [(0.0, 0.0), (5.0, 8.0), (10.0, -4.0), (15.0, 3.0)]
+            .iter()
+            .map(|(x, y)| point(&mut sketch, *x, *y))
+            .collect();
+        for p in &control {
+            fix(&mut sketch, *p);
+        }
+        let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+            control, false,
+        )));
+        let (a, b) = (point(&mut sketch, 7.0, -6.0), point(&mut sketch, 8.0, 8.0));
+        let l = line(&mut sketch, a, b);
+        fix(&mut sketch, a);
+        sketch.add_constraint(ConstraintKind::PerpendicularCurves {
+            curve1: l,
+            curve2: spline,
+        });
+        converged(&mut sketch);
+        let samples = spline_samples(&sketch, spline);
+        let (pa, pb) = (
+            sketch.point_position(a).unwrap().to_glam(),
+            sketch.point_position(b).unwrap().to_glam(),
+        );
+        let dir = (pb - pa).normalize();
+        // Where the line meets the spline, the spline runs across it.
+        let (i, _) = samples
+            .iter()
+            .enumerate()
+            .map(|(i, q)| (i, (*q - pa).perp_dot(dir).abs()))
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .unwrap();
+        let along = (samples[i + 1] - samples[i.saturating_sub(1)]).normalize();
+        assert!(along.dot(dir).abs() < 0.02, "square: {}", along.dot(dir));
+    }
+
+    #[test]
+    fn two_ends_picked_are_joined_smoothly() {
+        let mut sketch = Sketch::new("t");
+        let (a, b) = (point(&mut sketch, 0.0, 0.0), point(&mut sketch, 10.0, 0.0));
+        let line = line(&mut sketch, a, b);
+        fix(&mut sketch, a);
+        fix(&mut sketch, b);
+        let c = point(&mut sketch, 12.0, 6.0);
+        let s = point(&mut sketch, 12.0, 1.0);
+        let e = point(&mut sketch, 17.0, 6.0);
+        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
+        let selected: std::collections::HashSet<Uuid> = [b, s].into();
+        let shape = crate::constrain::SelectionShape::of(&sketch, &selected);
+        let kinds = crate::constrain::kinds_for("tangent", &shape, &sketch).unwrap();
+        assert!(
+            matches!(
+                kinds[..],
+                [
+                    ConstraintKind::Coincident { .. },
+                    ConstraintKind::Tangent { line_or_circle1, item2 },
+                ] if line_or_circle1 == line && item2 == arc
+            ),
+            "{kinds:?}"
+        );
+        for kind in kinds {
+            sketch.add_constraint(kind);
+        }
+        converged(&mut sketch);
+        let joint = sketch.point_position(s).unwrap();
+        near(joint.x, 10.0);
+        near(joint.y, 0.0);
+        let center = sketch.point_position(c).unwrap();
+        near(center.x, 10.0);
+        let r = match sketch.get_geometry(arc) {
+            Some(GeometryElement::Arc(a)) => a.radius,
+            _ => unreachable!(),
+        };
+        near(center.y.abs(), r);
+
+        // A point and the two curves meeting at it take the same join.
+        let selected: std::collections::HashSet<Uuid> = [b, line, arc].into();
+        let shape = crate::constrain::SelectionShape::of(&sketch, &selected);
+        let kinds = crate::constrain::kinds_for("tangent", &shape, &sketch).unwrap();
+        assert!(
+            kinds
+                .iter()
+                .any(|k| matches!(k, ConstraintKind::Tangent { .. })),
+            "{kinds:?}"
+        );
     }
 
     #[test]

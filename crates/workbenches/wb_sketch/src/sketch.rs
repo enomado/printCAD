@@ -345,6 +345,9 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         ConstraintKind::PointOnLine { point, line } => vec![*point, *line],
         ConstraintKind::PointOnCircle { point, circle } => vec![*point, *circle],
         ConstraintKind::PointOnEllipse { point, ellipse } => vec![*point, *ellipse],
+        ConstraintKind::PointOnCurve { point, curve } => vec![*point, *curve],
+        ConstraintKind::TangentCurves { curve1, curve2 }
+        | ConstraintKind::PerpendicularCurves { curve1, curve2 } => vec![*curve1, *curve2],
         ConstraintKind::Horizontal { element }
         | ConstraintKind::Vertical { element }
         | ConstraintKind::Block { element } => vec![*element],
@@ -416,6 +419,9 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::PointOnLine { .. } => "Point on line".to_string(),
         ConstraintKind::PointOnCircle { .. } => "Point on circle".to_string(),
         ConstraintKind::PointOnEllipse { .. } => "Point on ellipse".to_string(),
+        ConstraintKind::PointOnCurve { .. } => "Point on curve".to_string(),
+        ConstraintKind::TangentCurves { .. } => "Tangent".to_string(),
+        ConstraintKind::PerpendicularCurves { .. } => "Perpendicular".to_string(),
         ConstraintKind::Horizontal { .. } | ConstraintKind::HorizontalPoints { .. } => {
             "Horizontal".to_string()
         }
@@ -1256,6 +1262,15 @@ pub enum ConstraintKind {
         point: Uuid,
         angle_rad: f32,
     },
+    /// A point on any curve: a spline, a parabola or hyperbola, or any of
+    /// the others.
+    PointOnCurve { point: Uuid, curve: Uuid },
+    /// Two curves of any kind touching: where they meet, their directions
+    /// agree.
+    TangentCurves { curve1: Uuid, curve2: Uuid },
+    /// Two curves of any kind crossing square: where they meet, their
+    /// directions stand at a right angle.
+    PerpendicularCurves { curve1: Uuid, curve2: Uuid },
     /// Two ellipses (or arcs of them) the same size: equal major and minor
     /// radii.
     EqualEllipse { ellipse1: Uuid, ellipse2: Uuid },

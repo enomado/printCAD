@@ -23,9 +23,14 @@ pub struct SelectionShape {
     /// The arcs among `circles`.
     pub arcs: Vec<Uuid>,
     pub ellipses: Vec<Uuid>,
+    /// Splines, parabolas and hyperbolas.
+    pub others: Vec<Uuid>,
     /// Everything selected in the order it was picked; where that is not
     /// known, in sketch order.
     pub picked: Vec<Uuid>,
+    /// For each selected point that ends a line or an arc: that curve, and
+    /// whether it is a line.
+    pub curve_ends: Vec<(Uuid, Uuid, bool)>,
 }
 
 impl SelectionShape {
@@ -73,7 +78,7 @@ impl SelectionShape {
                     shape.arcs.push(id);
                 }
                 GeometryElement::Ellipse(_) => shape.ellipses.push(id),
-                _ => {}
+                GeometryElement::BSpline(_) | GeometryElement::Conic(_) => shape.others.push(id),
             }
         }
         // The origin and the axes hold no entry in `geometry`, but they take
@@ -90,6 +95,20 @@ impl SelectionShape {
             }
         }
         shape.picked = shape.all.clone();
+        for point in shape.points.clone() {
+            let owner = sketch.geometry.iter().find_map(|g| match g {
+                GeometryElement::Line(l) if l.start == point || l.end == point => {
+                    Some((l.id, true))
+                }
+                GeometryElement::Arc(a) if a.start == point || a.end == point => {
+                    Some((a.id, false))
+                }
+                _ => None,
+            });
+            if let Some((curve, line)) = owner {
+                shape.curve_ends.push((point, curve, line));
+            }
+        }
         shape
     }
 
@@ -188,6 +207,27 @@ pub fn kinds_for(
             point: p[0],
             ellipse: e[0],
         }],
+        "point_on_object" if p.len() == 1 && shape.others.len() == 1 && shape.total() == 2 => {
+            vec![ConstraintKind::PointOnCurve {
+                point: p[0],
+                curve: shape.others[0],
+            }]
+        }
+        // Two curves at least one of which is an ellipse, a conic or a
+        // spline: the general tangency and squareness.
+        "tangent" | "perpendicular"
+            if p.is_empty()
+                && shape.total() == 2
+                && !(tool == "tangent" && e.is_empty() && shape.others.is_empty())
+                && !(tool == "perpendicular" && l.len() == 2) =>
+        {
+            let (curve1, curve2) = (shape.all[0], shape.all[1]);
+            vec![if tool == "tangent" {
+                ConstraintKind::TangentCurves { curve1, curve2 }
+            } else {
+                ConstraintKind::PerpendicularCurves { curve1, curve2 }
+            }]
+        }
         "midpoint" if shape.only(1, 1, 0, 0) => vec![ConstraintKind::Midpoint {
             point: p[0],
             line: l[0],
@@ -243,6 +283,41 @@ pub fn kinds_for(
             line1: l[0],
             line2: l[1],
         }],
+        // A point and the two curves that meet there: joined smoothly at it.
+        "tangent"
+            if p.len() == 1 && l.len() + c.len() == 2 && shape.only(1, l.len(), c.len(), 0) =>
+        {
+            let point = p[0];
+            let curves: Vec<(Uuid, bool)> = shape
+                .all
+                .iter()
+                .copied()
+                .filter(|id| *id != point)
+                .map(|id| (id, l.contains(&id)))
+                .collect();
+            let mut kinds: Vec<ConstraintKind> = curves
+                .iter()
+                .filter(|(curve, _)| !held_on(sketch, point, *curve))
+                .map(|(curve, _)| on_curve(shape, point, *curve))
+                .collect();
+            kinds.push(tangency(curves[0], curves[1]));
+            kinds
+        }
+        // An end of each of two curves: the ends joined, the curves smooth
+        // across the join.
+        "tangent" if shape.only(2, 0, 0, 0) && shape.curve_ends.len() == 2 => {
+            let [(p1, c1, line1), (p2, c2, line2)] = [shape.curve_ends[0], shape.curve_ends[1]];
+            if c1 == c2 {
+                return None;
+            }
+            vec![
+                ConstraintKind::Coincident {
+                    point1: p1,
+                    point2: p2,
+                },
+                tangency((c1, line1), (c2, line2)),
+            ]
+        }
         "tangent" if shape.only(0, 0, 2, 0) => vec![ConstraintKind::Tangent {
             line_or_circle1: c[0],
             item2: c[1],
@@ -613,14 +688,41 @@ fn held_on(sketch: &Sketch, point: Uuid, curve: Uuid) -> bool {
     sketch.constraints.iter().any(|c| match c.kind {
         ConstraintKind::PointOnLine { point, line } => line == curve && same.contains(&point),
         ConstraintKind::PointOnCircle { point, circle } => circle == curve && same.contains(&point),
+        ConstraintKind::PointOnEllipse { point, ellipse } => {
+            ellipse == curve && same.contains(&point)
+        }
+        ConstraintKind::PointOnCurve { point, curve: on } => on == curve && same.contains(&point),
         _ => false,
     })
+}
+
+/// Two curves that meet held smooth there: two lines in one line, a line
+/// and a circle or two circles tangent (`true` marks a line).
+fn tangency((a, a_line): (Uuid, bool), (b, b_line): (Uuid, bool)) -> ConstraintKind {
+    match (a_line, b_line) {
+        (true, true) => ConstraintKind::Parallel { line1: a, line2: b },
+        (false, true) => ConstraintKind::Tangent {
+            line_or_circle1: b,
+            item2: a,
+        },
+        _ => ConstraintKind::Tangent {
+            line_or_circle1: a,
+            item2: b,
+        },
+    }
 }
 
 /// The constraint that keeps `point` on `curve`.
 fn on_curve(shape: &SelectionShape, point: Uuid, curve: Uuid) -> ConstraintKind {
     if shape.lines.contains(&curve) {
         ConstraintKind::PointOnLine { point, line: curve }
+    } else if shape.ellipses.contains(&curve) {
+        ConstraintKind::PointOnEllipse {
+            point,
+            ellipse: curve,
+        }
+    } else if shape.others.contains(&curve) {
+        ConstraintKind::PointOnCurve { point, curve }
     } else {
         ConstraintKind::PointOnCircle {
             point,

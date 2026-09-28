@@ -12,7 +12,9 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::FixedPoint { .. } => "constraint-lock",
         ConstraintKind::Coincident { .. } => "constraint-coincident",
         ConstraintKind::Parallel { .. } => "constraint-parallel",
-        ConstraintKind::Perpendicular { .. } => "constraint-perpendicular",
+        ConstraintKind::Perpendicular { .. } | ConstraintKind::PerpendicularCurves { .. } => {
+            "constraint-perpendicular"
+        }
         ConstraintKind::EqualLength { .. }
         | ConstraintKind::EqualRadius { .. }
         | ConstraintKind::EqualEllipse { .. } => "constraint-equal",
@@ -29,6 +31,7 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::PointOnLine { .. }
         | ConstraintKind::PointOnCircle { .. }
         | ConstraintKind::PointOnEllipse { .. }
+        | ConstraintKind::PointOnCurve { .. }
         | ConstraintKind::Midpoint { .. } => "constraint-point-on-object",
         ConstraintKind::Horizontal { .. } | ConstraintKind::HorizontalPoints { .. } => {
             "constraint-horizontal"
@@ -42,7 +45,9 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Angle { .. }
         | ConstraintKind::AngleToAxis { .. }
         | ConstraintKind::AngleAtPoint { .. } => "constraint-angle",
-        ConstraintKind::Tangent { .. } => "constraint-tangent",
+        ConstraintKind::Tangent { .. } | ConstraintKind::TangentCurves { .. } => {
+            "constraint-tangent"
+        }
         ConstraintKind::Symmetric { .. } | ConstraintKind::SymmetricAboutPoint { .. } => {
             "constraint-symmetric"
         }

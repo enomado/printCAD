@@ -68,13 +68,13 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Constraints
 
-- [ ] **Smooth join** (missing, M). A point and two curves: the curves
+- [x] **Smooth join** (missing, M). A point and two curves: the curves
   meet at the point with matching direction, as one constraint.
-- [ ] **Tangent and perpendicular for every curve kind** (partial, L).
+- [x] **Tangent and perpendicular for every curve kind** (partial, L).
   Tangent is line and circle or two circles; perpendicular is two lines.
   Missing ellipses, conics and B-splines, and a line square to a circle
   (`solver.rs` `Tangent`).
-- [ ] **Point on B-splines and conics** (partial, M).
+- [x] **Point on B-splines and conics** (partial, M).
 - [x] **Horizontal or vertical between two points** (partial, S). The
   tools take lines only; two hole centres level is a common step.
 - [x] **One constraint across many elements** (partial, S). Equal on
