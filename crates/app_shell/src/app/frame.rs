@@ -675,11 +675,11 @@ impl PrintCadApp {
                         document_saving: self.session.document_save_rx.is_some()
                             || server_status.saves_in_flight > 0,
                         save_progress: self.session.save_progress.as_ref().and_then(|p| p.read()),
-                        server_label: match (server_status.connected, server_status.peers) {
-                            (false, _) => format!("{} (disconnected)", self.session.server.name()),
-                            (true, 0) => self.session.server.name().to_string(),
-                            (true, 1) => format!("{} · 1 peer", self.session.server.name()),
-                            (true, n) => format!("{} · {n} peers", self.session.server.name()),
+                        server: crate::ui::status_bar::ServerBadge {
+                            name: self.session.server.name().to_string(),
+                            standalone: self.session.server.standalone(),
+                            connected: server_status.connected,
+                            peers: server_status.peers,
                         },
                         tabs,
                         measuring: self.session.measure.is_some(),

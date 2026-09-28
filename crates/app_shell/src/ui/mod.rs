@@ -20,7 +20,7 @@ mod preferences;
 mod property_panel;
 mod release_notes;
 mod start_page;
-mod status_bar;
+pub(crate) mod status_bar;
 mod step_import_modal;
 mod tab_bar;
 mod task_panel;
@@ -235,7 +235,7 @@ impl UiLayer {
             kernel_status,
             kernel_cancellable,
             kernel_progress,
-            server_label,
+            server,
             tabs,
             measuring,
             reveal_body,
@@ -541,7 +541,7 @@ impl UiLayer {
                     kernel_status: kernel_status.as_deref(),
                     kernel_cancellable,
                     kernel_progress,
-                    server_label: &server_label,
+                    server: &server,
                     document_saving,
                     save_progress,
                     nav_style,

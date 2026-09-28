@@ -43,6 +43,10 @@ impl DocumentServer for DirectFiles {
         "direct files (no daemon)"
     }
 
+    fn standalone(&self) -> bool {
+        true
+    }
+
     fn send(&mut self, msg: ClientMessage) {
         self.workers.retain(|handle| !handle.is_finished());
         match msg {

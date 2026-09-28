@@ -71,7 +71,10 @@ pub fn import_step(
     // bounds — so the bodies go wide. Serializing the snapshot dominates by
     // two orders of magnitude, which is what makes this worth threading.
     let loop_start = Instant::now();
-    progress::context(format_args!("Preparing {} bodies", sources.len()));
+    match sources.len() {
+        1 => progress::context("Preparing 1 body"),
+        n => progress::context(format_args!("Preparing {n} bodies")),
+    }
     // Workers finish out of order; a shared counter keeps the announced
     // progress monotone regardless of which body lands when.
     let done = std::sync::atomic::AtomicU64::new(0);

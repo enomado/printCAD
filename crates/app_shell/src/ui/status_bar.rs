@@ -3,14 +3,26 @@
 //! navigation style, frame counters, the document server).
 
 use axes::AxisSystem;
-use core_document::{StatusItems, Unit, format_length_mm};
+use core_document::{StatusItems, Unit};
 use egui::{RichText, Vec2};
 use glam::Vec3;
 use ui_kit::sans;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{mono_label, small_secondary_button, vseparator};
+use ui_kit::widgets::{mono_label, vseparator};
 
 use super::overlays::rgb;
+
+/// The document server serving a tab, as the status bar shows it.
+#[derive(Debug, Clone, Default)]
+pub struct ServerBadge {
+    /// What the server calls itself, for the tooltip.
+    pub name: String,
+    /// The app reads and writes files itself, with no server process.
+    pub standalone: bool,
+    pub connected: bool,
+    /// Other clients editing the same document.
+    pub peers: u32,
+}
 
 /// Everything the status bar reads this frame.
 pub struct StatusBarInputs<'a> {
@@ -24,7 +36,7 @@ pub struct StatusBarInputs<'a> {
     pub kernel_status: Option<&'a str>,
     pub kernel_cancellable: bool,
     pub kernel_progress: Option<(u64, u64)>,
-    pub server_label: &'a str,
+    pub server: &'a ServerBadge,
     pub document_saving: bool,
     /// Bytes packed into the archive being saved, out of the whole.
     pub save_progress: Option<(u64, u64)>,
@@ -52,23 +64,50 @@ pub struct StatusBarResult {
     pub stop_recording: bool,
 }
 
-fn progress_bar(ui: &mut egui::Ui, done: u64, total: u64) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(120.0, 6.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 3.0, BG4);
+/// A thin bar, `done` of `total` filled, the counts on hover.
+fn progress_bar(ui: &mut egui::Ui, done: u64, total: u64, hover: String) {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(96.0, 4.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 2.0, BG4);
     let mut fill = rect;
-    fill.set_width(rect.width() * (done as f32 / total as f32));
-    ui.painter().rect_filled(fill, 3.0, ACCENT);
+    fill.set_width(rect.width() * (done as f32 / total as f32).clamp(0.0, 1.0));
+    ui.painter().rect_filled(fill, 2.0, ACCENT);
+    response.on_hover_text(hover);
 }
 
 fn megabytes(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
 
-/// Returns true when the user asked to stop the running kernel job.
+fn percent(done: u64, total: u64) -> String {
+    format!("{:.0}%", 100.0 * done as f64 / total as f64)
+}
+
+/// Small text in the bar's type.
+fn text(ui: &mut egui::Ui, s: impl Into<String>, color: egui::Color32) -> egui::Response {
+    ui.add(egui::Label::new(RichText::new(s).font(sans(FONT_XS)).color(color)).truncate())
+}
+
+/// A coloured dot of the bar's size.
+fn dot(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(6.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 3.0, color);
+    response
+}
+
+/// A button that reads as text until hovered.
+fn quiet_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(label).font(sans(FONT_XS)).color(TEXT1))
+            .fill(egui::Color32::TRANSPARENT)
+            .stroke(egui::Stroke::new(1.0, BORDER))
+            .corner_radius(3.0)
+            .min_size(Vec2::new(0.0, 16.0)),
+    )
+}
+
+/// Draws the bar; says which of its buttons were pressed.
 pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
-    let mut cancel_requested = false;
-    let mut stop_script = false;
-    let mut stop_recording = false;
+    let mut result = StatusBarResult::default();
     egui::Panel::bottom("status_bar")
         .exact_size(STATUS_BAR)
         .frame(
@@ -81,150 +120,202 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
             let rect = ui.max_rect();
             ui.painter()
                 .hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, BORDER));
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_4;
-                draw_activity(ui, inputs, &mut cancel_requested);
-                if inputs.recording {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = SPACE_2;
-                        let (rect, _) =
-                            ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 4.0, DANGER);
-                        ui.label(RichText::new("Recording").font(sans(FONT_XS)).color(TEXT1));
-                        if small_secondary_button(ui, "Stop")
-                            .on_hover_text("Save what was recorded as a new script")
-                            .clicked()
-                        {
-                            stop_recording = true;
-                        }
-                    });
-                }
-                if let Some(script) = inputs.script_running {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = SPACE_2;
-                        ui.add(egui::Spinner::new().size(12.0).color(ACCENT));
-                        ui.label(
-                            RichText::new(format!("Running {script}"))
-                                .font(sans(FONT_XS))
-                                .color(TEXT1),
-                        );
-                        if small_secondary_button(ui, "Stop").clicked() {
-                            stop_script = true;
-                        }
-                    });
-                }
-
-                if let Some(sel) = inputs.items.and_then(|i| i.selection.as_deref()) {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(RichText::new("Selected:").font(sans(FONT_XS)).color(TEXT2));
-                        ui.label(RichText::new(sel).font(sans(FONT_XS)).color(TEXT1));
-                    });
-                } else if let Some(pre) = inputs.preselect {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(
-                            RichText::new("Preselected:")
-                                .font(sans(FONT_XS))
-                                .color(TEXT2),
-                        );
-                        ui.label(RichText::new(pre).font(sans(FONT_XS)).color(TEXT1));
-                    });
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = SPACE_3;
-                    if let Some(mode) = inputs.items.and_then(|i| i.mode.as_deref()) {
-                        ui.label(RichText::new(mode).font(sans(FONT_XS)).color(TEXT2));
-                        vseparator(ui, 14.0);
-                    }
-                    ui.label(
-                        RichText::new(format!("Nav: {}", inputs.nav_style))
-                            .font(sans(FONT_XS))
-                            .color(TEXT2),
-                    );
-                    if let Some(device) = inputs.nav_device {
-                        vseparator(ui, 14.0);
-                        ui.label(RichText::new(device).font(sans(FONT_XS)).color(TEXT2))
-                            .on_hover_text("6-DoF mouse connected");
-                    }
-                    vseparator(ui, 14.0);
-                    // Two numbers because they are two things: UI frames
-                    // presented, and how often the 3D scene was re-rendered
-                    // under them (cached otherwise).
-                    let scene = if inputs.fps.is_none() || inputs.scene_redraws_per_s == 0 {
-                        "scene: cached".to_string()
-                    } else {
-                        format!("scene: {}/s", inputs.scene_redraws_per_s)
-                    };
-                    mono_label(ui, scene, FONT_XS, TEXT3);
-                    let fps = match inputs.fps {
-                        Some(fps) if fps > 0.0 => format!("FPS {fps:.0}"),
-                        Some(_) => "FPS …".to_string(),
-                        // The loop is about to sleep; a frozen number would
-                        // read as a live measurement.
-                        None => "FPS idle".to_string(),
-                    };
-                    mono_label(ui, fps, FONT_XS, TEXT3);
-                    mono_label(ui, inputs.server_label, FONT_XS, TEXT3);
-                    vseparator(ui, 14.0);
-                    if let Some(dim) = inputs.dimensions {
-                        mono_label(ui, format!("Dim: {dim}"), FONT_XS, TEXT2);
-                    }
-                    mono_label(ui, coords_text(inputs), FONT_XS, TEXT2);
-                });
-            });
+            // The readouts on the right keep their room; what is happening
+            // on the left is cut short before it runs under them.
+            egui::containers::Sides::new()
+                .height(rect.height())
+                .spacing(SPACE_4)
+                .shrink_left()
+                .truncate()
+                .show(
+                    ui,
+                    |ui| {
+                        ui.set_clip_rect(ui.max_rect());
+                        ui.spacing_mut().item_spacing.x = SPACE_4;
+                        draw_left(ui, inputs, &mut result);
+                    },
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = SPACE_3;
+                        draw_right(ui, inputs);
+                    },
+                );
         });
-    StatusBarResult {
-        cancel_kernel: cancel_requested,
-        stop_script,
-        stop_recording,
+    result
+}
+
+/// What is happening: the activity, a recording, a script, the selection.
+fn draw_left(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, result: &mut StatusBarResult) {
+    draw_activity(ui, inputs, &mut result.cancel_kernel);
+    if inputs.recording {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_2;
+            dot(ui, DANGER);
+            text(ui, "Recording", TEXT1);
+            if quiet_button(ui, "Stop")
+                .on_hover_text("Save what was recorded as a new script")
+                .clicked()
+            {
+                result.stop_recording = true;
+            }
+        });
+    }
+    if let Some(script) = inputs.script_running {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_2;
+            ui.add(egui::Spinner::new().size(11.0).color(ACCENT));
+            text(ui, format!("Running {script}"), TEXT1);
+            if quiet_button(ui, "Stop").clicked() {
+                result.stop_script = true;
+            }
+        });
+    }
+    let (what, name) = match (
+        inputs.items.and_then(|i| i.selection.as_deref()),
+        inputs.preselect,
+    ) {
+        (Some(sel), _) => ("Selected", sel),
+        (None, Some(pre)) => ("Under the cursor", pre),
+        (None, None) => return,
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_1;
+        text(ui, what, TEXT3);
+        text(ui, name, TEXT1);
+    });
+}
+
+/// The readouts, laid out from the right edge: navigation, performance,
+/// the server, then what the bench or the cursor says.
+fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) {
+    text(ui, inputs.nav_style, TEXT3).on_hover_text("Navigation style (Preferences › Input)");
+    if let Some(device) = inputs.nav_device {
+        text(ui, device, TEXT3).on_hover_text("6-DoF mouse connected");
+    }
+    vseparator(ui, 12.0);
+
+    // Two numbers because they are two things: UI frames presented, and
+    // how often the 3D scene was drawn again under them.
+    let fps = match inputs.fps {
+        Some(fps) if fps > 0.0 => format!("{fps:.0} fps"),
+        Some(_) => "… fps".to_string(),
+        // The loop is about to sleep; a frozen number would read as a live
+        // measurement.
+        None => "idle".to_string(),
+    };
+    let scene = if inputs.fps.is_none() || inputs.scene_redraws_per_s == 0 {
+        "cached".to_string()
+    } else {
+        format!("{}/s", inputs.scene_redraws_per_s)
+    };
+    mono_label(ui, format!("{fps} · {scene}"), FONT_XS, TEXT3).on_hover_text(
+        "Frames drawn per second, and how often the 3D scene was drawn again \
+         (cached while nothing in it changes)",
+    );
+    vseparator(ui, 12.0);
+    draw_server(ui, inputs.server);
+
+    let coords = coords_text(inputs);
+    let mode = inputs.items.and_then(|i| i.mode.as_deref());
+    if coords.is_some() || inputs.dimensions.is_some() || mode.is_some() {
+        vseparator(ui, 12.0);
+    }
+    if let Some(mode) = mode {
+        text(ui, mode, TEXT2);
+    }
+    if let Some(dim) = inputs.dimensions {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_1;
+            mono_label(ui, dim, FONT_XS, TEXT2);
+            text(ui, "Size", TEXT3);
+        })
+        .response
+        .on_hover_text("The selection's bounding box");
+    }
+    if let Some(coords) = coords {
+        mono_label(ui, coords, FONT_XS, TEXT2).on_hover_text("The point under the cursor");
     }
 }
 
-fn coords_text(inputs: &StatusBarInputs<'_>) -> String {
+/// The document server: a dot while all is well, words when it is not.
+fn draw_server(ui: &mut egui::Ui, server: &ServerBadge) {
+    let (color, words, hover) = if server.standalone {
+        (
+            WARNING,
+            Some("No server".to_string()),
+            "The document server is not running: printCAD reads and writes files \
+             itself, with no edit log beside them and no one else editing"
+                .to_string(),
+        )
+    } else if !server.connected {
+        (
+            DANGER,
+            Some("Server lost".to_string()),
+            format!(
+                "The connection to the {} was lost; save to keep your work",
+                server.name
+            ),
+        )
+    } else if server.peers > 0 {
+        let peers = if server.peers == 1 {
+            "1 peer".to_string()
+        } else {
+            format!("{} peers", server.peers)
+        };
+        (
+            ACCENT,
+            Some(peers.clone()),
+            format!("Served by the {}, with {peers} editing too", server.name),
+        )
+    } else {
+        (SUCCESS, None, format!("Served by the {}", server.name))
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_1;
+        if let Some(words) = words {
+            text(ui, words, TEXT2);
+        }
+        dot(
+            ui,
+            color.gamma_multiply(if server.connected && !server.standalone {
+                0.7
+            } else {
+                1.0
+            }),
+        );
+    })
+    .response
+    .on_hover_text(hover);
+}
+
+/// Where the cursor is, while it is over something (or what the bench
+/// says in its place): each axis by its direction, in the document's unit.
+fn coords_text(inputs: &StatusBarInputs<'_>) -> Option<String> {
     if let Some(coords) = inputs.items.and_then(|i| i.coords.as_deref()) {
-        return coords.to_owned();
+        return Some(coords.to_owned());
     }
+    let pos = inputs.hovered_point?;
+    let canonical = inputs
+        .axis_system
+        .world_to_canonical(Vec3::from_array(pos))
+        .to_array();
     let axes = [
-        ("H", inputs.axis_system.horizontal()),
-        ("V", inputs.axis_system.vertical()),
-        ("D", inputs.axis_system.depth()),
+        inputs.axis_system.horizontal(),
+        inputs.axis_system.vertical(),
+        inputs.axis_system.depth(),
     ];
-    match inputs.hovered_point {
-        Some(pos) => {
-            let canonical = inputs
-                .axis_system
-                .world_to_canonical(Vec3::from_array(pos))
-                .to_array();
-            axes.iter()
-                .enumerate()
-                .map(|(idx, (role, axis))| {
-                    // Stored coordinates are millimetres; format through the
-                    // document's display unit.
-                    format!(
-                        "{}({}) {}",
-                        role,
-                        axis.signed_label(),
-                        format_length_mm(canonical[idx], inputs.display_unit, 2)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" · ")
-        }
-        None => {
-            let suffix = inputs.display_unit.short_label();
-            axes.iter()
-                .map(|(role, axis)| format!("{}({}): {}", role, axis.signed_label(), suffix))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        }
-    }
+    let unit = inputs.display_unit;
+    let values = axes
+        .iter()
+        .zip(canonical)
+        .map(|(axis, mm)| format!("{} {:.2}", axis.signed_label(), unit.from_mm(mm)))
+        .collect::<Vec<_>>()
+        .join("  ");
+    Some(format!("{values} {}", unit.short_label()))
 }
 
-/// The far-left slot: a state dot with a title, or — while the kernel,
-/// an open or a save is busy — a spinner or determinate bar with the
-/// announced stage and a Cancel button.
+/// The far-left slot: a state dot with a title, or, while the kernel, an
+/// open or a save is busy, a spinner or a bar with the announced stage and
+/// a Cancel button.
 fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut bool) {
     let busy = inputs.pending_imports > 0 || inputs.pending_document_open > 0;
     if !busy {
@@ -234,9 +325,8 @@ fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut b
         };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(6.0), egui::Sense::hover());
-            ui.painter().circle_filled(rect.center(), 3.0, color);
-            ui.label(RichText::new(title).font(sans(FONT_XS)).color(TEXT2));
+            dot(ui, color);
+            text(ui, title, TEXT2);
         });
         return;
     }
@@ -247,21 +337,21 @@ fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut b
         // else keeps the honest spinner.
         match (inputs.kernel_progress, inputs.save_progress) {
             (Some((done, total)), _) if total > 0 => {
-                progress_bar(ui, done, total);
-                mono_label(ui, format!("{done}/{total}"), FONT_XS, TEXT3);
+                progress_bar(ui, done, total, format!("{done} of {total}"));
+                mono_label(ui, percent(done, total), FONT_XS, TEXT2);
             }
             // A save counts bytes, which read better as megabytes.
             (None, Some((done, total))) if total > 0 => {
-                progress_bar(ui, done, total);
-                mono_label(
+                progress_bar(
                     ui,
-                    format!("{:.0}/{:.0} MB", megabytes(done), megabytes(total)),
-                    FONT_XS,
-                    TEXT3,
+                    done,
+                    total,
+                    format!("{:.1} of {:.1} MB", megabytes(done), megabytes(total)),
                 );
+                mono_label(ui, percent(done, total), FONT_XS, TEXT2);
             }
             _ => {
-                ui.add(egui::Spinner::new().size(12.0).color(ACCENT));
+                ui.add(egui::Spinner::new().size(11.0).color(ACCENT));
             }
         }
         let mut parts = Vec::new();
@@ -276,16 +366,16 @@ fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut b
             None => {}
         }
         if inputs.document_saving {
-            parts.push("Saving document…".to_string());
+            parts.push("Saving…".to_string());
         } else if inputs.pending_document_open > 0 {
-            parts.push("Opening document…".to_string());
+            parts.push("Opening…".to_string());
         }
         ui.label(
             RichText::new(parts.join(" · "))
                 .font(sans(FONT_XS))
                 .color(TEXT1),
         );
-        if inputs.kernel_cancellable && small_secondary_button(ui, "Cancel").clicked() {
+        if inputs.kernel_cancellable && quiet_button(ui, "Cancel").clicked() {
             *cancel = true;
         }
     });

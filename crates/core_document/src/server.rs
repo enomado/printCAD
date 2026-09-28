@@ -199,6 +199,12 @@ pub trait DocumentServer: Send {
     /// Human-readable implementation name for logs and the status bar.
     fn name(&self) -> &str;
 
+    /// The app reads and writes the files itself, with no server process:
+    /// no peers, no op log beside the file.
+    fn standalone(&self) -> bool {
+        false
+    }
+
     /// Queue a message. Never blocks; delivery failures surface through
     /// [`Self::status`] and error messages in [`Self::poll`].
     fn send(&mut self, msg: ClientMessage);

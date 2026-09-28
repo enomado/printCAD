@@ -89,9 +89,8 @@ pub struct UiFrameInputs<'a> {
     pub document_saving: bool,
     /// Bytes packed into the archive being saved, out of the whole.
     pub save_progress: Option<(u64, u64)>,
-    /// Which document server serves this session, with a degraded marker —
-    /// e.g. "local daemon" or "local daemon (disconnected)".
-    pub server_label: String,
+    /// The document server serving this session, and how it is doing.
+    pub server: super::status_bar::ServerBadge,
     /// The strip of open documents, in order.
     pub tabs: Vec<super::TabInfo>,
     /// The measure tool is armed.
