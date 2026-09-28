@@ -456,7 +456,12 @@ fn worker_loop(
                     Some(first..last + 1)
                 });
                 let asked: Vec<kernel_api::ChainProbe> = probes.iter().map(|p| p.probe).collect();
-                match kernel.execute_solid_chain_probing(&ops, &detail, range, &asked) {
+                // Each op's faces are named after the feature it builds.
+                let tags: Vec<kernel_api::TopoName> = op_features
+                    .iter()
+                    .map(|f| kernel_api::naming::name_of_id(f.as_bytes()))
+                    .collect();
+                match kernel.execute_solid_chain_named(&ops, &tags, &detail, range, &asked) {
                     Ok(result) => KernelResponse::SolidBuilt {
                         body_id,
                         result,

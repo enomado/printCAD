@@ -18,6 +18,7 @@ fn xy_plane() -> ProfilePlane {
 
 fn polygon(corners: &[[f64; 2]]) -> ProfileWire {
     ProfileWire {
+        names: Vec::new(),
         segments: (0..corners.len())
             .map(|i| ProfileSegment::Line {
                 start: corners[i],
@@ -29,6 +30,7 @@ fn polygon(corners: &[[f64; 2]]) -> ProfileWire {
 
 fn circle(radius: f64) -> ProfileWire {
     ProfileWire {
+        names: Vec::new(),
         segments: vec![ProfileSegment::Circle {
             center: [0.0, 0.0],
             radius,
@@ -78,6 +80,7 @@ fn rounded_rectangle(w: f64, h: f64, r: f64) -> ProfileWire {
     };
     let line = |start: [f64; 2], end: [f64; 2]| ProfileSegment::Line { start, end };
     ProfileWire {
+        names: Vec::new(),
         segments: vec![
             line([r, 0.0], [w - r, 0.0]),
             arc([w - r, r], [0.0, -1.0], [1.0, -1.0], [1.0, 0.0]),
@@ -183,10 +186,12 @@ fn a_straight_tube_has_a_straight_centre_line_its_length() {
         .centre_line(
             &blob,
             &FaceProbe {
+                name: 0,
                 point: [2.5, 0.0, 0.0],
                 normal: [0.0, 0.0, -1.0],
             },
             &FaceProbe {
+                name: 0,
                 point: [0.0, 2.5, 20.0],
                 normal: [0.0, 0.0, 1.0],
             },
@@ -214,6 +219,7 @@ fn a_bent_tube_has_a_centre_line_along_its_bend() {
         spine: Profile {
             plane: xy_plane(),
             wires: vec![ProfileWire {
+                names: Vec::new(),
                 segments: vec![ProfileSegment::Arc {
                     start: [0.0, 0.0],
                     mid: [
@@ -233,10 +239,12 @@ fn a_bent_tube_has_a_centre_line_along_its_bend() {
         .centre_line(
             &blob,
             &FaceProbe {
+                name: 0,
                 point: [0.0, 2.5, 0.0],
                 normal: [-1.0, 0.0, 0.0],
             },
             &FaceProbe {
+                name: 0,
                 point: [22.5, 20.0, 0.0],
                 normal: [0.0, 1.0, 0.0],
             },

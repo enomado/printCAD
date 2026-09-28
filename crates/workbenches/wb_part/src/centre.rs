@@ -94,6 +94,7 @@ pub(crate) fn command(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandRes
     }
     let probe = |point: &str, normal: &str| -> Result<FaceProbe, CommandError> {
         Ok(FaceProbe {
+            name: 0,
             point: crate::commands::vector3(a.0.get(point), point)?.map(f64::from),
             normal: crate::commands::vector3(a.0.get(normal), normal)?.map(f64::from),
         })
@@ -140,6 +141,7 @@ impl PartDesignWorkbench {
         let picked = Picked {
             body,
             probe: FaceProbe {
+                name: local.name,
                 point: local.point.map(f64::from),
                 normal: local.normal.map(f64::from),
             },

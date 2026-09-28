@@ -250,6 +250,7 @@ fn picks_editor(
         {
             restart_from(from, picked, faces, edges);
             faces.push(FacePick {
+                name: 0,
                 point: face.point,
                 normal: face.normal,
             });
@@ -271,6 +272,7 @@ fn picks_editor(
                 .filter(|e| BodyId(e.body) == picked)
             {
                 edges.push(EdgePick {
+                    faces: [0, 0],
                     point: edge.point,
                     direction: edge.direction,
                 });

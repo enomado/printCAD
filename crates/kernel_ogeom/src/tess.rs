@@ -173,6 +173,28 @@ pub fn mesh_shape_with(
     detail: &TessellationSettings,
     faces_threading: Faces,
 ) -> KernelResult<TriMesh> {
+    mesh_faces(model, root, face_colors, detail, faces_threading, None)
+}
+
+/// As [`mesh_shape`], each face carrying its name from `names` and each
+/// edge the names of the faces it runs between.
+pub(crate) fn mesh_named(
+    model: &Model,
+    root: &Shape,
+    detail: &TessellationSettings,
+    names: &crate::naming::NameMap,
+) -> KernelResult<TriMesh> {
+    mesh_faces(model, root, &[], detail, Faces::Wide, Some(names))
+}
+
+fn mesh_faces(
+    model: &Model,
+    root: &Shape,
+    face_colors: &[[f32; 3]],
+    detail: &TessellationSettings,
+    faces_threading: Faces,
+    names: Option<&crate::naming::NameMap>,
+) -> KernelResult<TriMesh> {
     let tol = tolerances();
     let deflection = deflection_for(model, root, detail);
     let faces = explore(model, root, Filter::OfType(ShapeType::Face))
@@ -272,6 +294,9 @@ pub fn mesh_shape_with(
         face_normals.push(average);
         mesh.face_surfaces
             .push(face_surface(model, face_shape, average));
+        if let Some(names) = names {
+            mesh.face_names.push(names.primary(face_shape));
+        }
 
         for t in &tri.triangles {
             mesh.indices.push(base + t[0]);
@@ -325,6 +350,11 @@ pub fn mesh_shape_with(
                 }
                 mesh.edges = outline.segments.iter().map(|i| base + i).collect();
                 mesh.edge_ids = outline.edge_ids;
+                if let Some(names) = names
+                    && let Ok(edges) = explore_unique(model, root, ShapeType::Edge)
+                {
+                    mesh.edge_faces = crate::naming::edge_faces(model, names, &edges);
+                }
             }
             Ok(_) => mesh.edges = extract_boundary_edges(&mesh.indices),
             Err(e) => {

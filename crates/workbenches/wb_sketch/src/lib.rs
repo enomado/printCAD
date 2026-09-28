@@ -5735,6 +5735,7 @@ mod external_geometry {
         wb.on_input(&armed, Some("sketch.external:intersection"), &mut ctx);
         ctx.selected_body_id = Some(body.0);
         ctx.selected_face = Some(core_document::FaceRef {
+            name: 0,
             point: [4.0, 2.0, -3.0],
             normal: [1.0, 0.0, 0.0],
             surface: None,
@@ -5795,6 +5796,7 @@ mod external_geometry {
         ctx.active_document_object = Some(sketch);
         ctx.kernel = Some(&FLAT);
         ctx.selected_edges = vec![EdgeRef {
+            faces: [0, 0],
             point: [2.0, 7.0, 0.0],
             direction: [1.0, 0.0, 0.0],
             length_mm: 10.0,

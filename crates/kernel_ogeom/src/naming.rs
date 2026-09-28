@@ -1,0 +1,709 @@
+//! The names of the faces of the solid a chain builds, carried from op to
+//! op (see `kernel_api::naming`).
+//!
+//! A feature's tool names its faces by what made them: the wall a profile
+//! segment sweeps by the segment's name, the ends by where they stand
+//! along the profile's normal. Any other face a feature adds is named by
+//! its kind of surface and which way it faces, ties broken by where it
+//! is, so a box keeps its names when it grows. After an op, each face of
+//! the result takes the names of every face it came from: the faces of the
+//! solid before and of the tool that it shares ground with (a piece a
+//! boolean cut from a face lies on that face; a face refine merged covers
+//! the faces it merged).
+//!
+//! While an op runs, the chain sets the names of the solid it works on
+//! ([`set_current`]); looking up a face or an edge by a reference's names
+//! goes through [`find_face`] and [`find_edge`], which fall back to the
+//! reference's point when the names find nothing.
+
+use std::cell::RefCell;
+
+use kernel_api::{Profile, ProfileSegment, TopoName, naming};
+use ogeom::math::{Point, Vector};
+use ogeom::mesh::{Deflection, triangulate_face};
+use ogeom::topo::{Model, NodeData, SameKey, Shape, ShapeType, explore_unique};
+
+use crate::tess;
+
+/// How fine a face is drawn to tell which faces lie on which: this part of
+/// its size, within [`FINEST`, `COARSEST`] mm. A flat face is drawn exactly
+/// whatever the chord; a curved one strays from its surface by the chord.
+const CHORD_PART: f64 = 2e-3;
+const FINEST: f64 = 0.005;
+const COARSEST: f64 = 0.25;
+/// Slack on top of two faces' chords for a point to lie on a face.
+const SLACK: f64 = 1e-4;
+
+/// One face with its names and what telling it apart takes.
+#[derive(Debug, Clone)]
+pub(crate) struct NamedFace {
+    pub face: Shape,
+    pub names: Vec<TopoName>,
+    /// A point well inside the face, and its normal there.
+    sample: Option<(Point, Vector)>,
+    /// The face's drawing, for telling whether a point lies on it.
+    triangles: Vec<[Point; 3]>,
+    min: Point,
+    max: Point,
+    /// The chord it was drawn to.
+    chord: f64,
+    /// What tells this face from any other at a glance.
+    print: Print,
+}
+
+/// A face at a glance: its kind of surface, how many vertices and edges
+/// bound it, and where its vertices lie. An op that leaves a face as it
+/// was, whatever it calls it, leaves its print as it was; one that trims
+/// the face changes its edges or its vertices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Print {
+    kind: u8,
+    vertices: usize,
+    edges: usize,
+    /// The bounds of the vertices, in micrometres.
+    bounds: [i64; 6],
+}
+
+impl Print {
+    fn of(model: &Model, face: &Shape) -> Self {
+        let vertices = explore_unique(model, face, ShapeType::Vertex).unwrap_or_default();
+        let edges = explore_unique(model, face, ShapeType::Edge)
+            .map(|e| e.len())
+            .unwrap_or(0);
+        let mut lo = [f64::MAX; 3];
+        let mut hi = [f64::MIN; 3];
+        for vertex in &vertices {
+            let Some(NodeData::Vertex(data)) = model.node(vertex).map(|n| n.data()) else {
+                continue;
+            };
+            let Ok(placement) = vertex.transform(model.datums()) else {
+                continue;
+            };
+            let p = placement.apply(data.point);
+            for (i, c) in [p.x, p.y, p.z].into_iter().enumerate() {
+                lo[i] = lo[i].min(c);
+                hi[i] = hi[i].max(c);
+            }
+        }
+        let um = |c: f64| (c * 1000.0).round() as i64;
+        Self {
+            kind: surface_kind(model, face),
+            vertices: vertices.len(),
+            edges,
+            bounds: [
+                um(lo[0]),
+                um(lo[1]),
+                um(lo[2]),
+                um(hi[0]),
+                um(hi[1]),
+                um(hi[2]),
+            ],
+        }
+    }
+}
+
+impl NamedFace {
+    fn drawn(model: &Model, face: Shape, print: Print) -> Self {
+        let tol = tess::tolerances();
+        let chord = tess::robust_bounds(model, &face)
+            .map_or(COARSEST, |(lo, hi)| (hi - lo).magnitude() * CHORD_PART)
+            .clamp(FINEST, COARSEST);
+        let triangles: Vec<[Point; 3]> = Deflection::with_chord(chord)
+            .ok()
+            .and_then(|d| triangulate_face(model, &face, d, tol).ok())
+            .map(|mesh| {
+                mesh.triangles
+                    .iter()
+                    .map(|t| t.map(|i| mesh.positions[i as usize]))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sample = triangles
+            .iter()
+            .map(|[a, b, c]| (((*b - *a).cross(*c - *a)).magnitude(), [*a, *b, *c]))
+            .max_by(|x, y| x.0.total_cmp(&y.0))
+            .filter(|(area, _)| *area > 0.0)
+            .map(|(_, [a, b, c])| {
+                let centre = Point::new(
+                    (a.x + b.x + c.x) / 3.0,
+                    (a.y + b.y + c.y) / 3.0,
+                    (a.z + b.z + c.z) / 3.0,
+                );
+                let n = (b - a).cross(c - a);
+                (centre, n * (1.0 / n.magnitude()))
+            });
+        let mut min = Point::new(f64::MAX, f64::MAX, f64::MAX);
+        let mut max = Point::new(f64::MIN, f64::MIN, f64::MIN);
+        for p in triangles.iter().flatten() {
+            min = Point::new(min.x.min(p.x), min.y.min(p.y), min.z.min(p.z));
+            max = Point::new(max.x.max(p.x), max.y.max(p.y), max.z.max(p.z));
+        }
+        Self {
+            face,
+            names: Vec::new(),
+            sample,
+            triangles,
+            min,
+            max,
+            chord,
+            print,
+        }
+    }
+
+    /// Whether `p`, a point drawn to `chord`, lies on this face.
+    fn holds(&self, p: Point, chord: f64) -> bool {
+        let reach = 2.0 * (self.chord + chord) + SLACK;
+        if p.x < self.min.x - reach
+            || p.y < self.min.y - reach
+            || p.z < self.min.z - reach
+            || p.x > self.max.x + reach
+            || p.y > self.max.y + reach
+            || p.z > self.max.z + reach
+        {
+            return false;
+        }
+        self.triangles
+            .iter()
+            .any(|t| point_triangle_distance(p, t) <= reach)
+    }
+}
+
+/// The names of the faces of one solid.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct NameMap {
+    faces: Vec<NamedFace>,
+}
+
+impl NameMap {
+    /// The names of `face`, when it is one of this solid's.
+    pub fn names_of(&self, face: &Shape) -> &[TopoName] {
+        let key = SameKey(face.clone());
+        self.faces
+            .iter()
+            .find(|f| SameKey(f.face.clone()) == key)
+            .map_or(&[], |f| f.names.as_slice())
+    }
+
+    /// The one name a pick keeps of `face`: the least of its names.
+    pub fn primary(&self, face: &Shape) -> TopoName {
+        self.names_of(face).iter().copied().min().unwrap_or(0)
+    }
+
+    /// The faces of `root`, each named by `name` (given the face, and a
+    /// point well inside it with the normal there); faces left without a
+    /// name are named afresh under `fresh`.
+    pub fn assign(
+        model: &Model,
+        root: &Shape,
+        fresh: TopoName,
+        name: impl FnMut(&NamedFace) -> Vec<TopoName>,
+    ) -> Self {
+        Self::assign_reusing(model, root, fresh, &[], name)
+    }
+
+    /// [`Self::assign`], taking the drawing of a face that is one of
+    /// `known`'s as it is rather than drawing it again.
+    fn assign_reusing(
+        model: &Model,
+        root: &Shape,
+        fresh: TopoName,
+        known: &[&NameMap],
+        mut name: impl FnMut(&NamedFace) -> Vec<TopoName>,
+    ) -> Self {
+        let faces = explore_unique(model, root, ShapeType::Face).unwrap_or_default();
+        // A face that is one of `known`'s, by identity or by its print,
+        // takes that face's drawing and names as they are.
+        let mut kept: Vec<Option<Vec<TopoName>>> = Vec::with_capacity(faces.len());
+        let mut map = NameMap {
+            faces: faces
+                .into_iter()
+                .map(|face| {
+                    let key = SameKey(face.clone());
+                    let known_faces = || known.iter().flat_map(|m| m.faces.iter());
+                    if let Some(f) = known_faces().find(|f| SameKey(f.face.clone()) == key) {
+                        kept.push(Some(f.names.clone()));
+                        return NamedFace {
+                            face: face.clone(),
+                            names: Vec::new(),
+                            ..f.clone()
+                        };
+                    }
+                    let print = Print::of(model, &face);
+                    let mut same = known_faces().filter(|f| f.print == print);
+                    match (same.next(), same.next()) {
+                        (Some(f), None) => {
+                            kept.push(Some(f.names.clone()));
+                            NamedFace {
+                                face: face.clone(),
+                                names: Vec::new(),
+                                ..f.clone()
+                            }
+                        }
+                        _ => {
+                            kept.push(None);
+                            NamedFace::drawn(model, face, print)
+                        }
+                    }
+                })
+                .collect(),
+        };
+        for (f, kept) in map.faces.iter_mut().zip(kept) {
+            f.names = match kept {
+                Some(names) if !names.is_empty() => names,
+                _ => name(f),
+            };
+        }
+        map.name_the_rest(model, fresh);
+        map
+    }
+
+    /// The faces of `result`, each named after every face of `sources` it
+    /// came from; faces that came from none are named afresh under
+    /// `fresh`.
+    pub fn carry(model: &Model, result: &Shape, sources: &[&NameMap], fresh: TopoName) -> Self {
+        Self::assign_reusing(model, result, fresh, sources, |f| {
+            let key = SameKey(f.face.clone());
+            let mut names: Vec<TopoName> = Vec::new();
+            for source in sources {
+                for g in &source.faces {
+                    if g.names.is_empty() {
+                        continue;
+                    }
+                    let same = SameKey(g.face.clone()) == key;
+                    // A piece lies on the face it was cut from; a merged
+                    // face covers each face it merged.
+                    let within = f.sample.is_some_and(|(p, _)| g.holds(p, f.chord));
+                    if same || within {
+                        names.extend(&g.names);
+                    }
+                }
+            }
+            names
+        })
+        .with_covered(sources)
+    }
+
+    /// Names every face of `self` also after each source face whose
+    /// inside it covers: what a merge of faces keeps.
+    fn with_covered(mut self, sources: &[&NameMap]) -> Self {
+        for f in &mut self.faces {
+            for source in sources {
+                for g in &source.faces {
+                    if g.names.is_empty() || g.names.iter().all(|n| f.names.contains(n)) {
+                        continue;
+                    }
+                    if let Some((p, _)) = g.sample
+                        && f.holds(p, g.chord)
+                    {
+                        f.names.extend(&g.names);
+                    }
+                }
+            }
+            f.names.sort_unstable();
+            f.names.dedup();
+        }
+        self
+    }
+
+    /// Names the faces still without one: by kind of surface and the way
+    /// the face looks, ties broken by where it is.
+    fn name_the_rest(&mut self, model: &Model, fresh: TopoName) {
+        let mut keyed: Vec<(TopoName, [i64; 3], usize)> = Vec::new();
+        for (index, f) in self.faces.iter().enumerate() {
+            if !f.names.is_empty() {
+                continue;
+            }
+            let (kind, facing, at) = match f.sample {
+                Some((p, n)) => (
+                    surface_kind(model, &f.face),
+                    [n.x, n.y, n.z].map(|c| (c * 100.0).round() as i64),
+                    [p.x, p.y, p.z].map(|c| (c * 1000.0).round() as i64),
+                ),
+                None => (0, [0; 3], [0; 3]),
+            };
+            let mut bytes = vec![b'f', kind];
+            for c in facing {
+                bytes.extend_from_slice(&c.to_le_bytes());
+            }
+            keyed.push((naming::child(fresh, &bytes), at, index));
+        }
+        keyed.sort();
+        let mut previous: Option<TopoName> = None;
+        let mut rank = 0u32;
+        for (key, _, index) in keyed {
+            rank = if previous == Some(key) { rank + 1 } else { 0 };
+            previous = Some(key);
+            let name = if rank == 0 {
+                key
+            } else {
+                naming::child(key, &rank.to_le_bytes())
+            };
+            self.faces[index].names.push(name);
+        }
+    }
+
+    /// The faces of the solid, with their names.
+    pub fn faces(&self) -> impl Iterator<Item = (&Shape, &[TopoName])> {
+        self.faces.iter().map(|f| (&f.face, f.names.as_slice()))
+    }
+}
+
+/// A number for the kind of surface a face lies on, as far as naming
+/// needs to tell faces apart.
+fn surface_kind(model: &Model, face: &Shape) -> u8 {
+    let Some(NodeData::Face(data)) = model.node(face).map(|n| n.data()) else {
+        return 0;
+    };
+    let Some(surface) = model.geometry().surface(data.surface) else {
+        return 0;
+    };
+    // The surface's variant, by its name, is kind enough.
+    let text = format!("{surface:?}");
+    let word: String = text.chars().take_while(|c| c.is_alphanumeric()).collect();
+    naming::name_of(word.as_bytes()).to_le_bytes()[0]
+}
+
+/// The names of a feature's tool: each wall after the profile segment it
+/// was swept from (`segments`: the segments' names and a point inside
+/// each, in the tool's frame), the ends after where they stand along
+/// `normal` from `origin`, the rest afresh.
+pub(crate) fn tool_names(
+    model: &Model,
+    tool: &Shape,
+    feature: TopoName,
+    segments: &[(TopoName, Point)],
+    origin: Point,
+    normal: Vector,
+) -> NameMap {
+    let mut ends: Vec<(f64, usize)> = Vec::new();
+    let mut map = NameMap::assign(model, tool, feature, |_| Vec::new());
+    for (index, f) in map.faces.iter_mut().enumerate() {
+        // An end lies square to the sweep: a segment's middle is on its
+        // rim, not on it.
+        let end = f
+            .sample
+            .is_some_and(|(_, n)| n.cross(normal).magnitude() < 1e-3);
+        if end {
+            if let Some((p, _)) = f.sample {
+                ends.push(((p - origin).dot(normal), index));
+            }
+            f.names = Vec::new();
+            continue;
+        }
+        f.names = segments
+            .iter()
+            .filter(|(_, p)| f.holds(*p, 0.0))
+            .map(|(name, _)| naming::child(feature, &name.to_le_bytes()))
+            .collect();
+    }
+    for (along, index) in ends {
+        let end: &[u8] = if along.abs() <= 2.0 * map.faces[index].chord + SLACK {
+            b"start"
+        } else if along > 0.0 {
+            b"end"
+        } else {
+            b"back"
+        };
+        map.faces[index].names = vec![naming::child(feature, end)];
+    }
+    // What sweeping named neither a wall nor an end (the tool is not a
+    // plain sweep) keeps the fresh name `assign` gave it.
+    for f in &mut map.faces {
+        f.names.retain(|n| *n != 0);
+    }
+    map
+}
+
+/// The name of every segment of `profile` and a point inside it, in the
+/// profile's plane in the world; segments without a name are named by
+/// where they stand in the profile.
+pub(crate) fn profile_segments(profile: &Profile) -> Vec<(TopoName, Point)> {
+    let plane = &profile.plane;
+    let at = |u: f64, v: f64| {
+        Point::new(
+            plane.origin[0] + plane.x_axis[0] * u + plane.y_axis[0] * v,
+            plane.origin[1] + plane.x_axis[1] * u + plane.y_axis[1] * v,
+            plane.origin[2] + plane.x_axis[2] * u + plane.y_axis[2] * v,
+        )
+    };
+    let mut out = Vec::new();
+    for (w, wire) in profile.wires.iter().enumerate() {
+        for (s, segment) in wire.segments.iter().enumerate() {
+            let Some([u, v]) = segment_point(segment) else {
+                continue;
+            };
+            let name = wire.name_of(s).unwrap_or_else(|| {
+                let mut bytes = (w as u32).to_le_bytes().to_vec();
+                bytes.extend_from_slice(&(s as u32).to_le_bytes());
+                naming::name_of(&bytes)
+            });
+            out.push((name, at(u, v)));
+        }
+    }
+    out
+}
+
+/// A point on `segment`, well away from its ends.
+fn segment_point(segment: &ProfileSegment) -> Option<[f64; 2]> {
+    Some(match segment {
+        ProfileSegment::Line { start, end } => {
+            [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0]
+        }
+        ProfileSegment::Arc { mid, .. } => *mid,
+        ProfileSegment::Circle { center, radius } => [center[0] + radius, center[1]],
+        ProfileSegment::Ellipse { center, major, .. } => {
+            [center[0] + major[0], center[1] + major[1]]
+        }
+        ProfileSegment::EllipseArc {
+            center,
+            major,
+            ratio,
+            start_param,
+            end_param,
+        } => {
+            let t = (start_param + end_param) / 2.0;
+            let minor = [-major[1] * ratio, major[0] * ratio];
+            [
+                center[0] + major[0] * t.cos() + minor[0] * t.sin(),
+                center[1] + major[1] * t.cos() + minor[1] * t.sin(),
+            ]
+        }
+        ProfileSegment::BSpline { .. } | ProfileSegment::Nurbs { .. } => return None,
+    })
+}
+
+/// The distance from `p` to triangle `t`.
+fn point_triangle_distance(p: Point, t: &[Point; 3]) -> f64 {
+    let [a, b, c] = *t;
+    let ab = b - a;
+    let ac = c - a;
+    let ap = p - a;
+    let d1 = ab.dot(ap);
+    let d2 = ac.dot(ap);
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return ap.magnitude();
+    }
+    let bp = p - b;
+    let d3 = ab.dot(bp);
+    let d4 = ac.dot(bp);
+    if d3 >= 0.0 && d4 <= d3 {
+        return bp.magnitude();
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let v = d1 / (d1 - d3);
+        return (p - (a + ab * v)).magnitude();
+    }
+    let cp = p - c;
+    let d5 = ab.dot(cp);
+    let d6 = ac.dot(cp);
+    if d6 >= 0.0 && d5 <= d6 {
+        return cp.magnitude();
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let w = d2 / (d2 - d6);
+        return (p - (a + ac * w)).magnitude();
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (p - (b + (c - b) * w)).magnitude();
+    }
+    let denom = 1.0 / (va + vb + vc);
+    let v = vb * denom;
+    let w = vc * denom;
+    (p - (a + ab * v + ac * w)).magnitude()
+}
+
+thread_local! {
+    /// The names of the solid the op running on this thread works on.
+    static CURRENT: RefCell<Option<NameMap>> = const { RefCell::new(None) };
+}
+
+/// The names of the solid the ops on this thread work on, while this
+/// lives: set by [`set_current`], given back by [`Current::take`], and
+/// cleared when dropped (an op that failed).
+#[must_use]
+pub(crate) struct Current;
+
+impl Current {
+    /// The names, given back.
+    pub fn take(self) -> NameMap {
+        CURRENT.with(|c| c.borrow_mut().take()).unwrap_or_default()
+    }
+}
+
+impl Drop for Current {
+    fn drop(&mut self) {
+        CURRENT.with(|c| c.borrow_mut().take());
+    }
+}
+
+/// Make `names` the names of the solid the ops on this thread work on.
+pub(crate) fn set_current(names: NameMap) -> Current {
+    CURRENT.with(|c| *c.borrow_mut() = Some(names));
+    Current
+}
+
+/// The face of `root` named `name`: the one bearing the name, or, among
+/// several (a face a later feature split), the one nearest `near`. `None`
+/// when no face of `root` bears it, or no names are set.
+pub(crate) fn find_face(model: &Model, root: &Shape, name: TopoName, near: Point) -> Option<Shape> {
+    if name == 0 {
+        return None;
+    }
+    let own: Vec<Shape> = explore_unique(model, root, ShapeType::Face).ok()?;
+    let candidates: Vec<NamedFace> = CURRENT.with(|c| {
+        let current = c.borrow();
+        let map = current.as_ref()?;
+        Some(
+            map.faces
+                .iter()
+                .filter(|f| f.names.contains(&name))
+                .filter(|f| {
+                    own.iter()
+                        .any(|o| SameKey(o.clone()) == SameKey(f.face.clone()))
+                })
+                .cloned()
+                .collect(),
+        )
+    })?;
+    nearest(&candidates, near)
+}
+
+/// The edge of `root` between faces named `faces`: among several, the one
+/// whose faces' drawing passes nearest `near`. `None` when no such edge,
+/// or no names are set.
+pub(crate) fn find_edge(
+    model: &Model,
+    root: &Shape,
+    faces: [TopoName; 2],
+    near: Point,
+) -> Option<Shape> {
+    if faces.contains(&0) {
+        return None;
+    }
+    let own: Vec<Shape> = explore_unique(model, root, ShapeType::Face).ok()?;
+    let (a, b): (Vec<Shape>, Vec<Shape>) = CURRENT.with(|c| {
+        let current = c.borrow();
+        let map = current.as_ref()?;
+        let named = |name: TopoName| -> Vec<Shape> {
+            map.faces
+                .iter()
+                .filter(|f| f.names.contains(&name))
+                .filter(|f| {
+                    own.iter()
+                        .any(|o| SameKey(o.clone()) == SameKey(f.face.clone()))
+                })
+                .map(|f| f.face.clone())
+                .collect()
+        };
+        Some((named(faces[0]), named(faces[1])))
+    })?;
+    let edges_of = |faces: &[Shape]| -> Vec<Shape> {
+        faces
+            .iter()
+            .flat_map(|f| explore_unique(model, f, ShapeType::Edge).unwrap_or_default())
+            .collect()
+    };
+    let (ea, eb) = (edges_of(&a), edges_of(&b));
+    let shared: Vec<Shape> = ea
+        .into_iter()
+        .filter(|e| eb.iter().any(|o| SameKey(o.clone()) == SameKey(e.clone())))
+        .collect();
+    match shared.len() {
+        0 => None,
+        1 => shared.into_iter().next(),
+        _ => shared
+            .into_iter()
+            .map(|e| (edge_distance(model, &e, near), e))
+            .min_by(|x, y| x.0.total_cmp(&y.0))
+            .map(|(_, e)| e),
+    }
+}
+
+fn nearest(candidates: &[NamedFace], near: Point) -> Option<Shape> {
+    candidates
+        .iter()
+        .map(|f| {
+            let d = f
+                .triangles
+                .iter()
+                .map(|t| point_triangle_distance(near, t))
+                .fold(f64::MAX, f64::min);
+            (d, f.face.clone())
+        })
+        .min_by(|x, y| x.0.total_cmp(&y.0))
+        .map(|(_, face)| face)
+}
+
+/// How far `near` is from `edge`'s drawn polyline.
+fn edge_distance(model: &Model, edge: &Shape, near: Point) -> f64 {
+    let tol = tess::tolerances();
+    let Ok(deflection) = Deflection::with_chord(FINEST * 4.0) else {
+        return f64::MAX;
+    };
+    let Ok(line) = ogeom::mesh::polyline_of_edge(model, edge, deflection, tol) else {
+        return f64::MAX;
+    };
+    line.windows(2)
+        .map(|pair| {
+            let (a, b) = (pair[0], pair[1]);
+            let ab = b - a;
+            let t = ((near - a).dot(ab) / ab.dot(ab).max(1e-300)).clamp(0.0, 1.0);
+            (near - (a + ab * t)).magnitude()
+        })
+        .fold(f64::MAX, f64::min)
+}
+
+/// The names of the two faces each edge of `root` runs between, in
+/// `edges`' order: what a pick keeps of an edge.
+pub(crate) fn edge_faces(model: &Model, names: &NameMap, edges: &[Shape]) -> Vec<[TopoName; 2]> {
+    let mut by_edge: Vec<(SameKey, Vec<TopoName>)> = Vec::new();
+    for (face, _) in names.faces() {
+        let primary = names.primary(face);
+        for edge in explore_unique(model, face, ShapeType::Edge).unwrap_or_default() {
+            let key = SameKey(edge);
+            match by_edge.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, list)) => list.push(primary),
+                None => by_edge.push((key, vec![primary])),
+            }
+        }
+    }
+    edges
+        .iter()
+        .map(|edge| {
+            let key = SameKey(edge.clone());
+            let list = by_edge
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, l)| l.as_slice())
+                .unwrap_or(&[]);
+            match list {
+                [a, b, ..] => {
+                    let (a, b) = if a <= b { (*a, *b) } else { (*b, *a) };
+                    [a, b]
+                }
+                _ => [0, 0],
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_point_on_a_triangle_is_at_no_distance_and_off_it_at_its_height() {
+        let t = [
+            Point::new(0.0, 0.0, 0.0),
+            Point::new(1.0, 0.0, 0.0),
+            Point::new(0.0, 1.0, 0.0),
+        ];
+        assert!(point_triangle_distance(Point::new(0.2, 0.2, 0.0), &t) < 1e-12);
+        assert!((point_triangle_distance(Point::new(0.2, 0.2, 0.5), &t) - 0.5).abs() < 1e-12);
+        assert!((point_triangle_distance(Point::new(-1.0, 0.0, 0.0), &t) - 1.0).abs() < 1e-12);
+    }
+}

@@ -118,6 +118,31 @@ impl ExtrudeDirection {
 pub struct FacePick {
     pub point: [f32; 3],
     pub normal: [f32; 3],
+    /// The face's name when it was picked, which a rebuild finds it by
+    /// (`kernel_api::naming`); zero when the pick had none, and the point
+    /// finds it.
+    #[serde(default, skip_serializing_if = "is_unnamed")]
+    pub name: kernel_api::TopoName,
+}
+
+fn is_unnamed(name: &kernel_api::TopoName) -> bool {
+    *name == 0
+}
+
+fn are_unnamed(names: &[kernel_api::TopoName; 2]) -> bool {
+    names.iter().all(|n| *n == 0)
+}
+
+impl FacePick {
+    /// The face `face` picked: where, which way it faced, and its name.
+    pub fn of(face: impl std::borrow::Borrow<core_document::FaceRef>) -> Self {
+        let face = face.borrow();
+        Self {
+            point: face.point,
+            normal: face.normal,
+            name: face.name,
+        }
+    }
 }
 
 /// Where a pad/pocket stops along the sweep direction.
@@ -357,6 +382,23 @@ pub enum EdgeSel {
 pub struct EdgePick {
     pub point: [f32; 3],
     pub direction: [f32; 3],
+    /// The names of the two faces the edge ran between when it was picked,
+    /// which a rebuild finds it by; zeros when the pick had none.
+    #[serde(default, skip_serializing_if = "are_unnamed")]
+    pub faces: [kernel_api::TopoName; 2],
+}
+
+impl EdgePick {
+    /// The edge `edge` picked: where, which way it ran, and its faces'
+    /// names.
+    pub fn of(edge: impl std::borrow::Borrow<core_document::EdgeRef>) -> Self {
+        let edge = edge.borrow();
+        Self {
+            point: edge.point,
+            direction: edge.direction,
+            faces: edge.faces,
+        }
+    }
 }
 
 /// A mirror/pattern reference plane.

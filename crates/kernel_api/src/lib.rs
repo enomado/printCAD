@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
+pub mod naming;
+pub use naming::TopoName;
+
 /// Convenience alias for kernel fallible operations.
 pub type KernelResult<T> = Result<T, KernelError>;
 
@@ -162,6 +165,15 @@ pub struct TriMesh {
     /// the source has no faces.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_surfaces: Vec<FaceSurface>,
+    /// The name of each kernel face, indexed like [`Self::faces`]: what a
+    /// pick keeps so a rebuild finds the face again. Zero where a face has
+    /// none; empty when the source names none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_names: Vec<TopoName>,
+    /// The names of the two faces each kernel edge runs between, indexed
+    /// like [`Self::edge_ids`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_faces: Vec<[TopoName; 2]>,
 }
 
 /// The kind and placement of a kernel face's surface, in the mesh's frame.
@@ -665,9 +677,30 @@ pub enum ProfileSegment {
 
 /// A closed loop of profile segments. Consecutive segments share endpoints;
 /// a single `Circle` segment is a wire by itself.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ProfileWire {
     pub segments: Vec<ProfileSegment>,
+    /// The name of each segment, one per segment, by what it was drawn from
+    /// (a sketch element): the faces a feature sweeps from it are named by
+    /// it, so they keep their names while dimensions change. Empty, or a
+    /// zero, where a segment has no such name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<TopoName>,
+}
+
+impl ProfileWire {
+    /// A wire of `segments` with no names.
+    pub fn new(segments: Vec<ProfileSegment>) -> Self {
+        Self {
+            segments,
+            names: Vec::new(),
+        }
+    }
+
+    /// The name of segment `index`, when it has one.
+    pub fn name_of(&self, index: usize) -> Option<TopoName> {
+        self.names.get(index).copied().filter(|n| *n != 0)
+    }
 }
 
 /// The plane a profile lives on, in world coordinates (millimetres).
@@ -714,14 +747,17 @@ pub enum ExtrudeTermination {
         normal: [f64; 3],
         offset: f64,
     },
-    /// Stop on the base solid's face nearest `point` (a picked face, where
-    /// it was picked), exactly on its surface whatever its shape, pushed
-    /// `offset` out along its outward normal. With no base solid, or no
-    /// face of it there, the plane through `point` square to `normal`.
+    /// Stop on the base solid's face named `name`, else the one nearest
+    /// `point` (a picked face, where it was picked), exactly on its surface
+    /// whatever its shape, pushed `offset` out along its outward normal.
+    /// With no base solid, or no face of it there, the plane through
+    /// `point` square to `normal`.
     UpToFace {
         point: [f64; 3],
         normal: [f64; 3],
         offset: f64,
+        #[serde(default)]
+        name: TopoName,
     },
     /// Stop at the first face of the base solid hit along the extrusion
     /// direction, on its surface.
@@ -967,12 +1003,16 @@ pub enum EdgeSelection {
     Picked(Vec<EdgeProbe>),
 }
 
-/// A picked edge, as a point beside it and the way it runs there. A zero
-/// direction leaves the way open.
+/// A picked edge, as a point beside it and the way it runs there, and the
+/// names of the two faces it runs between. A rebuild finds the edge
+/// between faces of those names, the point choosing among several; without
+/// names, the nearest edge. A zero direction leaves the way open.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EdgeProbe {
     pub point: [f64; 3],
     pub direction: [f64; 3],
+    #[serde(default)]
+    pub faces: [TopoName; 2],
 }
 
 /// How a thickness's walls meet across an edge of the solid.
@@ -1336,26 +1376,39 @@ pub struct MedialRegion {
     pub narrowest: Option<Narrowest>,
 }
 
-/// A picked face, named geometrically: a point on it and its outward
-/// normal, resolved to the face nearest the point.
+/// A picked face: its name, and a point on it with its outward normal.
+/// A rebuild finds the face by its name, the point choosing among the
+/// pieces of a face that split; without a name (or when no face bears it
+/// any more), the face nearest the point.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FaceProbe {
     pub point: [f64; 3],
     pub normal: [f64; 3],
+    #[serde(default)]
+    pub name: TopoName,
 }
 
 /// A question about a solid a reference stands on, named geometrically so
 /// it can be asked again of the solid a rebuild makes.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ShapeProbe {
-    /// The face nearest `point` (among faces as near, the one whose outward
-    /// normal agrees best with `normal`), and where on it `point` falls.
-    Face { point: [f64; 3], normal: [f64; 3] },
-    /// The edge nearest `point` that runs along `direction` there (a zero
-    /// direction takes the nearest edge whichever way it runs).
+    /// The face named `name`, else the face nearest `point` (among faces
+    /// as near, the one whose outward normal agrees best with `normal`),
+    /// and where on it `point` falls.
+    Face {
+        point: [f64; 3],
+        normal: [f64; 3],
+        #[serde(default)]
+        name: TopoName,
+    },
+    /// The edge between faces named `faces`, else the edge nearest `point`
+    /// that runs along `direction` there (a zero direction takes the
+    /// nearest edge whichever way it runs).
     Edge {
         point: [f64; 3],
         direction: [f64; 3],
+        #[serde(default)]
+        faces: [TopoName; 2],
     },
     /// The solid's centre of mass and principal axes of inertia.
     Mass,

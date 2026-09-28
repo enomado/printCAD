@@ -373,6 +373,7 @@ fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
             picks
                 .iter()
                 .map(|p| kernel_api::EdgeProbe {
+                    faces: p.faces,
                     point: p.point.map(f64::from),
                     direction: p.direction.map(f64::from),
                 })
@@ -939,6 +940,7 @@ fn side_termination(
                 .ok_or("pick a target face for the up-to-face mode")?;
             let (point, normal) = face_pick_plane(pick);
             Ok(ExtrudeTermination::UpToFace {
+                name: pick.name,
                 point,
                 normal,
                 offset: side.offset as f64,
@@ -967,7 +969,11 @@ fn side_termination(
 
 fn face_probe(pick: &FacePick) -> FaceProbe {
     let (point, normal) = face_pick_plane(pick);
-    FaceProbe { point, normal }
+    FaceProbe {
+        name: pick.name,
+        point,
+        normal,
+    }
 }
 
 fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -1414,6 +1420,7 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
         wires: centers
             .iter()
             .map(|center| ProfileWire {
+                names: Vec::new(),
                 segments: vec![ProfileSegment::Circle {
                     center: *center,
                     radius,
@@ -1708,7 +1715,7 @@ fn thread_cut(
     SolidOp::Sweep {
         profile: Profile {
             plane: section,
-            wires: vec![ProfileWire { segments }],
+            wires: vec![ProfileWire::new(segments)],
         },
         kind: SweepKind::Helix {
             axis_origin: [0.0, 0.0],
@@ -1829,6 +1836,7 @@ fn sketch_spine(
         return Ok(Profile {
             plane,
             wires: vec![ProfileWire {
+                names: Vec::new(),
                 segments: vec![ProfileSegment::Circle {
                     center: [center.x as f64, center.y as f64],
                     radius: circle.radius as f64,
@@ -1909,7 +1917,7 @@ fn sketch_spine(
 
     Ok(Profile {
         plane,
-        wires: vec![ProfileWire { segments }],
+        wires: vec![ProfileWire::new(segments)],
     })
 }
 
@@ -2713,10 +2721,12 @@ mod tests {
     fn picked_edges_reach_the_kernel_as_probe_points() {
         let picks = vec![
             crate::feature::EdgePick {
+                faces: [0, 0],
                 point: [1.0, 2.0, 3.0],
                 direction: [1.0, 0.0, 0.0],
             },
             crate::feature::EdgePick {
+                faces: [0, 0],
                 point: [4.0, 5.0, 6.0],
                 direction: [0.0, 1.0, 0.0],
             },
@@ -3534,6 +3544,7 @@ mod tests {
         use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
         let (mut doc, body, sketch) = doc_with_body_sketch();
         let edge = PatternAxis::Edge(crate::EdgePick {
+            faces: [0, 0],
             point: [1.0, 2.0, 3.0],
             direction: [0.0, 0.0, 2.0],
         });
@@ -4021,6 +4032,7 @@ mod tests {
                     f
                 {
                     *direction = crate::ExtrudeDirection::Edge(crate::EdgePick {
+                        faces: [0, 0],
                         point: [0.0; 3],
                         direction: [1.0, 0.0, 1.0],
                     });
@@ -4048,6 +4060,7 @@ mod tests {
     fn each_side_takes_its_own_end() {
         let sketch = FeatureId::new();
         let face = FacePick {
+            name: 0,
             point: [1.0, 2.0, 3.0],
             normal: [0.0, 0.0, 1.0],
         };
@@ -4126,6 +4139,7 @@ mod tests {
     #[test]
     fn a_face_profile_sweeps_the_face() {
         let face = FacePick {
+            name: 0,
             point: [5.0, 2.5, 5.0],
             normal: [0.0, 0.0, 1.0],
         };
@@ -4200,6 +4214,7 @@ mod tests {
         assert!(body_build_ops(&doc, body).is_err(), "nothing to stop on");
 
         let face = FacePick {
+            name: 0,
             point: [0.0, 1.0, 2.0],
             normal: [1.0, 0.0, 0.0],
         };
@@ -4209,6 +4224,7 @@ mod tests {
             (
                 RevolveMode::UpToFace,
                 RevolveTermination::UpToFace(FaceProbe {
+                    name: 0,
                     point: [0.0, 1.0, 2.0],
                     normal: [1.0, 0.0, 0.0],
                 }),
@@ -4284,6 +4300,7 @@ mod tests {
         );
         let edge = |direction| {
             RevolveAxis::Edge(crate::EdgePick {
+                faces: [0, 0],
                 point: [2.0, 7.0, 5.0],
                 direction,
             })

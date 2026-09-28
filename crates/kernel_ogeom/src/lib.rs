@@ -13,6 +13,7 @@ mod health;
 mod import;
 pub use import::is_iges;
 mod mesh;
+mod naming;
 pub use mesh::is_mesh_file;
 mod ops;
 mod probe;
@@ -189,6 +190,25 @@ impl OgeomKernel {
             message: e.to_string(),
         })?;
         chain::execute_probing(ops, detail, preview, probes)
+    }
+
+    /// [`Self::execute_solid_chain_probing`], naming the faces the ops make
+    /// under `tags` (one per op: the feature it builds, as
+    /// `kernel_api::naming::name_of_id` of its id): the mesh carries the
+    /// names, and references that kept names find their faces by them.
+    pub fn execute_solid_chain_named(
+        &mut self,
+        ops: &[SolidOp],
+        tags: &[kernel_api::TopoName],
+        detail: &TessellationSettings,
+        preview: Option<std::ops::Range<usize>>,
+        probes: &[kernel_api::ChainProbe],
+    ) -> Result<SolidBuildResult, ChainError> {
+        self.initialize().map_err(|e| ChainError {
+            op_index: 0,
+            message: e.to_string(),
+        })?;
+        chain::execute_named(ops, tags, detail, preview, probes)
     }
 }
 

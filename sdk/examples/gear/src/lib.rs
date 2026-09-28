@@ -275,14 +275,12 @@ impl Bench for Gears {
                         ProfileSegment::Line { start, end } => start != end,
                         _ => true,
                     });
-                    let mut wires = vec![ProfileWire { segments }];
+                    let mut wires = vec![ProfileWire::new(segments)];
                     if gear.bore > 0.0 {
-                        wires.push(ProfileWire {
-                            segments: vec![ProfileSegment::Circle {
+                        wires.push(ProfileWire::new(vec![ProfileSegment::Circle {
                                 center: [0.0, 0.0],
                                 radius: gear.bore / 2.0,
-                            }],
-                        });
+                            }]));
                     }
                     ops.push(SolidOp::Sweep {
                         profile: Profile {

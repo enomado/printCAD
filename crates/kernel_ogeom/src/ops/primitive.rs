@@ -366,7 +366,7 @@ fn revolve_synthetic(
     };
     let profile = Profile {
         plane,
-        wires: vec![ProfileWire { segments }],
+        wires: vec![ProfileWire::new(segments)],
     };
     let kind = kernel_api::SweepKind::Revolve {
         axis_origin: [0.0, 0.0],

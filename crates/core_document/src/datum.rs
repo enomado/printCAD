@@ -106,6 +106,14 @@ pub enum DatumAttachment {
     },
 }
 
+fn is_zero(name: &kernel_api::TopoName) -> bool {
+    *name == 0
+}
+
+fn are_zero(names: &[kernel_api::TopoName; 2]) -> bool {
+    names.iter().all(|n| *n == 0)
+}
+
 /// A face of a solid: a point on it and its outward normal there, and its
 /// surface when known.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -118,6 +126,10 @@ pub struct FaceAnchor {
     /// so the datum follows it.
     #[serde(default)]
     pub follows: bool,
+    /// The face's name, which a rebuild finds it by (`kernel_api::naming`);
+    /// zero when it has none, and the point finds it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub name: kernel_api::TopoName,
 }
 
 /// An edge of a solid: a point on it and the way it runs there, with what
@@ -135,6 +147,10 @@ pub struct EdgeAnchor {
     /// The edge is on the datum's own body, whose rebuilds find it again.
     #[serde(default)]
     pub follows: bool,
+    /// The names of the two faces the edge runs between, which a rebuild
+    /// finds it by; zeros when it has none, and the point finds it.
+    #[serde(default, skip_serializing_if = "are_zero")]
+    pub faces: [kernel_api::TopoName; 2],
 }
 
 /// The circle a circular edge runs round.
@@ -722,10 +738,12 @@ impl DatumFeature {
                 Followed::Face(face) => ShapeProbe::Face {
                     point: f64s(face.point),
                     normal: f64s(face.normal),
+                    name: face.name,
                 },
                 Followed::Edge(edge) => ShapeProbe::Edge {
                     point: f64s(edge.point),
                     direction: f64s(edge.direction),
+                    faces: edge.faces,
                 },
                 Followed::Mass(..) => ShapeProbe::Mass,
             })
@@ -999,6 +1017,7 @@ mod tests {
 
     fn straight_edge() -> EdgeAnchor {
         EdgeAnchor {
+            faces: [0, 0],
             point: [2.0, 0.0, 0.0],
             direction: [1.0, 0.0, 0.0],
             ends: Some([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]),
@@ -1010,6 +1029,7 @@ mod tests {
 
     fn rim() -> EdgeAnchor {
         EdgeAnchor {
+            faces: [0, 0],
             point: [5.0, 0.0, 12.0],
             direction: [0.0, 1.0, 0.0],
             ends: None,
@@ -1025,6 +1045,7 @@ mod tests {
 
     fn cylinder_face() -> FaceAnchor {
         FaceAnchor {
+            name: 0,
             point: [0.0, 5.0, 3.0],
             normal: [0.0, 1.0, 0.0],
             surface: Some(kernel_api::FaceSurface::Cylinder {
@@ -1152,6 +1173,7 @@ mod tests {
                 PlaneAnchor::Base(BasePlane::XY),
                 PlaneAnchor::Face {
                     face: FaceAnchor {
+                        name: 0,
                         point: [0.0, 0.0, 3.0],
                         normal: [0.0, 0.0, -1.0],
                         surface: None,

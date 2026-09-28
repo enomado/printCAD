@@ -128,6 +128,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
                 DatumShape::Plane { size: 20.0 },
                 DatumAttachment::Face {
                     face: FaceAnchor {
+                        name: 0,
                         point: [0.0, 5.0, 5.0],
                         normal: [0.0, 1.0, 0.0],
                         surface: None,
@@ -214,6 +215,7 @@ fn centres_follow_the_solid_they_are_found_on() {
                 DatumShape::Point,
                 DatumAttachment::CurveCentre {
                     edge: EdgeAnchor {
+                        faces: [0, 0],
                         point: [5.0, 0.0, 10.0],
                         direction: [0.0, 1.0, 0.0],
                         ends: None,
@@ -305,6 +307,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
                 DatumShape::Line { length: 20.0 },
                 DatumAttachment::AlongEdge {
                     edge: EdgeAnchor {
+                        faces: [0, 0],
                         point: [2.0, 0.0, 10.0],
                         direction: [0.0, 1.0, 0.0],
                         ends: None,

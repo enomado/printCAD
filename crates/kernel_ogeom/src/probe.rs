@@ -32,8 +32,24 @@ fn unit(v: Vector) -> [f64; 3] {
 /// What `root` answers to `probe`.
 pub fn answer(model: &mut Model, root: &Shape, probe: &ShapeProbe) -> Result<ProbeAnswer, String> {
     match *probe {
-        ShapeProbe::Face { point, normal } => face(model, root, &FaceProbe { point, normal }),
-        ShapeProbe::Edge { point, direction } => edge(model, root, point, direction),
+        ShapeProbe::Face {
+            point,
+            normal,
+            name,
+        } => face(
+            model,
+            root,
+            &FaceProbe {
+                point,
+                normal,
+                name,
+            },
+        ),
+        ShapeProbe::Edge {
+            point,
+            direction,
+            faces,
+        } => edge(model, root, point, direction, faces),
         ShapeProbe::Mass => mass(model, root),
     }
 }
@@ -97,7 +113,11 @@ fn edge(
     root: &Shape,
     point: [f64; 3],
     direction: [f64; 3],
+    faces: [kernel_api::TopoName; 2],
 ) -> Result<ProbeAnswer, String> {
+    if let Some(named) = crate::naming::find_edge(model, root, faces, point3(point)) {
+        return describe_edge(model, &named, point);
+    }
     let tol = tess::tolerances();
     let edges = explore_unique(model, root, ShapeType::Edge).map_err(|e| e.to_string())?;
     let mut near: Vec<(f64, Shape)> = Vec::with_capacity(edges.len());

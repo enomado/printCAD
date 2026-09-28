@@ -60,6 +60,14 @@ struct EdgeCurve {
     /// Endpoint point ids (start, end).
     ends: (Uuid, Uuid),
     segment: ProfileSegment,
+    /// The name of the element it was drawn from.
+    name: kernel_api::TopoName,
+}
+
+/// The name a segment drawn from element `id` carries: the faces a feature
+/// sweeps from it are named by it, whatever its dimensions.
+fn element_name(id: Uuid) -> kernel_api::TopoName {
+    kernel_api::naming::name_of_id(id.as_bytes())
 }
 
 /// Convert the world-space sketch plane into the kernel's profile plane.
@@ -85,6 +93,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
         if sketch.is_construction(geom.id()) || sketch.external.contains_key(&geom.id()) {
             continue;
         }
+        let name = element_name(geom.id());
         match geom {
             GeometryElement::Point(_) => {}
             GeometryElement::Circle(c) => {
@@ -92,6 +101,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     .point_position(c.center)
                     .ok_or(ProfileError::MissingPoint(c.center))?;
                 wires.push(ProfileWire {
+                    names: vec![name],
                     segments: vec![ProfileSegment::Circle {
                         center: v2(center),
                         radius: c.radius as f64,
@@ -106,6 +116,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     .point_position(l.end)
                     .ok_or(ProfileError::MissingPoint(l.end))?;
                 edges.push(EdgeCurve {
+                    name,
                     ends: (l.start, l.end),
                     segment: ProfileSegment::Line {
                         start: v2(a),
@@ -124,6 +135,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     .point_position(arc.end)
                     .ok_or(ProfileError::MissingPoint(arc.end))?;
                 edges.push(EdgeCurve {
+                    name,
                     ends: (arc.start, arc.end),
                     segment: ProfileSegment::Arc {
                         start: v2(s),
@@ -142,6 +154,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                 let major = [f64::from(e.major.x), f64::from(e.major.y)];
                 match e.arc {
                     None => wires.push(ProfileWire {
+                        names: vec![name],
                         segments: vec![ProfileSegment::Ellipse {
                             center: v2(center),
                             major,
@@ -153,6 +166,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                         // land as close as can be to the points it names.
                         let (t0, t1) = ellipse_arc_span(sketch, e, center)?;
                         edges.push(EdgeCurve {
+                            name,
                             ends: (arc.start, arc.end),
                             segment: ProfileSegment::EllipseArc {
                                 center: v2(center),
@@ -183,6 +197,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     crate::sketch::ConicKind::Hyperbola => vec![1.0, weight, 1.0],
                 };
                 edges.push(EdgeCurve {
+                    name,
                     ends: (c.start, c.end),
                     segment: ProfileSegment::Nurbs {
                         degree: 2,
@@ -212,10 +227,12 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                 let segment = spline_segment(b, control_points);
                 if b.periodic {
                     wires.push(ProfileWire {
+                        names: vec![name],
                         segments: vec![segment],
                     });
                 } else {
                     edges.push(EdgeCurve {
+                        name,
                         ends: (
                             b.control_points[0],
                             *b.control_points.last().expect("len >= 2"),
@@ -253,6 +270,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
             continue;
         }
         let mut segments = Vec::new();
+        let mut names = Vec::new();
         let start_point = edges[start_idx].ends.0;
         let mut current_point = start_point;
         let mut current_idx = start_idx;
@@ -267,6 +285,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
             } else {
                 reversed(&edge.segment)
             });
+            names.push(edge.name);
             // Advance to the far end of this edge.
             current_point = if edge.ends.0 == current_point {
                 edge.ends.1
@@ -285,7 +304,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                 None => return Err(ProfileError::OpenAt(current_point)),
             }
         }
-        wires.push(ProfileWire { segments });
+        wires.push(ProfileWire { segments, names });
     }
 
     Ok(wires)

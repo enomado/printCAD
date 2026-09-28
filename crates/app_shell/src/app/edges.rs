@@ -33,11 +33,15 @@ pub(crate) struct EdgeHit {
     pub direction: [f32; 3],
     pub length_mm: f32,
     pub circle: Option<EdgeCircle>,
+    /// The names of the faces the edge runs between, when the mesh has
+    /// them.
+    pub faces: [kernel_api::TopoName; 2],
 }
 
 impl EdgeHit {
     pub fn as_ref(&self) -> EdgeRef {
         EdgeRef {
+            faces: self.faces,
             point: self.point,
             direction: self.direction,
             length_mm: self.length_mm,
@@ -162,6 +166,11 @@ impl PrintCadApp {
             direction: direction.to_array(),
             length_mm: edge_length(mesh, edge),
             circle: EdgeCircle::fit(&edge_points(mesh, edge)),
+            faces: mesh
+                .edge_faces
+                .get(edge as usize)
+                .copied()
+                .unwrap_or_default(),
         })
     }
 

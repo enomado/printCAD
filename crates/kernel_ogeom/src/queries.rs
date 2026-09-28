@@ -384,6 +384,9 @@ pub(crate) fn face_named(
 ) -> KernelResult<Shape> {
     let tol = tess::tolerances();
     let point = Point::new(probe.point[0], probe.point[1], probe.point[2]);
+    if let Some(face) = crate::naming::find_face(model, root, probe.name, point) {
+        return Ok(face);
+    }
     let normal = Vector::new(probe.normal[0], probe.normal[1], probe.normal[2]);
     let vertex = model.add_vertex(ogeom::topo::VertexData::new(point));
     let faces = explore_unique(model, root, ShapeType::Face).map_err(other)?;

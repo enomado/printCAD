@@ -102,7 +102,7 @@ pub fn build_face_tool(
     if !matches!(kind, SweepKind::Extrude { .. }) {
         return Err("a face of the solid is only ever extruded".into());
     }
-    let found = face_at(model, base, point3(face.point))?
+    let found = face_by_name(model, base, face.name, point3(face.point))?
         .ok_or("no face of the solid lies where the face was picked")?;
     let (_, normal) = face_plane(model, &found).ok_or("the picked face is not flat")?;
     let outward = if found.orientation() == ogeom::topo::Orientation::Reversed {
@@ -250,10 +250,14 @@ fn extrude_one_side(
             point,
             normal,
             offset,
+            name,
         } => {
             let at = Point::new(point[0], point[1], point[2]);
             let target = match base {
-                Some(base) => face_at(model, base, at)?,
+                Some(base) => match crate::naming::find_face(model, base, *name, at) {
+                    Some(face) => Some(face),
+                    None => face_at(model, base, at)?,
+                },
                 None => None,
             };
             match (base, target) {
@@ -333,7 +337,7 @@ fn up_to_shape(
     let mut tool = prism_solid(model, built, dir, reach, taper_deg)?;
     for probe in faces {
         let at = point3(probe.point);
-        let face = face_at(model, base, at)?.ok_or_else(|| {
+        let face = face_by_name(model, base, probe.name, at)?.ok_or_else(|| {
             format!(
                 "no face of the solid lies at ({:.1}, {:.1}, {:.1}), where a stop face was picked",
                 at.x, at.y, at.z
@@ -436,6 +440,35 @@ fn up_to_plane(
 /// How far from a picked point the face it names may be: a pick lands on
 /// a face's drawn triangles, a chord off a curved surface.
 const FACE_REACH_MM: f64 = 0.5;
+
+/// The face of `base` named `name`, else the one [`face_at`] finds.
+pub(crate) fn face_by_name(
+    model: &mut Model,
+    base: &Shape,
+    name: kernel_api::TopoName,
+    point: Point,
+) -> Result<Option<Shape>, String> {
+    match crate::naming::find_face(model, base, name, point) {
+        Some(face) => Ok(Some(face)),
+        None => face_at(model, base, point),
+    }
+}
+
+/// The point of `face` nearest `point`.
+fn nearest_point_on(model: &mut Model, face: &Shape, point: Point) -> Option<Point> {
+    let probe = model.add_vertex(ogeom::topo::VertexData::new(point));
+    ogeom::algo::distance_between_shapes(
+        model,
+        &probe,
+        face,
+        ogeom::intersect::ExtremaOptions::default(),
+        tol(),
+    )
+    .ok()?
+    .pairs
+    .first()
+    .map(|pair| pair.point_b)
+}
 
 /// The face of `base` nearest `point`, when one comes within reach of it.
 pub(crate) fn face_at(
@@ -813,9 +846,12 @@ fn revolve_stop(
     let (face, met_at) = match stop {
         RevolveTermination::UpToFace(probe) => {
             let at = point3(probe.point);
-            let face = face_at(model, base, at)?
+            let face = face_by_name(model, base, probe.name, at)?
                 .ok_or("no face of the solid lies where the target face was picked")?;
-            (face, at)
+            // The face may have moved since it was picked: where the turn
+            // meets it is on it.
+            let met = nearest_point_on(model, &face, at).unwrap_or(at);
+            (face, met)
         }
         RevolveTermination::ToFirst | RevolveTermination::ToLast => {
             let first = matches!(stop, RevolveTermination::ToFirst);

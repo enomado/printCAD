@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 fn fake_mesh() -> Arc<TriMesh> {
     Arc::new(TriMesh {
+        edge_faces: Vec::new(),
+        face_names: Vec::new(),
         positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         normals: vec![[0.0, 0.0, 1.0]; 3],
         indices: vec![0, 1, 2],
@@ -88,6 +90,8 @@ fn brep_sidecars_roundtrip_through_prtcad() {
     doc.set_imported_brep_data(body_id, brep.clone(), colors.clone());
 
     let mesh = Arc::new(TriMesh {
+        edge_faces: Vec::new(),
+        face_names: Vec::new(),
         positions: vec![[0.0, 0.0, 0.0]],
         normals: vec![[0.0, 0.0, 1.0]],
         indices: Vec::new(),
@@ -314,6 +318,8 @@ fn a_cloned_document_saves_independently_from_another_thread() {
         body_id,
         ImportedGeometry {
             mesh: Arc::new(TriMesh {
+                edge_faces: Vec::new(),
+                face_names: Vec::new(),
                 positions: vec![[0.0, 0.0, 0.0]],
                 normals: vec![[0.0, 0.0, 1.0]],
                 indices: Vec::new(),

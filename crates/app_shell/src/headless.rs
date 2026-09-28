@@ -338,8 +338,14 @@ impl Headless {
                     Ok(plan) => {
                         let asked: Vec<kernel_api::ChainProbe> =
                             plan.probes.iter().map(|p| p.probe).collect();
-                        match kernel.execute_solid_chain_probing(
+                        let tags: Vec<kernel_api::TopoName> = plan
+                            .op_features
+                            .iter()
+                            .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+                            .collect();
+                        match kernel.execute_solid_chain_named(
                             &plan.ops,
+                            &tags,
                             &TessellationSettings::default(),
                             None,
                             &asked,

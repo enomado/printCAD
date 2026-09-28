@@ -53,6 +53,7 @@ fn a_face_probe_finds_the_tangent_point_and_the_cylinder() {
         &[ChainProbe {
             after_op: 1,
             probe: ShapeProbe::Face {
+                name: 0,
                 point: [7.0, 0.0, 6.0],
                 normal: [1.0, 0.0, 0.0],
             },
@@ -82,6 +83,7 @@ fn an_edge_probe_finds_a_rim_circle_and_a_straight_edge_s_ends() {
         &[ChainProbe {
             after_op: 1,
             probe: ShapeProbe::Edge {
+                faces: [0, 0],
                 point: [5.0, 0.0, 12.0],
                 direction: [0.0, 1.0, 0.0],
             },
@@ -103,6 +105,7 @@ fn an_edge_probe_finds_a_rim_circle_and_a_straight_edge_s_ends() {
         &[ChainProbe {
             after_op: 1,
             probe: ShapeProbe::Edge {
+                faces: [0, 0],
                 point: [4.0, 0.0, 0.0],
                 direction: [1.0, 0.0, 0.0],
             },
@@ -200,6 +203,7 @@ fn a_snapshot_answers_the_same_probe() {
         .probe(
             &result.brep_blob,
             &ShapeProbe::Face {
+                name: 0,
                 point: [0.0, 6.0, 6.0],
                 normal: [0.0, 1.0, 0.0],
             },

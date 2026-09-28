@@ -432,10 +432,7 @@ fn face_pick_row(
             .clicked()
             && let Some(face) = picked_face(ctx)
         {
-            *pick = Some(FacePick {
-                point: face.point,
-                normal: face.normal,
-            });
+            *pick = Some(FacePick::of(face));
             changed = true;
         }
     });
@@ -481,10 +478,7 @@ fn face_list_editor(
         .clicked()
         && let Some(face) = picked_face(ctx)
     {
-        faces.push(FacePick {
-            point: face.point,
-            normal: face.normal,
-        });
+        faces.push(FacePick::of(face));
         changed = true;
     }
     changed
@@ -586,10 +580,7 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
         .clicked()
     {
         for edge in &picked_edges(ctx) {
-            let pick = EdgePick {
-                point: edge.point,
-                direction: edge.direction,
-            };
+            let pick = EdgePick::of(edge);
             if !picks.contains(&pick) {
                 picks.push(pick);
                 changed = true;
@@ -633,10 +624,7 @@ fn edge_pick_row(
             .clicked()
             && let Some(edge) = picked_edges(ctx).first()
         {
-            *pick = Some(EdgePick {
-                point: edge.point,
-                direction: edge.direction,
-            });
+            *pick = Some(EdgePick::of(edge));
             changed = true;
         }
     });
@@ -678,6 +666,7 @@ fn extrude_direction_editor(
                     ),
                     (
                         ExtrudeDirection::Edge(EdgePick {
+                            faces: [0, 0],
                             point: [0.0; 3],
                             direction: [0.0, 0.0, 1.0],
                         }),
@@ -702,10 +691,7 @@ fn extrude_direction_editor(
                         // A picked edge starts from the one picked now.
                         *direction = match candidate {
                             ExtrudeDirection::Edge(_) => match picked_edges(ctx).first() {
-                                Some(edge) => ExtrudeDirection::Edge(EdgePick {
-                                    point: edge.point,
-                                    direction: edge.direction,
-                                }),
+                                Some(edge) => ExtrudeDirection::Edge(EdgePick::of(edge)),
                                 None => candidate,
                             },
                             other => other,
@@ -872,10 +858,7 @@ fn revolve_axis_editor(
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(shown)
             .show_ui(ui, |ui| {
-                let picked_edge = picked_edges(ctx).first().map(|edge| EdgePick {
-                    point: edge.point,
-                    direction: edge.direction,
-                });
+                let picked_edge = picked_edges(ctx).first().map(EdgePick::of);
                 let mut candidates = vec![
                     (
                         RevolveAxis::SketchY,
@@ -896,6 +879,7 @@ fn revolve_axis_editor(
                 candidates.extend(references.iter().cloned());
                 candidates.push((
                     RevolveAxis::Edge(picked_edge.unwrap_or(EdgePick {
+                        faces: [0, 0],
                         point: [0.0; 3],
                         direction: [0.0, 0.0, 1.0],
                     })),
@@ -1053,13 +1037,11 @@ fn pattern_axis_choices(
 fn edge_axis(edge: &core_document::EdgeRef) -> EdgePick {
     match edge.circle {
         Some(circle) => EdgePick {
+            faces: edge.faces,
             point: circle.center,
             direction: circle.normal,
         },
-        None => EdgePick {
-            point: edge.point,
-            direction: edge.direction,
-        },
+        None => EdgePick::of(edge),
     }
 }
 
@@ -1100,6 +1082,7 @@ fn pattern_axis_editor(
                 candidates.extend(references.iter().cloned());
                 candidates.push((
                     PatternAxis::Edge(picked_edge.unwrap_or(EdgePick {
+                        faces: [0, 0],
                         point: [0.0; 3],
                         direction: [0.0, 0.0, 1.0],
                     })),
@@ -1250,10 +1233,7 @@ fn mirror_plane_editor(
                     && !is_face
                     && let Some(face) = picked_face(ctx)
                 {
-                    *plane = MirrorPlane::Face(FacePick {
-                        point: face.point,
-                        normal: face.normal,
-                    });
+                    *plane = MirrorPlane::Face(FacePick::of(face));
                     changed = true;
                 }
             });

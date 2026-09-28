@@ -328,6 +328,7 @@ fn a_borrowed_face_is_the_face_a_pad_in_another_body_stops_on() {
         BorrowSource::Solid {
             body: a,
             faces: vec![FacePick {
+                name: 0,
                 point: [20.0, 20.0, 0.0],
                 normal: [0.0, 0.0, -1.0],
             }],
@@ -434,6 +435,7 @@ fn a_pad_stops_on_a_curved_borrowed_face() {
         BorrowSource::Solid {
             body: a,
             faces: vec![FacePick {
+                name: 0,
                 point: [2.0, 0.0, 20.0],
                 normal: [0.0, 0.0, -1.0],
             }],
@@ -499,6 +501,7 @@ fn a_pad_runs_along_a_borrowed_edge_where_its_body_turns_it() {
             body: a,
             faces: Vec::new(),
             edges: vec![EdgePick {
+                faces: [0, 0],
                 point: [0.0, 0.0, 5.0],
                 direction: [0.0, 0.0, 1.0],
             }],
@@ -559,6 +562,7 @@ fn bodies_that_borrow_from_each_other_settle_and_say_so() {
     let top = |body| BorrowSource::Solid {
         body,
         faces: vec![FacePick {
+            name: 0,
             point: [10.0, 10.0, 10.0],
             normal: [0.0, 0.0, 1.0],
         }],

@@ -33,6 +33,7 @@ fn plane_at_z(z: f64) -> ProfilePlane {
 
 fn rect_wire(x0: f64, y0: f64, x1: f64, y1: f64) -> ProfileWire {
     ProfileWire {
+        names: Vec::new(),
         segments: vec![
             ProfileSegment::Line {
                 start: [x0, y0],
@@ -56,6 +57,7 @@ fn rect_wire(x0: f64, y0: f64, x1: f64, y1: f64) -> ProfileWire {
 
 fn circle_wire(cx: f64, cy: f64, radius: f64) -> ProfileWire {
     ProfileWire {
+        names: Vec::new(),
         segments: vec![ProfileSegment::Circle {
             center: [cx, cy],
             radius,
@@ -264,6 +266,7 @@ fn ellipse_and_bspline_profiles_pad() {
     let detail = TessellationSettings::default();
 
     let ellipse = ProfileWire {
+        names: Vec::new(),
         segments: vec![ProfileSegment::Ellipse {
             center: [0.0, 0.0],
             major: [8.0, 0.0],
@@ -281,6 +284,7 @@ fn ellipse_and_bspline_profiles_pad() {
     assert_close(max[1] - min[1], 8.0, 0.1, "minor extent");
 
     let spline = ProfileWire {
+        names: Vec::new(),
         segments: vec![ProfileSegment::BSpline {
             control_points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
             periodic: true,
@@ -310,6 +314,7 @@ fn nurbs_profiles_pad_exactly() {
     let detail = TessellationSettings::default();
     let w = std::f64::consts::FRAC_1_SQRT_2;
     let quarter = ProfileWire {
+        names: Vec::new(),
         segments: vec![
             ProfileSegment::Line {
                 start: [0.0, 0.0],
@@ -347,6 +352,7 @@ fn nurbs_profiles_pad_exactly() {
     // A quintic over knots of its own, closed with a line, and a
     // quadratic ring.
     let open = ProfileWire {
+        names: Vec::new(),
         segments: vec![
             ProfileSegment::Nurbs {
                 degree: 5,
@@ -372,6 +378,7 @@ fn nurbs_profiles_pad_exactly() {
         ],
     };
     let ring = ProfileWire {
+        names: Vec::new(),
         segments: vec![ProfileSegment::Nurbs {
             degree: 2,
             knots: Vec::new(),
@@ -434,6 +441,7 @@ fn pipe_sweeps_profile_along_l_path() {
     let spine = Profile {
         plane: xy_plane(),
         wires: vec![ProfileWire {
+            names: Vec::new(),
             segments: vec![
                 ProfileSegment::Line {
                     start: [0.0, 0.0],
@@ -712,7 +720,11 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
                 ),
                 SolidOp::Fillet {
                     radius: 2.0,
-                    edges: EdgeSelection::Picked(vec![EdgeProbe { point, direction }]),
+                    edges: EdgeSelection::Picked(vec![EdgeProbe {
+                        faces: [0, 0],
+                        point,
+                        direction,
+                    }]),
                     follow_tangent: false,
                 },
             ],
@@ -1726,6 +1738,7 @@ fn a_pad_stops_exactly_on_a_curved_face() {
         (
             "up to face",
             ExtrudeTermination::UpToFace {
+                name: 0,
                 point: [10.0, 0.0, 10.0],
                 normal: [1.0, 0.0, 0.0],
                 offset: 0.0,
@@ -1735,6 +1748,7 @@ fn a_pad_stops_exactly_on_a_curved_face() {
         (
             "up to face, 1 mm off",
             ExtrudeTermination::UpToFace {
+                name: 0,
                 point: [10.0, 0.0, 10.0],
                 normal: [1.0, 0.0, 0.0],
                 offset: 1.0,
@@ -1795,6 +1809,7 @@ fn a_pad_stops_on_the_picked_flat_face_and_its_offset() {
         },
         kind: SweepKind::Extrude {
             termination: ExtrudeTermination::UpToFace {
+                name: 0,
                 point: [15.0, 15.0, 10.0],
                 normal: [0.0, 0.0, 1.0],
                 offset: 2.0,
@@ -1851,7 +1866,7 @@ fn walked_back(wire: &ProfileWire) -> ProfileWire {
             std::mem::swap(start, end);
         }
     }
-    ProfileWire { segments }
+    ProfileWire::new(segments)
 }
 
 /// The XZ plane, v up along world Z: where a spine rising from the XY
@@ -1873,7 +1888,10 @@ fn pipe_along(profile: ProfileWire, spine: Vec<ProfileSegment>) -> SolidOp {
         },
         spine: Profile {
             plane: xz_plane(),
-            wires: vec![ProfileWire { segments: spine }],
+            wires: vec![ProfileWire {
+                names: Vec::new(),
+                segments: spine,
+            }],
         },
         frame: kernel_api::PipeFrame::RotationMinimizing,
         corner: kernel_api::PipeCorner::Transformed,
@@ -2445,7 +2463,11 @@ fn extrude_on(
 }
 
 fn probe(point: [f64; 3], normal: [f64; 3]) -> FaceProbe {
-    FaceProbe { point, normal }
+    FaceProbe {
+        name: 0,
+        point,
+        normal,
+    }
 }
 
 /// A 20 × 20 × 10 block with a 10 × 20 step, 5 high, over its x < 10 half.
@@ -2714,6 +2736,7 @@ fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
                 normal: [0.0, 1.0, 0.0],
             },
             wires: vec![ProfileWire {
+                names: Vec::new(),
                 segments: (0..4)
                     .map(|i| ProfileSegment::Line {
                         start: corners[i],

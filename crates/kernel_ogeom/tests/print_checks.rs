@@ -161,6 +161,7 @@ fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
     ctx.view_proj = Some(view_proj);
     ctx.selected_body_id = Some(body.0);
     ctx.selected_face = Some(FaceRef {
+        name: 0,
         point: [2.5, 0.0, 0.0],
         normal: [0.0, 0.0, -1.0],
         surface: None,
@@ -179,6 +180,7 @@ fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
     assert!(HookOutcome::take(&mut ctx).recorded.is_empty());
 
     ctx.selected_face = Some(FaceRef {
+        name: 0,
         point: [0.0, 2.5, 20.0],
         normal: [0.0, 0.0, 1.0],
         surface: None,

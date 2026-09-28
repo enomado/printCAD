@@ -148,10 +148,7 @@ pub(crate) fn set_reference(
             let face = ctx
                 .selected_face_in(body)
                 .ok_or("select a flat face of the solid in the view first")?;
-            Err(FacePick {
-                point: face.point,
-                normal: face.normal,
-            })
+            Err(FacePick::of(face))
         }
     };
     set_profile(&mut feature, target)?;

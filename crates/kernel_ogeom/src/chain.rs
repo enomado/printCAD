@@ -7,8 +7,11 @@ use kernel_api::{
     BoolKind, BooleanOp, ChainError, ChainProbe, FeaturePreview, ProbeAnswer, SolidBuildResult,
     SolidOp, TessellationSettings,
 };
+use kernel_api::{Profile, TopoName, naming as names};
+use ogeom::math::{Point, Vector};
 use ogeom::topo::{Model, Shape};
 
+use crate::naming::{self, NameMap};
 use crate::ops::{self, pattern};
 use crate::{progress, tess};
 
@@ -62,6 +65,74 @@ pub fn execute_probing(
     preview: Option<std::ops::Range<usize>>,
     probes: &[ChainProbe],
 ) -> Result<SolidBuildResult, ChainError> {
+    execute_named(ops_list, &[], detail, preview, probes)
+}
+
+/// The name each op's faces are named under: `tags[index]` (the feature
+/// the op builds, [`kernel_api::naming::name_of_id`] of its id), the second
+/// and later ops of one feature told apart by their count; an op without
+/// a tag is named by where it stands in the chain.
+fn op_tags(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<TopoName> {
+    let mut seen: Vec<(TopoName, u32)> = Vec::new();
+    (0..ops_list.len())
+        .map(|index| {
+            let tag = tags
+                .get(index)
+                .copied()
+                .filter(|t| *t != 0)
+                .unwrap_or_else(|| names::name_of(format!("op {index}").as_bytes()));
+            let count = match seen.iter_mut().find(|(t, _)| *t == tag) {
+                Some((_, n)) => {
+                    *n += 1;
+                    *n
+                }
+                None => {
+                    seen.push((tag, 0));
+                    0
+                }
+            };
+            if count == 0 {
+                tag
+            } else {
+                names::child(tag, &count.to_le_bytes())
+            }
+        })
+        .collect()
+}
+
+/// The names of a sweep's tool: its walls after the profile's segments
+/// (every sweep's wall passes through the segment it sweeps) and its ends
+/// after where they stand along the profile's normal; the rest afresh.
+fn sweep_names(model: &Model, tool: &Shape, tag: TopoName, profile: &Profile) -> NameMap {
+    let plane = &profile.plane;
+    let origin = Point::new(plane.origin[0], plane.origin[1], plane.origin[2]);
+    let normal = Vector::new(plane.normal[0], plane.normal[1], plane.normal[2]);
+    naming::tool_names(
+        model,
+        tool,
+        tag,
+        &naming::profile_segments(profile),
+        origin,
+        normal,
+    )
+}
+
+/// A tool's faces named afresh, by their surfaces and where they face.
+fn tool_names_fresh(model: &Model, tool: &Shape, tag: TopoName) -> NameMap {
+    NameMap::assign(model, tool, tag, |_| Vec::new())
+}
+
+/// [`execute_probing`], naming the faces of the solid as it builds under
+/// `tags`, one per op (see [`op_tags`]): the result's mesh carries each
+/// face's name and each edge's faces' names, and references with names
+/// find their faces by them.
+pub fn execute_named(
+    ops_list: &[SolidOp],
+    tags: &[TopoName],
+    detail: &TessellationSettings,
+    preview: Option<std::ops::Range<usize>>,
+    probes: &[ChainProbe],
+) -> Result<SolidBuildResult, ChainError> {
     let chain_err = |op_index: usize, message: String| ChainError { op_index, message };
 
     if ops_list.is_empty() {
@@ -93,6 +164,8 @@ pub fn execute_probing(
 
     let mut model = Model::with_tolerances(tess::tolerances());
     let mut current: Option<Shape> = None;
+    let op_tags = op_tags(ops_list, tags);
+    let mut names = NameMap::default();
     let mut tools: Vec<Option<ToolSnapshot>> = Vec::with_capacity(ops_list.len());
     // The previewed feature: the body before it, after it, and its tools.
     let previewing = |index: usize| preview.as_ref().is_some_and(|r| r.contains(&index));
@@ -112,11 +185,16 @@ pub fn execute_probing(
         .collect();
 
     for (index, solid_op) in ops_list.iter().enumerate() {
+        let tag = op_tags[index];
+        // What the op and the probes asked before it look up by name is
+        // found in the solid as it stands.
+        let named = naming::set_current(std::mem::take(&mut names));
         if index > 0
             && let Some(shape) = current.as_ref()
         {
             ask(&mut model, shape, index, probes, &mut answers);
         }
+        let mut tool_names: Option<NameMap> = None;
         progress::context(format_args!(
             "{} {}/{}",
             progress::op_label(solid_op),
@@ -146,6 +224,7 @@ pub fn execute_probing(
             SolidOp::Sweep { profile, kind, op } => {
                 let tool = ops::sweep::build_tool(&mut model, base.as_ref(), profile, kind)
                     .map_err(&err)?;
+                tool_names = Some(sweep_names(&model, &tool, tag, profile));
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
@@ -154,6 +233,7 @@ pub fn execute_probing(
             SolidOp::SweepFace { face, kind, op } => {
                 let tool = ops::sweep::build_face_tool(&mut model, base.as_ref(), face, kind)
                     .map_err(&err)?;
+                tool_names = Some(tool_names_fresh(&model, &tool, tag));
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
@@ -165,6 +245,7 @@ pub fn execute_probing(
                 op,
             } => {
                 let tool = ops::primitive::build_tool(&mut model, kind, placement).map_err(&err)?;
+                tool_names = Some(tool_names_fresh(&model, &tool, tag));
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
@@ -178,6 +259,20 @@ pub fn execute_probing(
             } => {
                 let tool = ops::loft_pipe::loft_tool(&mut model, sections, *ruled, *closed)
                     .map_err(&err)?;
+                tool_names = Some(match sections.first() {
+                    Some(first) if !*closed => {
+                        let plane = &first.plane;
+                        naming::tool_names(
+                            &model,
+                            &tool,
+                            tag,
+                            &naming::profile_segments(first),
+                            Point::new(plane.origin[0], plane.origin[1], plane.origin[2]),
+                            Vector::new(plane.normal[0], plane.normal[1], plane.normal[2]),
+                        )
+                    }
+                    _ => tool_names_fresh(&model, &tool, tag),
+                });
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
@@ -194,6 +289,7 @@ pub fn execute_probing(
                 let tool =
                     ops::loft_pipe::pipe_tool(&mut model, profile, spine, frame, *corner, sections)
                         .map_err(&err)?;
+                tool_names = Some(tool_names_fresh(&model, &tool, tag));
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
@@ -307,6 +403,18 @@ pub fn execute_probing(
             }
         };
 
+        // The result's faces take the names of the faces they came from.
+        let before_names = named.take();
+        names = match solid_op {
+            SolidOp::Shape { .. } => tool_names_fresh(&model, &next, tag),
+            _ => {
+                let mut sources: Vec<&NameMap> = vec![&before_names];
+                if let Some(tool) = &tool_names {
+                    sources.push(tool);
+                }
+                NameMap::carry(&model, &next, &sources, tag)
+            }
+        };
         current = Some(next);
         if preview.as_ref().is_some_and(|r| r.end == index + 1) {
             after = current.clone();
@@ -315,6 +423,7 @@ pub fn execute_probing(
     }
 
     let final_shape = current.expect("chain validated non-empty");
+    let named = naming::set_current(names);
     ask(
         &mut model,
         &final_shape,
@@ -322,7 +431,8 @@ pub fn execute_probing(
         probes,
         &mut answers,
     );
-    let mesh = tess::mesh_shape(&model, &final_shape, &[], detail).map_err(|e| {
+    let names = named.take();
+    let mesh = tess::mesh_named(&model, &final_shape, detail, &names).map_err(|e| {
         chain_err(
             ops_list.len() - 1,
             format!("meshing the result failed: {e}"),

@@ -242,6 +242,7 @@ pub(crate) fn edge(document: &Document, r: &BorrowedRef) -> Result<EdgePick, Str
         mesh_edge(&mesh, pick).ok_or("no edge of the source solid lies where it was picked")?;
     let placement = relative(document, borrow.body, Some(source));
     Ok(EdgePick {
+        faces: [0, 0],
         point: placement.point(found.pick.point),
         direction: placement.direction(found.pick.direction),
     })
@@ -298,6 +299,7 @@ pub(crate) fn seen(document: &Document, borrow: &Borrow) -> (Vec<SeenFace>, Vec<
 fn moved_face(face: SeenFace, placement: &BodyPlacement) -> SeenFace {
     SeenFace {
         pick: FacePick {
+            name: 0,
             point: placement.point(face.pick.point),
             normal: placement.direction(face.pick.normal),
         },
@@ -311,6 +313,7 @@ fn moved_face(face: SeenFace, placement: &BodyPlacement) -> SeenFace {
 fn moved_edge(edge: FrozenEdge, placement: &BodyPlacement) -> FrozenEdge {
     FrozenEdge {
         pick: EdgePick {
+            faces: [0, 0],
             point: placement.point(edge.pick.point),
             direction: placement.direction(edge.pick.direction),
         },
@@ -359,6 +362,7 @@ pub fn freeze(
                         .map(|face| moved_face(face, &placement))
                         .unwrap_or_else(|| SeenFace {
                             pick: FacePick {
+                                name: 0,
                                 point: placement.point(pick.point),
                                 normal: placement.direction(pick.normal),
                             },
@@ -367,6 +371,7 @@ pub fn freeze(
                         });
                     frozen.faces.push(FrozenFace {
                         pick: FacePick {
+                            name: 0,
                             point: placement.point(pick.point),
                             normal: placement.direction(pick.normal),
                         },
@@ -499,6 +504,7 @@ pub(crate) fn flat_face_in_world(
             None => (face.pick.point, face.pick.normal),
         };
         Some(core_document::FaceRef {
+            name: 0,
             point: placement.point(point),
             normal: placement.direction(normal),
             surface: None,
@@ -717,6 +723,7 @@ fn mesh_edge(mesh: &TriMesh, pick: &EdgePick) -> Option<FrozenEdge> {
     }
     Some(FrozenEdge {
         pick: EdgePick {
+            faces: [0, 0],
             point: nearest_on_segment(pick.point, a, b),
             direction,
         },
@@ -765,6 +772,7 @@ mod tests {
         let face = mesh_face(
             &mesh,
             &FacePick {
+                name: 0,
                 point: [0.6, 0.3, 1.0],
                 normal: [0.0, 0.0, 1.0],
             },
@@ -774,6 +782,7 @@ mod tests {
         assert_eq!(face.outline.len(), 8);
         assert!(matches!(face.surface, Some(FaceSurface::Plane { .. })));
         let far = FacePick {
+            name: 0,
             point: [5.0, 5.0, 5.0],
             normal: [0.0, 0.0, 1.0],
         };
@@ -786,6 +795,7 @@ mod tests {
         let edge = mesh_edge(
             &mesh,
             &EdgePick {
+                faces: [0, 0],
                 point: [0.5, 0.0, 1.0],
                 direction: [-1.0, 0.0, 0.0],
             },

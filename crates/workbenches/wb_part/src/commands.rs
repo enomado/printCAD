@@ -338,6 +338,7 @@ pub fn run(
         let point = vector3(a.0.get("face_point"), "face_point")?;
         let normal = vector3(a.0.get("face_normal"), "face_normal")?;
         ctx.selected_face = Some(core_document::FaceRef {
+            name: 0,
             point: placement.point(point),
             normal: placement.direction(normal),
             surface: None,
@@ -512,6 +513,7 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
                 .iter()
                 .map(|f| {
                     Ok(FacePick {
+                        name: 0,
                         point: vector3(f.get("point"), "faces")?,
                         normal: vector3(f.get("normal"), "faces")?,
                     })
@@ -521,6 +523,7 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
                 .iter()
                 .map(|e| {
                     Ok(EdgePick {
+                        faces: [0, 0],
                         point: vector3(e.get("point"), "edges")?,
                         direction: vector3(e.get("direction"), "edges")?,
                     })
@@ -653,6 +656,7 @@ pub(crate) fn record_task(
                 .and_then(|v| serde_json::from_value::<crate::FacePick>(v.clone()).ok());
             let placement = ctx.document.body_placement(*body);
             let picked = profile_face.map(|face| core_document::FaceRef {
+                name: face.name,
                 point: placement.point(face.point),
                 normal: placement.direction(face.normal),
                 surface: None,
@@ -1338,6 +1342,7 @@ mod tests {
             let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
             ctx.selected_body_id = Some(body.0);
             ctx.selected_face = Some(core_document::FaceRef {
+                name: 0,
                 point: [5.0, 2.5, 10.0],
                 normal: [0.0, 0.0, 1.0],
                 surface: None,

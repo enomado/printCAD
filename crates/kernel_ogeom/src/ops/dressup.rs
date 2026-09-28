@@ -86,16 +86,22 @@ fn edge_probe(model: &Model, edge: &Shape) -> Option<Point> {
     Some(Point::new(acc.x / n, acc.y / n, acc.z / n))
 }
 
-/// A point that names an edge: the edge nearest it, and, when `along` is
+/// What names an edge: the names of the faces it runs between, when the
+/// pick kept them; else the edge nearest `point`, and, when `along` is
 /// set, running that way there.
 struct Probe {
     point: Point,
     along: Option<Vector>,
+    faces: [kernel_api::TopoName; 2],
 }
 
 impl Probe {
     fn at(point: Point) -> Self {
-        Self { point, along: None }
+        Self {
+            point,
+            along: None,
+            faces: [0, 0],
+        }
     }
 }
 
@@ -121,6 +127,7 @@ fn selection_probes(
                         point: point3(pick.point),
                         along: (length > 1e-9)
                             .then(|| Vector::new(x / length, y / length, z / length)),
+                        faces: pick.faces,
                     }
                 })
                 .collect();
@@ -223,6 +230,12 @@ fn chain_of(
         .map_err(|e| format!("exploring the solid failed: {e}"))?;
     let mut chain: Vec<Shape> = Vec::with_capacity(probes.len());
     for probe in probes {
+        if let Some(edge) = crate::naming::find_edge(model, solid, probe.faces, probe.point) {
+            if !chain.iter().any(|e| e.is_same(&edge)) {
+                chain.push(edge);
+            }
+            continue;
+        }
         let mut near: Vec<(f64, Shape)> = edges
             .iter()
             .filter_map(|e| distance_to(model, probe.point, e).map(|d| (d, e.clone())))

@@ -112,6 +112,10 @@ pub struct EdgeRef {
     /// The circle the edge runs round, when it is a circle or an arc of
     /// one: a hole's rim brings the hole's axis.
     pub circle: Option<EdgeCircle>,
+    /// The names of the two faces the edge runs between, when the mesh
+    /// records them: what a reference keeps so a rebuild finds the edge
+    /// again (`kernel_api::naming`).
+    pub faces: [kernel_api::TopoName; 2],
 }
 
 /// A circle an edge lies on, in the same frame as the edge.
@@ -175,12 +179,16 @@ pub struct FaceRef {
     /// The face's exact surface, in world space, when the mesh records
     /// it: a picked bore brings its axis, a flat face its plane.
     pub surface: Option<kernel_api::FaceSurface>,
+    /// The face's name, when the mesh records it: what a reference keeps
+    /// so a rebuild finds the face again (`kernel_api::naming`).
+    pub name: kernel_api::TopoName,
 }
 
 impl EdgeRef {
     /// The same edge seen from a frame `placement` moves points into.
     pub fn moved(&self, placement: &crate::BodyPlacement) -> Self {
         Self {
+            faces: self.faces,
             point: placement.point(self.point),
             direction: placement.direction(self.direction),
             length_mm: self.length_mm,
@@ -198,6 +206,7 @@ impl FaceRef {
     /// The same face seen from a frame `placement` moves points into.
     pub fn moved(&self, placement: &crate::BodyPlacement) -> Self {
         Self {
+            name: self.name,
             point: placement.point(self.point),
             normal: placement.direction(self.normal),
             surface: self

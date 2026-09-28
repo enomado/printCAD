@@ -1237,6 +1237,7 @@ mod tests {
 
     fn face_up(z: f32) -> FaceRef {
         FaceRef {
+            name: 0,
             point: [2.0, 2.0, z],
             normal: [0.0, 0.0, 1.0],
             surface: Some(FaceSurface::Plane {
@@ -1733,6 +1734,7 @@ mod tests {
         let (mut doc, base, part) = scene();
         let mut wb = AssemblyWorkbench::default();
         let rim = |body: BodyId, center: [f32; 3]| core_document::EdgeRef {
+            faces: [0, 0],
             point: [center[0] + 3.0, center[1], center[2]],
             direction: [0.0, 1.0, 0.0],
             length_mm: 18.85,

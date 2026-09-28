@@ -29,6 +29,7 @@ fn xy_plane() -> ProfilePlane {
 
 fn rect_wire(x0: f64, y0: f64, x1: f64, y1: f64) -> ProfileWire {
     ProfileWire {
+        names: Vec::new(),
         segments: vec![
             ProfileSegment::Line {
                 start: [x0, y0],

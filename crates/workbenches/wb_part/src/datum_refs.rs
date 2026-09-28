@@ -44,6 +44,7 @@ pub const MODES: &[(&str, &str)] = &[
 /// own body.
 pub fn face_anchor(face: &FaceRef, follows: bool) -> FaceAnchor {
     FaceAnchor {
+        name: face.name,
         point: face.point,
         normal: face.normal,
         surface: face.surface,
@@ -55,6 +56,7 @@ pub fn face_anchor(face: &FaceRef, follows: bool) -> FaceAnchor {
 /// own body.
 pub fn edge_anchor(edge: &EdgeRef, follows: bool) -> EdgeAnchor {
     EdgeAnchor {
+        faces: edge.faces,
         point: edge.point,
         direction: edge.direction,
         ends: None,
@@ -108,6 +110,7 @@ pub fn settle(
 
 fn face_from(value: &Value, name: &str) -> Result<FaceAnchor, CommandError> {
     Ok(FaceAnchor {
+        name: 0,
         point: vector3(value.get("face_point"), &format!("{name}.face_point"))?,
         normal: vector3(value.get("face_normal"), &format!("{name}.face_normal"))?,
         surface: None,
@@ -117,6 +120,7 @@ fn face_from(value: &Value, name: &str) -> Result<FaceAnchor, CommandError> {
 
 fn edge_from(value: &Value, name: &str) -> Result<EdgeAnchor, CommandError> {
     Ok(EdgeAnchor {
+        faces: [0, 0],
         point: vector3(value.get("edge_point"), &format!("{name}.edge_point"))?,
         direction: match value.get("edge_direction") {
             Some(v) if !v.is_null() => vector3(Some(v), &format!("{name}.edge_direction"))?,
@@ -269,6 +273,7 @@ pub fn attachment_from_args(
         },
         "face" => DatumAttachment::Face {
             face: FaceAnchor {
+                name: 0,
                 point: vector3(a.0.get("face_point"), "face_point")?,
                 normal: vector3(a.0.get("face_normal"), "face_normal")?,
                 surface: None,

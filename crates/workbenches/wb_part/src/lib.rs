@@ -177,10 +177,7 @@ impl PartDesignWorkbench {
     /// The current face pick, in `body`'s frame, when the user has one
     /// selected in the viewport.
     fn selected_face_pick(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FacePick> {
-        ctx.selected_face_in(body).map(|face| FacePick {
-            point: face.point,
-            normal: face.normal,
-        })
+        ctx.selected_face_in(body).map(FacePick::of)
     }
 
     /// The flat face picked in the viewport, in `body`'s frame, as a
@@ -191,10 +188,7 @@ impl PartDesignWorkbench {
             face.surface,
             None | Some(kernel_api::FaceSurface::Plane { .. })
         );
-        flat.then_some(FacePick {
-            point: face.point,
-            normal: face.normal,
-        })
+        flat.then_some(FacePick::of(face))
     }
 
     /// The flat face picked in the viewport, as a plane to mirror across;
@@ -205,10 +199,7 @@ impl PartDesignWorkbench {
             face.surface,
             None | Some(kernel_api::FaceSurface::Plane { .. })
         );
-        flat.then_some(MirrorPlane::Face(FacePick {
-            point: face.point,
-            normal: face.normal,
-        }))
+        flat.then_some(MirrorPlane::Face(FacePick::of(face)))
     }
 
     /// What a dress-up takes from the viewport selection, in `body`'s
@@ -217,15 +208,7 @@ impl PartDesignWorkbench {
     fn selected_edges(ctx: &WorkbenchRuntimeContext, body: BodyId) -> EdgeSel {
         let edges = ctx.selected_edges_in(body);
         if !edges.is_empty() {
-            return EdgeSel::Edges(
-                edges
-                    .iter()
-                    .map(|e| EdgePick {
-                        point: e.point,
-                        direction: e.direction,
-                    })
-                    .collect(),
-            );
+            return EdgeSel::Edges(edges.iter().map(EdgePick::of).collect());
         }
         match Self::selected_face_pick(ctx, body) {
             Some(pick) => EdgeSel::Faces(vec![pick]),
@@ -659,20 +642,14 @@ impl PartDesignWorkbench {
             let faces = ctx
                 .selected_face_in(from)
                 .filter(|_| face_body == Some(from))
-                .map(|face| FacePick {
-                    point: face.point,
-                    normal: face.normal,
-                })
+                .map(FacePick::of)
                 .into_iter()
                 .collect();
             let edges = ctx
                 .selected_edges_in(from)
                 .iter()
                 .filter(|e| BodyId(e.body) == from)
-                .map(|e| EdgePick {
-                    point: e.point,
-                    direction: e.direction,
-                })
+                .map(EdgePick::of)
                 .collect();
             return Ok(PartFeature::Borrow {
                 source: BorrowSource::Solid {
@@ -1772,6 +1749,7 @@ mod body_tool {
             ctx.selected_body_id = Some(body.0);
             ctx.active_document_object = Some(pad);
             ctx.selected_face = Some(core_document::FaceRef {
+                name: 0,
                 point: [10.0, 2.5, 4.0],
                 normal: [1.0, 0.0, 0.0],
                 surface,
@@ -1805,6 +1783,7 @@ mod body_tool {
         assert_eq!(
             mirror_with(Some(flat)),
             MirrorPlane::Face(FacePick {
+                name: 0,
                 point: [10.0, 2.5, 4.0],
                 normal: [1.0, 0.0, 0.0],
             })

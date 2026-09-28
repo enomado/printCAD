@@ -243,7 +243,7 @@ fn flip_v_wire(wire: &kernel_api::ProfileWire) -> kernel_api::ProfileWire {
             },
         })
         .collect();
-    kernel_api::ProfileWire { segments }
+    kernel_api::ProfileWire::new(segments)
 }
 
 /// A shape-producing op with its world-space inputs moved by a rigid

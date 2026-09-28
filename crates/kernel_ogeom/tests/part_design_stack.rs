@@ -703,6 +703,7 @@ fn bore_rim_fillets() {
         PartFeature::Fillet {
             radius: 2.0,
             edges: wb_part::EdgeSel::Edges(vec![wb_part::EdgePick {
+                faces: [0, 0],
                 point: [26.0, 15.0, 12.0],
                 direction: [0.0, 1.0, 0.0],
             }]),
@@ -989,6 +990,7 @@ fn mirrored_copies_the_pad_across_every_plane_it_is_given() {
         (MirrorPlane::YZ, [-10.0, 0.0, 0.0], [10.0, 5.0, 8.0]),
         (
             MirrorPlane::Face(FacePick {
+                name: 0,
                 point: [10.0, 2.5, 4.0],
                 normal: [1.0, 0.0, 0.0],
             }),
@@ -2315,6 +2317,7 @@ fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
         .unwrap();
     let edge = |direction: [f32; 3]| {
         wb_part::RevolveAxis::Edge(wb_part::EdgePick {
+            faces: [0, 0],
             point: [0.0, 3.0, 0.0],
             direction,
         })
@@ -2437,6 +2440,7 @@ fn a_linear_pattern_runs_along_an_edge_a_datum_line_or_a_sketch_axis() {
         )
         .unwrap();
     let edge = wb_part::PatternAxis::Edge(wb_part::EdgePick {
+        faces: [0, 0],
         point: [0.0, 30.0, 4.0],
         direction: [0.0, 1.0, 0.0],
     });
@@ -2514,6 +2518,7 @@ fn an_uneven_linear_pattern_spaces_each_occurrence_its_own_way() {
 #[test]
 fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
     let axis = wb_part::PatternAxis::Edge(wb_part::EdgePick {
+        faces: [0, 0],
         point: [30.0, 30.0, 10.0],
         direction: [0.0, 0.0, 1.0],
     });
@@ -2560,6 +2565,7 @@ fn thickened_block(inward: bool, join: kernel_api::ThicknessJoin) -> Result<f64,
         PartFeature::Thickness {
             value: 1.0,
             faces: vec![wb_part::FacePick {
+                name: 0,
                 point: [10.0, 10.0, 10.0],
                 normal: [0.0, 0.0, 1.0],
             }],
@@ -2614,6 +2620,7 @@ fn block_with_rounded_corner(dress_up: PartFeature) -> Result<f64, String> {
         PartFeature::Fillet {
             radius: 3.0,
             edges: wb_part::EdgeSel::Edges(vec![wb_part::EdgePick {
+                faces: [0, 0],
                 point: [20.0, 20.0, 5.0],
                 direction: [0.0, 0.0, 1.0],
             }]),
@@ -2634,14 +2641,17 @@ fn top_chain() -> Vec<wb_part::EdgePick> {
     let d = 3.0 * std::f32::consts::FRAC_1_SQRT_2;
     vec![
         wb_part::EdgePick {
+            faces: [0, 0],
             point: [20.0, 8.0, 10.0],
             direction: [0.0, 1.0, 0.0],
         },
         wb_part::EdgePick {
+            faces: [0, 0],
             point: [17.0 + d, 17.0 + d, 10.0],
             direction: [-1.0, 1.0, 0.0],
         },
         wb_part::EdgePick {
+            faces: [0, 0],
             point: [8.0, 20.0, 10.0],
             direction: [1.0, 0.0, 0.0],
         },
@@ -3400,5 +3410,131 @@ fn a_feature_made_at_an_earlier_point_builds_there() {
         2400.0 - 150.0 * pi + 36.0 * pi,
         5e-3,
         "with the boss",
+    );
+}
+
+/// Builds `body` naming its faces after its features, as the app does.
+fn built_named(doc: &Document, body: BodyId) -> Result<kernel_api::SolidBuildResult, String> {
+    let plan = wb_part::body_build_ops(doc, body).map_err(|e| e.message)?;
+    let tags: Vec<kernel_api::TopoName> = plan
+        .op_features
+        .iter()
+        .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+        .collect();
+    let mut kernel = OgeomKernel::new();
+    kernel
+        .execute_solid_chain_named(
+            &plan.ops,
+            &tags,
+            &TessellationSettings::default(),
+            None,
+            &[],
+        )
+        .map_err(|e| e.to_string())
+}
+
+/// The volume of a built solid.
+fn volume_of(result: &kernel_api::SolidBuildResult) -> f64 {
+    OgeomKernel::new()
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap()
+}
+
+/// The outline edge of `mesh` whose every point satisfies `on`, picked as
+/// a click picks it: its middle, its direction and its faces' names.
+fn pick_edge(mesh: &kernel_api::TriMesh, on: impl Fn([f32; 3]) -> bool) -> wb_part::EdgePick {
+    let edges = mesh.edge_ids.iter().copied().max().unwrap_or(0) + 1;
+    for edge in 0..edges {
+        let points: Vec<[f32; 3]> = mesh
+            .edges
+            .chunks(2)
+            .zip(&mesh.edge_ids)
+            .filter(|(_, id)| **id == edge)
+            .flat_map(|(pair, _)| pair.iter().map(|i| mesh.positions[*i as usize]))
+            .collect();
+        if points.is_empty() || !points.iter().all(|p| on(*p)) {
+            continue;
+        }
+        let (a, b) = (points[0], points[points.len() - 1]);
+        let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        return wb_part::EdgePick {
+            point: [
+                (a[0] + b[0]) / 2.0,
+                (a[1] + b[1]) / 2.0,
+                (a[2] + b[2]) / 2.0,
+            ],
+            direction: d.map(|c| c / len),
+            faces: mesh.edge_faces[edge as usize],
+        };
+    }
+    panic!("no such edge")
+}
+
+/// A fillet on the pad's top edge follows the edge when the pad grows:
+/// the edge is found by the faces it runs between, where the point it was
+/// picked at is now 10 mm off it.
+#[test]
+fn a_fillet_follows_its_edge_by_name_when_the_pad_grows() {
+    let (mut doc, body, sketch_id) = setup(20.0, 20.0);
+    let pad = doc
+        .add_feature_in_body(
+            pad_feature(sketch_id, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    let first = built_named(&doc, body).unwrap();
+    assert!(
+        first.mesh.face_names.iter().all(|n| *n != 0),
+        "every face is named"
+    );
+    // The top edge along X at y = 0.
+    let pick = pick_edge(&first.mesh, |p| {
+        (p[2] - 10.0).abs() < 1e-3 && p[1].abs() < 1e-3
+    });
+    assert!(pick.faces.iter().all(|n| *n != 0), "the pick keeps names");
+    doc.add_feature_in_body(
+        PartFeature::Fillet {
+            radius: 2.0,
+            edges: wb_part::EdgeSel::Edges(vec![pick]),
+            follow_tangent: false,
+        },
+        "Fillet".into(),
+        Some(body),
+    )
+    .unwrap();
+    let round = 4.0 * (1.0 - std::f64::consts::FRAC_PI_4);
+    let filleted = built_named(&doc, body).unwrap();
+    assert_near(
+        volume_of(&filleted),
+        4000.0 - round * 20.0,
+        5e-3,
+        "at 10 mm",
+    );
+
+    // The pad grows to 20 mm: the named edge is at z = 20 now.
+    let mut data = doc.get_feature_data(pad).unwrap().clone();
+    data["Pad"]["length"] = serde_json::json!(20.0);
+    doc.update_feature_data(pad, data).unwrap();
+    let grown = built_named(&doc, body).unwrap();
+    assert_near(volume_of(&grown), 8000.0 - round * 20.0, 5e-3, "at 20 mm");
+
+    // Without the names the point alone is too far from the edge.
+    let mut unnamed = doc.clone();
+    let fillet = unnamed
+        .feature_tree()
+        .all_nodes()
+        .find(|(_, n)| n.name == "Fillet")
+        .map(|(id, _)| *id)
+        .unwrap();
+    let mut data = unnamed.get_feature_data(fillet).unwrap().clone();
+    data["Fillet"]["edges"]["Edges"][0]["faces"] = serde_json::json!([0, 0]);
+    unnamed.update_feature_data(fillet, data).unwrap();
+    assert!(
+        built_named(&unnamed, body).is_err(),
+        "the point alone misses it"
     );
 }

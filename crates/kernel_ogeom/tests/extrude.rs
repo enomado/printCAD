@@ -28,6 +28,7 @@ fn xy_plane() -> ProfilePlane {
 
 fn rect_wire(x0: f64, y0: f64, x1: f64, y1: f64) -> ProfileWire {
     ProfileWire {
+        names: Vec::new(),
         segments: vec![
             ProfileSegment::Line {
                 start: [x0, y0],
@@ -51,6 +52,7 @@ fn rect_wire(x0: f64, y0: f64, x1: f64, y1: f64) -> ProfileWire {
 
 fn circle_wire(cx: f64, cy: f64, radius: f64) -> ProfileWire {
     ProfileWire {
+        names: Vec::new(),
         segments: vec![ProfileSegment::Circle {
             center: [cx, cy],
             radius,
@@ -340,6 +342,7 @@ fn invalid_chains_error_instead_of_crashing() {
     // Unclosed wire (three line segments that never loop back) must fail with
     // a message mentioning "closed".
     let open_wire = ProfileWire {
+        names: Vec::new(),
         segments: vec![
             ProfileSegment::Line {
                 start: [0.0, 0.0],
@@ -371,6 +374,7 @@ fn arc_profile_pads_successfully() {
 
     // 10x10 rectangle whose top side is replaced by an arc bulging to y=13.
     let wire = ProfileWire {
+        names: Vec::new(),
         segments: vec![
             ProfileSegment::Line {
                 start: [0.0, 0.0],

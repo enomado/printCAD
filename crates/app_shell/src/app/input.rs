@@ -706,7 +706,14 @@ pub(crate) fn face_ref_from_mesh(
         .get(triangle)
         .and_then(|face| mesh.face_surfaces.get(*face as usize))
         .copied();
+    let name = mesh
+        .faces
+        .get(triangle)
+        .and_then(|face| mesh.face_names.get(*face as usize))
+        .copied()
+        .unwrap_or(0);
     Some(core_document::FaceRef {
+        name,
         point: projected.to_array(),
         normal: normal.to_array(),
         surface,

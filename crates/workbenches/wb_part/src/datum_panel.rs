@@ -154,12 +154,14 @@ fn candidate(
 
 fn mode_label(mode: &str) -> &'static str {
     let face = FaceAnchor {
+        name: 0,
         point: [0.0; 3],
         normal: [0.0, 0.0, 1.0],
         surface: None,
         follows: false,
     };
     let edge = EdgeAnchor {
+        faces: [0, 0],
         point: [0.0; 3],
         direction: [1.0, 0.0, 0.0],
         ends: None,
