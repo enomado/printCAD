@@ -11,7 +11,7 @@ use ui_kit::widgets::{
 
 use super::label_cell;
 use crate::borrow;
-use crate::feature::{BorrowSource, EdgePick, FacePick, FrozenBorrow};
+use crate::feature::{BorrowOptions, BorrowSource, EdgePick, FacePick, FrozenBorrow};
 
 /// A body's name, for the panel.
 fn body_name(ctx: &WorkbenchRuntimeContext, body: BodyId) -> String {
@@ -60,6 +60,39 @@ fn source_label(ctx: &WorkbenchRuntimeContext, source: &BorrowSource) -> String 
     }
 }
 
+/// Where the borrowed geometry is moved and turned to from where the
+/// bodies put it.
+fn offset_editor(ui: &mut Ui, feature_id: FeatureId, options: &mut BorrowOptions) -> bool {
+    use ui_kit::widgets::QtyField;
+    let mut changed = false;
+    egui::CollapsingHeader::new("Offset")
+        .id_salt(("borrow_offset", feature_id))
+        .default_open(!options.offset.eq(&Default::default()))
+        .show(ui, |ui| {
+            let o = &mut options.offset;
+            let [x, y, z] = &mut o.translation;
+            for (label, value) in [("Along X", x), ("Along Y", y), ("Along Z", z)] {
+                ui.horizontal(|ui| {
+                    label_cell(ui, label);
+                    changed |= QtyField::mm(value).show(ui);
+                });
+            }
+            let [tilt_x, tilt_y] = &mut o.tilt;
+            for (label, value) in [
+                ("Turn about Z", &mut o.rotation_deg),
+                ("Tilt about X", tilt_x),
+                ("Tilt about Y", tilt_y),
+            ] {
+                ui.horizontal(|ui| {
+                    label_cell(ui, label);
+                    changed |= QtyField::degrees(value).show(ui);
+                });
+            }
+            changed |= check_row(ui, &mut o.flip, "Flip").changed();
+        });
+    changed
+}
+
 /// Why freezing failed, kept for the panel until the next try.
 fn freeze_error_id(feature: FeatureId) -> egui::Id {
     egui::Id::new(("borrow_freeze_error", feature))
@@ -73,6 +106,7 @@ pub(super) fn borrow_editor(
     feature_id: FeatureId,
     source: &mut BorrowSource,
     frozen: &mut Option<FrozenBorrow>,
+    options: &mut BorrowOptions,
 ) -> bool {
     let mut changed = false;
     let sketches = other_sketches(ctx, body);
@@ -118,7 +152,20 @@ pub(super) fn borrow_editor(
     } = source
     {
         changed |= picks_editor(ui, ctx, body, from, faces, edges);
+        changed |= check_row(ui, &mut options.fill, "Fill closed edges")
+            .on_hover_text(
+                "Edges that close into a loop in one plane lend the face they bound, as a profile",
+            )
+            .changed();
+        changed |= check_row(ui, &mut options.whole, "Whole solid as reference")
+            .on_hover_text("Draw all of the other body's edges here, to measure and stop on")
+            .changed();
+    } else if options.fill || options.whole {
+        options.fill = false;
+        options.whole = false;
+        changed = true;
     }
+    changed |= offset_editor(ui, feature_id, options);
 
     let mut is_frozen = frozen.is_some();
     let toggled = check_row(ui, &mut is_frozen, "Frozen")
@@ -133,7 +180,7 @@ pub(super) fn borrow_editor(
         *frozen = None;
         changed = true;
     } else if (toggled && is_frozen) || refreeze {
-        match borrow::freeze(ctx.document, ctx.kernel, body, source) {
+        match borrow::freeze(ctx.document, ctx.kernel, body, source, options) {
             Ok(snapshot) => {
                 *frozen = Some(snapshot);
                 ui.data_mut(|d| d.remove::<String>(freeze_error_id(feature_id)));

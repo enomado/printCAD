@@ -556,6 +556,7 @@ fn a_sketch_on_a_lent_face_follows_the_lender() {
     let lent = doc
         .add_feature_in_body(
             PartFeature::Borrow {
+                options: Default::default(),
                 source: wb_part::BorrowSource::Solid {
                     body: b,
                     faces: vec![wb_part::FacePick {

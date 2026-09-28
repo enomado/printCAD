@@ -16,8 +16,8 @@ use kernel_api::{FaceSurface, KernelQueries, TriMesh};
 use wb_sketch::SketchFeature;
 
 use crate::feature::{
-    BorrowSource, BorrowedRef, EdgePick, FacePick, FrozenBorrow, FrozenEdge, FrozenFace,
-    PartFeature,
+    BorrowOptions, BorrowSource, BorrowedRef, EdgePick, FacePick, FrozenBorrow, FrozenEdge,
+    FrozenFace, PartFeature,
 };
 
 /// A borrow feature as the build reads it.
@@ -26,6 +26,34 @@ pub(crate) struct Borrow {
     pub body: BodyId,
     pub source: BorrowSource,
     pub frozen: Option<FrozenBorrow>,
+    pub options: BorrowOptions,
+}
+
+impl Borrow {
+    /// What the borrow's offset does, on top of where the bodies put it.
+    fn offset(&self) -> BodyPlacement {
+        self.options.placement()
+    }
+
+    /// Whether it lends a sketch: a borrowed sketch, or edges it fills.
+    fn lends_sketch(&self) -> bool {
+        match &self.frozen {
+            Some(frozen) => {
+                frozen.sketch.is_some() || (self.options.fill && !frozen.edges.is_empty())
+            }
+            None => match &self.source {
+                BorrowSource::Sketch(_) => true,
+                BorrowSource::Solid { .. } => self.options.fill,
+            },
+        }
+    }
+}
+
+/// `rows` (a row-major rigid transform) done after by `then`.
+fn then_rows(then: &BodyPlacement, rows: [[f64; 4]; 4]) -> [[f64; 4]; 4] {
+    let a = glam::DMat4::from_cols_array_2d(&then.rows()).transpose();
+    let b = glam::DMat4::from_cols_array_2d(&rows).transpose();
+    (a * b).transpose().to_cols_array_2d()
 }
 
 /// The borrow `id` is, when it is one.
@@ -35,10 +63,15 @@ pub(crate) fn borrow_of(document: &Document, id: FeatureId) -> Option<Borrow> {
         return None;
     }
     match PartFeature::from_json(document.feature_values(id)?).ok()? {
-        PartFeature::Borrow { source, frozen } => Some(Borrow {
+        PartFeature::Borrow {
+            source,
+            frozen,
+            options,
+        } => Some(Borrow {
             body: node.body?,
             source,
             frozen,
+            options,
         }),
         _ => None,
     }
@@ -129,12 +162,18 @@ pub(crate) fn sketch(document: &Document, id: FeatureId) -> Option<Result<Sketch
 }
 
 fn borrowed_sketch(document: &Document, borrow: &Borrow) -> Result<SketchFeature, String> {
+    if borrow.options.fill && !matches!(borrow.source, BorrowSource::Sketch(_)) {
+        let (_, edges) = seen(document, borrow);
+        return filled(&edges);
+    }
     if let Some(frozen) = &borrow.frozen {
         let data = frozen
             .sketch
             .as_ref()
             .ok_or("this borrow was frozen with no sketch in it")?;
-        return SketchFeature::from_json(data).map_err(|e| format!("invalid frozen sketch: {e}"));
+        let feature =
+            SketchFeature::from_json(data).map_err(|e| format!("invalid frozen sketch: {e}"))?;
+        return Ok(placed_sketch(feature, &borrow.offset()));
     }
     let BorrowSource::Sketch(sketch) = &borrow.source else {
         return Err("this borrow lends faces and edges, not a sketch".into());
@@ -142,15 +181,181 @@ fn borrowed_sketch(document: &Document, borrow: &Borrow) -> Result<SketchFeature
     if let Some(why) = refusal(document, borrow.body, &borrow.source) {
         return Err(why);
     }
-    live_sketch(document, borrow.body, *sketch)
+    Ok(placed_sketch(
+        live_sketch(document, borrow.body, *sketch)?,
+        &borrow.offset(),
+    ))
 }
 
 /// Whether the borrow `id` lends a sketch.
 pub(crate) fn lends_sketch(document: &Document, id: FeatureId) -> bool {
-    borrow_of(document, id).is_some_and(|b| match &b.frozen {
-        Some(frozen) => frozen.sketch.is_some(),
-        None => matches!(b.source, BorrowSource::Sketch(_)),
-    })
+    borrow_of(document, id).is_some_and(|b| b.lends_sketch())
+}
+
+/// How far apart two points of borrowed edges may be and still be one.
+const JOIN_MM: f32 = 1e-3;
+
+/// The face borrowed `edges` bound, as a sketch on their plane: straight
+/// pieces as lines, a piece that keeps to one circle as that circle or an
+/// arc of it. Refused when they leave the plane or do not close.
+pub(crate) fn filled(edges: &[FrozenEdge]) -> Result<SketchFeature, String> {
+    use wb_sketch::sketch::{
+        Arc, Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
+    };
+    let points: Vec<[f32; 3]> = edges
+        .iter()
+        .flat_map(|e| e.outline.iter().copied())
+        .collect();
+    let Some(&p0) = points.first() else {
+        return Err("fill needs borrowed edges".into());
+    };
+    let size = points
+        .iter()
+        .map(|p| length(sub(*p, p0)))
+        .fold(0.0, f32::max)
+        .max(1.0);
+    // The plane: the first point and the two directions from it that
+    // span the most.
+    let far = points
+        .iter()
+        .copied()
+        .max_by(|a, b| length(sub(*a, p0)).total_cmp(&length(sub(*b, p0))))
+        .unwrap_or(p0);
+    let u = sub(far, p0);
+    let normal = points
+        .iter()
+        .map(|p| cross(u, sub(*p, p0)))
+        .max_by(|a, b| length(*a).total_cmp(&length(*b)))
+        .unwrap_or([0.0, 0.0, 1.0]);
+    if length(normal) < 1e-6 * size * size {
+        return Err("the borrowed edges lie in a line, which bounds no face".into());
+    }
+    let normal = normal.map(|c| c / length(normal));
+    if points
+        .iter()
+        .any(|p| dot(sub(*p, p0), normal).abs() > 1e-3 * size)
+    {
+        return Err("the borrowed edges do not lie in one plane".into());
+    }
+    let x_axis = u.map(|c| c / length(u));
+    let plane = SketchPlane::from_frame(p0, normal, x_axis);
+    let flat = |p: [f32; 3]| {
+        let d = sub(p, plane.origin);
+        Vec2D::new(dot(d, plane.x_axis), dot(d, plane.y_axis))
+    };
+    let mut sketch = Sketch::new("Filled");
+    sketch.plane = plane;
+    let mut ids: Vec<(Vec2D, uuid::Uuid)> = Vec::new();
+    let mut point_at = |sketch: &mut Sketch, p: Vec2D| {
+        if let Some((_, id)) = ids
+            .iter()
+            .find(|(q, _)| (*q - p).to_glam().length() < JOIN_MM)
+        {
+            return *id;
+        }
+        let id = sketch.add_geometry(GeometryElement::Point(Point::new(p)));
+        ids.push((p, id));
+        id
+    };
+    for edge in edges {
+        // The edge's pieces chained into one run of points.
+        let run = chain(&edge.outline)
+            .into_iter()
+            .map(flat)
+            .collect::<Vec<_>>();
+        if run.len() < 2 {
+            continue;
+        }
+        match round(&run) {
+            Some((c, r)) if run.len() >= 5 => {
+                let closed = (run[0] - run[run.len() - 1]).to_glam().length() < JOIN_MM;
+                let centre = sketch.add_geometry(GeometryElement::Point(Point::new(c)));
+                if closed {
+                    sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, r)));
+                } else {
+                    let (a, b) = (
+                        point_at(&mut sketch, run[0]),
+                        point_at(&mut sketch, run[run.len() - 1]),
+                    );
+                    let turn = (run[1] - c).to_glam().perp_dot((run[2] - c).to_glam())
+                        + (run[0] - c).to_glam().perp_dot((run[1] - c).to_glam());
+                    let (start, end) = if turn > 0.0 { (a, b) } else { (b, a) };
+                    sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, r)));
+                }
+            }
+            _ => {
+                for w in run.windows(2) {
+                    if (w[1] - w[0]).to_glam().length() < JOIN_MM {
+                        continue;
+                    }
+                    let (a, b) = (point_at(&mut sketch, w[0]), point_at(&mut sketch, w[1]));
+                    sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+                }
+            }
+        }
+    }
+    match wb_sketch::profile::extract_wires(&sketch) {
+        Ok(wires) if !wires.is_empty() => Ok(SketchFeature::new(sketch, plane)),
+        _ => Err("the borrowed edges do not close into a loop".into()),
+    }
+}
+
+/// Pairs of points (an edge's pieces) as one run from end to end.
+fn chain(pairs: &[[f32; 3]]) -> Vec<[f32; 3]> {
+    let mut pieces: Vec<([f32; 3], [f32; 3])> = pairs
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|p| (p[0], p[1]))
+        .collect();
+    let Some(first) = pieces.pop() else {
+        return Vec::new();
+    };
+    let near = |a: [f32; 3], b: [f32; 3]| length(sub(a, b)) < JOIN_MM;
+    let mut run = vec![first.0, first.1];
+    loop {
+        let tail = *run.last().expect("a run");
+        let head = run[0];
+        if let Some(i) = pieces
+            .iter()
+            .position(|(a, b)| near(*a, tail) || near(*b, tail))
+        {
+            let (a, b) = pieces.remove(i);
+            run.push(if near(a, tail) { b } else { a });
+        } else if let Some(i) = pieces
+            .iter()
+            .position(|(a, b)| near(*a, head) || near(*b, head))
+        {
+            let (a, b) = pieces.remove(i);
+            run.insert(0, if near(a, head) { b } else { a });
+        } else {
+            break;
+        }
+    }
+    run
+}
+
+/// The circle every point of `run` keeps to, when there is one.
+fn round(run: &[wb_sketch::sketch::Vec2D]) -> Option<(wb_sketch::sketch::Vec2D, f32)> {
+    use wb_sketch::sketch::Vec2D;
+    let (a, b, c) = (
+        run[0].to_glam(),
+        run[run.len() / 3].to_glam(),
+        run[2 * run.len() / 3].to_glam(),
+    );
+    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    if d.abs() < 1e-9 {
+        return None;
+    }
+    let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
+    let centre = glam::Vec2::new(
+        (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
+        (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
+    );
+    let r = (a - centre).length();
+    run.iter()
+        .all(|p| ((p.to_glam() - centre).length() - r).abs() < 1e-3 * r.max(1.0))
+        .then_some((Vec2D::from_glam(centre), r))
 }
 
 /// A borrowed face, ready for the kernel: a shape, what moves it into the
@@ -192,10 +397,11 @@ pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<Kernel
             .faces
             .get(r.index)
             .ok_or("the borrow has no such face; pick it again")?;
+        let offset = borrow.offset();
         return Ok(KernelFace {
             shape: face.shape.clone().into_bytes(),
-            transform: Some(face.transform),
-            point: face.pick.point.map(f64::from),
+            transform: Some(then_rows(&offset, face.transform)),
+            point: offset.point(face.pick.point).map(f64::from),
         });
     }
     let source = live_solid_source(document, &borrow)?;
@@ -209,7 +415,9 @@ pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<Kernel
         .imported_brep_blob(source)
         .ok_or("the body it borrows from has no solid yet")?
         .to_vec();
-    let placement = relative(document, borrow.body, Some(source));
+    let placement = borrow
+        .offset()
+        .after(&relative(document, borrow.body, Some(source)));
     Ok(KernelFace {
         shape,
         transform: (!placement.is_identity()).then(|| placement.rows()),
@@ -222,10 +430,11 @@ pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<Kernel
 pub(crate) fn edge(document: &Document, r: &BorrowedRef) -> Result<EdgePick, String> {
     let borrow = referenced(document, r)?;
     if let Some(frozen) = &borrow.frozen {
+        let offset = borrow.offset();
         return frozen
             .edges
             .get(r.index)
-            .map(|e| e.pick)
+            .map(|e| moved_edge(e.clone(), &offset).pick)
             .ok_or_else(|| "the borrow has no such edge; pick it again".to_string());
     }
     let source = live_solid_source(document, &borrow)?;
@@ -240,7 +449,9 @@ pub(crate) fn edge(document: &Document, r: &BorrowedRef) -> Result<EdgePick, Str
         .ok_or("the body it borrows from has no solid yet")?;
     let found =
         mesh_edge(&mesh, pick).ok_or("no edge of the source solid lies where it was picked")?;
-    let placement = relative(document, borrow.body, Some(source));
+    let placement = borrow
+        .offset()
+        .after(&relative(document, borrow.body, Some(source)));
     Ok(EdgePick {
         faces: [0, 0],
         point: placement.point(found.pick.point),
@@ -260,16 +471,25 @@ pub(crate) struct SeenFace {
 /// body's frame, drawn from the source's mesh (live) or the snapshot.
 pub(crate) fn seen(document: &Document, borrow: &Borrow) -> (Vec<SeenFace>, Vec<FrozenEdge>) {
     if let Some(frozen) = &borrow.frozen {
+        let offset = borrow.offset();
         let faces = frozen
             .faces
             .iter()
-            .map(|f| SeenFace {
-                pick: f.pick,
-                surface: f.surface,
-                outline: f.outline.clone(),
+            .map(|f| {
+                let face = SeenFace {
+                    pick: f.pick,
+                    surface: f.surface,
+                    outline: f.outline.clone(),
+                };
+                moved_face(face, &offset)
             })
             .collect();
-        return (faces, frozen.edges.clone());
+        let edges = frozen
+            .edges
+            .iter()
+            .map(|e| moved_edge(e.clone(), &offset))
+            .collect();
+        return (faces, edges);
     }
     let BorrowSource::Solid {
         body: source,
@@ -282,18 +502,60 @@ pub(crate) fn seen(document: &Document, borrow: &Borrow) -> (Vec<SeenFace>, Vec<
     let Some((mesh, _)) = document.local_geometry(*source) else {
         return (Vec::new(), Vec::new());
     };
-    let placement = relative(document, borrow.body, Some(*source));
+    let placement = borrow
+        .offset()
+        .after(&relative(document, borrow.body, Some(*source)));
     let seen_faces = faces
         .iter()
         .filter_map(|pick| mesh_face(&mesh, pick))
         .map(|face| moved_face(face, &placement))
         .collect();
-    let seen_edges = edges
+    let mut found: Vec<FrozenEdge> = edges
         .iter()
         .filter_map(|pick| mesh_edge(&mesh, pick))
+        .collect();
+    if borrow.options.whole {
+        found.extend(all_edges(&mesh));
+    }
+    let seen_edges = found
+        .into_iter()
         .map(|edge| moved_edge(edge, &placement))
         .collect();
     (seen_faces, seen_edges)
+}
+
+/// Every edge of a solid's mesh, each whole: the reference a whole borrowed
+/// solid draws.
+fn all_edges(mesh: &TriMesh) -> Vec<FrozenEdge> {
+    let count = mesh.edges.len() / 2;
+    let mut by_edge: HashMap<u32, Vec<[f32; 3]>> = HashMap::new();
+    let mut order = Vec::new();
+    for s in 0..count {
+        let key = mesh.edge_ids.get(s).copied().unwrap_or(s as u32);
+        let entry = by_edge.entry(key).or_insert_with(|| {
+            order.push(key);
+            Vec::new()
+        });
+        entry.push(mesh.positions[mesh.edges[s * 2] as usize]);
+        entry.push(mesh.positions[mesh.edges[s * 2 + 1] as usize]);
+    }
+    order
+        .into_iter()
+        .filter_map(|key| {
+            let outline = by_edge.remove(&key)?;
+            let (a, b) = (outline[0], outline[1]);
+            let d = sub(b, a);
+            let len = length(d).max(f32::EPSILON);
+            Some(FrozenEdge {
+                pick: EdgePick {
+                    faces: [0, 0],
+                    point: a,
+                    direction: d.map(|v| v / len),
+                },
+                outline,
+            })
+        })
+        .collect()
 }
 
 fn moved_face(face: SeenFace, placement: &BodyPlacement) -> SeenFace {
@@ -329,6 +591,7 @@ pub fn freeze(
     kernel: Option<&dyn KernelQueries>,
     using: BodyId,
     source: &BorrowSource,
+    options: &BorrowOptions,
 ) -> Result<FrozenBorrow, String> {
     if let Some(why) = refusal(document, using, source) {
         return Err(why);
@@ -387,6 +650,13 @@ pub fn freeze(
                     .ok_or("no edge of the source solid lies where an edge was picked")?;
                 frozen.edges.push(moved_edge(edge, &placement));
             }
+            if options.whole {
+                frozen.edges.extend(
+                    all_edges(&mesh)
+                        .into_iter()
+                        .map(|e| moved_edge(e, &placement)),
+                );
+            }
             Ok(frozen)
         }
     }
@@ -422,12 +692,17 @@ pub(crate) fn borrows_of_body(document: &Document, body: BodyId) -> Vec<(Feature
     crate::build::part_features_of_body(document, body)
         .into_iter()
         .filter_map(|(id, feature)| match feature {
-            PartFeature::Borrow { source, frozen } => Some((
+            PartFeature::Borrow {
+                source,
+                frozen,
+                options,
+            } => Some((
                 id,
                 Borrow {
                     body,
                     source,
                     frozen,
+                    options,
                 },
             )),
             _ => None,
@@ -535,11 +810,7 @@ pub(crate) fn lent_face(
 /// What the borrow draws in its body's frame: the sketch's curves, or the
 /// outlines of its faces and edges.
 pub(crate) fn lines(document: &Document, borrow: &Borrow) -> TriMesh {
-    let lends_sketch = match &borrow.frozen {
-        Some(frozen) => frozen.sketch.is_some(),
-        None => matches!(borrow.source, BorrowSource::Sketch(_)),
-    };
-    if lends_sketch {
+    if borrow.lends_sketch() && !borrow.options.fill {
         return match borrowed_sketch(document, borrow) {
             Ok(feature) => wb_sketch::render::sketch_to_lines(&feature.sketch, &feature.plane),
             Err(_) => TriMesh::default(),
@@ -834,6 +1105,64 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_solid_lends_every_edge_once() {
+        let edges = all_edges(&cube_top());
+        assert_eq!(edges.len(), 4);
+        assert!(edges.iter().all(|e| e.outline.len() == 2));
+    }
+
+    #[test]
+    fn closed_edges_fill_to_a_face_with_its_round_parts_round() {
+        // A 10 × 10 square at z = 3, and a circle of radius 2 inside it,
+        // as a mesh gives them: the circle in 32 pieces.
+        let side = |a: [f32; 3], b: [f32; 3]| FrozenEdge {
+            pick: EdgePick {
+                faces: [0, 0],
+                point: a,
+                direction: sub(b, a),
+            },
+            outline: vec![a, b],
+        };
+        let corners = [
+            [0.0, 0.0, 3.0],
+            [10.0, 0.0, 3.0],
+            [10.0, 10.0, 3.0],
+            [0.0, 10.0, 3.0],
+        ];
+        let mut edges: Vec<FrozenEdge> = (0..4)
+            .map(|i| side(corners[i], corners[(i + 1) % 4]))
+            .collect();
+        let on = |k: usize| {
+            let t = k as f32 / 32.0 * std::f32::consts::TAU;
+            [5.0 + 2.0 * t.cos(), 5.0 + 2.0 * t.sin(), 3.0]
+        };
+        edges.push(FrozenEdge {
+            pick: EdgePick {
+                faces: [0, 0],
+                point: on(0),
+                direction: [0.0, 1.0, 0.0],
+            },
+            outline: (0..32).flat_map(|k| [on(k), on(k + 1)]).collect(),
+        });
+        let feature = filled(&edges).unwrap();
+        let circles = feature
+            .sketch
+            .geometry
+            .iter()
+            .filter(|g| matches!(g, wb_sketch::sketch::GeometryElement::Circle(_)))
+            .count();
+        assert_eq!(circles, 1, "the round edge comes back a circle");
+        let wires = wb_sketch::profile::extract_wires(&feature.sketch).unwrap();
+        assert_eq!(wires.len(), 2, "the square with the circle a hole in it");
+        assert!((feature.plane.origin[2] - 3.0).abs() < 1e-5);
+        // Edges out of one plane, or open, fill nothing.
+        let mut bent = edges[..4].to_vec();
+        bent[2].outline[1][2] = 5.0;
+        assert!(filled(&bent).is_err());
+        assert!(filled(&edges[..3]).is_err());
+    }
+
+    #[test]
     fn a_picked_face_brings_its_whole_outline_and_its_plane() {
         let mesh = cube_top();
         let face = mesh_face(
@@ -1046,6 +1375,7 @@ mod tests {
         let PartFeature::Borrow {
             source: BorrowSource::Solid { body, faces, edges },
             frozen: None,
+            ..
         } = data(&doc, id_of(&made))
         else {
             panic!("a live borrow of faces and edges");
@@ -1109,7 +1439,7 @@ mod tests {
         assert_eq!(doc.get_feature_meta(made).unwrap().body, Some(b));
         assert!(matches!(
             data(&doc, made),
-            PartFeature::Borrow { source: BorrowSource::Sketch(s), frozen: None } if s == sketch
+            PartFeature::Borrow { source: BorrowSource::Sketch(s), frozen: None, .. } if s == sketch
         ));
         let egui_ctx = egui::Context::default();
         ui_kit::apply_theme(&egui_ctx);

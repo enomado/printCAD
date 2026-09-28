@@ -223,6 +223,14 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Bool,
             "Keep the geometry as it is now rather than follow the source",
         )
+        .optional(
+            "options",
+            ParamKind::Any,
+            "How it lends: {offset = {translation = {x, y, z}, rotation_deg, tilt = {x, y}, \
+             flip}} moves and turns it along and about this body's axes; fill = true makes \
+             closed borrowed edges a face features take as a profile; whole = true lends the \
+             whole solid's edges as reference",
+        )
         .optional("name", ParamKind::String, "Its name in the tree")
         .returns("the borrow's id"),
     );
@@ -573,9 +581,20 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         };
         return Err(CommandError::bad(arg, why));
     }
+    let options: crate::feature::BorrowOptions = match a.0.get("options") {
+        None | Some(Value::Null) => Default::default(),
+        Some(v) => serde_json::from_value(v.clone())
+            .map_err(|e| CommandError::bad("options", e.to_string()))?,
+    };
+    if (options.fill || options.whole) && matches!(source, BorrowSource::Sketch(_)) {
+        return Err(CommandError::bad(
+            "options",
+            "fill and whole take from a solid, not a sketch",
+        ));
+    }
     let frozen = if a.opt_bool("frozen")?.unwrap_or(false) {
         Some(
-            crate::borrow::freeze(ctx.document, ctx.kernel, body, &source)
+            crate::borrow::freeze(ctx.document, ctx.kernel, body, &source, &options)
                 .map_err(CommandError::failed)?,
         )
     } else {
@@ -585,9 +604,14 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .opt_string("name")?
         .map(str::to_string)
         .unwrap_or_else(|| PartDesignWorkbench::next_feature_name(ctx, "Borrowed"));
+    let feature = PartFeature::Borrow {
+        source,
+        frozen,
+        options,
+    };
     let id = ctx
         .document
-        .add_feature_in_body(PartFeature::Borrow { source, frozen }, name, Some(body))
+        .add_feature_in_body(feature, name, Some(body))
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.mark_feature_dirty(id);
     ctx.active_document_object = Some(id);
@@ -604,7 +628,9 @@ fn freeze(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .get_feature_meta(id)
         .and_then(|n| n.body)
         .ok_or_else(not_a_borrow)?;
-    let Some(PartFeature::Borrow { source, .. }) = ctx
+    let Some(PartFeature::Borrow {
+        source, options, ..
+    }) = ctx
         .document
         .get_feature_data(id)
         .and_then(|d| PartFeature::from_json(d).ok())
@@ -613,13 +639,17 @@ fn freeze(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     };
     let frozen = if a.opt_bool("frozen")?.unwrap_or(true) {
         Some(
-            crate::borrow::freeze(ctx.document, ctx.kernel, body, &source)
+            crate::borrow::freeze(ctx.document, ctx.kernel, body, &source, &options)
                 .map_err(CommandError::failed)?,
         )
     } else {
         None
     };
-    let feature = PartFeature::Borrow { source, frozen };
+    let feature = PartFeature::Borrow {
+        source,
+        frozen,
+        options,
+    };
     ctx.document
         .update_feature_data(id, feature.to_json())
         .map_err(|e| CommandError::failed(e.to_string()))?;
@@ -657,8 +687,13 @@ pub(crate) fn record_task(
         return;
     };
     let id = json!(task.feature.0.to_string());
-    if let Ok(PartFeature::Borrow { source, frozen }) = PartFeature::from_json(&node.data) {
-        record_borrow(ctx, task, &node.name, source, frozen.is_some());
+    if let Ok(PartFeature::Borrow {
+        source,
+        frozen,
+        options,
+    }) = PartFeature::from_json(&node.data)
+    {
+        record_borrow(ctx, task, &node.name, source, frozen.is_some(), options);
         return;
     }
     match (&task.made_by, &task.kind) {
@@ -768,6 +803,7 @@ fn record_borrow(
     name: &str,
     source: crate::feature::BorrowSource,
     frozen: bool,
+    options: crate::feature::BorrowOptions,
 ) {
     use crate::feature::BorrowSource;
     let id = json!(task.feature.0.to_string());
@@ -788,20 +824,29 @@ fn record_borrow(
         if frozen {
             args.insert("frozen".into(), json!(true));
         }
+        if !options.is_plain() {
+            args.insert("options".into(), json!(options));
+        }
         ctx.record("part.borrow", args, id);
         return;
     }
     let Ok(PartFeature::Borrow {
         source: source_before,
         frozen: frozen_before,
+        options: options_before,
     }) = PartFeature::from_json(&task.snapshot)
     else {
         return;
     };
-    if source_before != source {
+    if source_before != source || options_before != options {
         let mut args = Map::new();
         args.insert("feature".into(), id.clone());
-        args.insert("source".into(), json!(source));
+        if source_before != source {
+            args.insert("source".into(), json!(source));
+        }
+        if options_before != options {
+            args.insert("options".into(), json!(options));
+        }
         ctx.record("part.set", args, Value::Null);
     }
     let now =

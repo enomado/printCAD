@@ -5331,6 +5331,7 @@ version = "0.1.0"
 dependencies = [
  "core_document",
  "egui",
+ "glam 0.33.7",
  "kernel_api",
  "serde",
  "serde_json",

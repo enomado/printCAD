@@ -1185,7 +1185,46 @@ pub enum PartFeature {
         /// The geometry as it was frozen; `None` follows the source.
         #[serde(default)]
         frozen: Option<FrozenBorrow>,
+        #[serde(default, skip_serializing_if = "BorrowOptions::is_plain")]
+        options: BorrowOptions,
     },
+}
+
+/// How a borrow lends what it borrows.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BorrowOptions {
+    /// Moved and turned from where the bodies put it: along and about the
+    /// borrowing body's own axes (the turn about z, then the tilt about x
+    /// and y).
+    pub offset: core_document::AttachmentOffset,
+    /// Borrowed edges that close into a loop in one plane lend the face
+    /// they bound, as a profile features take.
+    pub fill: bool,
+    /// All of the other body's solid, drawn as reference: its edges lent,
+    /// its faces to stop on.
+    pub whole: bool,
+}
+
+impl BorrowOptions {
+    pub fn is_plain(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// What the offset does to the borrowed geometry, in the borrowing
+    /// body's frame.
+    pub fn placement(&self) -> core_document::BodyPlacement {
+        let o = &self.offset;
+        let turn = glam::Quat::from_rotation_z(o.rotation_deg.to_radians())
+            * glam::Quat::from_rotation_x(o.tilt[0].to_radians())
+            * glam::Quat::from_rotation_y(o.tilt[1].to_radians())
+            * if o.flip {
+                glam::Quat::from_rotation_x(std::f32::consts::PI)
+            } else {
+                glam::Quat::IDENTITY
+            };
+        core_document::BodyPlacement::new(turn, glam::Vec3::from_array(o.translation))
+    }
 }
 
 fn default_true() -> bool {
@@ -1531,6 +1570,7 @@ impl WorkbenchFeature for PartFeature {
         if let PartFeature::Borrow {
             source: BorrowSource::Sketch(sketch),
             frozen: None,
+            ..
         } = self
         {
             deps.push(*sketch);

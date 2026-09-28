@@ -2352,8 +2352,12 @@ pub fn feature_editor(
                     });
             });
         }
-        PartFeature::Borrow { source, frozen } => {
-            changed |= borrow::borrow_editor(ui, ctx, body, feature_id, source, frozen);
+        PartFeature::Borrow {
+            source,
+            frozen,
+            options,
+        } => {
+            changed |= borrow::borrow_editor(ui, ctx, body, feature_id, source, frozen, options);
         }
         PartFeature::BodyBoolean {
             tool_body,

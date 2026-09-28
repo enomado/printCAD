@@ -16,6 +16,7 @@ wb_sketch = { path = "../wb_sketch", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+glam = { workspace = true }
 settings = { path = "../../settings" }
 tracing = { workspace = true }
 egui = { workspace = true, optional = true }

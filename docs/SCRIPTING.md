@@ -1069,6 +1069,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `faces` (list, optional): With from: faces it lends, each {point, normal} in that body's own frame
 - `edges` (list, optional): With from: edges it lends, each {point, direction} in that body's own frame
 - `frozen` (boolean, optional): Keep the geometry as it is now rather than follow the source
+- `options` (any, optional): How it lends: {offset = {translation = {x, y, z}, rotation_deg, tilt = {x, y}, flip}} moves and turns it along and about this body's axes; fill = true makes closed borrowed edges a face features take as a profile; whole = true lends the whole solid's edges as reference
 - `name` (string, optional): Its name in the tree
 - Returns the borrow's id
 

@@ -27,10 +27,11 @@ pub use build::{
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel, ExtrudeDirection,
-    ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit,
-    MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
-    SketchAxis, ThreadSpec, TransformStep, primitive_icon, primitive_preset,
+    BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel,
+    ExtrudeDirection, ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace, HelixMode,
+    HoleCut, HoleFit, MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation,
+    RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep, primitive_icon,
+    primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -658,6 +659,7 @@ impl PartDesignWorkbench {
                     edges,
                 },
                 frozen: None,
+                options: Default::default(),
             });
         }
         let sketch = ctx
@@ -673,6 +675,7 @@ impl PartDesignWorkbench {
         Ok(PartFeature::Borrow {
             source: BorrowSource::Sketch(sketch),
             frozen: None,
+            options: Default::default(),
         })
     }
 

@@ -138,7 +138,7 @@ and noted on its item, and the rest of the item is built around it.
   (`core_document/src/datum.rs`, `wb_part/src/datum_panel.rs`).
 - [x] **Attachment offset tilt** (partial, S). The offset turns only about
   the normal.
-- [ ] **Borrowed geometry options** (partial, M). An offset of the
+- [x] **Borrowed geometry options** (partial, M). An offset of the
   borrowed geometry, a face from borrowed closed edges, a whole solid as
   reference only (`borrow.rs`).
 

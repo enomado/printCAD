@@ -122,6 +122,7 @@ fn assert_close(got: f64, want: f64, what: &str) {
 fn borrow(doc: &mut Document, body: BodyId, source: BorrowSource) -> FeatureId {
     doc.add_feature_in_body(
         PartFeature::Borrow {
+            options: Default::default(),
             source,
             frozen: None,
         },
@@ -139,8 +140,16 @@ fn freeze(doc: &mut Document, id: FeatureId) {
     else {
         panic!("not a borrow");
     };
-    let frozen = wb_part::freeze(doc, Some(&kernel_ogeom::QUERIES), body, &source).unwrap();
+    let frozen = wb_part::freeze(
+        doc,
+        Some(&kernel_ogeom::QUERIES),
+        body,
+        &source,
+        &Default::default(),
+    )
+    .unwrap();
     let feature = PartFeature::Borrow {
+        options: Default::default(),
         source,
         frozen: Some(frozen),
     };
@@ -601,4 +610,105 @@ fn bodies_that_borrow_from_each_other_settle_and_say_so() {
         wb_part::rebuild_jobs(&mut doc).is_empty(),
         "nothing comes back"
     );
+}
+
+/// A borrow moved by its offset: the borrowed circle shifted to cross the
+/// block's edge drills only what of it lies inside.
+#[test]
+fn an_offset_moves_what_a_borrow_lends() {
+    let mut doc = Document::new("t");
+    let a = doc.create_body(Some("A".into()));
+    let hole = doc
+        .add_feature_in_body(circle(10.0, 10.0, 3.0), "Hole sketch".into(), Some(a))
+        .unwrap();
+    let b = block(&mut doc, "B", 20.0, 20.0, 10.0);
+    let options = wb_part::BorrowOptions {
+        offset: core_document::AttachmentOffset {
+            translation: [8.0, 0.0, 0.0],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let borrowed = doc
+        .add_feature_in_body(
+            PartFeature::Borrow {
+                source: BorrowSource::Sketch(hole),
+                frozen: None,
+                options,
+            },
+            "Borrowed".into(),
+            Some(b),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        extrude(
+            "Pocket",
+            borrowed,
+            serde_json::json!({ "mode": "ThroughAll", "through_all": true, "reversed": true }),
+        ),
+        "Hole".into(),
+        Some(b),
+    )
+    .unwrap();
+    wb_part::mark_all_part_features_dirty(&mut doc);
+    let mut kernel = OgeomKernel::new();
+    settle(&mut doc, &mut kernel);
+    // Centred at x = 18, the circle runs 1 mm past the block's side.
+    let inside = PI * 9.0 - segment_beyond(3.0, 2.0);
+    assert_close(
+        volume(&doc, &mut kernel, b),
+        4000.0 - inside * 10.0,
+        "shifted",
+    );
+}
+
+/// Edges borrowed from another body's solid that close into a loop lend
+/// the face they bound: a body pads it.
+#[test]
+fn closed_borrowed_edges_fill_to_a_face_a_pad_takes() {
+    let mut doc = Document::new("t");
+    let a = block(&mut doc, "A", 20.0, 20.0, 10.0);
+    let b = doc.create_body(Some("B".into()));
+    let top = [
+        ([10.0, 0.0, 10.0], [1.0, 0.0, 0.0]),
+        ([20.0, 10.0, 10.0], [0.0, 1.0, 0.0]),
+        ([10.0, 20.0, 10.0], [1.0, 0.0, 0.0]),
+        ([0.0, 10.0, 10.0], [0.0, 1.0, 0.0]),
+    ];
+    let edges = top
+        .iter()
+        .map(|&(point, direction)| EdgePick {
+            faces: [0, 0],
+            point,
+            direction,
+        })
+        .collect();
+    let borrowed = doc
+        .add_feature_in_body(
+            PartFeature::Borrow {
+                source: BorrowSource::Solid {
+                    body: a,
+                    faces: Vec::new(),
+                    edges,
+                },
+                frozen: None,
+                options: wb_part::BorrowOptions {
+                    fill: true,
+                    ..Default::default()
+                },
+            },
+            "Top".into(),
+            Some(b),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        extrude("Pad", borrowed, serde_json::json!({ "length": 5.0 })),
+        "Slab".into(),
+        Some(b),
+    )
+    .unwrap();
+    wb_part::mark_all_part_features_dirty(&mut doc);
+    let mut kernel = OgeomKernel::new();
+    settle(&mut doc, &mut kernel);
+    assert_close(volume(&doc, &mut kernel, b), 2000.0, "the top padded");
 }
