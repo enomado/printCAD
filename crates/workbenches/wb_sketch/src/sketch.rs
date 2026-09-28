@@ -115,6 +115,10 @@ pub struct ExternalSource {
     /// A face cut by the sketch plane, not an edge projected onto it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub section: bool,
+    /// It counts in the sketch's profiles, as drawn geometry does, rather
+    /// than only guiding it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub defining: bool,
 }
 
 impl Sketch {

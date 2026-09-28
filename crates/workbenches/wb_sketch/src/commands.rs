@@ -220,6 +220,18 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(sketch(
         CommandSpec::new(
+            "sketch.external_defining",
+            "Count external geometry in the sketch's profiles, or leave it only guiding",
+        )
+        .param("items", ParamKind::List, "External elements' ids")
+        .optional(
+            "on",
+            ParamKind::Bool,
+            "true counts them (the default), false stops",
+        ),
+    ));
+    context.register_command(sketch(
+        CommandSpec::new(
             "sketch.solver_settings",
             "How far the solver goes on this sketch",
         )
@@ -525,6 +537,24 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "sketch.merge" => {
             let with = feature_ids(args.get("with"), "with")?;
             return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.external_defining" => {
+            let items = ids(args.get("items"), "items", &feature.sketch)?;
+            if let Some(bad) = items
+                .iter()
+                .find(|i| !feature.sketch.external.contains_key(i))
+            {
+                return Err(CommandError::bad(
+                    "items",
+                    format!("{bad} is not external geometry"),
+                ));
+            }
+            set_external_defining(
+                &mut feature.sketch,
+                &items,
+                a.opt_bool("on")?.unwrap_or(true),
+            );
+            return save(ctx, sketch_id, feature, Value::Null);
         }
         "sketch.solver_settings" => {
             if let Some(n) = a.opt_number("iterations")? {
@@ -1360,6 +1390,7 @@ fn external_sources(
                 point: v("point")?,
                 direction: v("direction")?,
                 section: false,
+                defining: false,
             })
         })
         .collect()
@@ -1387,6 +1418,7 @@ fn section_sources(
                 point: v("point")?,
                 direction: v("normal")?,
                 section: true,
+                defining: false,
             })
         })
         .collect()
@@ -1420,6 +1452,16 @@ pub(crate) fn add_external(
 }
 
 /// Named arguments from a JSON object.
+/// Mark `items` of the sketch's external geometry as counting in its
+/// profiles, or not.
+pub(crate) fn set_external_defining(sketch: &mut Sketch, items: &[Uuid], on: bool) {
+    for id in items {
+        if let Some(source) = sketch.external.get_mut(id) {
+            source.defining = on;
+        }
+    }
+}
+
 pub(crate) fn args(value: Value) -> CommandArgs {
     match value {
         Value::Object(map) => map,

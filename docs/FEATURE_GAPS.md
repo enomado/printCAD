@@ -59,7 +59,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### External references
 
-- [ ] **External geometry in profiles** (missing, M). Projected curves are
+- [x] **External geometry in profiles** (missing, M). Projected curves are
   always left out of profiles; a per-element switch lets one close a
   profile (`Sketch::external`, `profile::extract_wires`).
 - [ ] **External geometry from sketches and datums** (missing, M).

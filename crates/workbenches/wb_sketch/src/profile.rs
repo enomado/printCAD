@@ -88,9 +88,13 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
     let mut edges: Vec<EdgeCurve> = Vec::new();
 
     for geom in &sketch.geometry {
-        // Construction and external geometry are guides, never part of
-        // the profile.
-        if sketch.is_construction(geom.id()) || sketch.external.contains_key(&geom.id()) {
+        // Construction geometry is a guide, never part of the profile, and
+        // so is external geometry unless it is marked as defining it.
+        let guide = sketch
+            .external
+            .get(&geom.id())
+            .is_some_and(|source| !source.defining);
+        if sketch.is_construction(geom.id()) || guide {
             continue;
         }
         let name = element_name(geom.id());
@@ -671,5 +675,39 @@ mod tests {
                 assert!(knots.windows(2).all(|w| w[0] <= w[1]), "{knots:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod external_profile_tests {
+    use crate::sketch::{ExternalSource, GeometryElement, Line, Point, Sketch, Vec2D};
+
+    #[test]
+    fn a_projected_edge_closes_a_profile_once_it_counts() {
+        let mut sketch = Sketch::new("t");
+        let mut p = |x: f32, y: f32| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+        };
+        let (a, b, c) = (p(0.0, 0.0), p(10.0, 0.0), p(5.0, 8.0));
+        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        let edge = sketch.add_geometry(GeometryElement::Line(Line::new(c, a)));
+        sketch.external.insert(
+            edge,
+            ExternalSource {
+                body: uuid::Uuid::new_v4(),
+                point: [0.0; 3],
+                direction: [1.0, 0.0, 0.0],
+                section: false,
+                defining: false,
+            },
+        );
+        assert!(
+            super::extract_wires(&sketch).is_err(),
+            "a guide leaves the outline open"
+        );
+        crate::commands::set_external_defining(&mut sketch, &[edge], true);
+        let wires = super::extract_wires(&sketch).expect("closed by the edge");
+        assert_eq!(wires[0].segments.len(), 3);
     }
 }

@@ -259,6 +259,7 @@ mod tests {
             point: [1.0, 2.0, 3.0],
             direction: [0.0, 0.0, 1.0],
             section: false,
+            defining: false,
         }
     }
 
@@ -354,6 +355,7 @@ mod tests {
     fn a_face_cut_in_two_lines_refreshes_both_and_remakes_them_when_they_change() {
         let face = ExternalSource {
             section: true,
+            defining: false,
             ..source()
         };
         let mut sketch = Sketch::new("t");
@@ -376,6 +378,7 @@ mod tests {
             &ProjectedEdge::Point([1.0, 1.0]),
             ExternalSource {
                 section: false,
+                defining: false,
                 ..face
             },
         );

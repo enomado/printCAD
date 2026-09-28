@@ -591,6 +591,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `items` (list): The elements to drag
 - `by` (list): The step, {x, y}
 
+`pc.sketch.external_defining`: Count external geometry in the sketch's profiles, or leave it only guiding.
+
+- `items` (list): External elements' ids
+- `on` (boolean, optional): true counts them (the default), false stops
+- `sketch` (id): The sketch to draw in
+
 `pc.sketch.solver_settings`: How far the solver goes on this sketch.
 
 - `iterations` (number, optional): The most steps it takes (100 when never set)

@@ -2625,6 +2625,15 @@ impl Workbench for SketchWorkbench {
                 ));
                 context.register_tool(
                     ToolDescriptor::new_action(
+                        "sketch.external_defining",
+                        "Toggle external geometry in profiles",
+                        Some("geometry.external"),
+                    )
+                    .icon("external-geometry")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new_action(
                         "sketch.carbon_copy",
                         "Carbon copy",
                         Some("geometry.external"),
@@ -3017,6 +3026,7 @@ impl Workbench for SketchWorkbench {
             }
             match base {
                 "sketch.construction" => return self.toggle_construction_selected(ctx),
+                "sketch.external_defining" => return self.toggle_external_defining(ctx),
                 "sketch.internal_geometry" => return self.toggle_internal_geometry(ctx),
                 "sketch.remove_axis_alignment" => return self.remove_axis_alignment(ctx),
                 "sketch.snap" => {
@@ -4157,6 +4167,43 @@ impl SketchWorkbench {
 
     /// Stray points, constraints that reference missing geometry, and
     /// whether the sketch closes into profiles: reported and selected.
+    /// Selected external geometry counts in profiles, or stops counting:
+    /// all of it on when any was off.
+    fn toggle_external_defining(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(mut feature), Some(id)) = (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return InputResult::ignored();
+        };
+        let items: Vec<Uuid> = self
+            .selected
+            .iter()
+            .copied()
+            .filter(|e| feature.sketch.external.contains_key(e))
+            .collect();
+        if items.is_empty() {
+            ctx.log_warn("Select external geometry to count in the profile");
+            return InputResult::consumed();
+        }
+        let on = items.iter().any(|e| !feature.sketch.external[e].defining);
+        commands::set_external_defining(&mut feature.sketch, &items, on);
+        self.store_sketch(ctx, feature);
+        ctx.record(
+            "sketch.external_defining",
+            commands::args(serde_json::json!({
+                "sketch": id.0.to_string(),
+                "items": items.iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+                "on": on,
+            })),
+            serde_json::Value::Null,
+        );
+        ctx.log_info(if on {
+            "External geometry counts in the profile"
+        } else {
+            "External geometry only guides the sketch"
+        });
+        InputResult::consumed()
+    }
+
     /// Repair the sketch being edited, ends within the snap reach joined,
     /// as `sketch.repair` does.
     fn repair(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -4679,6 +4726,7 @@ impl SketchWorkbench {
                     point: local.point,
                     direction: local.direction,
                     section: false,
+                    defining: false,
                 }
             })
             .collect();
@@ -4752,6 +4800,7 @@ impl SketchWorkbench {
             point: local.point,
             direction: local.normal,
             section: true,
+            defining: false,
         };
         let before = commands::ids_of(&feature.sketch);
         let added =
