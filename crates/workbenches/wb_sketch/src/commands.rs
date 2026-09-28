@@ -512,6 +512,17 @@ fn placing(spec: CommandSpec) -> CommandSpec {
     )
     .optional("name", ParamKind::String, "Its name in the tree")
     .optional(
+        "attachment",
+        ParamKind::Any,
+        "Attached as a datum plane is, by a mode on the body's faces, edges and points \
+         (as part.datum lists them): the sketch follows what it stands on",
+    )
+    .optional(
+        "attachment_offset",
+        ParamKind::Any,
+        "The attachment's offset, as a datum's",
+    )
+    .optional(
         "on",
         ParamKind::Id,
         "A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes",
@@ -1026,13 +1037,53 @@ fn add_sketch(
             None => ctx.document.create_body(None),
         },
     };
+    // Attached by a mode: the plane is where the attachment puts it on
+    // the body, and follows it.
+    let attached = match args_value(a, "attachment") {
+        Some(value) => {
+            let attachment: core_document::DatumAttachment = serde_json::from_value(value.clone())
+                .map_err(|e| CommandError::bad("attachment", e.to_string()))?;
+            let offset = match args_value(a, "attachment_offset") {
+                Some(v) => serde_json::from_value(v.clone())
+                    .map_err(|e| CommandError::bad("attachment_offset", e.to_string()))?,
+                None => core_document::AttachmentOffset::default(),
+            };
+            let attached = settle_attached(ctx, body, attachment, offset)
+                .map_err(|e| CommandError::bad("attachment", e))?;
+            plane = attached.plane();
+            Some(attached)
+        }
+        None => None,
+    };
     sketch.plane = plane;
     let name = sketch.name.clone();
     let mut feature = SketchFeature::new(sketch, plane);
     feature.support = support;
+    feature.attached = attached;
     ctx.document
         .add_feature_in_body(feature, name, Some(body))
         .map_err(|e| CommandError::failed(e.to_string()))
+}
+
+/// An argument's raw value, when given and not nil.
+fn args_value<'a>(a: &'a Args, name: &str) -> Option<&'a Value> {
+    a.0.get(name).filter(|v| !v.is_null())
+}
+
+/// An attachment on `body`, filled in from its solid where there is one,
+/// as a sketch keeps it.
+pub(crate) fn settle_attached(
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    attachment: core_document::DatumAttachment,
+    offset: core_document::AttachmentOffset,
+) -> Result<crate::feature::AttachedSupport, String> {
+    let mut datum = crate::feature::AttachedSupport { attachment, offset }.datum();
+    core_document::attach::settle(ctx, body, &mut datum)?;
+    Ok(crate::feature::AttachedSupport {
+        attachment: datum.attachment,
+        offset: datum.offset,
+    })
 }
 
 fn load(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Result<SketchFeature, CommandError> {
@@ -2024,6 +2075,41 @@ mod tests {
             .filter(|g| g["kind"] == "point")
             .count();
         assert_eq!(points, 3);
+    }
+
+    #[test]
+    fn a_sketch_attached_by_three_points_lies_on_them() {
+        use core_document::{DatumAttachment, PointAnchor};
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let at = |point| PointAnchor::At { point };
+        let attachment = DatumAttachment::ThreePoints {
+            points: [
+                at([0.0, 0.0, 5.0]),
+                at([10.0, 0.0, 5.0]),
+                at([0.0, 10.0, 5.0]),
+            ],
+        };
+        let sketch = call(
+            &mut doc,
+            "sketch.new",
+            json!({"body": body.0.to_string(), "attachment": attachment}),
+        )
+        .unwrap();
+        let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
+        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        assert_eq!(feature.attached.map(|a| a.attachment), Some(attachment));
+        let (o, n) = (feature.plane.origin, feature.plane.normal);
+        assert!((o[2] - 5.0).abs() < 1e-5, "{o:?}");
+        assert!((n[2].abs() - 1.0).abs() < 1e-5, "{n:?}");
+        assert!(
+            call(
+                &mut doc,
+                "sketch.new",
+                json!({"body": body.0.to_string(), "attachment": {"Nonsense": 1}}),
+            )
+            .is_err()
+        );
     }
 
     #[test]

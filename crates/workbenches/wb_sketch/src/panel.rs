@@ -311,6 +311,7 @@ impl SketchWorkbench {
             Option<crate::feature::FaceSupport>,
         );
         let mut chosen: Option<Choice> = None;
+        let mut by_mode: Option<core_document::DatumAttachment> = None;
         let mut cancel = false;
         ui_kit::widgets::Card::new().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -353,6 +354,39 @@ impl SketchWorkbench {
                     chosen = Some((SketchPlane::yz(), None, None));
                 }
             });
+            // Attached as a datum plane would be, by a mode on what is
+            // selected on the body.
+            if let Some(body) = body {
+                use core_document::attach::{PICK_MODES, Picked, candidate, mode_label};
+                let picked = Picked::of(ctx, body);
+                let frame = core_document::DatumFrame {
+                    origin: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                    x_axis: [1.0, 0.0, 0.0],
+                };
+                ui.label(
+                    RichText::new("Or by a mode, on what is selected")
+                        .font(sans(FONT_XS))
+                        .color(TEXT3),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    for (mode, needs) in PICK_MODES {
+                        let made = candidate(mode, ctx, body, frame, None, &picked);
+                        let response = ui.add_enabled(
+                            made.is_some(),
+                            egui::Button::new(RichText::new(mode_label(mode)).font(sans(FONT_XS))),
+                        );
+                        let response = if needs.is_empty() {
+                            response
+                        } else {
+                            response.on_disabled_hover_text(*needs)
+                        };
+                        if response.clicked() {
+                            by_mode = made;
+                        }
+                    }
+                });
+            }
             // Datum planes of the target body attach the sketch to their
             // resolved frame (toponaming-safe anchor).
             if let Some(body) = body {
@@ -415,7 +449,23 @@ impl SketchWorkbench {
         }
         if let Some((plane, support, face)) = chosen {
             self.pending_creation = None;
-            self.create_sketch_on_plane(ctx, body, plane, support, face);
+            self.create_sketch_on_plane(ctx, body, plane, support, face, None);
+        }
+        if let (Some(attachment), Some(on)) = (by_mode, body) {
+            match crate::commands::settle_attached(ctx, on, attachment, Default::default()) {
+                Ok(attached) => {
+                    self.pending_creation = None;
+                    self.create_sketch_on_plane(
+                        ctx,
+                        body,
+                        attached.plane(),
+                        None,
+                        None,
+                        Some(attached),
+                    );
+                }
+                Err(why) => ctx.log_warn(format!("Cannot attach the sketch there: {why}")),
+            }
         }
     }
 

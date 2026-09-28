@@ -213,12 +213,16 @@ fn datums_asking(
                 // `answer_lent_faces` finds it, not this body's build.
                 "wb.sketch" => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
-                    sketch
-                        .face
-                        .iter()
-                        .filter(|face| face.lent_by.is_none())
-                        .map(|face| face.probe())
-                        .collect()
+                    // Attached by a mode, it asks what the attachment asks.
+                    match sketch.attached {
+                        Some(attached) => attached.probes(),
+                        None => sketch
+                            .face
+                            .iter()
+                            .filter(|face| face.lent_by.is_none())
+                            .map(|face| face.probe())
+                            .collect(),
+                    }
                 }
                 _ => return None,
             };

@@ -115,7 +115,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Placement and input
 
-- [ ] **Attachment modes of its own** (partial, M). Three points,
+- [x] **Attachment modes of its own** (partial, M). Three points,
   normal to an edge (pipe profiles), tangent to a curved face, concentric
   with a circular edge, without a datum first.
 - [x] **Offset within the plane** (partial, S). Shift, turn and flip

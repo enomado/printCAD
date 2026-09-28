@@ -21,6 +21,11 @@ pub struct SketchFeature {
     /// the history, the sketch moves with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face: Option<FaceSupport>,
+    /// Attached as a datum is, by a mode on what was picked (three points,
+    /// square to an edge, tangent to a face, a circle's centre, ...): the
+    /// sketch's plane is the attachment's, and follows what it stands on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached: Option<AttachedSupport>,
     /// The numbers the sketch's curves are made from, for a generated
     /// sketch (a gear, a sprocket, a shaft); its curves follow them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -29,6 +34,51 @@ pub struct SketchFeature {
     /// plane is cut away.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub section_view: bool,
+}
+
+/// A sketch attached by a mode, as a datum plane would be.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AttachedSupport {
+    pub attachment: core_document::DatumAttachment,
+    #[serde(default)]
+    pub offset: core_document::AttachmentOffset,
+}
+
+impl AttachedSupport {
+    /// The datum plane the attachment would make.
+    pub fn datum(&self) -> core_document::DatumFeature {
+        core_document::DatumFeature {
+            shape: core_document::DatumShape::Plane { size: 1.0 },
+            attachment: self.attachment,
+            offset: self.offset,
+        }
+    }
+
+    /// What the attachment asks of the body's solid to follow it.
+    pub fn probes(&self) -> Vec<kernel_api::ShapeProbe> {
+        self.datum().probes()
+    }
+
+    /// The sketch's plane where the attachment puts it.
+    pub fn plane(&self) -> SketchPlane {
+        let frame = self.datum().frame();
+        SketchPlane {
+            origin: frame.origin,
+            normal: frame.normal,
+            x_axis: frame.x_axis,
+            y_axis: frame.y_axis(),
+        }
+    }
+
+    /// The attachment with what the solid answered its probes taken in.
+    pub fn answered(&self, answers: &[Result<kernel_api::ProbeAnswer, String>]) -> Self {
+        let mut datum = self.datum();
+        datum.take_answers(answers);
+        Self {
+            attachment: datum.attachment,
+            offset: datum.offset,
+        }
+    }
 }
 
 /// A sketch's place on a datum: a datum plane, or one of a coordinate
@@ -200,6 +250,7 @@ impl SketchFeature {
             plane,
             support: None,
             face: None,
+            attached: None,
             generator: None,
             section_view: false,
         }
@@ -211,6 +262,7 @@ impl SketchFeature {
             plane: SketchPlane::default(),
             support: None,
             face: None,
+            attached: None,
             generator: None,
             section_view: false,
         }

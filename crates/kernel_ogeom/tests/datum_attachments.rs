@@ -616,3 +616,73 @@ fn a_sketch_on_a_lent_face_follows_the_lender() {
         "{low:?} {high:?}"
     );
 }
+
+/// A sketch attached to the pad's top by the face mode, as a datum plane
+/// would be, follows the top when the pad grows, and the pocket drawn on
+/// it with it.
+#[test]
+fn a_sketch_attached_by_a_mode_follows_what_it_stands_on() {
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let base = doc
+        .add_feature_in_body(rect_sketch(20.0, 20.0), "base".into(), Some(body))
+        .unwrap();
+    let pad_id = doc
+        .add_feature_in_body(pad(base, 10.0), "Pad".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+
+    let mesh = doc.imported_geometry(body).unwrap().mesh.clone();
+    let top_id = mesh
+        .face_surfaces
+        .iter()
+        .position(|s| {
+            matches!(s, kernel_api::FaceSurface::Plane { origin, normal }
+                if normal[2] > 0.99 && (origin[2] - 10.0).abs() < 1e-3)
+        })
+        .expect("a top face");
+    let top = core_document::FaceRef {
+        point: [10.0, 10.0, 10.0],
+        normal: [0.0, 0.0, 1.0],
+        surface: None,
+        name: mesh.face_names[top_id],
+    };
+    let attached = wb_sketch::AttachedSupport {
+        attachment: core_document::DatumAttachment::Face {
+            face: core_document::attach::face_anchor(&top, true),
+        },
+        offset: AttachmentOffset::default(),
+    };
+    let plane = attached.plane();
+    let mut hole = Sketch::new("hole");
+    hole.plane = plane;
+    // The attachment's frame: the circle is placed about its origin.
+    let centre = hole.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    hole.add_geometry(GeometryElement::Circle(wb_sketch::sketch::Circle::new(
+        centre, 3.0,
+    )));
+    let mut hole = SketchFeature::new(hole, plane);
+    hole.attached = Some(attached);
+    let hole = doc
+        .add_feature_in_body(hole, "hole".into(), Some(body))
+        .unwrap();
+    let pocket_id = doc
+        .add_feature_in_body(pocket(hole, 3.0), "Pocket".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(pocket_id);
+    settle(&registry, &mut doc, body);
+    assert_eq!(upward_floors(&doc, body), [7.0, 10.0]);
+
+    let mut data = doc.get_feature_data(pad_id).unwrap().clone();
+    data["Pad"]["length"] = serde_json::json!(20.0);
+    doc.update_feature_data(pad_id, data).unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+    assert_eq!(
+        upward_floors(&doc, body),
+        [17.0, 20.0],
+        "the attached sketch went up with the top"
+    );
+}

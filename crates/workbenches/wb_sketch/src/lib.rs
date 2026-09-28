@@ -41,7 +41,7 @@ use core_document::{
     ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
     WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
-pub use feature::{DatumSupport, FaceSupport, LentFace, SketchFeature};
+pub use feature::{AttachedSupport, DatumSupport, FaceSupport, LentFace, SketchFeature};
 use overlay::SketchProjector;
 use ovp::DimCapture;
 use sketch::{Constraint, GeometryElement, Sketch, SketchPlane, Vec2D};
@@ -975,6 +975,7 @@ impl SketchWorkbench {
         plane: SketchPlane,
         support: Option<crate::feature::DatumSupport>,
         face: Option<crate::feature::FaceSupport>,
+        attached: Option<crate::feature::AttachedSupport>,
     ) {
         let sketch_name = Self::next_sketch_name(ctx.document);
         let mut sketch = Sketch::new(sketch_name.clone());
@@ -982,6 +983,7 @@ impl SketchWorkbench {
         let mut sketch_feature = SketchFeature::new(sketch, plane);
         sketch_feature.support = support.clone();
         sketch_feature.face = face;
+        sketch_feature.attached = attached;
 
         match ctx
             .document
@@ -1008,6 +1010,10 @@ impl SketchWorkbench {
                 };
                 if let Some(body) = body {
                     args["body"] = serde_json::json!(body.0.to_string());
+                }
+                if let Some(attached) = attached {
+                    args["attachment"] = serde_json::json!(attached.attachment);
+                    args["attachment_offset"] = serde_json::json!(attached.offset);
                 }
                 ctx.record(
                     "sketch.new",
@@ -2348,7 +2354,7 @@ impl Workbench for SketchWorkbench {
         match (scope, id) {
             (MenuScope::StartPage, "sketch.start_blank") => {
                 let body = ctx.selected_body_id.map(BodyId);
-                self.create_sketch_on_plane(ctx, body, SketchPlane::default(), None, None);
+                self.create_sketch_on_plane(ctx, body, SketchPlane::default(), None, None, None);
                 true
             }
             (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
@@ -2402,6 +2408,21 @@ impl Workbench for SketchWorkbench {
         let Ok(mut feature) = SketchFeature::from_json(values) else {
             return false;
         };
+        // Attached by a mode: the plane the attachment makes of what the
+        // solid answered.
+        if let Some(attached) = feature.attached {
+            if probed.probes != attached.probes() {
+                return false;
+            }
+            let plane = attached.answered(&probed.answers).plane();
+            if feature.plane == plane && feature.sketch.plane == plane {
+                return false;
+            }
+            feature.plane = plane;
+            feature.sketch.plane = plane;
+            *values = feature.to_json();
+            return true;
+        }
         let (Some(face), Some(Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }))) =
             (feature.face, probed.answers.first())
         else {

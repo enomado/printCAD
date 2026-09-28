@@ -482,6 +482,8 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `plane` (string, optional): XY (the default), XZ or YZ
 - `offset` (number, optional): How far along the plane's normal it sits
 - `name` (string, optional): Its name in the tree
+- `attachment` (any, optional): Attached as a datum plane is, by a mode on the body's faces, edges and points (as part.datum lists them): the sketch follows what it stands on
+- `attachment_offset` (any, optional): The attachment's offset, as a datum's
 - `on` (id, optional): A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
 - `origin` (list, optional): With normal: where the plane's origin sits, {x, y, z}
@@ -494,6 +496,8 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `plane` (string, optional): XY (the default), XZ or YZ
 - `offset` (number, optional): How far along the plane's normal it sits
 - `name` (string, optional): Its name in the tree
+- `attachment` (any, optional): Attached as a datum plane is, by a mode on the body's faces, edges and points (as part.datum lists them): the sketch follows what it stands on
+- `attachment_offset` (any, optional): The attachment's offset, as a datum's
 - `on` (id, optional): A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
 - `origin` (list, optional): With normal: where the plane's origin sits, {x, y, z}
