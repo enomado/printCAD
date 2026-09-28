@@ -118,7 +118,7 @@ and noted on its item, and the rest of the item is built around it.
 - [ ] **Attachment modes of its own** (partial, M). Three points,
   normal to an edge (pipe profiles), tangent to a curved face, concentric
   with a circular edge, without a datum first.
-- [ ] **Offset within the plane** (partial, S). Shift, turn and flip
+- [x] **Offset within the plane** (partial, S). Shift, turn and flip
   against the support.
 - [x] **Angle snap while drawing** (missing, S). Steps of 15 degrees
   with a modifier.

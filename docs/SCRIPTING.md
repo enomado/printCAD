@@ -591,6 +591,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `items` (list): The elements to drag
 - `by` (list): The step, {x, y}
 
+`pc.sketch.attachment`: Move a sketch on the datum it is attached to: along its normal, across it, turned about it.
+
+- `offset` (number, optional): Along the normal, mm
+- `shift` (list, optional): Across the plane, {x, y} in mm
+- `turn` (number, optional): About the normal, degrees
+- `sketch` (id): The sketch to draw in
+
 `pc.sketch.external_from`: Bring another sketch's curves and points, or a datum, into this sketch as external geometry that follows them.
 
 - `from` (id): A sketch or a datum

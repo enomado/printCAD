@@ -43,6 +43,20 @@ pub struct DatumSupport {
     /// Millimetres along the plane's normal.
     #[serde(default)]
     pub offset: f32,
+    /// Millimetres across the plane, along its x and y.
+    #[serde(default, skip_serializing_if = "is_zero2")]
+    pub shift: [f32; 2],
+    /// Degrees the sketch is turned about the plane's normal.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub turn: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_zero2(v: &[f32; 2]) -> bool {
+    *v == [0.0, 0.0]
 }
 
 /// A sketch's place on a face of its body's solid: the face as it was
@@ -159,7 +173,23 @@ impl DatumSupport {
         for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
             *o += n * self.offset;
         }
-        Some(plane)
+        Some(self.moved_within(plane))
+    }
+
+    /// `plane` shifted across itself and turned about its normal as the
+    /// support says.
+    pub fn moved_within(&self, mut plane: SketchPlane) -> SketchPlane {
+        use glam::Vec3;
+        let (x, y) = (
+            Vec3::from_array(plane.x_axis),
+            Vec3::from_array(plane.y_axis),
+        );
+        let origin = Vec3::from_array(plane.origin) + x * self.shift[0] + y * self.shift[1];
+        let (s, c) = self.turn.to_radians().sin_cos();
+        plane.origin = origin.to_array();
+        plane.x_axis = (x * c + y * s).to_array();
+        plane.y_axis = (y * c - x * s).to_array();
+        plane
     }
 }
 

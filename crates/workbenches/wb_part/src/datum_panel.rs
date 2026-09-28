@@ -2,193 +2,17 @@
 //! reference the mode takes, filled from what is picked in the viewport.
 
 use core_document::{
-    BasePlane, BodyId, DatumAttachment, DatumFeature, EdgeAnchor, EdgeSpot, FaceAnchor, FeatureId,
-    PlaneAnchor, PointAnchor, WorkbenchRuntimeContext,
+    BasePlane, BodyId, DatumAttachment, DatumFeature, EdgeAnchor, EdgeSpot, FeatureId, PlaneAnchor,
+    PointAnchor, WorkbenchRuntimeContext,
 };
 use egui::Ui;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{Note, accent_outline_button, mono_label, note_card};
 
-use crate::datum_refs::{edge_anchor, face_anchor, settle};
 use crate::editors::label_cell;
-
-/// The modes the selector offers after the base planes, with what each
-/// needs picked first.
-const MODES: &[(&str, &str)] = &[
-    ("face", "Click a face first"),
-    ("three_points", ""),
-    ("normal_to_edge", "Click an edge first"),
-    ("along_edge", "Click an edge first"),
-    ("two_points", ""),
-    ("plane_intersection", ""),
-    ("curve_centre", "Click a circular edge first"),
-    ("inertia", "Needs the body's solid"),
-];
-
-/// What is picked in the viewport, as references in the datum's body.
-struct Picked {
-    face: Option<FaceAnchor>,
-    edges: Vec<EdgeAnchor>,
-}
-
-impl Picked {
-    fn of(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Self {
-        let on_body = ctx.selected_body_id == Some(body.0);
-        let face = ctx
-            .selected_face_in(body)
-            .map(|face| face_anchor(&face, on_body));
-        let edges = ctx
-            .selected_edges_in(body)
-            .iter()
-            .map(|edge| edge_anchor(edge, edge.body == body.0))
-            .collect();
-        Self { face, edges }
-    }
-
-    /// The picked points: each edge where it was picked, then the face.
-    fn points(&self) -> Vec<PointAnchor> {
-        self.edges
-            .iter()
-            .map(|edge| PointAnchor::Edge {
-                edge: *edge,
-                spot: EdgeSpot::Picked,
-            })
-            .chain(self.face.map(|face| PointAnchor::Face { face }))
-            .collect()
-    }
-}
-
-fn add(a: [f32; 3], b: [f32; 3], s: f32) -> [f32; 3] {
-    [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s]
-}
-
-/// The edge the datum stands on now, when its mode takes one.
-fn current_edge(attachment: &DatumAttachment) -> Option<EdgeAnchor> {
-    match attachment {
-        DatumAttachment::NormalToEdge { edge, .. }
-        | DatumAttachment::AlongEdge { edge }
-        | DatumAttachment::CurveCentre { edge } => Some(*edge),
-        _ => None,
-    }
-}
-
-/// The attachment `mode` makes from what is picked, the datum's own frame
-/// filling in the points not picked; `None` when the mode needs a pick
-/// there is not.
-fn candidate(
-    mode: &str,
-    ctx: &WorkbenchRuntimeContext,
-    body: BodyId,
-    datum: &DatumFeature,
-    picked: &Picked,
-) -> Option<DatumAttachment> {
-    let frame = datum.frame();
-    let edge = picked
-        .edges
-        .first()
-        .copied()
-        .or_else(|| current_edge(&datum.attachment));
-    let points = |n: usize| -> Vec<PointAnchor> {
-        let spare = [
-            frame.origin,
-            add(frame.origin, frame.x_axis, 10.0),
-            add(frame.origin, frame.y_axis(), 10.0),
-        ];
-        let mut points = picked.points();
-        points.truncate(n);
-        while points.len() < n {
-            points.push(PointAnchor::At {
-                point: spare[points.len()],
-            });
-        }
-        points
-    };
-    Some(match mode {
-        "face" => DatumAttachment::Face { face: picked.face? },
-        "three_points" => DatumAttachment::ThreePoints {
-            points: points(3).try_into().ok()?,
-        },
-        "two_points" => DatumAttachment::TwoPoints {
-            points: points(2).try_into().ok()?,
-        },
-        "normal_to_edge" => DatumAttachment::NormalToEdge {
-            edge: edge?,
-            spot: EdgeSpot::Picked,
-        },
-        "along_edge" => DatumAttachment::AlongEdge { edge: edge? },
-        "curve_centre" => DatumAttachment::CurveCentre {
-            edge: edge.filter(|e| e.circle.is_some())?,
-        },
-        "plane_intersection" => {
-            let first = match picked.face {
-                Some(face) => PlaneAnchor::Face { face },
-                None => PlaneAnchor::Base(BasePlane::XY),
-            };
-            let (_, normal) = first.plane();
-            // The base plane least like the first.
-            let second = BasePlane::ALL
-                .into_iter()
-                .min_by(|a, b| {
-                    let along = |p: &BasePlane| {
-                        let (_, n, _) = p.frame();
-                        (n[0] * normal[0] + n[1] * normal[1] + n[2] * normal[2]).abs()
-                    };
-                    along(a).total_cmp(&along(b))
-                })
-                .map(PlaneAnchor::Base)?;
-            DatumAttachment::PlaneIntersection {
-                planes: [first, second],
-            }
-        }
-        "inertia" => {
-            ctx.kernel?;
-            ctx.document.imported_brep_blob(body)?;
-            DatumAttachment::Inertia {
-                centre: [0.0; 3],
-                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            }
-        }
-        _ => return None,
-    })
-}
-
-fn mode_label(mode: &str) -> &'static str {
-    let face = FaceAnchor {
-        name: 0,
-        point: [0.0; 3],
-        normal: [0.0, 0.0, 1.0],
-        surface: None,
-        follows: false,
-    };
-    let edge = EdgeAnchor {
-        faces: [0, 0],
-        point: [0.0; 3],
-        direction: [1.0, 0.0, 0.0],
-        ends: None,
-        middle: None,
-        circle: None,
-        follows: false,
-    };
-    let point = PointAnchor::At { point: [0.0; 3] };
-    let plane = PlaneAnchor::Base(BasePlane::XY);
-    match mode {
-        "face" => DatumAttachment::Face { face },
-        "three_points" => DatumAttachment::ThreePoints { points: [point; 3] },
-        "normal_to_edge" => DatumAttachment::NormalToEdge {
-            edge,
-            spot: EdgeSpot::Picked,
-        },
-        "along_edge" => DatumAttachment::AlongEdge { edge },
-        "two_points" => DatumAttachment::TwoPoints { points: [point; 2] },
-        "plane_intersection" => DatumAttachment::PlaneIntersection { planes: [plane; 2] },
-        "curve_centre" => DatumAttachment::CurveCentre { edge },
-        _ => DatumAttachment::Inertia {
-            centre: [0.0; 3],
-            axes: [[0.0; 3]; 3],
-        },
-    }
-    .label()
-}
+use core_document::attach::{
+    PICK_MODES as MODES, Picked, candidate, current_edge, mode_label, settle,
+};
 
 fn coords(p: [f32; 3]) -> String {
     format!("({:.1}, {:.1}, {:.1})", p[0], p[1], p[2])
@@ -363,7 +187,14 @@ pub fn attachment_editor(
                 ui.separator();
                 for (mode, needs) in MODES {
                     let current = datum.attachment.mode() == *mode;
-                    let made = candidate(mode, ctx, body, datum, &picked);
+                    let made = candidate(
+                        mode,
+                        ctx,
+                        body,
+                        datum.frame(),
+                        current_edge(&datum.attachment),
+                        &picked,
+                    );
                     let response = ui.add_enabled(
                         current || made.is_some(),
                         egui::Button::selectable(current, mode_label(mode)),

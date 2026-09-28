@@ -220,6 +220,16 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(sketch(
         CommandSpec::new(
+            "sketch.attachment",
+            "Move a sketch on the datum it is attached to: along its normal, across it, \
+             turned about it",
+        )
+        .optional("offset", ParamKind::Number, "Along the normal, mm")
+        .optional("shift", ParamKind::List, "Across the plane, {x, y} in mm")
+        .optional("turn", ParamKind::Number, "About the normal, degrees"),
+    ));
+    context.register_command(sketch(
+        CommandSpec::new(
             "sketch.external_from",
             "Bring another sketch's curves and points, or a datum, into this sketch as \
              external geometry that follows them",
@@ -546,6 +556,37 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "sketch.merge" => {
             let with = feature_ids(args.get("with"), "with")?;
             return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.attachment" => {
+            let Some(mut support) = feature.support.clone() else {
+                return Err(CommandError::bad("sketch", "is not attached to a datum"));
+            };
+            if let Some(v) = a.opt_number("offset")? {
+                support.offset = v as f32;
+            }
+            if let Some(v) = args.get("shift").filter(|v| !v.is_null()) {
+                let pair = v
+                    .as_array()
+                    .filter(|p| p.len() == 2)
+                    .and_then(|p| Some([p[0].as_f64()? as f32, p[1].as_f64()? as f32]))
+                    .ok_or_else(|| CommandError::bad("shift", "must be {x, y}"))?;
+                support.shift = pair;
+            }
+            if let Some(v) = a.opt_number("turn")? {
+                support.turn = v as f32;
+            }
+            let values = ctx
+                .document
+                .feature_values(support.datum)
+                .cloned()
+                .ok_or_else(|| CommandError::failed("the datum is gone"))?;
+            let plane = support
+                .plane_from(&values)
+                .ok_or_else(|| CommandError::failed("the datum is not a plane"))?;
+            feature.plane = plane;
+            feature.sketch.plane = plane;
+            feature.support = Some(support);
+            return save(ctx, sketch_id, feature, Value::Null);
         }
         "sketch.external_from" => {
             let from = FeatureId(a.id("from")?);
@@ -1081,6 +1122,8 @@ fn datum_support(
         datum: id,
         plane,
         offset,
+        shift: [0.0, 0.0],
+        turn: 0.0,
     };
     let values = ctx
         .document
@@ -1914,6 +1957,8 @@ mod tests {
                 datum,
                 plane: Some("XZ".into()),
                 offset: 2.0,
+                shift: [0.0, 0.0],
+                turn: 0.0,
             })
         );
         assert_eq!(doc.feature_tree().dependencies(id), vec![datum]);
@@ -1979,6 +2024,57 @@ mod tests {
             .filter(|g| g["kind"] == "point")
             .count();
         assert_eq!(points, 3);
+    }
+
+    #[test]
+    fn a_sketch_on_a_datum_shifts_and_turns_on_it() {
+        use core_document::{
+            AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape,
+        };
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let datum = doc
+            .add_feature_in_body(
+                DatumFeature {
+                    shape: DatumShape::Plane { size: 20.0 },
+                    attachment: DatumAttachment::BasePlane(BasePlane::XY),
+                    offset: AttachmentOffset::default(),
+                },
+                "Datum".into(),
+                Some(body),
+            )
+            .unwrap();
+        let sketch = call(&mut doc, "sketch.new", json!({"on": datum.0.to_string()})).unwrap();
+        call(
+            &mut doc,
+            "sketch.attachment",
+            json!({"sketch": sketch, "offset": 3.0, "shift": [5.0, 0.0], "turn": 90.0}),
+        )
+        .unwrap();
+        let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
+        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
+        assert!(
+            near(feature.plane.origin, [5.0, 0.0, 3.0]),
+            "{:?}",
+            feature.plane
+        );
+        assert!(
+            near(feature.plane.x_axis, [0.0, 1.0, 0.0]),
+            "{:?}",
+            feature.plane
+        );
+        assert!(near(feature.plane.y_axis, [-1.0, 0.0, 0.0]));
+        let free = call(&mut doc, "sketch.new", json!({})).unwrap();
+        assert!(
+            call(
+                &mut doc,
+                "sketch.attachment",
+                json!({"sketch": free, "turn": 5.0})
+            )
+            .is_err(),
+            "only a sketch on a datum"
+        );
     }
 
     #[test]

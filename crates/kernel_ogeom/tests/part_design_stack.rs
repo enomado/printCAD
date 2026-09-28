@@ -1154,6 +1154,8 @@ fn a_pad_on_a_datum_sketch_follows_the_datum() {
         datum,
         plane: None,
         offset: 0.0,
+        shift: [0.0, 0.0],
+        turn: 0.0,
     });
     let sketch_id = doc
         .add_feature_in_body(sketch, "sketch".into(), Some(body))

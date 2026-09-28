@@ -154,6 +154,8 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
         datum: tangent,
         plane: None,
         offset: 0.0,
+        shift: [0.0, 0.0],
+        turn: 0.0,
     });
     let sketch = doc
         .add_feature_in_body(sketch, "Sketch".into(), Some(body))

@@ -88,12 +88,14 @@ impl SketchWorkbench {
             return TaskOutcome::Open;
         }
         let plane = feature.plane;
+        let support = feature.support.clone();
         let sketch = feature.sketch;
 
         if self.sketch_picker.is_some() {
             self.sketch_picker_section(ui, ctx, &plane);
         }
         self.tool_section(ui);
+        self.attachment_section(ui, ctx, support.as_ref());
         self.array_section(ui, ctx);
         self.solver_section(ui, ctx, &sketch);
         self.edit_controls_section(ui);
@@ -193,6 +195,53 @@ impl SketchWorkbench {
             self.sketch_picker = None;
         }
         ui.add_space(SPACE_2);
+    }
+
+    /// Where a sketch attached to a datum sits on it: along the normal,
+    /// across the plane and turned about it.
+    fn attachment_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        support: Option<&crate::feature::DatumSupport>,
+    ) {
+        let (Some(support), Some(id)) = (support, self.active_sketch_id) else {
+            return;
+        };
+        if !section_header(ui, "sketch_attachment", "Attachment", None, false) {
+            return;
+        }
+        let (mut offset, mut shift, mut turn) = (support.offset, support.shift, support.turn);
+        let mut changed = false;
+        egui::Grid::new("sketch_attachment_grid")
+            .num_columns(2)
+            .spacing([SPACE_2, SPACE_1])
+            .show(ui, |ui| {
+                ui_kit::widgets::field_label(ui, "Along normal");
+                changed |= QtyField::mm(&mut offset).show(ui);
+                ui.end_row();
+                ui_kit::widgets::field_label(ui, "Across x");
+                changed |= QtyField::mm(&mut shift[0]).show(ui);
+                ui.end_row();
+                ui_kit::widgets::field_label(ui, "Across y");
+                changed |= QtyField::mm(&mut shift[1]).show(ui);
+                ui.end_row();
+                ui_kit::widgets::field_label(ui, "Turned");
+                changed |= QtyField::degrees(&mut turn).show(ui);
+                ui.end_row();
+            });
+        if changed {
+            let args = crate::commands::args(serde_json::json!({
+                "sketch": id.0.to_string(),
+                "offset": offset,
+                "shift": shift,
+                "turn": turn,
+            }));
+            match crate::commands::run("sketch.attachment", &args, ctx) {
+                Ok(_) => ctx.record("sketch.attachment", args, serde_json::Value::Null),
+                Err(err) => ctx.log_warn(err.to_string()),
+            }
+        }
     }
 
     /// The document's other sketches and its datums, one click bringing
@@ -325,6 +374,8 @@ impl SketchWorkbench {
                                         datum: datum_id,
                                         plane: None,
                                         offset: 0.0,
+                                        shift: [0.0, 0.0],
+                                        turn: 0.0,
                                     }),
                                     None,
                                 ));
@@ -342,6 +393,8 @@ impl SketchWorkbench {
                                             datum: datum_id,
                                             plane: Some(plane.to_string()),
                                             offset: 0.0,
+                                            shift: [0.0, 0.0],
+                                            turn: 0.0,
                                         }),
                                         None,
                                     ));

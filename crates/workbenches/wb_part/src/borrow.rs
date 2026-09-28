@@ -883,6 +883,8 @@ mod tests {
             datum: FeatureId::new(),
             plane: None,
             offset: 0.0,
+            shift: [0.0, 0.0],
+            turn: 0.0,
         });
         // A quarter turn about x, then 10 mm along it.
         let half = std::f32::consts::FRAC_PI_4;

@@ -1,4 +1,5 @@
 pub mod asset;
+pub mod attach;
 pub mod command;
 pub mod configurations;
 pub mod datum;

@@ -3,13 +3,14 @@
 //! at hand, and written back out as the arguments that make them again.
 
 use core_document::{
-    Args, BasePlane, BodyId, CommandError, DatumAttachment, DatumFeature, EdgeAnchor, EdgeRef,
-    EdgeSpot, FaceAnchor, FaceRef, FeatureId, PlaneAnchor, PointAnchor, WorkbenchFeature,
-    WorkbenchRuntimeContext,
+    Args, BasePlane, BodyId, CommandError, DatumAttachment, DatumFeature, EdgeAnchor, EdgeSpot,
+    FaceAnchor, FeatureId, PlaneAnchor, PointAnchor, WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Map, Value, json};
 
 use crate::commands::vector3;
+
+pub use core_document::attach::{edge_anchor, face_anchor, settle};
 
 /// The modes a datum attaches by, as `part.datum` names them, with what
 /// each is.
@@ -39,74 +40,6 @@ pub const MODES: &[(&str, &str)] = &[
         "at the body's centre of mass, on its axes of inertia",
     ),
 ];
-
-/// A picked face as a datum keeps it; `follows` when it is on the datum's
-/// own body.
-pub fn face_anchor(face: &FaceRef, follows: bool) -> FaceAnchor {
-    FaceAnchor {
-        name: face.name,
-        point: face.point,
-        normal: face.normal,
-        surface: face.surface,
-        follows,
-    }
-}
-
-/// A picked edge as a datum keeps it; `follows` when it is on the datum's
-/// own body.
-pub fn edge_anchor(edge: &EdgeRef, follows: bool) -> EdgeAnchor {
-    EdgeAnchor {
-        faces: edge.faces,
-        point: edge.point,
-        direction: edge.direction,
-        ends: None,
-        middle: None,
-        circle: edge.circle.map(|c| core_document::AnchorCircle {
-            center: c.center,
-            normal: c.normal,
-            radius: c.radius,
-        }),
-        follows,
-    }
-}
-
-/// Fill in what the body's solid says of the datum's references (a face's
-/// surface, an edge's ends, the centre of mass) and check they make a
-/// frame. Without a kernel or a solid the references stay as given, and a
-/// datum at the centre of mass cannot be made.
-pub fn settle(
-    ctx: &WorkbenchRuntimeContext,
-    body: BodyId,
-    datum: &mut DatumFeature,
-) -> Result<(), String> {
-    let probes = datum.probes();
-    if !probes.is_empty() {
-        let solid = ctx
-            .kernel
-            .zip(ctx.document.imported_brep_blob(body))
-            .filter(|_| !ctx.document.is_mesh_body(body));
-        match solid {
-            Some((kernel, blob)) => {
-                let answers: Vec<Result<kernel_api::ProbeAnswer, String>> = probes
-                    .iter()
-                    .map(|probe| kernel.probe(blob, probe).map_err(|e| e.to_string()))
-                    .collect();
-                if let Some(Err(e)) = answers.iter().find(|a| a.is_err()) {
-                    return Err(format!("the body's solid does not answer: {e}"));
-                }
-                datum.take_answers(&answers);
-            }
-            None if matches!(datum.attachment, DatumAttachment::Inertia { .. }) => {
-                return Err("the centre of mass needs the body's solid".into());
-            }
-            None => {}
-        }
-    }
-    match datum.attachment.problem() {
-        Some(problem) => Err(problem.to_string()),
-        None => Ok(()),
-    }
-}
 
 fn face_from(value: &Value, name: &str) -> Result<FaceAnchor, CommandError> {
     Ok(FaceAnchor {
