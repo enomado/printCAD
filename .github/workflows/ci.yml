@@ -15,12 +15,12 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install system dependencies
-        # libvulkan-dev: ash uses the "linked" feature (links libvulkan at build time).
         # glslc/libshaderc: render_vk's build.rs compiles GLSL via shaderc.
+        # Vulkan itself is loaded at run time, so nothing links it.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libvulkan-dev glslc libshaderc-dev
+            glslc libshaderc-dev
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install

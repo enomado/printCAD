@@ -105,6 +105,9 @@ pub(crate) struct RendererCore {
     pick_in_flight: Vec<Option<PendingPick>>,
     // Cached pick result (updated when an in-flight readback resolves)
     last_pick_result: PickResult,
+    /// The loaded Vulkan library. Last, so it is unloaded only after `drop`
+    /// has destroyed everything made through it.
+    _entry: Entry,
 }
 
 impl RendererCore {
@@ -113,7 +116,7 @@ impl RendererCore {
         extent: vk::Extent2D,
         settings: RenderSettings,
     ) -> Result<Self, RenderError> {
-        let entry = Entry::linked();
+        let entry = load_vulkan()?;
         let available_layers: HashSet<String> = unsafe {
             entry
                 .enumerate_instance_layer_properties()
@@ -265,6 +268,7 @@ impl RendererCore {
             last_draw_stats: crate::mesh::DrawStats::default(),
             pick_in_flight: vec![None; MAX_FRAMES_IN_FLIGHT],
             last_pick_result: PickResult::default(),
+            _entry: entry,
         };
 
         core.create_swapchain(extent)?;
@@ -1609,6 +1613,44 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
     h.finish()
 }
 
+/// The system's Vulkan library. On macOS, where Vulkan runs over Metal,
+/// the loader or MoltenVK itself, and failing the system's, the ones an
+/// application bundle carries in its `Frameworks`.
+fn load_vulkan() -> Result<Entry, RenderError> {
+    let first = match unsafe { Entry::load() } {
+        Ok(entry) => return Ok(entry),
+        Err(err) => err,
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let frameworks = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("Frameworks")));
+        let names = ["libvulkan.1.dylib", "libMoltenVK.dylib"];
+        let candidates = frameworks
+            .iter()
+            .flat_map(|dir| names.map(|name| dir.join(name)))
+            .chain(names.map(std::path::PathBuf::from));
+        for candidate in candidates {
+            if let Ok(entry) = unsafe { Entry::load_from(&candidate) } {
+                return Ok(entry);
+            }
+        }
+    }
+    Err(RenderError::Initialization(format!(
+        "Vulkan is not available on this system ({first}); install your graphics driver's Vulkan support"
+    )))
+}
+
+/// Instance extensions that are offered and wanted when they are: portability
+/// enumeration, without which a Vulkan-over-Metal device is not listed.
+fn portability_enumeration(entry: &Entry) -> bool {
+    unsafe { entry.enumerate_instance_extension_properties(None) }
+        .unwrap_or_default()
+        .iter()
+        .any(|ext| ext.extension_name_as_c_str() == Ok(ash::khr::portability_enumeration::NAME))
+}
+
 fn create_instance(
     entry: &Entry,
     window: &Window,
@@ -1623,7 +1665,11 @@ fn create_instance(
         .engine_version(vk::make_api_version(0, 0, 1, 0))
         .api_version(vk::API_VERSION_1_2);
 
-    let extensions_vec = surface::required_extensions(window, enable_validation)?;
+    let mut extensions_vec = surface::required_extensions(window, enable_validation)?;
+    let portability = portability_enumeration(entry);
+    if portability {
+        extensions_vec.push(ash::khr::portability_enumeration::NAME.as_ptr());
+    }
 
     let validation_layers_cstr: Vec<CString> = if enable_validation {
         vec![CString::new(VALIDATION_LAYER).unwrap()]
@@ -1639,6 +1685,9 @@ fn create_instance(
         .application_info(&app_info)
         .enabled_extension_names(&extensions_vec)
         .enabled_layer_names(&validation_layers);
+    if portability {
+        create_info = create_info.flags(vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR);
+    }
 
     // Chain a messenger create-info so instance create/destroy-time messages
     // (outside the lifetime of the real messenger) are captured too.
@@ -1728,7 +1777,15 @@ fn create_logical_device(
         ..vk::PhysicalDeviceFeatures::default()
     };
     let wide_lines_on = device_features.wide_lines != vk::FALSE;
-    let device_extensions = [ash::khr::swapchain::NAME.as_ptr()];
+    let mut device_extensions = vec![ash::khr::swapchain::NAME.as_ptr()];
+    // A device that is a portability subset (Vulkan over Metal) must say so.
+    let subset = unsafe { instance.enumerate_device_extension_properties(physical_device) }
+        .unwrap_or_default()
+        .iter()
+        .any(|ext| ext.extension_name_as_c_str() == Ok(ash::khr::portability_subset::NAME));
+    if subset {
+        device_extensions.push(ash::khr::portability_subset::NAME.as_ptr());
+    }
 
     let create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_info)

@@ -8,6 +8,7 @@ build = "build.rs"
 
 [dependencies]
 ash.workspace = true
+ash-window.workspace = true
 kernel_api = { path = "../kernel_api" }
 raw-window-handle.workspace = true
 thiserror.workspace = true

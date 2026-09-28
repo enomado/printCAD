@@ -259,6 +259,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `SetBodyPlacement` ops.
 - `render_vk`: data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
+  The Vulkan library is loaded at run time (`load_vulkan`; on macOS the
+  loader or MoltenVK, then a bundle's `Frameworks`), kept as the renderer's
+  last field so it outlives every call; surfaces come from `ash-window`,
+  and portability enumeration and the portability subset are turned on
+  where the driver offers them (Vulkan over Metal).
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,
