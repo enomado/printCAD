@@ -16,6 +16,7 @@ mod feature;
 mod generators;
 mod hole_tables;
 mod params;
+mod references;
 #[cfg(feature = "egui")]
 mod task;
 
@@ -77,6 +78,9 @@ pub struct PartDesignWorkbench {
     /// A feature a tool just created: the task that opens for it deletes it
     /// on Cancel, and records it on OK as the command that makes it.
     pending_task_from_tool: Option<ToolMade>,
+    /// A feature the user asked to edit (a double click in the tree), for
+    /// the task panel to open on.
+    edit_request: Option<FeatureId>,
     /// The centre line tool, while it is out.
     centre: Option<centre::CentreTask>,
 }
@@ -892,6 +896,34 @@ impl Workbench for PartDesignWorkbench {
 
     fn editing_feature(&self) -> Option<FeatureId> {
         self.task.as_ref().map(|task| task.feature)
+    }
+
+    fn references(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Vec<core_document::FeatureReference> {
+        references::references(document, id, node)
+    }
+
+    fn set_reference(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        key: &str,
+        to: core_document::ReferenceChoice,
+    ) -> Result<(), String> {
+        references::set_reference(ctx, id, key, to)
+    }
+
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        #[cfg(feature = "egui")]
+        if task::task_kind(ctx, id).is_some() {
+            self.edit_request = Some(id);
+        }
+        #[cfg(not(feature = "egui"))]
+        let _ = (ctx, id);
     }
 
     fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {

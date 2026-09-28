@@ -184,11 +184,20 @@ fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -
 /// Which data fields are lengths and which refer to other features,
 /// for the property panel.
 fn property_hints(&self) -> PropertyHints;
+
+/// Inputs the property panel lets the user swap (a profile sketch), and
+/// how to swap one.
+fn references(&self, doc: &Document, id: FeatureId, node: &FeatureNode)
+    -> Vec<FeatureReference>;
+fn set_reference(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId,
+    key: &str, to: ReferenceChoice) -> Result<(), String>;
 ```
 
-Double clicking a feature in the tree switches to its owner and makes the
-feature the active document object. `locks_view_to_plane` keeps the camera
-square to the plane while editing.
+A click on a feature in the tree only selects it: it becomes the active
+document object. A double click switches to its owner and calls
+`edit_feature`, which is where the workbench opens the feature's task; never
+open one on selection alone. `locks_view_to_plane` keeps the camera square
+to the plane while editing.
 
 ## 7. Build solids
 
@@ -267,11 +276,13 @@ to the new one as `ctx.attach_request`.
 2. `configure` with the tools and their default keys, and
    `is_tool_enabled` where tools have preconditions.
 3. `feature_info`, plus `passive_geometry`, `pick_feature`,
-   `delete_feature` and `property_hints` as needed.
+   `delete_feature`, `property_hints`, `references` and `set_reference` as
+   needed.
 4. `rebuild_jobs`, `invalidate_body` and `invalidate_all` if it builds
    solids.
 5. `on_input` for the tools.
-6. `task` and `ui_task_panel` for editing, `ui_settings` for preferences.
+6. `edit_feature`, `task` and `ui_task_panel` for editing, `ui_settings`
+   for preferences.
 7. `menu_items` and `on_command` for menus and start cards.
 8. `register_command` and `run_command` for what scripts can do, and
    `register_import` for files it reads.

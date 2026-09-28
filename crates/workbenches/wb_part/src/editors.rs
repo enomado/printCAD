@@ -738,31 +738,6 @@ fn extrude_direction_editor(
     changed
 }
 
-/// The profile of a pad or pocket: a sketch of the body, or a flat face of
-/// the solid picked in the viewport. Choosing one clears the other.
-fn extrude_profile_rows(
-    ui: &mut Ui,
-    ctx: &WorkbenchRuntimeContext,
-    body: BodyId,
-    id_salt: (&'static str, FeatureId),
-    sketch: &mut Option<FeatureId>,
-    profile_face: &mut Option<FacePick>,
-) -> bool {
-    let mut changed = false;
-    if let Some(new) = sketch_combo(ui, ctx, body, id_salt, *sketch, "Profile:") {
-        *sketch = Some(new);
-        *profile_face = None;
-        changed = true;
-    }
-    let mut face = *profile_face;
-    if face_pick_row(ui, ctx, &mut face, "Or face:") {
-        *profile_face = face;
-        *sketch = None;
-        changed = true;
-    }
-    changed
-}
-
 /// The rows of one side's end condition, beyond its mode: the length, the
 /// face or the faces it stops on and their offset.
 #[expect(clippy::too_many_arguments)]
@@ -1645,7 +1620,7 @@ pub fn feature_editor(
     match feature {
         PartFeature::Pad {
             refine: _,
-            sketch,
+            sketch: _,
             length,
             reversed,
             symmetric,
@@ -1654,7 +1629,7 @@ pub fn feature_editor(
             taper_deg,
             up_to_face,
             up_to_offset,
-            profile_face,
+            profile_face: _,
             direction,
             up_to_shape,
             mode2,
@@ -1662,14 +1637,6 @@ pub fn feature_editor(
             up_to_offset2,
             up_to_shape2,
         } => {
-            changed |= extrude_profile_rows(
-                ui,
-                ctx,
-                body,
-                ("pad_sketch", feature_id),
-                sketch,
-                profile_face,
-            );
             let borrowed = crate::borrow::faces_of_body(ctx.document, body);
             changed |=
                 extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature, &borrowed);
@@ -1714,7 +1681,7 @@ pub fn feature_editor(
         }
         PartFeature::Pocket {
             refine: _,
-            sketch,
+            sketch: _,
             depth,
             reversed,
             symmetric,
@@ -1724,7 +1691,7 @@ pub fn feature_editor(
             taper_deg,
             up_to_face,
             up_to_offset,
-            profile_face,
+            profile_face: _,
             direction,
             up_to_shape,
             mode2,
@@ -1732,14 +1699,6 @@ pub fn feature_editor(
             up_to_offset2,
             up_to_shape2,
         } => {
-            changed |= extrude_profile_rows(
-                ui,
-                ctx,
-                body,
-                ("pocket_sketch", feature_id),
-                sketch,
-                profile_face,
-            );
             // The flag and the ThroughAll mode are one setting: a file that
             // has only the flag set opens in that mode, and the flag
             // follows the mode picked.
@@ -1820,17 +1779,6 @@ pub fn feature_editor(
             mode,
             up_to_face,
         } => {
-            if let Some(new) = sketch_combo(
-                ui,
-                ctx,
-                body,
-                ("rev_sketch", feature_id),
-                Some(*sketch),
-                "Profile:",
-            ) {
-                *sketch = new;
-                changed = true;
-            }
             ui.horizontal(|ui| {
                 label_cell(ui, "Type");
                 egui::ComboBox::from_id_salt(("rev_mode", feature_id))
@@ -1930,17 +1878,6 @@ pub fn feature_editor(
                 ui,
                 ctx,
                 body,
-                ("pipe_profile", feature_id),
-                Some(*profile),
-                "Profile:",
-            ) {
-                *profile = new;
-                changed = true;
-            }
-            if let Some(new) = sketch_combo(
-                ui,
-                ctx,
-                body,
                 ("pipe_spine", feature_id),
                 Some(*spine),
                 "Path:",
@@ -2016,17 +1953,6 @@ pub fn feature_editor(
             growth,
             keep_inside,
         } => {
-            if let Some(new) = sketch_combo(
-                ui,
-                ctx,
-                body,
-                ("helix_sketch", feature_id),
-                Some(*sketch),
-                "Profile:",
-            ) {
-                *sketch = new;
-                changed = true;
-            }
             changed |=
                 revolve_axis_editor(ui, ctx, body, *sketch, axis, ("helix_axis", feature_id));
             ui.horizontal(|ui| {

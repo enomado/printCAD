@@ -244,6 +244,13 @@ pub enum UiCommand {
         parameter: Box<core_document::Parameter>,
         edit: ui_kit::widgets::FormulaEdit,
     },
+    /// Point one of a feature's inputs (its profile) at something else,
+    /// through the bench that claims the feature.
+    SetFeatureReference {
+        feature: core_document::FeatureId,
+        key: String,
+        to: core_document::ReferenceChoice,
+    },
     /// Change one of the agent's session options (mode, model ...).
     SetChatOption {
         chat: String,

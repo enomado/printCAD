@@ -14,9 +14,9 @@ use wb_sketch::sketch::{
 pub enum Scene {
     /// A constrained sketch, to be opened for editing.
     Sketch,
-    /// The sketch padded, the pad selected.
+    /// The sketch padded.
     Pad,
-    /// The pad with a face sketch pocketed into its top, the pocket selected.
+    /// The pad with a face sketch pocketed into its top.
     Pocket,
 }
 
@@ -35,10 +35,8 @@ impl Scene {
 /// What the host does with the scene once built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SceneHandles {
-    /// The feature to open for editing (the bare sketch).
-    pub activate: Option<FeatureId>,
-    /// The feature to select in the tree (the pad or the pocket).
-    pub select: Option<FeatureId>,
+    /// The scene's last feature: the sketch, the pad or the pocket.
+    pub feature: FeatureId,
 }
 
 /// A body's worth of features on `body`: a rectangle with a hole, fully
@@ -85,10 +83,7 @@ pub fn open_sketch_scene(
         .add_feature_in_body(SketchFeature::new(sketch, plane), "Sketch".into(), body)
         .map_err(|err| format!("sketch: {err}"))?;
     if scene == Scene::Sketch {
-        return Ok(SceneHandles {
-            activate: Some(sketch_id),
-            select: None,
-        });
+        return Ok(SceneHandles { feature: sketch_id });
     }
 
     let pad = PartFeature::Pad {
@@ -116,10 +111,7 @@ pub fn open_sketch_scene(
     document.mark_feature_dirty(pad_id);
     document.set_feature_visible(sketch_id, false);
     if scene == Scene::Pad {
-        return Ok(SceneHandles {
-            activate: None,
-            select: Some(pad_id),
-        });
+        return Ok(SceneHandles { feature: pad_id });
     }
 
     let mut top = Sketch::new("sketch_1");
@@ -155,10 +147,7 @@ pub fn open_sketch_scene(
         .map_err(|err| format!("pocket: {err}"))?;
     document.mark_feature_dirty(pocket_id);
     document.set_feature_visible(top_id, false);
-    Ok(SceneHandles {
-        activate: None,
-        select: Some(pocket_id),
-    })
+    Ok(SceneHandles { feature: pocket_id })
 }
 
 #[cfg(test)]
@@ -182,9 +171,11 @@ mod tests {
                     .all(|(_, n)| n.body == Some(body)),
                 "{scene:?}: every feature sits on the body"
             );
+            let opened = doc.get_feature_meta(handles.feature).unwrap();
+            let kind = opened.workbench_id.as_str();
             match scene {
-                Scene::Sketch => assert!(handles.activate.is_some() && handles.select.is_none()),
-                _ => assert!(handles.activate.is_none() && handles.select.is_some()),
+                Scene::Sketch => assert_eq!(kind, "wb.sketch"),
+                _ => assert_eq!(kind, "wb.part"),
             }
         }
         assert_eq!(Scene::named("pad"), Scene::Pad);

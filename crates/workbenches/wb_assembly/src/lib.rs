@@ -1020,31 +1020,30 @@ impl Workbench for AssemblyWorkbench {
             self.take_pick(ctx);
             return;
         }
-        // A joint picked in the tree opens its settings; picking something
-        // else closes them, keeping what was set.
-        let selected = Self::selected_joint(ctx);
-        match (&self.task, selected) {
-            (Some(Task::Joint { id, .. }), Some(joint)) if *id == joint => {}
-            (
-                Some(
-                    Task::Move { .. }
-                    | Task::Interference { .. }
-                    | Task::Explode { .. }
-                    | Task::Parts,
-                ),
-                _,
-            ) => {}
-            (_, Some(joint)) => {
-                self.task = Some(Task::Joint {
-                    id: joint,
-                    before: ctx.document.get_feature_data(joint).cloned(),
-                    placements: all_placements(ctx),
-                });
-                self.verdict = None;
-            }
-            (Some(Task::Joint { .. }), None) => self.task = None,
-            (None, None) => {}
+        // A joint's settings stay open while it is selected; picking
+        // something else closes them, keeping what was set. They open on a
+        // double click (`edit_feature`), never on selection alone.
+        if let Some(Task::Joint { id, .. }) = &self.task
+            && Self::selected_joint(ctx) != Some(*id)
+        {
+            self.task = None;
         }
+    }
+
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        let is_joint = ctx
+            .document
+            .get_feature_meta(id)
+            .is_some_and(|n| n.workbench_id.as_str() == JOINT_KIND);
+        if !is_joint || self.picking.is_some() {
+            return;
+        }
+        self.task = Some(Task::Joint {
+            id,
+            before: ctx.document.get_feature_data(id).cloned(),
+            placements: all_placements(ctx),
+        });
+        self.verdict = None;
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {

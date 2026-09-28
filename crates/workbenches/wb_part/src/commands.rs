@@ -1269,6 +1269,11 @@ mod tests {
         );
 
         // Editing it again records the change alone.
+        {
+            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.active_document_object = Some(pad);
+            core_document::Workbench::edit_feature(&mut bench, &mut ctx, pad);
+        }
         task_frame(&mut bench, &mut doc, pad, Default::default());
         let mut data = doc.get_feature_data(pad).unwrap().clone();
         data["Pad"]["reversed"] = json!(true);

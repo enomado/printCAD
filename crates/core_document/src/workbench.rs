@@ -221,6 +221,34 @@ pub struct ViewportHud {
     pub ovp: Option<OvpWidget>,
 }
 
+/// An input of a feature that can be swapped for another, as the property
+/// panel offers it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureReference {
+    /// Handed back to [`Workbench::set_reference`].
+    pub key: String,
+    pub label: String,
+    /// What it reads now, in words.
+    pub current: String,
+    /// The feature it reads now, when it reads one.
+    pub selected: Option<FeatureId>,
+    /// The features it may read instead, with their names.
+    pub choices: Vec<(FeatureId, String)>,
+    /// A flat face picked in the view can stand in for a feature.
+    pub takes_face: bool,
+    /// The feature data's fields this input stands for, left out of the
+    /// plain rows beside it.
+    pub fields: Vec<String>,
+}
+
+/// What an input is pointed at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ReferenceChoice {
+    Feature(FeatureId),
+    /// The face selected in the view.
+    SelectedFace,
+}
+
 /// A workbench's contribution to the status bar.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StatusItems {
@@ -615,6 +643,31 @@ pub trait Workbench: Send {
         Vec::new()
     }
 
+    /// The inputs of an owned feature that can be swapped for others (a
+    /// pad's profile sketch), for the property panel to offer. `id` is the
+    /// feature `node` describes.
+    fn references(
+        &self,
+        _document: &crate::Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+    ) -> Vec<FeatureReference> {
+        Vec::new()
+    }
+
+    /// Point input `key` of feature `id` (one [`Self::references`] listed)
+    /// at `to`, the bench's own way: its dependencies, what it hides, what
+    /// rebuilds. Why not, when it cannot.
+    fn set_reference(
+        &mut self,
+        _ctx: &mut WorkbenchRuntimeContext,
+        _id: FeatureId,
+        _key: &str,
+        _to: ReferenceChoice,
+    ) -> Result<(), String> {
+        Err("this input cannot be changed here".to_string())
+    }
+
     /// Formulas moved the values of `moved` (any bench's features): a
     /// bench whose results are recorded rather than derived (placements a
     /// joint solves for) records them here. Runs just before an undo step
@@ -746,6 +799,12 @@ pub trait Workbench: Send {
     fn editing_feature(&self) -> Option<FeatureId> {
         None
     }
+
+    /// The user asked to edit `id`, a feature of a kind this bench claims
+    /// (a double click on its tree row): open its task. Selecting a feature
+    /// alone never opens one; the host has made `id` the active document
+    /// object before this call.
+    fn edit_feature(&mut self, _ctx: &mut WorkbenchRuntimeContext, _id: FeatureId) {}
 
     /// Whether an Action tool that acts as a toggle is currently on, so its
     /// button can render pressed.

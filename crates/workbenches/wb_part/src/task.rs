@@ -8,9 +8,8 @@ use core_document::{
 use egui::RichText;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, destructive_button, note_card};
-use ui_kit::{mono, sans, sans_semibold};
+use ui_kit::{sans, sans_semibold};
 
-use crate::build::sketch_plane_description;
 use crate::feature::PartFeature;
 use crate::{PartDesignWorkbench, editors};
 
@@ -52,7 +51,7 @@ fn name_field_id(feature: FeatureId) -> egui::Id {
 }
 
 /// The kind of task node `id` is, if it is one this workbench edits.
-fn task_kind(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<TaskKind> {
+pub(crate) fn task_kind(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<TaskKind> {
     let node = ctx.document.get_feature_meta(id)?;
     match node.workbench_id.as_str() {
         "wb.part" => Some(TaskKind::Part),
@@ -62,10 +61,23 @@ fn task_kind(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<TaskKind> {
 }
 
 impl PartDesignWorkbench {
-    /// The task the active document object calls for.
+    /// The feature the task panel is for: the open task's, else one the
+    /// user asked to edit, else one a tool just made. Selecting a feature
+    /// alone opens nothing.
+    fn task_target(&self, ctx: &WorkbenchRuntimeContext) -> Option<(FeatureId, TaskKind)> {
+        [
+            self.task.as_ref().map(|t| t.feature),
+            self.edit_request,
+            self.pending_task_from_tool.as_ref().map(|m| m.feature),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|id| task_kind(ctx, id).map(|kind| (id, kind)))
+    }
+
+    /// The task open, or about to open, in the panel.
     pub(crate) fn task_info(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        let id = ctx.active_document_object?;
-        let kind = task_kind(ctx, id)?;
+        let (id, kind) = self.task_target(ctx)?;
         let node = ctx.document.get_feature_meta(id)?;
         let icon = match kind {
             TaskKind::Part => PartFeature::from_json(&node.data)
@@ -116,25 +128,13 @@ impl PartDesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
-        let target = ctx
-            .active_document_object
-            .and_then(|id| task_kind(ctx, id).map(|kind| (id, kind)));
-        let Some((target_id, target_kind)) = target else {
-            // Deselected: the edits so far stay.
-            return match self.task.take() {
-                Some(task) => {
-                    Self::apply_name_draft(ctx, &task);
-                    crate::commands::record_task(self, ctx, &task);
-                    self.rebuild_accepted(ctx, task.feature);
-                    TaskOutcome::Accepted {
-                        label: "Edit feature".to_string(),
-                    }
-                }
-                None => TaskOutcome::Open,
-            };
-        };
-        // Selecting another feature accepts the open task implicitly.
-        if self.task.as_ref().is_some_and(|t| t.feature != target_id) {
+        // Selecting something else (or nothing) accepts the open task: the
+        // edits so far stay.
+        if self
+            .task
+            .as_ref()
+            .is_some_and(|t| ctx.active_document_object != Some(t.feature))
+        {
             if let Some(task) = &self.task {
                 Self::apply_name_draft(ctx, task);
             }
@@ -143,11 +143,16 @@ impl PartDesignWorkbench {
                 crate::commands::record_task(self, ctx, &task);
                 self.rebuild_accepted(ctx, task.feature);
             }
-            self.open_task(ctx, target_id, target_kind.clone());
             return TaskOutcome::Accepted { label };
         }
+        let Some((target_id, target_kind)) = self.task_target(ctx) else {
+            self.edit_request = None;
+            return TaskOutcome::Open;
+        };
         if self.task.is_none() {
+            self.edit_request = None;
             self.open_task(ctx, target_id, target_kind);
+            ctx.active_document_object = Some(target_id);
         }
 
         if request.cancel {
@@ -161,7 +166,7 @@ impl PartDesignWorkbench {
             if let Some(task) = self.task.take() {
                 crate::commands::record_task(self, ctx, &task);
             }
-            ctx.active_document_object = None;
+            // The feature stays selected, out of its task.
             self.rebuild_accepted(ctx, target_id);
             return TaskOutcome::Accepted { label };
         }
@@ -222,6 +227,11 @@ impl PartDesignWorkbench {
         let Some(task) = self.task.take() else {
             return TaskOutcome::Cancelled;
         };
+        // A feature the tool made goes, and nothing stays selected; an
+        // edit put back leaves the feature selected.
+        if task.created_by_tool {
+            ctx.active_document_object = None;
+        }
         for (sketch, was) in &task.visibility {
             ctx.document.set_feature_visible(*sketch, *was);
         }
@@ -288,7 +298,6 @@ impl PartDesignWorkbench {
                 ctx.log_info("Edit cancelled");
             }
         }
-        ctx.active_document_object = None;
         TaskOutcome::Cancelled
     }
 
@@ -379,19 +388,6 @@ impl PartDesignWorkbench {
             &format!("{} parameters", feature.kind_label()),
         );
         self.name_row(ui, ctx, feature_id, &node.name);
-        if let Some(sketch_id) = feature.sketch() {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_2;
-                editors::label_cell(ui, "Plane");
-                let description = sketch_plane_description(ctx.document, sketch_id);
-                ui.add(
-                    egui::Label::new(RichText::new(&description).font(mono(FONT_XS)).color(TEXT3))
-                        .truncate(),
-                )
-                .on_hover_text(description);
-            });
-        }
-
         let deps_before = feature.dependencies();
         let sketch_before = feature.sketch();
         let (changed, formula_edits) = {
@@ -635,6 +631,56 @@ mod tests {
         outcome
     }
 
+    /// A double click on `id`'s row: the bench is asked to edit it, and
+    /// the panel draws with it selected.
+    fn open(
+        wb: &mut PartDesignWorkbench,
+        panel: &egui::Context,
+        doc: &mut Document,
+        id: FeatureId,
+    ) -> TaskOutcome {
+        {
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(id);
+            core_document::Workbench::edit_feature(wb, &mut ctx, id);
+        }
+        frame(wb, panel, doc, Some(id), OPEN, vec![])
+    }
+
+    /// Selecting a feature opens nothing; asking to edit it does, and
+    /// accepting leaves it selected, out of its task.
+    #[test]
+    fn a_selected_feature_opens_only_when_asked_to_edit() {
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        let mut wb = PartDesignWorkbench::default();
+        let panel = panel();
+        {
+            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.active_document_object = Some(id);
+            assert!(wb.task_info(&ctx).is_none(), "selected, not edited");
+        }
+        frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+        assert!(wb.task.is_none());
+
+        open(&mut wb, &panel, &mut doc, id);
+        assert_eq!(wb.task.as_ref().map(|t| t.feature), Some(id));
+
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        let mut outcome = TaskOutcome::Open;
+        let mut output = panel.run_ui(egui::RawInput::default(), |ui| {
+            outcome = wb.draw_task_panel(ui, &mut ctx, OK);
+        });
+        output.textures_delta.clear();
+        assert!(matches!(outcome, TaskOutcome::Accepted { .. }));
+        assert_eq!(ctx.active_document_object, Some(id), "still selected");
+        assert!(wb.task.is_none());
+        let again = wb.task_info(&ctx);
+        assert!(again.is_none(), "accepting does not reopen it");
+    }
+
     const OPEN: TaskRequest = TaskRequest {
         accept: false,
         cancel: false,
@@ -681,7 +727,7 @@ mod tests {
             .unwrap();
         let mut wb = PartDesignWorkbench::default();
         let panel = panel();
-        frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+        open(&mut wb, &panel, &mut doc, id);
 
         doc.rename_feature(id, "Renamed");
         doc.set_feature_formula(id, "/Pad/length", None).unwrap();
@@ -723,7 +769,7 @@ mod tests {
             let mut wb = PartDesignWorkbench::default();
             wb.options.update_while_editing = false;
             let panel = panel();
-            frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+            open(&mut wb, &panel, &mut doc, id);
             edit(&mut wb, &mut doc, id, pad(first, 12.0));
             assert!(!doc.get_feature_meta(id).unwrap().dirty, "{how}: waits");
 
@@ -751,7 +797,7 @@ mod tests {
             } = scene();
             let mut wb = PartDesignWorkbench::default();
             let panel = panel();
-            frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+            open(&mut wb, &panel, &mut doc, id);
             panel.memory_mut(|m| m.request_focus(name_field_id(id)));
             for text in ["X", "Y"] {
                 let events = vec![egui::Event::Text(text.into())];

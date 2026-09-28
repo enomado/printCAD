@@ -1368,7 +1368,8 @@ pub(crate) struct ViewportData {
 impl PrintCadApp {
     /// Dev/bench hook: a body with a small constrained sketch, opened for
     /// editing, so the sketcher can be exercised without clicking; `pad`
-    /// pads it and selects the pad, `pocket` pockets the pad's top too.
+    /// pads it and opens the pad for editing, `pocket` pockets the pad's
+    /// top too and opens the pocket.
     fn bench_open_sketch(&mut self) {
         self.create_new_body();
         let scene = bench_fixtures::Scene::named(
@@ -1380,12 +1381,7 @@ impl PrintCadApp {
             scene,
         ) {
             Ok(handles) => {
-                if let Some(feature) = handles.activate {
-                    self.apply_tree_activation(crate::ui::TreeItemId::Feature(feature));
-                }
-                if let Some(feature) = handles.select {
-                    self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
-                }
+                self.apply_tree_activation(crate::ui::TreeItemId::Feature(handles.feature));
             }
             Err(err) => app_log::error(format!("bench scene: {err}")),
         }

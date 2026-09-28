@@ -301,7 +301,10 @@ active. The UI surface: `configure` registers
 `ui_settings()` draws the bench's Preferences page (one rail entry per
 registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
 `delete_feature`/`property_hints` answer for the feature kinds a bench
-claims; `busy` keeps frames coming while a bench's work runs away from
+claims; `edit_feature` is the double click that opens a feature's task
+(selecting one never does, so a feature stays selected after its task
+closes); `references`/`set_reference` offer the inputs the property
+panel's Inputs group swaps (Part Design's profile, kept out of its task); `busy` keeps frames coming while a bench's work runs away from
 the window; `rebuild_jobs`/`invalidate_body`/`invalidate_all` drive solids;
 `menu_items`/`on_command` add entries to the viewport body menu, tree rows
 and the start page's New cards; `register_import` (a `FileImport`: label,

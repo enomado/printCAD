@@ -116,6 +116,89 @@ fn parameter_rows(
     }
 }
 
+/// The inputs a feature's bench lets be swapped (its profile), each a
+/// dropdown of what it may read instead.
+fn reference_rows(
+    ui: &mut egui::Ui,
+    document: &Document,
+    registry: &core_document::DocumentService,
+    feature: FeatureId,
+    result: &mut PropertyPanelResult,
+) {
+    let references = registry.references(document, feature);
+    if references.is_empty() {
+        return;
+    }
+    group_header(ui, "Inputs");
+    for reference in references {
+        ui.horizontal(|ui| {
+            let half = ui.available_width() * 0.5;
+            ui.add_space(24.0);
+            ui.add_sized(
+                [half - 32.0, TREE_ROW],
+                egui::Label::new(
+                    RichText::new(&reference.label)
+                        .font(sans(FONT_SM))
+                        .color(TEXT2),
+                )
+                .truncate(),
+            );
+            let mut picked = None;
+            egui::ComboBox::from_id_salt(("reference", feature, &reference.key))
+                .selected_text(RichText::new(&reference.current).font(sans(FONT_SM)))
+                .width((ui.available_width() - 8.0).max(80.0))
+                .show_ui(ui, |ui| {
+                    for (id, name) in &reference.choices {
+                        let on = reference.selected == Some(*id);
+                        if ui
+                            .selectable_label(on, RichText::new(name).font(sans(FONT_SM)))
+                            .clicked()
+                            && !on
+                        {
+                            picked = Some(core_document::ReferenceChoice::Feature(*id));
+                        }
+                    }
+                    if reference.takes_face {
+                        ui.separator();
+                        if ui
+                            .selectable_label(
+                                false,
+                                RichText::new("The face selected in the view").font(sans(FONT_SM)),
+                            )
+                            .on_hover_text("Click a flat face of the solid first")
+                            .clicked()
+                        {
+                            picked = Some(core_document::ReferenceChoice::SelectedFace);
+                        }
+                    }
+                });
+            if let Some(to) = picked {
+                result.commands.push(super::UiCommand::SetFeatureReference {
+                    feature,
+                    key: reference.key.clone(),
+                    to,
+                });
+            }
+        });
+    }
+}
+
+/// `data` (a feature's payload, one variant key over its fields) without
+/// `fields`.
+fn without_fields(data: &serde_json::Value, fields: &[String]) -> serde_json::Value {
+    let mut data = data.clone();
+    if let Some(inner) = data
+        .as_object_mut()
+        .and_then(|m| m.values_mut().next())
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for field in fields {
+            inner.remove(field);
+        }
+    }
+    data
+}
+
 /// One value row.
 struct PropRow {
     name: String,
@@ -417,7 +500,14 @@ fn data_groups(
                 return vec![("Base".to_string(), base)];
             }
             let hints = registry.property_hints();
-            let (group, rows) = flatten_feature_json(&node.data, document, &hints, unit);
+            // What the Inputs group offers is not repeated here.
+            let covered: Vec<String> = registry
+                .references(document, id)
+                .into_iter()
+                .flat_map(|r| r.fields)
+                .collect();
+            let data = without_fields(&node.data, &covered);
+            let (group, rows) = flatten_feature_json(&data, document, &hints, unit);
             vec![("Base".to_string(), base), (group, rows)]
         }
         TreeItemId::ImportedObject(id) => {
@@ -595,6 +685,7 @@ pub fn draw_property_panel(
                 if table.is_none()
                     && let Some((feature, _)) = &kind
                 {
+                    reference_rows(ui, document, registry, *feature, &mut result);
                     parameter_rows(ui, document, registry, *feature, &mut result);
                 }
                 let mut groups = data_groups(document, registry, selected);

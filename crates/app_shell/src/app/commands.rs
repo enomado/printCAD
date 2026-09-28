@@ -238,6 +238,9 @@ impl PrintCadApp {
                     parameter,
                     edit,
                 } => self.set_parameter(feature, &parameter, edit),
+                UiCommand::SetFeatureReference { feature, key, to } => {
+                    self.set_feature_reference(feature, &key, to);
+                }
                 UiCommand::NewVariableSet => self.new_variable_set(),
                 UiCommand::Config(edit) => self.apply_config_edit(edit),
                 UiCommand::SetVariable {
@@ -778,9 +781,10 @@ impl PrintCadApp {
         }
     }
 
-    /// Double-click "jump" semantics: a sketch opens straight in the
-    /// sketcher's edit mode; a part feature or datum jumps to the Part
-    /// Design panel with its settings editor open.
+    /// A double click on a row: a feature opens for editing in the bench
+    /// that claims its kind (a sketch in the sketcher, a part feature or
+    /// datum in Part Design's task panel), through `Workbench::edit_feature`.
+    /// A single click only selects.
     pub(crate) fn apply_tree_activation(&mut self, item: TreeItemId) {
         let TreeItemId::Feature(id) = item else {
             // A body or an imported part: the whole body is the selection,
@@ -796,15 +800,56 @@ impl PrintCadApp {
         let kind = node.workbench_id.clone();
         self.apply_tree_selection(item);
         // The bench that claimed the feature's kind edits it: it becomes
-        // active and finds the feature as the active document object. A
-        // kind no bench claims is only selected.
+        // active, finds the feature as the active document object and is
+        // asked to edit it. A kind no bench claims is only selected.
         let Some(owner) = self.registry.owner_id_of(&kind).cloned() else {
             return;
         };
         if self.session.active_workbench.0 != owner {
-            self.switch_workbench_for_flow(owner);
+            self.switch_workbench_for_flow(owner.clone());
         }
         self.session.active_document_object = Some(id);
+        let params = self.interaction_ctx_params();
+        if let Some(((), outcome)) =
+            self.with_workbench_ctx(&owner, params, |wb, ctx| wb.edit_feature(ctx, id))
+        {
+            self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
+        }
+    }
+
+    /// Point input `key` of `feature` at `to` through the bench that claims
+    /// the feature's kind: one undo step, what went wrong in the log.
+    fn set_feature_reference(
+        &mut self,
+        feature: core_document::FeatureId,
+        key: &str,
+        to: core_document::ReferenceChoice,
+    ) {
+        let Some(kind) = self
+            .session
+            .document
+            .get_feature_meta(feature)
+            .map(|n| n.workbench_id.clone())
+        else {
+            return;
+        };
+        let Some(owner) = self.registry.owner_id_of(&kind).cloned() else {
+            return;
+        };
+        let params = self.interaction_ctx_params();
+        let Some((done, outcome)) = self.with_workbench_ctx(&owner, params, |wb, ctx| {
+            wb.set_reference(ctx, feature, key, to)
+        }) else {
+            return;
+        };
+        self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
+        match done {
+            Ok(()) => {
+                self.session.journal.label_next(format!("Change {key}"));
+                self.close_gesture();
+            }
+            Err(why) => app_log::warn(format!("Could not change the {key}: {why}")),
+        }
     }
 
     /// Apply a history context-menu action from the feature tree.
@@ -1047,14 +1092,12 @@ impl PrintCadApp {
                     self.session.active_body_id,
                     scene,
                 ) {
-                    Ok(handles) => {
-                        if let Some(feature) = handles.activate {
-                            self.apply_tree_activation(TreeItemId::Feature(feature));
-                        }
-                        if let Some(feature) = handles.select {
-                            self.apply_tree_selection(TreeItemId::Feature(feature));
-                        }
+                    // The bare sketch opens in the sketcher; a padded or
+                    // pocketed example is selected, ready to look at.
+                    Ok(handles) if scene == bench_fixtures::Scene::Sketch => {
+                        self.apply_tree_activation(TreeItemId::Feature(handles.feature));
                     }
+                    Ok(handles) => self.apply_tree_selection(TreeItemId::Feature(handles.feature)),
                     Err(err) => app_log::error(format!("Example: {err}")),
                 }
             }

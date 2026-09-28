@@ -229,6 +229,21 @@ impl DocumentService {
             .unwrap_or_default()
     }
 
+    /// The swappable inputs of feature `id`, from the bench that claimed
+    /// its kind.
+    pub fn references(
+        &self,
+        document: &Document,
+        id: FeatureId,
+    ) -> Vec<crate::workbench::FeatureReference> {
+        let Some(node) = document.get_feature_meta(id) else {
+            return Vec::new();
+        };
+        self.owner_of(&node.workbench_id)
+            .map(|wb| wb.references(document, id, node))
+            .unwrap_or_default()
+    }
+
     /// Work out the document's formulas when it changed since they last
     /// were; features whose values moved are marked for rebuilding.
     pub fn evaluate(&self, document: &mut Document) {
