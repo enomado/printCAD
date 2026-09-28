@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
@@ -40,7 +40,10 @@ pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
 });
 
 /// The thread that moves the epoch, running only while a call or a job
-/// does, so an idle app never wakes for it.
+/// does, so an idle app never wakes for it. The epoch counts ticks of real
+/// time: a sleep the system stretches (a loaded machine, a timer macOS
+/// coalesces) moves it by every tick that passed, so a budget is the same
+/// time everywhere.
 struct Ticker {
     running: AtomicUsize,
     thread: Mutex<Option<std::thread::Thread>>,
@@ -50,13 +53,19 @@ static TICKER: LazyLock<Ticker> = LazyLock::new(|| {
     let handle = std::thread::Builder::new()
         .name("printcad-wasm-epoch".into())
         .spawn(|| {
+            let mut counted = Instant::now();
             loop {
                 if TICKER.running.load(Ordering::Acquire) == 0 {
                     std::thread::park();
+                    counted = Instant::now();
                     continue;
                 }
                 std::thread::sleep(TICK);
-                ENGINE.increment_epoch();
+                let passed = counted.elapsed().as_nanos() / TICK.as_nanos();
+                for _ in 0..passed {
+                    ENGINE.increment_epoch();
+                }
+                counted += TICK * passed as u32;
             }
         })
         .expect("spawn the epoch thread");
