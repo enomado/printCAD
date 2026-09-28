@@ -20,6 +20,32 @@ fn viewport_painter(ctx: &Context, viewport_rect: egui::Rect, id: &'static str) 
     ctx.layer_painter(layer_id).with_clip_rect(viewport_rect)
 }
 
+/// How far a line's dark rim reaches past it on each side, in pixels.
+const RIM_PX: f32 = 1.0;
+/// How dark the rim is at a line's full strength.
+const RIM_ALPHA: f32 = 0.55;
+/// The strength from which a line gets a rim: fainter lines (the grid,
+/// guides) are background, and stay unrimmed.
+const RIMMED_FROM: f32 = 0.6;
+
+/// Where `overlay` starts and ends on screen.
+fn ends(
+    viewport_rect: egui::Rect,
+    overlay: &core_document::ScreenSpaceOverlay,
+    ppp: f32,
+) -> (egui::Pos2, egui::Pos2) {
+    (
+        egui::pos2(
+            viewport_rect.min.x + overlay.start[0] / ppp,
+            viewport_rect.min.y + overlay.start[1] / ppp,
+        ),
+        egui::pos2(
+            viewport_rect.min.x + overlay.end[0] / ppp,
+            viewport_rect.min.y + overlay.end[1] / ppp,
+        ),
+    )
+}
+
 /// Draw constant-thickness lines in the viewport area.
 pub fn draw_screen_space_overlays(
     ctx: &Context,
@@ -31,6 +57,29 @@ pub fn draw_screen_space_overlays(
     }
     let ppp = ctx.pixels_per_point();
     let painter = viewport_painter(ctx, viewport_rect, "screen_space_overlays");
+    // A dark rim under every strong line first, so a light line reads on a
+    // light face and a coloured one on a face of its colour; the rims all
+    // go down before any line, so none covers a neighbour.
+    for overlay in overlays.iter().filter(|o| o.alpha >= RIMMED_FROM) {
+        let (start, end) = ends(viewport_rect, overlay, ppp);
+        let rim = egui::Stroke::new(
+            (overlay.thickness + 2.0 * RIM_PX) / ppp,
+            Color32::from_black_alpha((RIM_ALPHA * overlay.alpha * 255.0) as u8),
+        );
+        match overlay.dash {
+            Some((dash, gap)) => {
+                painter.add(egui::Shape::dashed_line(
+                    &[start, end],
+                    rim,
+                    dash / ppp,
+                    gap / ppp,
+                ));
+            }
+            None => {
+                painter.line_segment([start, end], rim);
+            }
+        }
+    }
     for overlay in overlays {
         let start = egui::pos2(
             viewport_rect.min.x + overlay.start[0] / ppp,

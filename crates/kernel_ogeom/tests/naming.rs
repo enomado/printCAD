@@ -84,6 +84,10 @@ fn every_face_is_named_and_the_names_hold_across_builds() {
     let a = build(&[block(10.0)], &[]);
     let b = build(&[block(10.0)], &[]);
     assert!(a.mesh.face_names.iter().all(|n| *n != 0));
+    assert!(
+        a.mesh.colors.is_empty(),
+        "a built solid has no colours of its own: it draws in the body's"
+    );
     assert_eq!(a.mesh.face_names, b.mesh.face_names, "the same every time");
     let mut unique = a.mesh.face_names.clone();
     unique.sort_unstable();

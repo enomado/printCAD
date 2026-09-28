@@ -502,13 +502,19 @@ impl DrawStyle {
 /// competing with it for the same depth.
 pub const MAX_SELECTION_OPACITY: f32 = 0.9;
 
+/// The selection paint: the interface's accent blue, apart from the
+/// sketches' white and green and from the hover's amber.
 fn default_selection_color() -> [f32; 3] {
-    [0.35, 0.95, 0.45]
+    [0.24, 0.56, 1.0]
 }
 
 fn default_selection_opacity() -> f32 {
-    0.45
+    0.42
 }
+
+/// Selection colours earlier versions set as the default. A settings file
+/// holding one of them never chose it, so it takes today's default.
+const FORMER_SELECTION_COLORS: [[f32; 3]; 1] = [[0.35, 0.95, 0.45]];
 
 fn default_preview_color() -> [f32; 3] {
     [0.10, 0.90, 0.60]
@@ -516,6 +522,17 @@ fn default_preview_color() -> [f32; 3] {
 
 fn default_preview_opacity() -> f32 {
     0.35
+}
+
+impl RenderingSettings {
+    /// A colour that was only ever the default of an earlier version takes
+    /// today's default.
+    pub fn retire_former_defaults(&mut self) {
+        if FORMER_SELECTION_COLORS.contains(&self.selection_color) {
+            self.selection_color = default_selection_color();
+            self.selection_opacity = default_selection_opacity();
+        }
+    }
 }
 
 impl Default for RenderingSettings {
@@ -824,7 +841,8 @@ impl SettingsStore {
         }
         let file = File::open(&self.path)?;
         let reader = BufReader::new(file);
-        let settings = serde_json::from_reader(reader)?;
+        let mut settings: UserSettings = serde_json::from_reader(reader)?;
+        settings.rendering.retire_former_defaults();
         Ok(settings)
     }
 
@@ -869,6 +887,28 @@ impl Clone for SettingsStore {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_selection_colour_only_ever_the_default_takes_today_s() {
+        let mut old = RenderingSettings {
+            selection_color: [0.35, 0.95, 0.45],
+            selection_opacity: 0.45,
+            ..RenderingSettings::default()
+        };
+        old.retire_former_defaults();
+        assert_eq!(
+            old.selection_color,
+            RenderingSettings::default().selection_color
+        );
+        // A colour the user chose stays.
+        let mut chosen = RenderingSettings {
+            selection_color: [1.0, 0.2, 0.6],
+            ..RenderingSettings::default()
+        };
+        chosen.retire_former_defaults();
+        assert_eq!(chosen.selection_color, [1.0, 0.2, 0.6]);
+    }
+
     use super::*;
 
     #[test]

@@ -256,9 +256,11 @@ const THUMBNAIL_ENTRY: &str = "thumbnail.png";
 pub type LocalGeometry = (Arc<TriMesh>, Option<([f32; 3], [f32; 3])>);
 
 impl Default for BodyDisplay {
+    /// A neutral slate grey: mid-toned, so white and coloured lines, the
+    /// dark edges and the selection paint all stand out on it.
     fn default() -> Self {
         Self {
-            color: [0.78, 0.78, 0.82],
+            color: [0.58, 0.61, 0.66],
             opacity: 1.0,
         }
     }

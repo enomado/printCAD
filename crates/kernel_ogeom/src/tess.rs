@@ -363,6 +363,11 @@ fn mesh_faces(
             }
         }
     }
+    // A solid that brought no colours of its own carries none, so it draws
+    // in the body's colour rather than as white.
+    if face_colors.is_empty() {
+        mesh.colors.clear();
+    }
     Ok(mesh)
 }
 

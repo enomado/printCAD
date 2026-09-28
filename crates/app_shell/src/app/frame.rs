@@ -894,23 +894,23 @@ impl PrintCadApp {
             .passive_geometries(&self.session.document, editing_feature)
             .into_iter()
             .map(|(feature_id, geometry)| {
-                // Match the in-edit overlay palette: white geometry,
-                // orange hover, green selection. Color is baked directly so
-                // the tint is unmistakable even on hairline geometry.
+                // Match the in-edit overlay palette: its geometry colour, the
+                // amber hover, and its selected colour, the selection's
+                // blue. Color is baked directly so the tint is unmistakable
+                // even on hairline geometry.
                 let is_selected = self.session.active_document_object == Some(feature_id)
                     || self.session.tree_selection
                         == Some(crate::ui::TreeItemId::Feature(feature_id));
                 let is_hovered = self.session.hovered_feature == Some(feature_id);
+                let palette = core_document::SketchPalette::default();
                 let color = if is_selected {
-                    [0.35, 0.95, 0.45]
+                    palette.selected
                 } else if is_hovered {
                     HOVER_PAINT
                 } else {
                     match geometry.tint {
-                        core_document::PassiveTint::Plain => [0.85, 0.85, 0.85],
-                        core_document::PassiveTint::External => {
-                            core_document::SketchPalette::default().external
-                        }
+                        core_document::PassiveTint::Plain => palette.geometry,
+                        core_document::PassiveTint::External => palette.external,
                     }
                 };
                 // The tint participates in the cache revision so hover /
@@ -992,7 +992,7 @@ impl PrintCadApp {
                 let base_color = match chosen {
                     Some(display) => display.color,
                     None if use_vertex_albedo => [1.0, 1.0, 1.0],
-                    None => [0.78, 0.78, 0.82],
+                    None => core_document::BodyDisplay::default().color,
                 };
                 let opacity = chosen.map(|d| d.opacity.clamp(0.05, 1.0)).unwrap_or(1.0);
                 BodySubmission {

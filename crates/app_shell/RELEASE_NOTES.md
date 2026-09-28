@@ -82,6 +82,7 @@ version first.
 - The dimensions, tolerances, datums and notes a STEP or IGES file carries show over the model and in the tree, and each body lists the layers it is on; View › Annotations turns them off.
 
 ### View
+- Parts draw in a neutral slate grey and the selection paint is the interface's blue, so white and green sketch lines, dark edges and the selection all stand apart; sketch lines being edited carry a thin dark rim that keeps them readable over any face.
 - Faces and edges select one by one; a double click takes the whole body.
 - Shaded, shaded with edges, and wireframe; orthographic or perspective with a field of view to taste.
 - A clipping plane cuts the view across X, Y or Z.
