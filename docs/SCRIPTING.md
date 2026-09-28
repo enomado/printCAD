@@ -580,7 +580,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.sketch.draw`: Run a drawing or editing tool over points of the sketch, as clicks there would.
 
 - `sketch` (id): The sketch to draw in
-- `tool` (string): line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, circle, circle3, arc, arc3, ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, chamfer, trim, extend, split, offset, translate, rotate, scale or mirror
+- `tool` (string): line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, circle, circle3, arc, arc3, ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, chamfer, trim, extend, split, bspline_knot, offset, translate, rotate, scale or mirror
 - `points` (list): The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} with values typed at it; "arc" and "line" switch a polyline, "finish" ends a spline
 - `tolerance` (number, optional): How close a click snaps onto points and curves, mm (0.001)
 - `params` (any, optional): Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, copies_linked, bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, array_rows, array_cols, array_dx, array_dy, mirror_keep, mirror_linked, mirror_center
@@ -648,6 +648,44 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `dy` (number): The step between rows, mm
 - `linked` (boolean, optional): Copies stay the originals' size, spaced by one pitch along the rows and one down the columns (false)
 - Returns {elements}: what it made
+
+`pc.sketch.to_bspline`: Make lines, arcs, circles, ellipses and conics into splines that are exactly them.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The curves to make splines of
+- Returns {elements}: what it made
+
+`pc.sketch.spline_degree`: Raise or lower the degree of splines: raising keeps the curve, lowering fits the nearest one.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The splines
+- `by` (integer): 1 to raise, -1 to lower
+
+`pc.sketch.insert_knot`: Insert a knot into a spline where it passes nearest a point, the curve unchanged.
+
+- `sketch` (id): The sketch to draw in
+- `spline` (id): The spline
+- `at` (list): A point near the curve, {x, y}
+
+`pc.sketch.knot_multiplicity`: Set how many times a spline's knot stands (1 up to the degree), or remove it with 0.
+
+- `sketch` (id): The sketch to draw in
+- `spline` (id): The spline
+- `knot` (number): The knot's value, as sketch.spline_knots lists it
+- `multiplicity` (integer)
+
+`pc.sketch.spline_knots`: A spline's knots inside its ends and how many times each stands.
+
+- `sketch` (id): The sketch to draw in
+- `spline` (id): The spline
+- Returns {{knot, multiplicity}}
+
+`pc.sketch.spline_weight`: Weigh a spline's control point: more pulls the curve toward it.
+
+- `sketch` (id): The sketch to draw in
+- `spline` (id): The spline
+- `point` (id): One of its control points
+- `weight` (number): More than 0; 1 is plain
 
 `pc.sketch.join`: Merge curves that meet end to end into one B-spline following them.
 

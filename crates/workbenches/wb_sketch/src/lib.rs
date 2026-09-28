@@ -28,6 +28,7 @@ pub mod sketch;
 pub mod snap;
 mod solver;
 pub mod spline;
+pub mod spline_edit;
 mod step;
 pub mod style;
 mod tools;
@@ -307,6 +308,10 @@ pub struct SketchOptions {
     /// What dimensions' labels show.
     #[serde(default)]
     pub dimension_labels: glyphs::DimensionLabels,
+    /// Splines draw their curvature combs.
+    pub spline_comb: bool,
+    /// Splines mark their knots.
+    pub spline_knots: bool,
 }
 
 impl Default for SketchOptions {
@@ -325,6 +330,8 @@ impl Default for SketchOptions {
             min_wall: walls::DEFAULT_MINIMUM_MM,
             ask_dimension_value: true,
             dimension_labels: glyphs::DimensionLabels::Value,
+            spline_comb: false,
+            spline_knots: false,
         }
     }
 }
@@ -2721,6 +2728,44 @@ impl Workbench for SketchWorkbench {
                 .row(1),
         );
         for (id, label, icon) in [
+            ("sketch.bspline_convert", "Convert to B-spline", "bspline"),
+            (
+                "sketch.bspline_degree_up",
+                "Raise spline degree",
+                "bspline-degree",
+            ),
+            (
+                "sketch.bspline_degree_down",
+                "Lower spline degree",
+                "bspline-degree",
+            ),
+        ] {
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some("geometry.bspline"))
+                    .icon(icon)
+                    .row(1),
+            );
+        }
+        context.register_tool(
+            ToolDescriptor::new(
+                "sketch.bspline_knot",
+                "Insert knot",
+                Some("geometry.bspline"),
+            )
+            .icon("bspline-knot")
+            .row(1),
+        );
+        for (id, label, icon) in [
+            ("sketch.bspline_comb", "Curvature comb", "bspline-comb"),
+            ("sketch.bspline_knots", "Show knots", "bspline-polygon"),
+        ] {
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some("constraints.view"))
+                    .icon(icon)
+                    .row(2),
+            );
+        }
+        for (id, label, icon) in [
             (
                 "sketch.delete_all_geometry",
                 "Delete all geometry",
@@ -3099,6 +3144,35 @@ impl Workbench for SketchWorkbench {
                 "sketch.attach" => return self.attach_to_face(ctx),
                 "sketch.array" => return self.array_selection(ctx),
                 "sketch.join" => return self.join_selection(ctx),
+                "sketch.bspline_convert" => {
+                    return self.selection_edit(
+                        ctx,
+                        "sketch.to_bspline",
+                        serde_json::json!({}),
+                        spline_edit::to_bspline,
+                    );
+                }
+                "sketch.bspline_degree_up" | "sketch.bspline_degree_down" => {
+                    let by = if base == "sketch.bspline_degree_up" {
+                        1
+                    } else {
+                        -1
+                    };
+                    return self.selection_edit(
+                        ctx,
+                        "sketch.spline_degree",
+                        serde_json::json!({ "by": by }),
+                        |s, sel| spline_edit::change_degree(s, sel, by),
+                    );
+                }
+                "sketch.bspline_comb" => {
+                    self.options.spline_comb = !self.options.spline_comb;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_knots" => {
+                    self.options.spline_knots = !self.options.spline_knots;
+                    return InputResult::consumed();
+                }
                 "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
                 "sketch.external_from" => {
                     return self.open_sketch_picker(SketchPickerMode::ExternalFrom);
@@ -3405,6 +3479,12 @@ impl Workbench for SketchWorkbench {
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.array" => editing && !self.selected.is_empty(),
+            "sketch.bspline_convert" => {
+                editing && self.selection_shape.all.len() > self.selection_shape.points.len()
+            }
+            "sketch.bspline_degree_up" | "sketch.bspline_degree_down" => {
+                editing && !self.selection_shape.others.is_empty()
+            }
             "sketch.internal_geometry" => editing && self.internal_target,
             "sketch.remove_axis_alignment" => editing && !self.selection_shape.lines.is_empty(),
             "sketch.join" => {
@@ -3440,6 +3520,8 @@ impl Workbench for SketchWorkbench {
             "sketch.show_constraints" => self.options.constraints_hidden,
             "sketch.grid" => self.options.grid_on,
             "sketch.rendering_order" => self.options.construction_on_top,
+            "sketch.bspline_comb" => self.options.spline_comb,
+            "sketch.bspline_knots" => self.options.spline_knots,
             "sketch.parked_layer" => self.parked_layer,
             "sketch.section_view" => self.section_view,
             "sketch.carbon_copy" | "sketch.merge" => self.sketch_picker.as_ref().is_some_and(|p| {
@@ -3646,6 +3728,23 @@ impl Workbench for SketchWorkbench {
         if let Some(check) = self.shown_wall_check() {
             out.extend(walls::overlays(check, &proj, &pal));
         }
+        if self.options.spline_comb {
+            for spline in feature.sketch.geometry.iter().filter_map(|g| match g {
+                GeometryElement::BSpline(b) => Some(b.id),
+                _ => None,
+            }) {
+                for (a, b) in spline_edit::comb(&feature.sketch, spline) {
+                    if let (Some(a), Some(b)) = (proj.to_px(a), proj.to_px(b)) {
+                        out.push(core_document::ScreenSpaceOverlay::new(
+                            a,
+                            b,
+                            pal.preview,
+                            1.0,
+                        ));
+                    }
+                }
+            }
+        }
         if !self.options.constraints_hidden {
             let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
             out.extend(glyphs::dimension_overlays(&glyphs));
@@ -3666,6 +3765,19 @@ impl Workbench for SketchWorkbench {
         let mut out = self.build_overlays(ctx, &feature, &proj, &pal).marks;
         if let Some(check) = self.shown_wall_check() {
             out.extend(walls::marks(check, &proj, &pal));
+        }
+        if self.options.spline_knots {
+            for spline in feature.sketch.geometry.iter().filter_map(|g| match g {
+                GeometryElement::BSpline(b) => Some(b.id),
+                _ => None,
+            }) {
+                for (at, multiplicity) in spline_edit::knot_points(&feature.sketch, spline) {
+                    if let Some(px) = proj.to_px(at) {
+                        let radius = 2.5 + multiplicity as f32;
+                        out.push(ScreenSpaceMark::dot(px, radius, pal.constraint));
+                    }
+                }
+            }
         }
         if !self.options.constraints_hidden {
             out.extend(
@@ -4723,6 +4835,74 @@ impl SketchWorkbench {
                     "sketch": id.0.to_string(),
                     "items": ids_json(&items),
                 })),
+                commands::made_since(&feature.sketch, &before),
+            );
+        }
+        let alive: HashSet<Uuid> = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(GeometryElement::id)
+            .collect();
+        self.selected.retain(|id| alive.contains(id));
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        InputResult::consumed()
+    }
+
+    /// Apply `edit` to the edited sketch's selection and record it as
+    /// `command`, its arguments `extra` with the sketch and the selection.
+    fn selection_edit(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        command: &str,
+        extra: serde_json::Value,
+        edit: impl FnOnce(&mut Sketch, &HashSet<Uuid>) -> tools::ToolEffect,
+    ) -> InputResult {
+        let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+        items.sort();
+        let mut args = extra;
+        args["items"] = ids_json(&items);
+        let selected: HashSet<Uuid> = items.into_iter().collect();
+        self.sketch_edit(ctx, command, args, |s| edit(s, &selected))
+    }
+
+    /// Apply `edit` to the edited sketch and record it as `command` with
+    /// `args` (the sketch's id added), solved and stored.
+    pub(crate) fn sketch_edit(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        command: &str,
+        mut args: serde_json::Value,
+        edit: impl FnOnce(&mut Sketch) -> tools::ToolEffect,
+    ) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let before = (
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect(),
+            feature.sketch.constraints.iter().map(|c| c.id).collect(),
+        );
+        let effect = edit(&mut feature.sketch);
+        if !effect.changed {
+            if let Some(why) = effect.log {
+                ctx.log_warn(why);
+            }
+            return InputResult::consumed();
+        }
+        if let Some(log) = effect.log {
+            ctx.log_info(log);
+        }
+        if let Some(id) = self.active_sketch_id {
+            args["sketch"] = serde_json::json!(id.0.to_string());
+            ctx.record(
+                command,
+                commands::args(args),
                 commands::made_since(&feature.sketch, &before),
             );
         }

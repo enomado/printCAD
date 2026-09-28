@@ -1363,6 +1363,7 @@ fn cut_spline(sketch: &mut Sketch, id: Uuid, spans: &[(f64, f64)], shared: &[(f6
             knots: piece.knots,
             fit_points: Vec::new(),
             fit_params: Vec::new(),
+            weights: piece.weights,
         };
         if replaced {
             sketch.add_geometry(GeometryElement::BSpline(part));

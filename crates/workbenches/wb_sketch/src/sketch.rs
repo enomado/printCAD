@@ -1073,6 +1073,10 @@ pub struct BSpline {
     /// The parameter each fit point sits at.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fit_params: Vec<f64>,
+    /// A rational spline's weight of each control point, one each; empty
+    /// when every weight is one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weights: Vec<f64>,
 }
 
 fn cubic() -> u32 {
@@ -1094,6 +1098,7 @@ impl BSpline {
             knots: Vec::new(),
             fit_points: Vec::new(),
             fit_params: Vec::new(),
+            weights: Vec::new(),
         }
     }
 
@@ -1104,6 +1109,7 @@ impl BSpline {
             degree: other.degree,
             knots: other.knots.clone(),
             fit_params: other.fit_params.clone(),
+            weights: other.weights.clone(),
             ..self
         }
     }

@@ -171,7 +171,7 @@ pub fn register(context: &mut WorkbenchContext) {
             "line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, \
              circle, circle3, arc, arc3, \
              ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, \
-             chamfer, trim, extend, split, offset, translate, rotate, scale or mirror",
+             chamfer, trim, extend, split, bspline_knot, offset, translate, rotate, scale or mirror",
         )
         .param(
             "points",
@@ -321,6 +321,62 @@ pub fn register(context: &mut WorkbenchContext) {
              down the columns (false)",
         )
         .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.to_bspline",
+            "Make lines, arcs, circles, ellipses and conics into splines that are exactly them",
+        ))
+        .param("items", ParamKind::List, "The curves to make splines of")
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.spline_degree",
+            "Raise or lower the degree of splines: raising keeps the curve, lowering fits the \
+             nearest one",
+        ))
+        .param("items", ParamKind::List, "The splines")
+        .param("by", ParamKind::Integer, "1 to raise, -1 to lower"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.insert_knot",
+            "Insert a knot into a spline where it passes nearest a point, the curve unchanged",
+        ))
+        .param("spline", ParamKind::Id, "The spline")
+        .param("at", ParamKind::List, "A point near the curve, {x, y}"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.knot_multiplicity",
+            "Set how many times a spline's knot stands (1 up to the degree), or remove it with 0",
+        ))
+        .param("spline", ParamKind::Id, "The spline")
+        .param(
+            "knot",
+            ParamKind::Number,
+            "The knot's value, as sketch.spline_knots lists it",
+        )
+        .param("multiplicity", ParamKind::Integer, ""),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.spline_knots",
+            "A spline's knots inside its ends and how many times each stands",
+        ))
+        .param("spline", ParamKind::Id, "The spline")
+        .returns("{{knot, multiplicity}}")
+        .read_only(),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.spline_weight",
+            "Weigh a spline's control point: more pulls the curve toward it",
+        ))
+        .param("spline", ParamKind::Id, "The spline")
+        .param("point", ParamKind::Id, "One of its control points")
+        .param("weight", ParamKind::Number, "More than 0; 1 is plain"),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -853,6 +909,100 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             }
             made_since(sketch, &before)
         }
+        "sketch.to_bspline" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            let before = ids_of(sketch);
+            let effect = crate::spline_edit::to_bspline(sketch, &items);
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    effect
+                        .log
+                        .unwrap_or_else(|| "nothing to convert".to_string()),
+                ));
+            }
+            made_since(sketch, &before)
+        }
+        "sketch.spline_degree" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            let by = a.number("by")? as i32;
+            if by == 0 {
+                return Err(CommandError::bad("by", "must be 1 or -1"));
+            }
+            let effect = crate::spline_edit::change_degree(sketch, &items, by.signum());
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    effect
+                        .log
+                        .unwrap_or_else(|| "no degree changed".to_string()),
+                ));
+            }
+            Value::Null
+        }
+        "sketch.insert_knot" => {
+            let spline = one_id(args, "spline", sketch)?;
+            let at = points(Some(&json!([args
+                .get("at")
+                .cloned()
+                .unwrap_or(Value::Null)])))
+            .map_err(|_| CommandError::bad("at", "must be {x, y}"))?[0];
+            let t = crate::spline_edit::param_near(sketch, spline, at)
+                .ok_or_else(|| CommandError::bad("spline", "is not a spline"))?;
+            let effect = crate::spline_edit::add_knot(sketch, spline, t);
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    effect.log.unwrap_or_else(|| "no knot inserted".to_string()),
+                ));
+            }
+            Value::Null
+        }
+        "sketch.knot_multiplicity" => {
+            let spline = one_id(args, "spline", sketch)?;
+            let knot = a.number("knot")?;
+            let multiplicity = a.number("multiplicity")?;
+            if multiplicity < 0.0 {
+                return Err(CommandError::bad("multiplicity", "must be 0 or more"));
+            }
+            let effect = if multiplicity < 1.0 {
+                crate::spline_edit::remove_knot(sketch, spline, knot)
+            } else {
+                crate::spline_edit::set_multiplicity(sketch, spline, knot, multiplicity as usize)
+            };
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    effect
+                        .log
+                        .unwrap_or_else(|| "the knot is unchanged".to_string()),
+                ));
+            }
+            Value::Null
+        }
+        "sketch.spline_knots" => {
+            let spline = one_id(args, "spline", sketch)?;
+            let knots = crate::spline_edit::knots_of(sketch, spline);
+            return Ok(json!(
+                knots
+                    .iter()
+                    .map(|(k, m)| json!({"knot": k, "multiplicity": m}))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        "sketch.spline_weight" => {
+            let spline = one_id(args, "spline", sketch)?;
+            let point = one_id(args, "point", sketch)?;
+            let effect = crate::spline_edit::set_weight(sketch, spline, point, a.number("weight")?);
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    effect
+                        .log
+                        .unwrap_or_else(|| "the weight is unchanged".to_string()),
+                ));
+            }
+            Value::Null
+        }
         "sketch.join" => {
             let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
                 .into_iter()
@@ -1269,6 +1419,19 @@ fn unit(v: [f64; 3], name: &str) -> Result<[f64; 3], CommandError> {
 
 /// Ids named in a list: element and constraint ids, and the names of the
 /// sketch's origin and axes.
+/// The one id `args` gives as `name`.
+fn one_id(
+    args: &serde_json::Map<String, Value>,
+    name: &str,
+    sketch: &Sketch,
+) -> Result<Uuid, CommandError> {
+    let value = args
+        .get(name)
+        .cloned()
+        .ok_or_else(|| CommandError::bad(name, "is missing"))?;
+    Ok(ids(Some(&json!([value])), name, sketch)?[0])
+}
+
 fn ids(value: Option<&Value>, name: &str, sketch: &Sketch) -> Result<Vec<Uuid>, CommandError> {
     let list = value
         .and_then(Value::as_array)
@@ -1784,6 +1947,7 @@ const DRAW_TOOLS: &[&str] = &[
     "trim",
     "extend",
     "split",
+    "bspline_knot",
     "offset",
     "translate",
     "rotate",

@@ -107,11 +107,11 @@ and noted on its item, and the rest of the item is built around it.
 
 ### B-splines
 
-- [ ] **Convert a curve to a B-spline** (missing, M).
-- [ ] **Raise or lower the degree** (missing, S).
-- [ ] **Knot multiplicity and knot insertion** (missing, M).
-- [ ] **Weights (rational splines)** (missing, M).
-- [ ] **Curvature comb and knot display** (missing, M).
+- [x] **Convert a curve to a B-spline** (missing, M).
+- [x] **Raise or lower the degree** (missing, S).
+- [x] **Knot multiplicity and knot insertion** (missing, M).
+- [x] **Weights (rational splines)** (missing, M).
+- [x] **Curvature comb and knot display** (missing, M).
 
 ### Placement and input
 

@@ -19,18 +19,44 @@ pub struct Basis {
     /// Control points as the spline names them.
     points: usize,
     periodic: bool,
+    /// One per control point for a rational spline; empty when every
+    /// weight is one.
+    weights: Vec<f64>,
 }
 
 impl Basis {
     /// The basis of `spline` over `points` control points. `None` when
     /// there are too few to make a curve.
     pub fn of(spline: &BSpline) -> Option<Self> {
-        Self::new(
-            spline.degree,
-            spline.control_points.len(),
-            &spline.knots,
-            spline.periodic,
+        Some(
+            Self::new(
+                spline.degree,
+                spline.control_points.len(),
+                &spline.knots,
+                spline.periodic,
+            )?
+            .with_weights(&spline.weights),
         )
+    }
+
+    /// The rational basis with `weights`, one per control point; any other
+    /// count, or all of them one, leaves it plain.
+    pub fn with_weights(mut self, weights: &[f64]) -> Self {
+        self.weights = if weights.len() == self.points && weights.iter().any(|w| *w != 1.0) {
+            weights.to_vec()
+        } else {
+            Vec::new()
+        };
+        self
+    }
+
+    /// The weights of a rational basis; empty for a plain one.
+    pub fn weights(&self) -> &[f64] {
+        &self.weights
+    }
+
+    pub fn is_periodic(&self) -> bool {
+        self.periodic
     }
 
     /// The basis of a spline of `degree` over `points` control points:
@@ -53,6 +79,7 @@ impl Basis {
             knots,
             points,
             periodic,
+            weights: Vec::new(),
         };
         let (t0, t1) = basis.domain();
         (t1 > t0).then_some(basis)
@@ -115,6 +142,17 @@ impl Basis {
             }
             values[j] = saved;
         }
+        if !self.weights.is_empty() {
+            // A rational spline weighs each control point's share and
+            // scales them back to one in all.
+            for (i, value) in values.iter_mut().enumerate() {
+                *value *= self.weights[(k - p + i) % self.points];
+            }
+            let total: f64 = values.iter().sum();
+            if total.abs() > 1e-300 {
+                values.iter_mut().for_each(|v| *v /= total);
+            }
+        }
         let mut row: Vec<(usize, f64)> = Vec::with_capacity(p + 1);
         for (i, value) in values.into_iter().enumerate() {
             let index = (k - p + i) % self.points;
@@ -154,6 +192,8 @@ impl Basis {
 pub struct Piece {
     pub control: Vec<[f64; 2]>,
     pub knots: Vec<f64>,
+    /// A rational spline's part keeps weights; empty for a plain one.
+    pub weights: Vec<f64>,
 }
 
 impl Basis {
@@ -166,13 +206,19 @@ impl Basis {
         let (d0, d1) = self.domain();
         // A closed spline laid out twice round as an open one, so a part
         // can cross where it closes.
+        // Worked on weighted points, so a rational spline's part is exact.
+        let weight = |i: usize| self.weights.get(i).copied().unwrap_or(1.0);
+        let lift = |i: usize| {
+            let (c, w) = (control[i], weight(i));
+            [c[0] * w, c[1] * w, w]
+        };
         let (mut knots, mut ctrl) = if self.periodic {
             let n = self.points;
             let knots: Vec<f64> = (0..2 * n + 2 * p + 1).map(|i| i as f64).collect();
-            let ctrl: Vec<[f64; 2]> = (0..2 * n + p).map(|i| control[i % n]).collect();
+            let ctrl: Vec<[f64; 3]> = (0..2 * n + p).map(|i| lift(i % n)).collect();
             (knots, ctrl)
         } else {
-            (self.knots.clone(), control.to_vec())
+            (self.knots.clone(), (0..control.len()).map(lift).collect())
         };
         let end = if self.periodic { d1 + (d1 - d0) } else { d1 };
         let slack = 1e-9 * (d1 - d0);
@@ -191,7 +237,13 @@ impl Basis {
         if m == 0 || first_b <= m {
             return None;
         }
-        let control = ctrl[m - 1..first_b].to_vec();
+        let lifted = &ctrl[m - 1..first_b];
+        let control: Vec<[f64; 2]> = lifted.iter().map(|q| [q[0] / q[2], q[1] / q[2]]).collect();
+        let weights: Vec<f64> = if self.weights.is_empty() {
+            Vec::new()
+        } else {
+            lifted.iter().map(|q| q[2]).collect()
+        };
         let scale = |k: f64| (k - t0) / (t1 - t0);
         let mut out = vec![0.0; p + 1];
         out.extend(knots[last_a + 1..first_b].iter().map(|k| scale(*k)));
@@ -199,12 +251,14 @@ impl Basis {
         (out.len() == control.len() + p + 1).then_some(Piece {
             control,
             knots: out,
+            weights,
         })
     }
 }
 
-/// One more knot at `u`, the curve unchanged (Boehm's insertion).
-fn insert_knot(knots: &mut Vec<f64>, ctrl: &mut Vec<[f64; 2]>, p: usize, u: f64) {
+/// One more knot at `u`, the curve unchanged (Boehm's insertion), over
+/// weighted control points.
+pub fn insert_knot(knots: &mut Vec<f64>, ctrl: &mut Vec<[f64; 3]>, p: usize, u: f64) {
     let n = ctrl.len();
     let mut k = p;
     while k + 1 < n && knots[k + 1] <= u {
@@ -224,7 +278,11 @@ fn insert_knot(knots: &mut Vec<f64>, ctrl: &mut Vec<[f64; 2]>, p: usize, u: f64)
                 (u - knots[i]) / span
             };
             let (q, r) = (ctrl[i - 1], ctrl[i]);
-            out.push([q[0] + (r[0] - q[0]) * a, q[1] + (r[1] - q[1]) * a]);
+            out.push([
+                q[0] + (r[0] - q[0]) * a,
+                q[1] + (r[1] - q[1]) * a,
+                q[2] + (r[2] - q[2]) * a,
+            ]);
         }
     }
     knots.insert(k + 1, u);
@@ -579,7 +637,7 @@ impl BSpline {
     /// Whether the kernel needs more than the default cubic over uniform
     /// knots to draw it: another degree, or knots of its own.
     pub fn is_default_cubic(&self) -> bool {
-        self.degree == 3 && self.knots.is_empty()
+        self.degree == 3 && self.knots.is_empty() && self.weights.is_empty()
     }
 }
 

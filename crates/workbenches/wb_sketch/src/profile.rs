@@ -333,7 +333,7 @@ fn spline_segment(b: &crate::sketch::BSpline, control_points: Vec<[f64; 2]>) -> 
                 basis.knots().to_vec()
             },
             control_points,
-            weights: Vec::new(),
+            weights: basis.weights().to_vec(),
             periodic: b.periodic,
         },
         None => ProfileSegment::BSpline {

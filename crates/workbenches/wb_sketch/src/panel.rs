@@ -97,6 +97,7 @@ impl SketchWorkbench {
         self.tool_section(ui);
         self.attachment_section(ui, ctx, support.as_ref());
         self.array_section(ui, ctx);
+        self.spline_section(ui, ctx, &sketch);
         self.solver_section(ui, ctx, &sketch);
         self.edit_controls_section(ui);
         self.constraints_section(ui, ctx, &sketch);
@@ -674,6 +675,149 @@ impl SketchWorkbench {
                     _ => {}
                 }
             });
+    }
+
+    /// With one spline selected: its degree and its knots, each with how
+    /// many times it stands; with one of a spline's control points, its
+    /// weight.
+    fn spline_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
+        let splines: Vec<&sketch::BSpline> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                sketch::GeometryElement::BSpline(b) if self.selected.contains(&b.id) => Some(b),
+                _ => None,
+            })
+            .collect();
+        let weighted = self.selected.iter().find_map(|id| {
+            sketch.geometry.iter().find_map(|g| match g {
+                sketch::GeometryElement::BSpline(b) if b.control_points.contains(id) => {
+                    Some((b.id, *id))
+                }
+                _ => None,
+            })
+        });
+        if splines.len() != 1 && weighted.is_none() {
+            return;
+        }
+        if !section_header(ui, "sketch_spline", "Spline", None, true) {
+            return;
+        }
+        enum Change {
+            Degree(i32),
+            Multiplicity(f64, usize),
+            Weight(Uuid, Uuid, f64),
+        }
+        let mut change = None;
+        let spline = splines.first().map(|b| (b.id, b.degree));
+        egui::Grid::new("sketch_spline_grid")
+            .num_columns(2)
+            .spacing([SPACE_2, SPACE_1])
+            .show(ui, |ui| {
+                if let Some((id, degree)) = spline {
+                    ui_kit::widgets::field_label(ui, "Degree");
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(degree > 1, egui::Button::new("−"))
+                            .on_hover_text("Lower the degree: the nearest curve of one less")
+                            .clicked()
+                        {
+                            change = Some(Change::Degree(-1));
+                        }
+                        mono_label(ui, degree.to_string(), FONT_SM, TEXT1);
+                        if ui
+                            .add_enabled(degree < crate::spline::MAX_DEGREE, egui::Button::new("+"))
+                            .on_hover_text("Raise the degree, the curve unchanged")
+                            .clicked()
+                        {
+                            change = Some(Change::Degree(1));
+                        }
+                    });
+                    ui.end_row();
+                    for (knot, times) in crate::spline_edit::knots_of(sketch, id) {
+                        ui_kit::widgets::field_label(ui, &format!("Knot {knot:.3}"));
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button("−")
+                                .on_hover_text(if times > 1 {
+                                    "Stand once less: a smoother curve near it"
+                                } else {
+                                    "Remove the knot: the nearest curve without it"
+                                })
+                                .clicked()
+                            {
+                                change = Some(Change::Multiplicity(knot, times - 1));
+                            }
+                            mono_label(ui, format!("×{times}"), FONT_SM, TEXT1);
+                            if ui
+                                .add_enabled(times < degree as usize, egui::Button::new("+"))
+                                .on_hover_text("Stand once more, the curve unchanged")
+                                .clicked()
+                            {
+                                change = Some(Change::Multiplicity(knot, times + 1));
+                            }
+                        });
+                        ui.end_row();
+                    }
+                }
+                if let Some((owner, point)) = weighted {
+                    ui_kit::widgets::field_label(ui, "Weight");
+                    let now = crate::spline_edit::weight_of(sketch, owner, point).unwrap_or(1.0);
+                    let mut w = now as f32;
+                    if QtyField::new(&mut w)
+                        .decimals(3)
+                        .speed(0.01)
+                        .range(0.01..=100.0)
+                        .show(ui)
+                        && f64::from(w) != now
+                    {
+                        change = Some(Change::Weight(owner, point, f64::from(w)));
+                    }
+                    ui.end_row();
+                }
+            });
+        let ids = |id: Uuid| serde_json::json!(id.to_string());
+        match change {
+            Some(Change::Degree(by)) => {
+                self.selection_edit(
+                    ctx,
+                    "sketch.spline_degree",
+                    serde_json::json!({ "by": by }),
+                    |s, sel| crate::spline_edit::change_degree(s, sel, by),
+                );
+            }
+            Some(Change::Multiplicity(knot, times)) => {
+                let Some((id, _)) = spline else {
+                    return;
+                };
+                self.sketch_edit(
+                    ctx,
+                    "sketch.knot_multiplicity",
+                    serde_json::json!({ "spline": ids(id), "knot": knot, "multiplicity": times }),
+                    |s| {
+                        if times == 0 {
+                            crate::spline_edit::remove_knot(s, id, knot)
+                        } else {
+                            crate::spline_edit::set_multiplicity(s, id, knot, times)
+                        }
+                    },
+                );
+            }
+            Some(Change::Weight(owner, point, w)) => {
+                self.sketch_edit(
+                    ctx,
+                    "sketch.spline_weight",
+                    serde_json::json!({ "spline": ids(owner), "point": ids(point), "weight": w }),
+                    |s| crate::spline_edit::set_weight(s, owner, point, w),
+                );
+            }
+            None => {}
+        }
     }
 
     fn solver_section(

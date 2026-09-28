@@ -652,6 +652,47 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
     );
 }
 
+/// A circle made into a spline is the same circle, a rational one: it pads
+/// to the cylinder the circle would.
+#[test]
+fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
+    use wb_sketch::sketch::Circle;
+    let (r, height) = (6.0f32, 3.0f32);
+    let mut sketch = Sketch::new("disc");
+    let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, r)));
+    let made = wb_sketch::spline_edit::to_bspline(&mut sketch, &[circle].into_iter().collect());
+    assert!(made.changed);
+    let plane = sketch.plane;
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch, plane),
+            "sketch".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(sketch_id, height, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the spline disc pads");
+    let props = kernel.physical_properties(&result.brep_blob).unwrap();
+    let volume = props.volume_mm3.expect("a closed solid");
+    let expected = f64::from(std::f32::consts::PI * r * r * height);
+    assert!(
+        (volume - expected).abs() < 1e-3 * expected,
+        "volume {volume} vs {expected}"
+    );
+}
+
 /// A block with a bore through it, the bore's top rim rounded: the fillet
 /// a printed part's hole mouth takes most often.
 #[test]

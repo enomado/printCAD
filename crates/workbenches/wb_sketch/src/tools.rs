@@ -424,20 +424,20 @@ pub struct ToolEffect {
 }
 
 impl ToolEffect {
-    fn none() -> Self {
+    pub(crate) fn none() -> Self {
         Self {
             changed: false,
             log: None,
         }
     }
-    fn changed(log: impl Into<String>) -> Self {
+    pub(crate) fn changed(log: impl Into<String>) -> Self {
         Self {
             changed: true,
             log: Some(log.into()),
         }
     }
     /// Nothing changed, and why.
-    fn log(log: impl Into<String>) -> Self {
+    pub(crate) fn log(log: impl Into<String>) -> Self {
         Self {
             changed: false,
             log: Some(log.into()),
@@ -627,6 +627,7 @@ pub fn handle_click(
             params.corner_keep,
         ),
         "sketch.trim" => modify::trim(sketch, cursor, snap_tol),
+        "sketch.bspline_knot" => crate::spline_edit::knot_at_click(sketch, cursor, snap_tol),
         "sketch.extend" => modify::extend(sketch, cursor, snap_tol),
         "sketch.split" => modify::split(sketch, cursor, snap_tol),
         "sketch.offset" => modify::offset(
