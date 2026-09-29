@@ -2838,7 +2838,7 @@ fn primitive_volume(kind: PrimitiveKind) -> Result<Measured, String> {
 /// An ellipsoid cut as a sphere is keeps the upper half of itself, and a
 /// quarter turn of that a quarter of it.
 #[test]
-#[ignore = "kernel: an unevenly scaled cut sphere comes out the wrong solid (ogeom-rs#93)"]
+#[ignore = "kernel: a cut sphere scaled on all three axes does not mesh (ogeom-rs#96)"]
 fn an_ellipsoid_takes_a_spheres_cut() {
     let whole = 4.0 / 3.0 * std::f64::consts::PI * 8.0 * 5.0 * 3.0;
     let cut = |sweep: f64| {

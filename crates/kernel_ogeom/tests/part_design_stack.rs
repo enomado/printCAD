@@ -4239,7 +4239,8 @@ fn a_pipe_closes_to_a_point() {
                 shape: DatumShape::Point,
                 attachment: DatumAttachment::BasePlane(BasePlane::XY),
                 offset: AttachmentOffset {
-                    translation: [1.0, 1.0, 10.0],
+                    // At the path's end, where the pipe closes.
+                    translation: [1.0, 0.0, 10.0],
                     ..Default::default()
                 },
             },
