@@ -461,11 +461,13 @@ fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
     inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui_kit::icon::draw(ui, "chevron-down", 14.0, TEXT3);
     });
-    let response = response.on_hover_text(if current.1.is_empty() {
-        "Active workbench".to_string()
-    } else {
-        format!("Active workbench: {}", current.1)
-    });
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(if current.1.is_empty() {
+            "Active workbench".to_string()
+        } else {
+            format!("Active workbench: {}", current.1)
+        });
     Popup::menu(&response).show(|ui| {
         for wb in workbenches.iter() {
             let target = ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
@@ -1110,7 +1112,9 @@ fn search_box(ui: &mut egui::Ui, key: Option<String>) -> egui::Response {
             ui_kit::widgets::key_chip(ui, key);
         }
     });
-    response.on_hover_text("Search tools and commands")
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Search tools and commands")
 }
 
 #[cfg(test)]

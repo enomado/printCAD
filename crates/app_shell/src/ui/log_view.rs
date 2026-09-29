@@ -61,10 +61,14 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
                             ui.spacing_mut().item_spacing.x = SPACE_2;
                             ui.label(RichText::new(time).font(mono(FONT_XS)).color(TEXT3));
                             ui.label(RichText::new(label).font(mono(FONT_XS)).color(color));
-                            ui.label(
-                                RichText::new(&entry.message)
-                                    .font(sans(FONT_SM))
-                                    .color(TEXT2),
+                            // Messages are copied out into reports.
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&entry.message)
+                                        .font(sans(FONT_SM))
+                                        .color(TEXT2),
+                                )
+                                .selectable(true),
                             );
                         });
                     }
