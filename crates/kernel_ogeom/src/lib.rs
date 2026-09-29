@@ -10,6 +10,7 @@ mod chain;
 pub mod dxf;
 pub mod export;
 mod health;
+mod holes;
 mod import;
 pub use import::is_iges;
 mod mesh;

@@ -1625,7 +1625,34 @@ pub struct CentreLine {
     pub straight: bool,
 }
 
+/// A round hole found in a solid: a full bore, open at one end (blind)
+/// or both (through), closed by a flat bottom or a drill point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecognizedHole {
+    /// The centre of its opening, on its axis.
+    pub entry: [f64; 3],
+    /// Along its axis, into the material.
+    pub direction: [f64; 3],
+    pub diameter: f64,
+    /// The bore's length from the opening, not counting a drill point.
+    pub depth: f64,
+    /// Open at both ends.
+    pub through: bool,
+    /// The included angle of the cone that ends a blind hole, degrees;
+    /// `None` for a flat bottom or a through hole.
+    pub drill_point_deg: Option<f64>,
+    /// A point on each face the hole is made of (its bore, its bottom),
+    /// with that face's outward normal.
+    pub faces: Vec<([f64; 3], [f64; 3])>,
+}
+
 pub trait KernelQueries: Send + Sync {
+    /// The round holes of `brep`, in its own frame, and how many bores it
+    /// has that are not holes it can describe (a counterbore, a slot).
+    fn recognize_holes(&self, _brep: &[u8]) -> KernelResult<(Vec<RecognizedHole>, usize)> {
+        Err(KernelError::Unsupported("recognize_holes".into()))
+    }
+
     /// What `a` and `b` share when `b` sits where `b_in_a` (a rigid
     /// row-major 4×4 matrix) puts it in `a`'s frame; `None` when they only
     /// touch or are apart.

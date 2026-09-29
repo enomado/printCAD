@@ -35,6 +35,7 @@ impl scripting::Host for Benches {
         let wb = self.registry.workbench_mut(&bench).unwrap();
         let mut ctx =
             WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.kernel = Some(&kernel_ogeom::QUERIES);
         wb.run_command(&id, &args, &mut ctx)
     }
 }
@@ -227,5 +228,198 @@ fn deleting_a_bore_closes_it_again() {
     assert!(
         (closed - whole).abs() < 1e-3,
         "closed again: {closed} of {whole}"
+    );
+}
+
+/// Holes drilled with the Hole feature into the imported box, found again
+/// in the solid they made.
+#[test]
+fn drilled_holes_are_recognized_as_they_were_drilled() {
+    use kernel_api::KernelQueries;
+    let (document, body, lo, hi) = imported_box();
+    let mut host = benches(document);
+    let top = hi[2];
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            local s = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.point{{sketch = s, x = {ax}, y = {y}}}
+            pc.design.hole{{sketch = s, diameter = 3, through_all = true}}
+            local b = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.point{{sketch = b, x = {bx}, y = {y}}}
+            pc.design.hole{{sketch = b, diameter = 4, depth = 5}}
+            local p = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.point{{sketch = p, x = {px}, y = {y}}}
+            pc.design.hole{{sketch = p, diameter = 5, depth = 6,
+                drill_point = {{Angled = {{angle_deg = 118}}}}}}
+            "#,
+            body = body.0,
+            top = top,
+            ax = lo[0] + 4.0,
+            bx = lo[0] + 10.0,
+            px = lo[0] + 16.0,
+            y = (lo[1] + hi[1]) / 2.0,
+        ),
+        "holes.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
+    let built = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let (mut holes, unknown) = kernel_ogeom::QUERIES
+        .recognize_holes(&built.brep_blob)
+        .unwrap();
+    assert_eq!(unknown, 0);
+    holes.sort_by(|a, b| a.diameter.total_cmp(&b.diameter));
+    assert_eq!(holes.len(), 3, "{holes:#?}");
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-3;
+
+    let through = &holes[0];
+    assert!(near(through.diameter, 3.0) && through.through);
+    assert!(near(through.depth, f64::from(hi[2] - lo[2])));
+
+    let flat = &holes[1];
+    assert!(near(flat.diameter, 4.0) && !flat.through);
+    assert!(near(flat.depth, 5.0), "{flat:?}");
+    assert!(near(flat.entry[2], f64::from(top)) && near(flat.direction[2], -1.0));
+    assert_eq!(flat.drill_point_deg, None);
+    assert_eq!(flat.faces.len(), 2, "the bore and its bottom");
+
+    let pointed = &holes[2];
+    assert!(
+        near(pointed.diameter, 5.0) && near(pointed.depth, 6.0),
+        "{pointed:?}"
+    );
+    assert!(near(pointed.drill_point_deg.unwrap(), 118.0), "{pointed:?}");
+}
+
+/// A solid with holes, as a file would bring it: recognized, its holes
+/// become Hole features that build the same solid, and whose sizes change
+/// it.
+#[test]
+fn recognized_holes_rebuild_the_solid_and_take_new_sizes() {
+    let volume = |blob: &[u8]| {
+        OgeomKernel::new()
+            .physical_properties(blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap()
+    };
+    // The holed box, built once and then kept as an imported shape.
+    let (document, body, lo, hi) = imported_box();
+    let mut maker = benches(document);
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            local s = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.point{{sketch = s, x = {ax}, y = {y}}}
+            pc.sketch.point{{sketch = s, x = {bx}, y = {y}}}
+            pc.design.hole{{sketch = s, diameter = 3, through_all = true}}
+            local p = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.point{{sketch = p, x = {px}, y = {y}}}
+            pc.design.hole{{sketch = p, diameter = 5, depth = 6,
+                drill_point = {{Angled = {{angle_deg = 118}}}}}}
+            "#,
+            body = body.0,
+            top = hi[2],
+            ax = lo[0] + 4.0,
+            bx = lo[0] + 10.0,
+            px = lo[0] + 16.0,
+            y = (lo[1] + hi[1]) / 2.0,
+        ),
+        "holes.lua",
+        &mut maker,
+    );
+    assert_eq!(out.error, None);
+    let ops = wb_design::body_build_ops(&maker.document, body)
+        .unwrap()
+        .ops;
+    let holed = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+
+    let mut document = Document::new("holed");
+    let part = document.create_body(Some("Holed".into()));
+    let mesh = std::sync::Arc::new(holed.mesh.clone());
+    document.set_imported_geometry(
+        part,
+        ImportedGeometry {
+            bounds_mm: mesh.bounds(),
+            mesh,
+            source_asset: Some(part.0),
+            revision: 0,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+    document.set_imported_brep_data(part, holed.brep_blob.clone(), Vec::new());
+    let mut host = benches(document);
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            local made = pc.design.recognize_holes{{body = "{part}"}}
+            assert(made.holes == 3, "three holes: " .. made.holes)
+            assert(made.left == 0)
+            "#,
+            part = part.0
+        ),
+        "recognize.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+
+    let features = wb_design::design_features_of_body(&host.document, part);
+    let holes: Vec<_> = features
+        .iter()
+        .filter(|(_, f)| matches!(f, DesignFeature::Hole { .. }))
+        .collect();
+    assert_eq!(holes.len(), 2, "the two through holes are one feature");
+    let build = |doc: &Document| {
+        let ops = wb_design::body_build_ops(doc, part).unwrap().ops;
+        OgeomKernel::new()
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .unwrap()
+    };
+    let rebuilt = build(&host.document);
+    assert!(
+        (volume(&rebuilt.brep_blob) - volume(&holed.brep_blob)).abs() < 1e-2,
+        "the same solid again: {} and {}",
+        volume(&rebuilt.brep_blob),
+        volume(&holed.brep_blob)
+    );
+
+    // A recognized size is a number to change.
+    let through = holes
+        .iter()
+        .find(|(_, f)| {
+            matches!(
+                f,
+                DesignFeature::Hole {
+                    through_all: true,
+                    ..
+                }
+            )
+        })
+        .unwrap()
+        .0;
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"pc.design.set{{feature = "{}", diameter = 4}}"#,
+            through.0
+        ),
+        "resize.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let resized = build(&host.document);
+    let depth = f64::from(hi[2] - lo[2]);
+    let expected = 2.0 * std::f64::consts::PI * (2.0f64.powi(2) - 1.5f64.powi(2)) * depth;
+    let taken = volume(&rebuilt.brep_blob) - volume(&resized.brep_blob);
+    assert!(
+        (taken - expected).abs() < 1e-2,
+        "{taken} against {expected}"
     );
 }

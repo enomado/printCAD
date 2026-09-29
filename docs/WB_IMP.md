@@ -81,6 +81,15 @@ opening from the faces around it: a bore, a boss or a round taken away,
 on any solid, an imported one included. What the kernel does not close
 yet it refuses by name, on the feature.
 
+**Recognize holes** reads the body's solid for round holes: full bores
+open at one end or both, ending flat or in a drill point. It deletes
+their faces (one Delete faces feature) and drills them again as Hole
+features, one per set of alike holes on one plane, from a hidden sketch
+of their centres, so a recognized hole's diameter, depth and point are
+numbers to change like any hole's. Bores it cannot describe (a
+counterbore, a countersink, a slot) are left as they are and counted in
+the log. On an imported solid it gives the body its base shape first.
+
 ## The tree
 
 - Double clicking a feature opens it for editing in the workbench that owns

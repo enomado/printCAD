@@ -1141,6 +1141,11 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the borrow's id
 
+`pc.design.recognize_holes`: Make the round holes of a body's solid Hole features: their faces deleted, and each set of alike holes drilled again from a sketch of their centres.
+
+- `body` (id): The body
+- Returns {holes, left, features}: the holes made features, the bores left as they are (counterbores, slots) and the features added
+
 `pc.design.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
 
 - `feature` (id): The borrow

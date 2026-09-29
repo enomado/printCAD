@@ -243,6 +243,18 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "design.recognize_holes",
+            "Make the round holes of a body's solid Hole features: their faces deleted, \
+             and each set of alike holes drilled again from a sketch of their centres",
+        )
+        .param("body", ParamKind::Id, "The body")
+        .returns(
+            "{holes, left, features}: the holes made features, the bores left as they are \
+             (counterbores, slots) and the features added",
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "design.freeze",
             "Freeze borrowed geometry as it is now, or let it follow its source again",
         )
@@ -342,6 +354,18 @@ pub fn run(
     }
     if id == "design.freeze" {
         return freeze(&a, ctx);
+    }
+    if id == "design.recognize_holes" {
+        let body = BodyId(a.id("body")?);
+        if !ctx.document.bodies().iter().any(|b| b.id == body) {
+            return Err(CommandError::bad("body", "is not a body of this document"));
+        }
+        let made = crate::recognize::recognize_holes(ctx, body).map_err(CommandError::failed)?;
+        return Ok(json!({
+            "holes": made.holes,
+            "left": made.left,
+            "features": made.features.iter().map(|f| f.0.to_string()).collect::<Vec<_>>(),
+        }));
     }
     if id == "design.move_to_body" {
         return move_to_body(&a, ctx);

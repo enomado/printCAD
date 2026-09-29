@@ -36,6 +36,13 @@ fn other(message: impl std::fmt::Display) -> KernelError {
 const TOUCHING_MM3: f64 = 1e-6;
 
 impl KernelQueries for OgeomQueries {
+    fn recognize_holes(
+        &self,
+        brep: &[u8],
+    ) -> KernelResult<(Vec<kernel_api::RecognizedHole>, usize)> {
+        crate::holes::recognize_holes(brep)
+    }
+
     fn gap(&self, a: &[u8], b: &[u8], b_in_a: &[[f64; 4]; 4]) -> KernelResult<kernel_api::Gap> {
         let tol = tess::tolerances();
         let (mut model, first) = tess::read_blob(a)?;

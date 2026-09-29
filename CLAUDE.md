@@ -483,7 +483,13 @@ converted) into the base, invalidating the body, or into its shape.
 Design's Delete Faces (`DesignFeature::DeleteFaces`, `SolidOp::RemoveFaces`)
 takes picked faces away through the kernel's `remove_faces`, the
 neighbours closing the openings. Moving or offsetting faces waits on the
-kernel (ogeom-rs#98).
+kernel (ogeom-rs#98). Recognize holes (`design.recognize_holes`,
+`wb_design/src/recognize.rs`) asks `KernelQueries::recognize_holes`
+(`kernel_ogeom/src/holes.rs`: concave cylinder faces grouped by axis and
+radius into whole bores, each end an opening, a flat bottom or a coaxial
+cone, from the faces sharing its edges) and adds one Delete Faces for
+every hole's faces, then per set of alike holes a hidden sketch of their
+centres on the opening plane and a Hole feature.
 
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,

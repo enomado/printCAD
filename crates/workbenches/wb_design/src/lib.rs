@@ -18,6 +18,7 @@ mod generators;
 mod handles;
 mod hole_tables;
 mod params;
+mod recognize;
 mod references;
 #[cfg(feature = "egui")]
 mod task;
@@ -1417,6 +1418,15 @@ impl Workbench for DesignWorkbench {
             context,
             action("design.delete_faces", "Delete faces", "delete", "dressup"),
         );
+        register(
+            context,
+            action(
+                "design.recognize_holes",
+                "Recognize holes",
+                "hole",
+                "dressup",
+            ),
+        );
         // Boolean.
         register(
             context,
@@ -1560,6 +1570,48 @@ impl Workbench for DesignWorkbench {
                 );
                 ctx.request(HostRequest::SelectBody(body));
                 ctx.request(HostRequest::JournalLabel("Create body".to_string()));
+                InputResult::consumed()
+            }
+            Some("design.recognize_holes") => {
+                let Some(body) = Self::target_body(ctx) else {
+                    ctx.log_warn("Select a body whose holes to recognize");
+                    return InputResult::consumed();
+                };
+                match recognize::recognize_holes(ctx, body) {
+                    Ok(made) => {
+                        ctx.record(
+                            "design.recognize_holes",
+                            commands::object(serde_json::json!({"body": body.0.to_string()})),
+                            serde_json::json!({
+                                "holes": made.holes,
+                                "left": made.left,
+                                "features": made
+                                    .features
+                                    .iter()
+                                    .map(|f| f.0.to_string())
+                                    .collect::<Vec<_>>(),
+                            }),
+                        );
+                        let left = if made.left > 0 {
+                            format!(
+                                "; {} bore(s) left as they are (counterbores, slots)",
+                                made.left
+                            )
+                        } else {
+                            String::new()
+                        };
+                        if made.holes == 0 {
+                            ctx.log_info(format!("No round holes to recognize{left}"));
+                        } else {
+                            ctx.log_info(format!(
+                                "{} hole(s) made Hole features{left}",
+                                made.holes
+                            ));
+                        }
+                        ctx.request(HostRequest::JournalLabel("Recognize holes".to_string()));
+                    }
+                    Err(message) => ctx.log_warn(format!("Cannot recognize holes: {message}")),
+                }
                 InputResult::consumed()
             }
             Some(
@@ -1809,6 +1861,7 @@ impl Workbench for DesignWorkbench {
             | "design.draft"
             | "design.thickness"
             | "design.delete_faces"
+            | "design.recognize_holes"
             | "design.mirror"
             | "design.linear_pattern"
             | "design.polar_pattern"
