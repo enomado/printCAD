@@ -598,6 +598,7 @@ impl PrintCadApp {
                 Vec3::from_array(req.plane_origin),
                 Vec3::from_array(req.plane_normal),
                 Vec3::from_array(req.plane_up),
+                req.centre.map(Vec3::from_array),
                 &self.user_settings.camera,
             );
         }

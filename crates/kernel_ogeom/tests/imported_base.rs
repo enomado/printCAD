@@ -2,6 +2,7 @@
 //! shape, the imported solid, and builds on it, as a primitive's body
 //! builds on the primitive.
 
+use core_document::WorkbenchFeature as _;
 use core_document::{
     BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService,
     ImportedGeometry, WorkbenchId, WorkbenchRuntimeContext,
@@ -492,4 +493,47 @@ fn faces_offset_and_move_with_their_neighbours_following() {
         "the side out 3 mm"
     );
     assert!(near(f64::from(mhi[2] - mlo[2]), height));
+}
+
+/// A sketch placed on a side face of an imported solid stands on that
+/// face once the document is worked out, not on an origin plane.
+#[test]
+fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
+    let (document, body, lo, hi) = imported_box();
+    let mut host = benches(document);
+    let point = [hi[0], (lo[1] + hi[1]) / 2.0, (lo[2] + hi[2]) / 2.0];
+    let face = core_document::FaceRef {
+        point,
+        normal: [1.0, 0.0, 0.0],
+        surface: None,
+        name: 0,
+    };
+    let plane = wb_sketch::sketch::SketchPlane::from_face(point, face.normal);
+    let mut sketch = wb_sketch::sketch::Sketch::new("side");
+    sketch.plane = plane;
+    let mut sketch = wb_sketch::SketchFeature::new(sketch, plane);
+    sketch.face =
+        wb_sketch::FaceSupport::from_origin(&face, core_document::FaceOrigin::OwnSolid, plane);
+    let id = host
+        .document
+        .add_feature_in_body(sketch, "side".into(), Some(body))
+        .unwrap();
+    for _ in 0..3 {
+        host.registry.evaluate(&mut host.document);
+        let _ = host.registry.rebuild_jobs(&mut host.document);
+    }
+    let placed = wb_sketch::SketchFeature::from_json(host.document.feature_values(id).unwrap())
+        .unwrap()
+        .plane;
+    assert!(
+        (placed.normal[0] - 1.0).abs() < 1e-3,
+        "normal {:?}, origin {:?}",
+        placed.normal,
+        placed.origin
+    );
+    assert!(
+        (placed.origin[0] - hi[0]).abs() < 1e-3,
+        "origin {:?}",
+        placed.origin
+    );
 }

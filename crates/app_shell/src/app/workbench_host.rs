@@ -273,6 +273,7 @@ impl PrintCadApp {
                     glam::Vec3::from_array(orient.plane_origin),
                     glam::Vec3::from_array(orient.plane_normal),
                     glam::Vec3::from_array(orient.plane_up),
+                    orient.centre.map(glam::Vec3::from_array),
                     &self.user_settings.camera,
                 );
             }

@@ -96,7 +96,7 @@ fn orient_to_plane_puts_sketch_axes_screen_aligned() {
     cam.update_viewport((0, 0), (800, 600));
 
     // Default sketch plane: XY at origin, +Z normal, +Y plane-up.
-    cam.orient_to_plane(Vec3::ZERO, Vec3::Z, Vec3::Y, &settings);
+    cam.orient_to_plane(Vec3::ZERO, Vec3::Z, Vec3::Y, Some(Vec3::ZERO), &settings);
     // Drive the transition tween to completion.
     for _ in 0..600 {
         cam.update(0.016, &settings);
@@ -698,5 +698,47 @@ fn a_field_of_view_change_keeps_the_object_its_size() {
         cam.field_of_view_deg(),
         before,
         "an orthographic view has none to change"
+    );
+}
+
+/// Turned to a plane away from the origin, the view looks at the point
+/// asked for (a clicked face), else keeps its own centre, carried onto
+/// the plane: never at where the origin falls on the plane.
+#[test]
+fn orient_to_plane_looks_at_the_face_not_the_origin() {
+    use super::CameraController;
+    use glam::Vec3;
+    let settings = CameraSettings::default();
+    let settle = |cam: &mut CameraController| {
+        for _ in 0..600 {
+            cam.update(0.016, &settings);
+        }
+    };
+    // A face at x = 20, its sketch plane's origin where the world origin
+    // falls on it.
+    let (origin, normal, up) = (Vec3::new(20.0, 0.0, 0.0), Vec3::X, Vec3::Z);
+    let face = Vec3::new(20.0, 5.0, 34.0);
+
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    cam.orient_to_plane(origin, normal, up, Some(face), &settings);
+    settle(&mut cam);
+    let (x, y) = cam.world_to_screen(face).expect("the face is in view");
+    assert!(
+        (x - 400.0).abs() < 1.0 && (y - 300.0).abs() < 1.0,
+        "centred: {x}, {y}"
+    );
+
+    // No point asked for: the view's own centre, carried onto the plane.
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    let before = cam.focal_point_world();
+    cam.orient_to_plane(origin, normal, up, None, &settings);
+    settle(&mut cam);
+    let after = cam.focal_point_world();
+    assert!((after.x - 20.0).abs() < 1e-3, "on the plane: {after:?}");
+    assert!(
+        (after.y - before.y).abs() < 1e-3 && (after.z - before.z).abs() < 1e-3,
+        "the same spot, carried across: {before:?} to {after:?}"
     );
 }

@@ -128,10 +128,51 @@ pub fn plane_label(plane: &SketchPlane) -> &'static str {
     }
 }
 
+/// What a sketch stands on, for the view's footer: the face, datum or
+/// attachment it was placed on, else its base plane and how far off the
+/// origin it sits.
+pub fn placement_label(feature: &crate::feature::SketchFeature) -> String {
+    if feature.face.is_some() {
+        return "On a face".to_string();
+    }
+    if feature.support.is_some() {
+        return "On a datum".to_string();
+    }
+    if feature.attached.is_some() {
+        return "Attached".to_string();
+    }
+    let plane = &feature.plane;
+    let label = plane_label(plane);
+    let offset: f32 = (0..3).map(|i| plane.origin[i] * plane.normal[i]).sum();
+    if label == "Face plane" || offset.abs() < 1e-3 {
+        label.to_string()
+    } else {
+        format!("{label}, offset {offset:.2} mm")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sketch::{Line, Point, Vec2D};
+
+    #[test]
+    fn a_sketch_on_a_face_is_not_called_an_origin_plane() {
+        use crate::feature::{FaceSupport, SketchFeature};
+        let top = SketchPlane::from_face([5.0, 5.0, 40.0], [0.0, 0.0, 1.0]);
+        let mut on_face = SketchFeature::new(Sketch::new("s"), top);
+        assert_eq!(placement_label(&on_face), "XY plane, offset 40.00 mm");
+        let face = core_document::FaceRef {
+            point: [5.0, 5.0, 40.0],
+            normal: [0.0, 0.0, 1.0],
+            surface: None,
+            name: 0,
+        };
+        on_face.face = Some(FaceSupport::on(&face, top));
+        assert_eq!(placement_label(&on_face), "On a face");
+        let origin = SketchFeature::new(Sketch::new("s"), SketchPlane::xy());
+        assert_eq!(placement_label(&origin), "XY plane");
+    }
 
     #[test]
     fn element_names_count_per_kind_in_sketch_order() {

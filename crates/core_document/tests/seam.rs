@@ -296,6 +296,7 @@ fn a_hook_outcome_keeps_every_request_in_the_hosts_order_and_the_active_object()
         plane_origin: [0.0; 3],
         plane_normal: [0.0, 0.0, 1.0],
         plane_up: [0.0, 1.0, 0.0],
+        centre: None,
     };
     ctx.request(HostRequest::FinishEditing);
     ctx.request(HostRequest::OrientCamera(orient.clone()));

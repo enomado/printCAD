@@ -706,6 +706,7 @@ impl CameraController {
         plane_origin: Vec3,
         plane_normal: Vec3,
         plane_up: Vec3,
+        centre: Option<Vec3>,
         settings: &CameraSettings,
     ) {
         let normal = plane_normal.normalize();
@@ -731,11 +732,15 @@ impl CameraController {
         let q_end = Quat::from_mat3(&(dst * src.transpose())).normalize();
 
         let fd = self.state.focal_distance;
-        let focal = DVec3::new(
-            plane_origin.x as f64,
-            plane_origin.y as f64,
-            plane_origin.z as f64,
-        );
+        // The point asked for, else what the view was on, carried square
+        // onto the plane. A sketch plane's origin is where the world origin
+        // falls on it, which for a face away from the origin is nowhere
+        // near the face.
+        let centre = centre.unwrap_or_else(|| {
+            let target = self.focal_point_world();
+            target - normal * (target - plane_origin).dot(normal)
+        });
+        let focal = DVec3::new(centre.x as f64, centre.y as f64, centre.z as f64);
         let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end);
         let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
 

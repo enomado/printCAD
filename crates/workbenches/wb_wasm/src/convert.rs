@@ -170,6 +170,7 @@ pub(crate) fn request(
             plane_origin: origin,
             plane_normal: normal,
             plane_up: up,
+            centre: None,
         }),
         R::FinishEditing => HostRequest::FinishEditing,
         R::SaveFile {

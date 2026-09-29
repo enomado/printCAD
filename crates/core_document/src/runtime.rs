@@ -253,6 +253,9 @@ pub struct CameraOrientRequest {
     pub plane_origin: [f32; 3],
     pub plane_normal: [f32; 3],
     pub plane_up: [f32; 3],
+    /// The point on the plane to look at: a clicked face's point. `None`
+    /// keeps what the view is on, carried square onto the plane.
+    pub centre: Option<[f32; 3]>,
 }
 
 /// Something a bench asks the host to do once the hook returns. The host

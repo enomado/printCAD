@@ -859,6 +859,7 @@ impl SketchWorkbench {
                         plane_origin: plane.origin,
                         plane_normal: plane.normal,
                         plane_up: plane.y_axis,
+                        centre: None,
                     },
                 ));
             }
@@ -972,6 +973,18 @@ impl SketchWorkbench {
 
     /// The "Create Sketch" action: open the plane picker. The sketch is
     /// created once a plane is chosen in the left panel.
+    /// Another workbench (or the host) asked for a sketch on a specific
+    /// body: take the request and open the plane picker, the face it
+    /// offers in the body's own frame.
+    fn take_attach_request(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(request) = ctx.attach_request.take() {
+            let face = request
+                .face
+                .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()));
+            self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin);
+        }
+    }
+
     fn begin_sketch_creation(
         &mut self,
         body: Option<BodyId>,
@@ -1041,13 +1054,17 @@ impl SketchWorkbench {
                 self.session_start = ctx.document.get_feature_data(feature_id).cloned();
                 self.clear_interaction_state();
                 ctx.active_document_object = Some(feature_id);
-                // The view turns to the plane where the body has it.
-                let plane = placed_plane(&plane, &sketch_placement(ctx.document, feature_id));
+                // The view turns to the plane where the body has it, onto
+                // the face the sketch was placed on when it was.
+                let placement = sketch_placement(ctx.document, feature_id);
+                let centre = face.as_ref().map(|f| placement.point(f.point));
+                let plane = placed_plane(&plane, &placement);
                 ctx.request(HostRequest::OrientCamera(
                     core_document::CameraOrientRequest {
                         plane_origin: plane.origin,
                         plane_normal: plane.normal,
                         plane_up: plane.y_axis,
+                        centre,
                     },
                 ));
                 ctx.log_info(format!("Created new sketch: {sketch_name}"));
@@ -3101,14 +3118,7 @@ impl Workbench for SketchWorkbench {
             return InputResult::consumed();
         }
 
-        // Another workbench (or the host) asked us to create a sketch on a
-        // specific body: take the request and open the plane picker.
-        if let Some(request) = ctx.attach_request.take() {
-            let face = request
-                .face
-                .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()));
-            self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin);
-        }
+        self.take_attach_request(ctx);
 
         if base == Some("sketch.create") {
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
@@ -3464,6 +3474,8 @@ impl Workbench for SketchWorkbench {
         if shape_done {
             self.flush_draw_record(ctx);
         }
+        // The picker opens as the bench does, not at the next input.
+        self.take_attach_request(ctx);
         self.sync_active_sketch_from_ctx(ctx);
         if self.active_sketch_id.is_some() && self.external_refreshed != self.active_sketch_id {
             self.external_refreshed = self.active_sketch_id;
@@ -3693,7 +3705,7 @@ impl Workbench for SketchWorkbench {
                 (pal.constraint, "Constraint"),
             ],
             footer: [
-                style::plane_label(&feature.plane).to_string(),
+                style::placement_label(&feature),
                 if self.snap_off {
                     "Snap: off".to_string()
                 } else {
@@ -4793,6 +4805,7 @@ impl SketchWorkbench {
                 plane_origin: plane.origin,
                 plane_normal: plane.normal,
                 plane_up: plane.y_axis,
+                centre: None,
             },
         ));
     }
@@ -6201,6 +6214,52 @@ mod placed_body {
         let stored = stored_sketch(ctx.document, sketch).unwrap().plane;
         assert!(close(stored.origin, [0.0, 5.0, 0.0]), "{:?}", stored.origin);
         assert!(close(stored.normal, [0.0, 0.0, 1.0]));
+    }
+}
+
+#[cfg(test)]
+mod face_view {
+    use super::*;
+
+    /// A sketch made on a slanted face turns the view square to that face,
+    /// centred on the point clicked on it.
+    #[test]
+    fn a_sketch_on_a_face_turns_the_view_to_the_face() {
+        let mut doc = core_document::Document::new("t");
+        let body = doc.create_body(None);
+        let normal = {
+            let n = glam::Vec3::new(1.0, 0.0, 1.0).normalize();
+            [n.x, n.y, n.z]
+        };
+        let clicked = [10.0, 2.0, 5.0];
+        let plane = SketchPlane::from_face(clicked, normal);
+        let face = core_document::FaceRef {
+            point: clicked,
+            normal,
+            surface: None,
+            name: 0,
+        };
+        let support = crate::feature::FaceSupport::on(&face, plane);
+        let mut wb = SketchWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        wb.create_sketch_on_plane(
+            &mut ctx,
+            Some(BodyId(body.0)),
+            plane,
+            None,
+            Some(support),
+            None,
+        );
+        let orient = ctx
+            .take_requests()
+            .into_iter()
+            .find_map(|r| match r {
+                HostRequest::OrientCamera(o) => Some(o),
+                _ => None,
+            })
+            .expect("the view is turned");
+        assert_eq!(orient.plane_normal, plane.normal);
+        assert_eq!(orient.centre, Some(clicked), "on the face clicked");
     }
 }
 

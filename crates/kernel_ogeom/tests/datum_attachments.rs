@@ -533,6 +533,63 @@ fn a_sketch_on_a_face_follows_the_face_when_the_pad_grows() {
     );
 }
 
+/// A sketch placed on a side face stands on that face once the body is
+/// built and the sketch's place worked out again: not on an origin plane.
+#[test]
+fn a_sketch_on_a_side_face_stays_on_that_face() {
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let base = doc
+        .add_feature_in_body(rect_sketch(20.0, 20.0), "base".into(), Some(body))
+        .unwrap();
+    let pad_id = doc
+        .add_feature_in_body(pad(base, 10.0), "Pad".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+
+    let mesh = doc.imported_geometry(body).unwrap().mesh.clone();
+    let side_id = mesh
+        .face_surfaces
+        .iter()
+        .position(|s| {
+            matches!(s, kernel_api::FaceSurface::Plane { origin, normal }
+                if normal[0] > 0.99 && (origin[0] - 20.0).abs() < 1e-3)
+        })
+        .expect("the +X side");
+    let side = core_document::FaceRef {
+        point: [20.0, 10.0, 5.0],
+        normal: [1.0, 0.0, 0.0],
+        surface: None,
+        name: mesh.face_names[side_id],
+    };
+    let plane = wb_sketch::sketch::SketchPlane::from_face(side.point, side.normal);
+    let mut sketch = Sketch::new("side");
+    sketch.plane = plane;
+    let mut sketch = SketchFeature::new(sketch, plane);
+    sketch.face = Some(wb_sketch::FaceSupport::on(&side, plane));
+    let id = doc
+        .add_feature_in_body(sketch, "side".into(), Some(body))
+        .unwrap();
+    settle(&registry, &mut doc, body);
+
+    let placed = SketchFeature::from_json(doc.feature_values(id).unwrap())
+        .unwrap()
+        .plane;
+    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-3);
+    assert!(
+        near(placed.normal, [1.0, 0.0, 0.0]),
+        "normal {:?}",
+        placed.normal
+    );
+    assert!(
+        (placed.origin[0] - 20.0).abs() < 1e-3,
+        "origin {:?}",
+        placed.origin
+    );
+}
+
 /// A sketch placed on a face another body lends follows the face: body B's
 /// top, borrowed by body A, rises when B's pad grows, and A's post drawn
 /// on it rises with it.
