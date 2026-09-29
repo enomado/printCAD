@@ -23,13 +23,9 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
         })
     };
     let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
-    // External geometry repeats a solid's own edge, which already draws.
-    let external = sketch.external_ids();
-    for geom in sketch
-        .geometry
-        .iter()
-        .filter(|g| !external.contains(&g.id()))
-    {
+    // Projected geometry draws as drawn geometry does: the solid it came
+    // from may have changed since, or be built from it.
+    for geom in &sketch.geometry {
         match geom {
             GeometryElement::Point(p) => {
                 // A small cross in the plane.
@@ -225,4 +221,33 @@ fn add_line_quad(
     indices.push(base + 3);
 
     *vertex_offset += 4;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sketch::{ExternalReference, ExternalSource, Line, Point};
+
+    /// A closed sketch draws its projected geometry as it draws what was
+    /// drawn in it, whether it guides or counts.
+    #[test]
+    fn projected_geometry_draws_when_the_sketch_is_closed() {
+        let mut sketch = Sketch::new("s");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let drawn = sketch_polylines(&sketch, &SketchPlane::default()).len();
+        sketch.external.insert(
+            line,
+            ExternalSource::of_reference(ExternalReference::Datum {
+                datum: uuid::Uuid::new_v4(),
+            }),
+        );
+        assert_eq!(
+            sketch_polylines(&sketch, &SketchPlane::default()).len(),
+            drawn
+        );
+        let lines = sketch_to_lines(&sketch, &SketchPlane::default());
+        assert!(!lines.edges.is_empty());
+    }
 }

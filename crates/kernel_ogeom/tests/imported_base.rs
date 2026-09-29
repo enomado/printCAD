@@ -545,24 +545,61 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
 #[test]
 #[ignore = "kernel: every ray meets an ambiguous crossing and the fuse gives up (ogeom-rs#99)"]
 fn a_pad_along_a_converted_solid_s_sides_fuses() {
+    fuses_along_its_sides("base.ogeom", "tool.ogeom");
+}
+
+/// The same outline padded out through the converted solid's bottom: the
+/// fuse keeps what leaves it. Read from `PRINTCAD_TEST_FUSE_DIR`
+/// (`pad-base.ogeom`, `pad-tool.ogeom`).
+#[test]
+#[ignore = "kernel: a marched section wanders beside a chart's pole and the fuse gives up (ogeom-rs#100)"]
+fn a_pad_out_through_a_converted_solid_s_bottom_fuses() {
+    fuses_along_its_sides("pad-base.ogeom", "pad-tool.ogeom");
+}
+
+/// Fuses the tool into the base, both read from `PRINTCAD_TEST_FUSE_DIR`,
+/// and checks the union reaches as far as either does.
+fn fuses_along_its_sides(base: &str, tool: &str) {
     let Some(dir) = std::env::var_os("PRINTCAD_TEST_FUSE_DIR") else {
         return;
     };
     let dir = std::path::PathBuf::from(dir);
-    let base = std::fs::read(dir.join("base.ogeom")).unwrap();
-    let tool = std::fs::read(dir.join("tool.ogeom")).unwrap();
+    let base = std::fs::read(dir.join(base)).unwrap();
+    let tool = std::fs::read(dir.join(tool)).unwrap();
     let ops = [
         kernel_api::SolidOp::Shape { brep: base },
         kernel_api::SolidOp::Boolean {
-            tool_brep: tool,
+            tool_brep: tool.clone(),
             kind: kernel_api::BoolKind::Fuse,
             tool_transform: None,
         },
     ];
-    let built = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
+    let mut kernel = OgeomKernel::new();
+    let detail = TessellationSettings::default();
+    let built = kernel
+        .execute_solid_chain(&ops, &detail)
         .expect("the fuse settles");
-    assert!(built.mesh.bounds().is_some());
+    let mut bounds = |ops: &[kernel_api::SolidOp]| {
+        kernel
+            .execute_solid_chain(ops, &detail)
+            .unwrap()
+            .mesh
+            .bounds()
+            .unwrap()
+    };
+    let (lo, hi) = built.mesh.bounds().unwrap();
+    // The union reaches as far as either solid does.
+    for (a, b) in [
+        bounds(&ops[..1]),
+        bounds(&[kernel_api::SolidOp::Shape { brep: tool }]),
+    ] {
+        for k in 0..3 {
+            assert!(
+                lo[k] <= a[k] + 1e-3 && hi[k] >= b[k] - 1e-3,
+                "{lo:?} {hi:?} vs {a:?} {b:?}"
+            );
+        }
+    }
 }
 
 /// A face picked for projection brings every edge around it: the box's

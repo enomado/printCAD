@@ -410,8 +410,8 @@ each, its seam left out), projects each
 through `ctx.kernel` (`kernel_api::KernelQueries`, the host hands benches
 `kernel_ogeom::QUERIES`) onto the sketch plane in the edge body's frame,
 and stores the result as geometry marked in `Sketch::external` with its
-`ExternalSource`: pinned in the solver, left out of profiles and passive
-drawing until marked as counting (`ExternalSource::defining`, which the
+`ExternalSource`: pinned in the solver, drawn with the closed sketch as
+drawn geometry is, left out of profiles until marked as counting (`ExternalSource::defining`, which the
 Construction button switches as it does construction for drawn curves),
 drawn in the external colour (dashed while a guide, solid once it
 counts), never dragged, and projected again. New projections take the
