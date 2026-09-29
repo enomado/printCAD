@@ -204,27 +204,50 @@ fn drive_parameters(
     drive: &Drive,
     dim: core_document::expr::Dim,
 ) -> Vec<core_document::Parameter> {
+    named_drive_parameters(&format!("/kind/{variant}/drive"), ("", ""), drive, dim)
+}
+
+/// The same for a drive stored at `base`, its keys and labels starting
+/// with `prefix`.
+fn named_drive_parameters(
+    base: &str,
+    (key, label): (&str, &str),
+    drive: &Drive,
+    dim: core_document::expr::Dim,
+) -> Vec<core_document::Parameter> {
     use core_document::Parameter;
     let mut out = Vec::new();
+    let named = |name: &str| {
+        if key.is_empty() {
+            (name.to_string(), capitalized(name))
+        } else {
+            (format!("{key}_{name}"), format!("{label} {name}"))
+        }
+    };
     if drive.to.is_some() {
-        out.push(Parameter::new(
-            "drive",
-            "Drive",
-            dim,
-            format!("/kind/{variant}/drive/to"),
-        ));
+        let (name, text) = named("drive");
+        out.push(Parameter::new(&name, &text, dim, format!("{base}/to")));
     }
     if drive.limits.is_some() {
-        for (end, name, label) in [(0, "lowest", "Lowest"), (1, "highest", "Highest")] {
+        for (end, word) in [(0, "lowest"), (1, "highest")] {
+            let (name, text) = named(word);
             out.push(Parameter::new(
-                name,
-                label,
+                &name,
+                &text,
                 dim,
-                format!("/kind/{variant}/drive/limits/{end}"),
+                format!("{base}/limits/{end}"),
             ));
         }
     }
     out
+}
+
+fn capitalized(word: &str) -> String {
+    let mut chars = word.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 impl AssemblyWorkbench {
@@ -1114,6 +1137,17 @@ impl Workbench for AssemblyWorkbench {
                 out
             }
             Ok(JointKind::Slider { drive, .. }) => drive_parameters("Slider", &drive, Dim::LENGTH),
+            Ok(JointKind::Align { turn, slide, .. }) => {
+                let mut out =
+                    named_drive_parameters("/kind/Align/turn", ("turn", "Turn"), &turn, Dim::ANGLE);
+                out.extend(named_drive_parameters(
+                    "/kind/Align/slide",
+                    ("slide", "Slide"),
+                    &slide,
+                    Dim::LENGTH,
+                ));
+                out
+            }
             Ok(JointKind::Distance { .. }) => {
                 vec![Parameter::new(
                     "offset",

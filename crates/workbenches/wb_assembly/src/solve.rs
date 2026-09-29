@@ -827,7 +827,7 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
             JointKind::Mate { flip: false, .. } => -df,
             JointKind::Mate { flip: true, .. } => df,
             // An axis has no way round: the nearer of its two directions.
-            JointKind::Align | JointKind::Hinge { .. } | JointKind::Parallel => {
+            JointKind::Align { .. } | JointKind::Hinge { .. } | JointKind::Parallel => {
                 if dm.dot(df) < 0.0 { -df } else { df }
             }
             // A held turn is the whole rotation, not only a direction.
@@ -1085,7 +1085,7 @@ mod tests {
             &mut doc,
             pin,
             JointFeature {
-                kind: JointKind::Align,
+                kind: JointKind::align(),
                 moving: Anchor::Axis {
                     point: [0.0, 0.0, 0.0],
                     direction: [0.0, 0.0, 1.0],
@@ -1399,7 +1399,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
-                kind: JointKind::Align,
+                kind: JointKind::align(),
                 moving: Anchor::Axis {
                     point: [5.0, 0.0, 0.0],
                     direction: [0.0, 0.0, 1.0],

@@ -7,7 +7,7 @@ use core_document::{
 };
 use egui::RichText;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{Card, Note, QtyField, check_row, destructive_button, note_card};
+use ui_kit::widgets::{Card, Note, QtyField, check_row, destructive_button, note_card, overline};
 use ui_kit::{sans, sans_semibold};
 
 use crate::{
@@ -638,6 +638,9 @@ impl AssemblyWorkbench {
         let now = node
             .body
             .and_then(|b| joint.travel(&placed(b), &placed(joint.other_body)));
+        let align_now = node
+            .body
+            .and_then(|b| joint.align_travel(&placed(b), &placed(joint.other_body)));
         let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
         let playing = &mut self.playing;
         let mut record = None;
@@ -707,14 +710,33 @@ impl AssemblyWorkbench {
                         .color(TEXT2),
                     );
                 }
-                JointKind::Align => {
-                    ui.label(
-                        RichText::new(
-                            "The body can still turn about the axis and slide along \
-                             it; a mate on an end face holds the slide.",
-                        )
-                        .font(sans(FONT_SM))
-                        .color(TEXT2),
+                JointKind::Align { turn, slide, .. } => {
+                    let (turn_now, slide_now) = align_now.unzip();
+                    overline(ui, "Turn");
+                    changed |= drive_rows(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        ("/kind/Align/turn", true, false),
+                        turn,
+                        (turn_now, dt),
+                        playing,
+                        &mut record,
+                    );
+                    ui.add_space(SPACE_1);
+                    overline(ui, "Slide");
+                    changed |= drive_rows(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        ("/kind/Align/slide", false, false),
+                        slide,
+                        (slide_now, dt),
+                        playing,
+                        &mut record,
+                    );
+                    note(
+                        ui,
+                        "The body can turn about the axis and slide along it, each \
+                         free, held or kept within limits.",
                     );
                 }
                 JointKind::Hinge { offset, drive, .. } => {
@@ -732,7 +754,7 @@ impl AssemblyWorkbench {
                     changed |= drive_rows(
                         ui,
                         (document, id, &mut formula_edits),
-                        "Hinge",
+                        ("/kind/Hinge/drive", true, true),
                         drive,
                         (now, dt),
                         playing,
@@ -778,7 +800,7 @@ impl AssemblyWorkbench {
                     changed |= drive_rows(
                         ui,
                         (document, id, &mut formula_edits),
-                        "Slider",
+                        ("/kind/Slider/drive", false, true),
                         drive,
                         (now, dt),
                         playing,
@@ -1177,14 +1199,13 @@ fn drive_rows(
         core_document::FeatureId,
         &mut Vec<(String, Option<String>)>,
     ),
-    variant: &str,
+    (base, angular, sweep): (&str, bool, bool),
     drive: &mut crate::Drive,
     (now, dt): (Option<f64>, f64),
     playing: &mut Option<crate::Play>,
     record: &mut Option<(f32, f32)>,
 ) -> bool {
     use core_document::expr::Dim;
-    let angular = variant == "Hinge";
     let (dim, unit) = if angular {
         (Dim::ANGLE, "°")
     } else {
@@ -1198,7 +1219,7 @@ fn drive_rows(
             &format!("{now:.2}{unit}"),
         );
     }
-    let to_key = format!("/kind/{variant}/drive/to");
+    let to_key = format!("{base}/to");
     let mut driven = drive.to.is_some();
     if check_row(ui, &mut driven, "Drive")
         .on_hover_text(if angular {
@@ -1243,7 +1264,7 @@ fn drive_rows(
         });
         if !limited {
             for end in 0..2 {
-                edits.push((format!("/kind/{variant}/drive/limits/{end}"), None));
+                edits.push((format!("{base}/limits/{end}"), None));
             }
         }
         changed = true;
@@ -1254,7 +1275,7 @@ fn drive_rows(
                 ui,
                 (document, joint, edits),
                 (label, "An end of the range the motion stays in"),
-                &format!("/kind/{variant}/drive/limits/{end}"),
+                &format!("{base}/limits/{end}"),
                 dim,
                 value,
             );
@@ -1267,6 +1288,9 @@ fn drive_rows(
     let Some(to) = &mut drive.to else {
         return changed;
     };
+    if !sweep {
+        return changed;
+    }
     // The sweep: through the limits, or a whole turn, or 25 mm either side
     // of where it started.
     let mine = playing.filter(|p| p.joint == joint);

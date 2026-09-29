@@ -29,31 +29,65 @@ const LIMITS: &str = "{low, high}: the range a hinge's angle or a slider's posit
 
 /// Read `drive` and `limits` into a hinge's or a slider's drive.
 fn drive_args(a: &Args, drive: &mut Drive) -> Result<(), CommandError> {
-    match a.0.get("drive") {
+    drive_args_named(a, drive, "drive", "limits")
+}
+
+/// Read the arguments named `to` and `range` into a drive.
+fn drive_args_named(
+    a: &Args,
+    drive: &mut Drive,
+    to_name: &str,
+    range: &str,
+) -> Result<(), CommandError> {
+    match a.0.get(to_name) {
         None => {}
         Some(Value::Bool(false)) | Some(Value::Null) => drive.to = None,
         Some(v) => {
             let to = v
                 .as_f64()
-                .ok_or_else(|| CommandError::bad("drive", "must be a number or false"))?;
+                .ok_or_else(|| CommandError::bad(to_name, "must be a number or false"))?;
             drive.to = Some(to as f32);
         }
     }
-    match a.0.get("limits") {
+    match a.0.get(range) {
         None => {}
         Some(Value::Bool(false)) | Some(Value::Null) => drive.limits = None,
         Some(v) => {
-            let bad = || CommandError::bad("limits", "must be {low, high} or false");
+            let bad = || CommandError::bad(range, "must be {low, high} or false");
             let pair = v.as_array().filter(|l| l.len() == 2).ok_or_else(bad)?;
             let low = pair[0].as_f64().ok_or_else(bad)? as f32;
             let high = pair[1].as_f64().ok_or_else(bad)? as f32;
             if low > high {
-                return Err(CommandError::bad("limits", "low must not be above high"));
+                return Err(CommandError::bad(range, "low must not be above high"));
             }
             drive.limits = Some([low, high]);
         }
     }
     Ok(())
+}
+
+/// An alignment's drives: its turn and its slide, each held or limited.
+fn align_drives(spec: CommandSpec) -> CommandSpec {
+    spec.optional(
+        "turn_drive",
+        ParamKind::Any,
+        "An alignment's turn (degrees from where it was made) to hold it at; false lets it turn",
+    )
+    .optional(
+        "turn_limits",
+        ParamKind::Any,
+        "{low, high}: the range an alignment's turn stays in; false takes it away",
+    )
+    .optional(
+        "slide_drive",
+        ParamKind::Any,
+        "How far along the axis (mm) to hold an alignment; false lets it slide",
+    )
+    .optional(
+        "slide_limits",
+        ParamKind::Any,
+        "{low, high}: the range an alignment's slide stays in, mm; false takes it away",
+    )
 }
 
 /// Register every command this module runs.
@@ -115,6 +149,7 @@ pub fn register(context: &mut WorkbenchContext) {
                 ParamKind::Any,
                 LIMITS,
             ),
+            JointTool::Align => align_drives(spec),
             JointTool::Distance => spec.optional(
                 "offset",
                 ParamKind::Number,
@@ -147,32 +182,31 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional("name", ParamKind::String, "Its name in the tree")
         .returns("the coupling's id"),
     );
-    context.register_command(
-        CommandSpec::new(
-            "asm.set",
-            "Change a joint's gap, side, angle or radius, or a coupling's joints and ratio",
-        )
-        .param("joint", ParamKind::Id, "A joint or a coupling")
-        .optional("gearing", ParamKind::String, GEARING)
-        .optional("ratio", ParamKind::Number, RATIO)
-        .optional(
-            "reverse",
-            ParamKind::Bool,
-            "A coupling's driven joint moves the other way",
-        )
-        .optional("driver", ParamKind::Id, "A coupling's leading joint")
-        .optional("driven", ParamKind::Id, "A coupling's following joint")
-        .optional(
-            "offset",
-            ParamKind::Number,
-            "A mate's gap, a hinge's height or a distance, mm",
-        )
-        .optional("flip", ParamKind::Bool, "A mate's side")
-        .optional("degrees", ParamKind::Number, "An angle joint's angle")
-        .optional("radius", ParamKind::Number, "A tangent's radius, mm")
-        .optional("drive", ParamKind::Any, DRIVE)
-        .optional("limits", ParamKind::Any, LIMITS),
-    );
+    let set = CommandSpec::new(
+        "asm.set",
+        "Change a joint's gap, side, angle or radius, or a coupling's joints and ratio",
+    )
+    .param("joint", ParamKind::Id, "A joint or a coupling")
+    .optional("gearing", ParamKind::String, GEARING)
+    .optional("ratio", ParamKind::Number, RATIO)
+    .optional(
+        "reverse",
+        ParamKind::Bool,
+        "A coupling's driven joint moves the other way",
+    )
+    .optional("driver", ParamKind::Id, "A coupling's leading joint")
+    .optional("driven", ParamKind::Id, "A coupling's following joint")
+    .optional(
+        "offset",
+        ParamKind::Number,
+        "A mate's gap, a hinge's height or a distance, mm",
+    )
+    .optional("flip", ParamKind::Bool, "A mate's side")
+    .optional("degrees", ParamKind::Number, "An angle joint's angle")
+    .optional("radius", ParamKind::Number, "A tangent's radius, mm")
+    .optional("drive", ParamKind::Any, DRIVE)
+    .optional("limits", ParamKind::Any, LIMITS);
+    context.register_command(align_drives(set));
     context.register_command(
         CommandSpec::new(
             "asm.interference",
@@ -345,8 +379,11 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         *radius = v as f32;
                     }
                 }
-                JointKind::Align
-                | JointKind::Ground
+                JointKind::Align { turn, slide, .. } => {
+                    drive_args_named(&a, turn, "turn_drive", "turn_limits")?;
+                    drive_args_named(&a, slide, "slide_drive", "slide_limits")?;
+                }
+                JointKind::Ground
                 | JointKind::Fixed { .. }
                 | JointKind::Parallel
                 | JointKind::Perpendicular => {}
@@ -625,6 +662,10 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
             drive_args(a, drive)?;
         }
         JointKind::Slider { drive, .. } => drive_args(a, drive)?,
+        JointKind::Align { turn, slide, .. } => {
+            drive_args_named(a, turn, "turn_drive", "turn_limits")?;
+            drive_args_named(a, slide, "slide_drive", "slide_limits")?;
+        }
         JointKind::Distance { offset } => {
             if let Some(v) = a.opt_number("offset")? {
                 *offset = v as f32;
@@ -691,8 +732,13 @@ pub(crate) fn record_joint(
         }),
         JointKind::Distance { offset } => json!({"offset": offset}),
         JointKind::Tangent { radius } => json!({"radius": radius}),
-        JointKind::Align
-        | JointKind::Ground
+        JointKind::Align { turn, slide, .. } => json!({
+            "turn_drive": turn.to.map_or(json!(false), |v| json!(v)),
+            "turn_limits": turn.limits.map_or(json!(false), |l| json!(l)),
+            "slide_drive": slide.to.map_or(json!(false), |v| json!(v)),
+            "slide_limits": slide.limits.map_or(json!(false), |l| json!(l)),
+        }),
+        JointKind::Ground
         | JointKind::Fixed { .. }
         | JointKind::Parallel
         | JointKind::Perpendicular => json!({}),
@@ -1173,6 +1219,44 @@ mod tests {
             json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
         );
         assert!(both_flat.is_err(), "one face of each");
+    }
+
+    /// An alignment's turn and slide are each driven, and an alignment
+    /// stored as a plain word still loads, both free.
+    #[test]
+    fn an_alignment_drives_its_turn_and_its_slide() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+        let joint = call(
+            &mut doc,
+            "asm.align",
+            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
+                   "slide_drive": 5}),
+        )
+        .unwrap();
+        assert!((doc.body_placement(a).translation[2] - 5.0).abs() < 1e-3);
+        call(
+            &mut doc,
+            "asm.set",
+            json!({"joint": joint, "turn_drive": 30}),
+        )
+        .unwrap();
+        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+        assert!((x[1].atan2(x[0]).to_degrees() - 30.0).abs() < 1e-2, "{x:?}");
+        assert!((doc.body_placement(a).translation[2] - 5.0).abs() < 1e-3);
+        let free = crate::freedom(&doc);
+        let motions = &free.iter().find(|(body, _)| *body == a).unwrap().1;
+        assert!(motions.is_empty(), "both held: {motions:?}");
+
+        let old = json!({
+            "kind": "Align",
+            "moving": {"Axis": {"point": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 1.0]}},
+            "other_body": b.0.to_string(),
+            "fixed": {"Axis": {"point": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 1.0]}},
+        });
+        let read: JointFeature = serde_json::from_value(old).expect("an old alignment loads");
+        assert_eq!(read.kind, JointKind::align());
     }
 
     #[test]

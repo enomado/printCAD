@@ -1154,6 +1154,10 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `other` (id): The body it is held against
 - `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
 - `name` (string, optional): Its name in the tree
+- `turn_drive` (any, optional): An alignment's turn (degrees from where it was made) to hold it at; false lets it turn
+- `turn_limits` (any, optional): {low, high}: the range an alignment's turn stays in; false takes it away
+- `slide_drive` (any, optional): How far along the axis (mm) to hold an alignment; false lets it slide
+- `slide_limits` (any, optional): {low, high}: the range an alignment's slide stays in, mm; false takes it away
 - Returns the joint's id
 
 `pc.asm.angle`: Hold two flat faces at an angle.
@@ -1260,6 +1264,10 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `radius` (number, optional): A tangent's radius, mm
 - `drive` (any, optional): A hinge's angle (degrees from where it was made) or a slider's position (mm) to hold it at; false lets it move again
 - `limits` (any, optional): {low, high}: the range a hinge's angle or a slider's position stays in while not driven; false takes the limits away
+- `turn_drive` (any, optional): An alignment's turn (degrees from where it was made) to hold it at; false lets it turn
+- `turn_limits` (any, optional): {low, high}: the range an alignment's turn stays in; false takes it away
+- `slide_drive` (any, optional): How far along the axis (mm) to hold an alignment; false lets it slide
+- `slide_limits` (any, optional): {low, high}: the range an alignment's slide stays in, mm; false takes it away
 
 `pc.asm.interference`: Where solid bodies share material: each pair that clashes, how much and where.
 

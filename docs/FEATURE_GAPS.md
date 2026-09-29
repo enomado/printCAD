@@ -261,7 +261,7 @@ and noted on its item, and the rest of the item is built around it.
   parallel, perpendicular and angle.
 - [ ] **Joints to the origin and datums** (missing, S). The world
   planes and datums as the other end.
-- [ ] **Align with offset, drive and limits** (partial, S). The
+- [x] **Align with offset, drive and limits** (partial, S). The
   cylindrical joint's turn and slide driven or limited.
 - [ ] **A turn offset and a flip on every joint** (partial, S), and an
   editable shift for a fixed joint.

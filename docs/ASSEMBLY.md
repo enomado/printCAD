@@ -53,6 +53,10 @@ driven joint through its limits (or a whole turn, or 25 mm either way) to
 show the motion, and puts it back when stopped. Record saves the same
 sweep, there and back, as an animated PNG seen from the current view.
 
+An alignment leaves two motions, the turn about its axis and the slide
+along it, and each can be driven or limited the same way (`turn_drive`,
+`turn_limits`, `slide_drive` and `slide_limits` in a script).
+
 ## Gears, belts, racks and screws
 
 Couple joints (K) ties two joints' motions: the driven joint follows the

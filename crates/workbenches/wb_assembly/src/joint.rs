@@ -21,8 +21,18 @@ pub enum JointKind {
     /// under it do.
     Mate { flip: bool, offset: f32 },
     /// Two round faces on one axis: a pin in a hole, a shaft in a bearing.
-    /// The moving body may still turn about the axis and slide along it.
-    Align,
+    /// The moving body may still turn about the axis and slide along it;
+    /// `turn` can hold or limit the turn (degrees from `zero`, the body's
+    /// turn in the other's frame when the joint was made) and `slide` the
+    /// slide (mm along the axis from the other's anchor).
+    Align {
+        #[serde(default = "unturned")]
+        zero: [f64; 4],
+        #[serde(default)]
+        turn: Drive,
+        #[serde(default)]
+        slide: Drive,
+    },
     /// Two flat faces at `degrees` between their outward normals: 180
     /// faces them at each other, 90 stands one square to the other. Only
     /// the turn is held; where the faces sit is left free.
@@ -113,6 +123,20 @@ fn unturned() -> [f64; 4] {
     DQuat::IDENTITY.to_array()
 }
 
+/// A joint's kind as stored: a plain word for a kind with no settings,
+/// which an alignment was before it took drives.
+fn kind_or_word<'de, D: serde::Deserializer<'de>>(de: D) -> Result<JointKind, D::Error> {
+    let value = serde_json::Value::deserialize(de)?;
+    if value.as_str() == Some("Align") {
+        return Ok(JointKind::Align {
+            zero: unturned(),
+            turn: Drive::default(),
+            slide: Drive::default(),
+        });
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+
 /// A body's turn and shift in another body's frame.
 pub fn relative(moving: &Rigid, fixed: &Rigid) -> (DQuat, DVec3) {
     let back = fixed.rotation.inverse();
@@ -135,10 +159,20 @@ pub fn quat(turn: [f64; 4]) -> DQuat {
 }
 
 impl JointKind {
+    /// An alignment made where the bodies stand unturned, neither motion
+    /// held.
+    pub fn align() -> Self {
+        JointKind::Align {
+            zero: unturned(),
+            turn: Drive::default(),
+            slide: Drive::default(),
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             JointKind::Mate { .. } => "Mate",
-            JointKind::Align => "Align",
+            JointKind::Align { .. } => "Align",
             JointKind::Angle { .. } => "Angle",
             JointKind::Ground => "Ground",
             JointKind::Hinge { .. } => "Hinge",
@@ -154,7 +188,7 @@ impl JointKind {
     pub fn icon(&self) -> &'static str {
         match self {
             JointKind::Mate { .. } => "joint-mate",
-            JointKind::Align => "joint-align",
+            JointKind::Align { .. } => "joint-align",
             JointKind::Angle { .. } => "constraint-angle",
             JointKind::Ground => "constraint-lock",
             JointKind::Hinge { .. } => "revolution",
@@ -304,6 +338,7 @@ impl From<Rigid> for BodyPlacement {
 /// A joint, stored as a feature of the body it moves.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JointFeature {
+    #[serde(deserialize_with = "kind_or_word")]
     pub kind: JointKind,
     /// On the body that moves: the body the feature belongs to.
     pub moving: Anchor,
@@ -323,18 +358,7 @@ impl JointFeature {
     /// (-180 to 180) or the slider's position in millimetres.
     pub fn travel(&self, moving: &Rigid, fixed: &Rigid) -> Option<f64> {
         match self.kind {
-            JointKind::Hinge { zero, .. } => {
-                // The turn since the joint was made, in the other body's
-                // frame, and how much of it is about the axis there.
-                let (now, _) = relative(moving, fixed);
-                let mut d = (now * quat(zero).inverse()).normalize();
-                if d.w < 0.0 {
-                    d = -d;
-                }
-                let (_, axis) = self.fixed.parts();
-                let along = DVec3::new(d.x, d.y, d.z).dot(axis.normalize_or_zero());
-                Some((2.0 * along.atan2(d.w)).to_degrees())
-            }
+            JointKind::Hinge { zero, .. } => Some(self.turned(zero, moving, fixed)),
             JointKind::Slider { .. } => {
                 let (pm, _) = self.moving.placed(moving);
                 let (pf, df) = self.fixed.placed(fixed);
@@ -342,6 +366,32 @@ impl JointFeature {
             }
             _ => None,
         }
+    }
+
+    /// The turn about the other end's axis since `zero`, degrees from
+    /// -180 to 180.
+    pub fn turned(&self, zero: [f64; 4], moving: &Rigid, fixed: &Rigid) -> f64 {
+        // The turn since the joint was made, in the other body's frame,
+        // and how much of it is about the axis there.
+        let (now, _) = relative(moving, fixed);
+        let mut d = (now * quat(zero).inverse()).normalize();
+        if d.w < 0.0 {
+            d = -d;
+        }
+        let (_, axis) = self.fixed.parts();
+        let along = DVec3::new(d.x, d.y, d.z).dot(axis.normalize_or_zero());
+        (2.0 * along.atan2(d.w)).to_degrees()
+    }
+
+    /// Where an alignment has got to: its turn in degrees and its slide in
+    /// millimetres.
+    pub fn align_travel(&self, moving: &Rigid, fixed: &Rigid) -> Option<(f64, f64)> {
+        let JointKind::Align { zero, .. } = self.kind else {
+            return None;
+        };
+        let (pm, _) = self.moving.placed(moving);
+        let (pf, df) = self.fixed.placed(fixed);
+        Some((self.turned(zero, moving, fixed), (pm - pf).dot(df)))
     }
 
     pub fn residuals(&self, moving: &Rigid, fixed: &Rigid, out: &mut Vec<f64>) {
@@ -354,9 +404,13 @@ impl JointFeature {
                 out.extend(facing.to_array().map(|c| c * ARM_MM));
                 out.push((pm - pf).dot(df) - f64::from(offset));
             }
-            JointKind::Align => {
+            JointKind::Align { zero, turn, slide } => {
                 out.extend(dm.cross(df).to_array().map(|c| c * ARM_MM));
                 out.extend((pm - pf).cross(df).to_array());
+                slide.residual((pm - pf).dot(df), false, out);
+                if turn.to.is_some() || turn.limits.is_some() {
+                    turn.residual(self.turned(zero, moving, fixed), true, out);
+                }
             }
             JointKind::Angle { degrees } => {
                 let between = dm.cross(df).length().atan2(dm.dot(df));
@@ -492,7 +546,7 @@ impl JointTool {
     pub fn of_kind(kind: &JointKind) -> Option<JointTool> {
         Some(match kind {
             JointKind::Mate { .. } => JointTool::Mate,
-            JointKind::Align => JointTool::Align,
+            JointKind::Align { .. } => JointTool::Align,
             JointKind::Angle { .. } => JointTool::Angle,
             JointKind::Ground => return None,
             JointKind::Hinge { .. } => JointTool::Hinge,
@@ -627,7 +681,11 @@ impl JointTool {
                 flip: false,
                 offset: 0.0,
             },
-            JointTool::Align => JointKind::Align,
+            JointTool::Align => JointKind::Align {
+                zero: turn.to_array(),
+                turn: Drive::default(),
+                slide: Drive::default(),
+            },
             JointTool::Angle => JointKind::Angle {
                 degrees: moving.angle_to(at, fixed, fixed_at),
             },
