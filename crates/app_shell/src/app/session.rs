@@ -140,6 +140,10 @@ pub(crate) struct DocumentSession {
     pub previews: std::collections::HashMap<core_document::BodyId, BodyPreview>,
     /// Bodies whose repair the kernel worker is running.
     pub repairs_in_flight: std::collections::HashSet<Uuid>,
+    /// Bodies whose new shape is being read, and the asset each failed to
+    /// read from, which is not tried again.
+    pub shapes_in_flight: std::collections::HashSet<Uuid>,
+    pub shapes_failed: std::collections::HashMap<Uuid, Uuid>,
     /// The depths the pick pass drew around the cursor, and the camera it
     /// drew them with: which edges near the cursor are in view.
     pub pick_depths: Option<render_vk::DepthWindow>,
@@ -227,6 +231,8 @@ impl DocumentSession {
             face_colored: Default::default(),
             pick_depths: None,
             repairs_in_flight: Default::default(),
+            shapes_in_flight: Default::default(),
+            shapes_failed: Default::default(),
             solids_in_flight: Default::default(),
             mirrors_in_flight: Default::default(),
             mirrors_failed: Default::default(),

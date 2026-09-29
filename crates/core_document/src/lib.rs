@@ -253,6 +253,12 @@ pub struct Body {
     /// import's geometry.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub repair_requested: bool,
+    /// The asset the body's shape is read from in place of the one it
+    /// was imported with (op `ReplaceBodyShape`): its first solid becomes
+    /// the body's base, or its shape when it has no history. Derived from
+    /// the asset, like an import's geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape_asset: Option<Uuid>,
     /// The user asked for this mesh body to become a B-rep solid. The
     /// solid is derived from it, like the rest of an import's geometry.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -797,6 +803,7 @@ impl Document {
             // lying about — clearing undo beats a wrong inverse.
             Op::AddAsset { .. }
             | Op::RequestBodyRepair { .. }
+            | Op::ReplaceBodyShape { .. }
             | Op::RequestMeshSolid { .. }
             | Op::ImportModel { .. }
             | Op::AppendImportedObjectGraph { .. }
@@ -892,6 +899,7 @@ impl Document {
                     tip: None,
                     display: None,
                     repair_requested: false,
+                    shape_asset: None,
                     solid_requested: false,
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
@@ -912,6 +920,7 @@ impl Document {
                     tip: None,
                     display: None,
                     repair_requested: false,
+                    shape_asset: None,
                     solid_requested: false,
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
@@ -939,6 +948,7 @@ impl Document {
                     tip: None,
                     display: None,
                     repair_requested: false,
+                    shape_asset: None,
                     solid_requested: false,
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
@@ -1014,6 +1024,16 @@ impl Document {
             Op::RequestBodyRepair { id } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.repair_requested = true;
+                }
+            }
+            Op::ReplaceBodyShape { id, asset, bytes } => {
+                self.assets.insert(asset.id, asset.clone());
+                self.asset_blobs
+                    .insert(asset.id, std::sync::Arc::clone(&bytes.0));
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.shape_asset = Some(asset.id);
+                    // A new shape is checked and repaired afresh.
+                    entry.repair_requested = false;
                 }
             }
             Op::SetBodyVisible { id, visible } => {
@@ -1214,6 +1234,7 @@ impl Document {
                         tip: None,
                         display: None,
                         repair_requested: false,
+                        shape_asset: None,
                         solid_requested: false,
                         hidden: false,
                         placement: BodyPlacement::IDENTITY,
@@ -1897,11 +1918,73 @@ impl Document {
             .iter()
             .find(|b| b.id == body)
             .is_some_and(|b| !b.repair_requested);
-        if !pending || !self.body_solid_is_imported(body) {
+        if !pending || !(self.body_solid_is_imported(body) || self.has_base_solid(body)) {
             return false;
         }
         self.record_and_apply(op::DocumentOp::RequestBodyRepair { id: body });
         true
+    }
+
+    /// Read the body's shape from the file `name`, whose contents are
+    /// `bytes`: its first solid becomes the body's base (what its history
+    /// builds on), or its shape when it has no history. For a body whose
+    /// shape comes from outside its history (an import, a converted mesh,
+    /// a base); not undoable, as an import is not. Whether it was
+    /// recorded.
+    pub fn replace_body_shape(&mut self, body: BodyId, name: &str, bytes: Vec<u8>) -> bool {
+        if !self.can_replace_shape(body) || bytes.is_empty() {
+            return false;
+        }
+        let extension = std::path::Path::new(name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_else(|| "step".to_string());
+        let asset = AssetReference::new(
+            format!("assets/{}.{extension}", Uuid::new_v4()),
+            AssetType::from_extension(&extension),
+            serde_json::json!({ "source_path": name, "replaces_shape_of": body.0 }),
+        );
+        self.record_and_apply(op::DocumentOp::ReplaceBodyShape {
+            id: body,
+            asset,
+            bytes: op::BlobPayload(std::sync::Arc::new(bytes)),
+        });
+        true
+    }
+
+    /// Whether the body's shape comes from a file (an import, a converted
+    /// mesh, or its base), so another file can replace it: not a body
+    /// built from its history alone, a linked copy or a linked part.
+    pub fn can_replace_shape(&self, body: BodyId) -> bool {
+        self.has_base_solid(body)
+            || (self.copy_source(body).is_none()
+                && self.bodies.iter().any(|b| b.id == body && b.link.is_none())
+                && self
+                    .imported_geometry(body)
+                    .is_some_and(|g| g.source_asset.is_some()))
+    }
+
+    /// Bodies whose shape is to be read from a new asset and has not been
+    /// yet, each with the asset: the host derives the shape from it.
+    pub fn bodies_awaiting_shape(&self) -> Vec<(BodyId, Uuid)> {
+        self.bodies
+            .iter()
+            .filter_map(|b| {
+                let asset = b.shape_asset?;
+                let shape = self
+                    .base_solids
+                    .get(&b.id)
+                    .or_else(|| self.imported_geometry(b.id));
+                (shape.and_then(|g| g.source_asset) != Some(asset)).then_some((b.id, asset))
+            })
+            .collect()
+    }
+
+    /// The asset `id` as the document keeps it: where it sits in the
+    /// archive (its extension names its format) and its bytes.
+    pub fn asset_with_bytes(&self, id: Uuid) -> Option<(&AssetReference, std::sync::Arc<Vec<u8>>)> {
+        Some((self.assets.get(&id)?, self.asset_blobs.get(&id)?.clone()))
     }
 
     /// Whether a body is a mesh from a mesh file, not yet a solid: it has

@@ -62,6 +62,14 @@ pub enum KernelRequest {
         source_blob: Arc<Vec<u8>>,
         plane: core_document::MirrorPlane,
     },
+    /// Read the first solid of a file for a body whose shape is replaced
+    /// by it; the file is the worker's own temporary copy of the asset.
+    ReadSolid {
+        body_id: Uuid,
+        asset: Uuid,
+        path: PathBuf,
+        detail: TessellationSettings,
+    },
     /// Run the kernel's repair on an imported body's snapshot.
     RepairShape {
         body_id: Uuid,
@@ -103,6 +111,13 @@ pub enum KernelResponse {
     ShapeRepaired {
         body_id: Uuid,
         result: kernel_api::RepairResult,
+        elapsed: Duration,
+    },
+    /// A body's new shape, read from `asset`.
+    SolidRead {
+        body_id: Uuid,
+        asset: Uuid,
+        result: Result<kernel_api::MeshSolidResult, String>,
         elapsed: Duration,
     },
     RepairFailed {
@@ -273,6 +288,30 @@ impl KernelWorker {
                 body_id,
                 brep_blob,
                 face_colors,
+                detail,
+            })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit the reading of a body's new shape from `path`, a temporary
+    /// copy of `asset` the worker removes when done. One response arrives
+    /// per request.
+    pub fn request_read_solid(
+        &mut self,
+        body_id: Uuid,
+        asset: Uuid,
+        path: PathBuf,
+        detail: TessellationSettings,
+    ) {
+        if self
+            .tx
+            .send(KernelRequest::ReadSolid {
+                body_id,
+                asset,
+                path,
                 detail,
             })
             .is_ok()
@@ -624,6 +663,23 @@ fn worker_loop(
                     body_id,
                     from: source_blob,
                     result,
+                }
+            }
+            KernelRequest::ReadSolid {
+                body_id,
+                asset,
+                path,
+                detail,
+            } => {
+                let started = Instant::now();
+                let result = kernel.read_solid(&path, &detail).map_err(|e| e.to_string());
+                // The worker's own copy of the asset.
+                let _ = std::fs::remove_file(&path);
+                KernelResponse::SolidRead {
+                    body_id,
+                    asset,
+                    result,
+                    elapsed: started.elapsed(),
                 }
             }
             KernelRequest::RepairShape {

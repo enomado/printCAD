@@ -163,6 +163,19 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .param("bodies", ParamKind::List, "The mesh bodies")
             .returns("nothing; pc.doc.rebuild() waits for the conversion"),
         CommandSpec::new(
+            "doc.replace_shape",
+            "Read a body's shape from another file: its first solid becomes the shape the \
+             body's features build on",
+        )
+        .param(
+            "body",
+            ParamKind::Id,
+            "An imported or converted body, or one with a base shape",
+        )
+        .param("path", ParamKind::String, "A STEP, IGES or mesh file")
+        .returns("nothing; pc.doc.rebuild() waits for the new shape")
+        .agent_always_asks(),
+        CommandSpec::new(
             "doc.suppress",
             "Leave a feature out of its body's solid, or back in",
         )
@@ -957,6 +970,7 @@ impl PrintCadApp {
         self.in_script_tab(|app| {
             app.drive_part_recompute();
             app.drive_shape_repairs();
+            app.drive_shape_replacements();
             app.drive_mesh_solids();
             app.drive_mirrored_copies();
             app.drive_links();
@@ -1594,6 +1608,20 @@ pub(crate) fn document_command(
         "doc.recompute" => {
             let body = body_arg(document, &a)?;
             registry.invalidate_body(document, body);
+            Ok(Value::Null)
+        }
+        "doc.replace_shape" => {
+            let body = body_arg(document, &a)?;
+            let path = a.string("path")?;
+            let bytes = std::fs::read(path)
+                .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
+            if !document.replace_body_shape(body, path, bytes) {
+                return Err(CommandError::bad(
+                    "body",
+                    "builds its shape from its history, or takes it from another body or \
+                     file; only an imported or converted shape, or a base shape, is replaced",
+                ));
+            }
             Ok(Value::Null)
         }
         "doc.rename" => {

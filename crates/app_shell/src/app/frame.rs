@@ -573,6 +573,7 @@ impl PrintCadApp {
             app.drain_document_opens();
             app.drive_part_recompute();
             app.drive_shape_repairs();
+            app.drive_shape_replacements();
             app.drive_mesh_solids();
             app.drive_mirrored_copies();
             app.drive_links();

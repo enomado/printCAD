@@ -70,6 +70,12 @@ on that first feature, or deleting the Base once nothing follows it,
 makes the body the plain imported solid again. Repair shape on such a
 body mends its base, and the features build again on it.
 
+**Replace shape…** (a body's menu, in the tree or the view) reads the
+shape from another file: its first solid becomes the base, and the
+features after it build again on the new shape, finding their faces by
+name. On a body without features it simply replaces the shape. It clears
+the undo history, as an import does.
+
 ## The tree
 
 - Double clicking a feature opens it for editing in the workbench that owns

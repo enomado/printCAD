@@ -275,6 +275,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `bodies` (list): The mesh bodies
 - Returns nothing; pc.doc.rebuild() waits for the conversion
 
+`pc.doc.replace_shape`: Read a body's shape from another file: its first solid becomes the shape the body's features build on.
+
+- `body` (id): An imported or converted body, or one with a base shape
+- `path` (string): A STEP, IGES or mesh file
+- Returns nothing; pc.doc.rebuild() waits for the new shape
+
 `pc.doc.suppress`: Leave a feature out of its body's solid, or back in.
 
 - `id` (id): The feature

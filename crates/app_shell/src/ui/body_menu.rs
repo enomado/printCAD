@@ -129,6 +129,18 @@ pub fn body_entries(
         out.push(UiCommand::RevealInTree(source));
         picked = true;
     }
+    if document.can_replace_shape(body)
+        && ui
+            .button("Replace shape…")
+            .on_hover_text(
+                "Read the shape from another file: its first solid, which the body's \
+                 features then build on",
+            )
+            .clicked()
+    {
+        out.push(UiCommand::ReplaceShape(body));
+        picked = true;
+    }
     ui.separator();
     if ui
         .button("Recompute")

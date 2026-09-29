@@ -318,3 +318,20 @@ fn a_filleted_mesh_converts_to_a_sound_solid_of_its_size() {
         );
     }
 }
+
+/// A file's first solid, read to replace a body's shape: a mesh file's
+/// triangles come back a closed solid.
+#[test]
+fn a_mesh_file_reads_as_a_solid() {
+    let path = staged(
+        "replace.stl",
+        &ogeom::io::stl::write(&cube(false), ogeom::io::stl::Encoding::Binary).unwrap(),
+    );
+    let read = OgeomKernel::new()
+        .read_solid(&path, &TessellationSettings::default())
+        .expect("the cube reads");
+    let _ = std::fs::remove_file(&path);
+    assert!(read.closed, "{:?}", read.summary);
+    assert!(!read.brep_blob.is_empty());
+    assert_eq!(read.health.broken, 0);
+}

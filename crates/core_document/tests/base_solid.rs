@@ -109,3 +109,49 @@ fn a_base_is_saved_and_read_back() {
     assert_eq!(back.base_face_colors(body), Some(&[[0.5, 0.5, 0.5]][..]));
     assert_eq!(back.imported_brep_blob(body), Some(&b"ogeom built"[..]));
 }
+
+#[test]
+fn a_replaced_shape_waits_on_its_asset_until_derived_on_every_replica() {
+    let mut doc = Document::new("t");
+    let body = imported_body(&mut doc);
+    let _ = doc.take_pending_ops();
+    let mut peer = doc.clone();
+
+    assert!(doc.can_replace_shape(body));
+    assert!(doc.replace_body_shape(body, "/tmp/new.step", b"ISO-10303-21;".to_vec()));
+    let (waiting, asset) = doc.bodies_awaiting_shape()[0];
+    assert_eq!(waiting, body);
+    let (reference, bytes) = doc.asset_with_bytes(asset).unwrap();
+    assert!(reference.path.ends_with(".step"));
+    assert_eq!(&bytes[..], b"ISO-10303-21;");
+
+    // A peer given the op waits on the same asset.
+    for op in doc.take_pending_ops() {
+        peer.apply_remote_op(&op);
+    }
+    assert_eq!(peer.bodies_awaiting_shape(), [(body, asset)]);
+
+    // Once derived from that asset, nothing waits.
+    let mut read = doc.imported_geometry(body).unwrap().clone();
+    read.source_asset = Some(asset);
+    doc.set_imported_geometry(body, read);
+    assert!(doc.bodies_awaiting_shape().is_empty());
+
+    // A based body takes the new shape as its base.
+    doc.set_body_base(body, true);
+    assert!(doc.replace_body_shape(body, "/tmp/newer.stl", b"solid".to_vec()));
+    let (_, newer) = doc.bodies_awaiting_shape()[0];
+    let mut read = doc.base_geometry(body).unwrap().clone();
+    read.source_asset = Some(newer);
+    doc.set_base_solid(body, read, b"ogeom newer".to_vec(), Vec::new());
+    assert!(doc.bodies_awaiting_shape().is_empty());
+    assert_eq!(doc.base_brep_blob(body), Some(&b"ogeom newer"[..]));
+}
+
+#[test]
+fn a_shape_built_from_history_alone_is_not_replaced() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(None);
+    assert!(!doc.can_replace_shape(body));
+    assert!(!doc.replace_body_shape(body, "/tmp/x.step", b"x".to_vec()));
+}

@@ -171,6 +171,100 @@ impl PrintCadApp {
         }
     }
 
+    /// Read the new shape of every body whose shape was replaced by
+    /// another file (`ReplaceBodyShape`), each once, on the kernel thread.
+    pub(crate) fn drive_shape_replacements(&mut self) {
+        for (body, asset) in self.session.document.bodies_awaiting_shape() {
+            if self.session.shapes_in_flight.contains(&body.0)
+                || self.session.shapes_failed.get(&body.0) == Some(&asset)
+            {
+                continue;
+            }
+            let Some((reference, bytes)) = self.session.document.asset_with_bytes(asset) else {
+                continue;
+            };
+            // The kernel reads files: a copy of the asset under its format's
+            // extension, removed by the worker when read.
+            let name = std::path::Path::new(&reference.path)
+                .file_name()
+                .map(|n| n.to_owned())
+                .unwrap_or_else(|| format!("{asset}.step").into());
+            let dir = std::env::temp_dir().join("printcad").join("shapes");
+            let path = dir.join(name);
+            if let Err(e) =
+                std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &*bytes))
+            {
+                self.session.shapes_failed.insert(body.0, asset);
+                app_log::error(format!(
+                    "Could not stage the new shape of `{}`: {e}",
+                    self.body_name(body)
+                ));
+                continue;
+            }
+            self.session.shapes_in_flight.insert(body.0);
+            app_log::info(format!(
+                "Reading the new shape of `{}`…",
+                self.body_name(body)
+            ));
+            self.kernel_worker.request_read_solid(
+                body.0,
+                asset,
+                path,
+                TessellationSettings::default(),
+            );
+        }
+    }
+
+    /// Land a body's new shape: as its base, which its features then build
+    /// on, or as its shape when it has no history.
+    pub(crate) fn apply_shape_read(
+        &mut self,
+        body: core_document::BodyId,
+        asset: uuid::Uuid,
+        result: Result<kernel_api::MeshSolidResult, String>,
+        elapsed: std::time::Duration,
+    ) {
+        self.session.shapes_in_flight.remove(&body.0);
+        let name = self.body_name(body);
+        let read = match result {
+            Ok(read) => read,
+            Err(error) => {
+                self.session.shapes_failed.insert(body.0, asset);
+                app_log::error(format!(
+                    "The new shape of `{name}` could not be read: {error}"
+                ));
+                return;
+            }
+        };
+        let geometry = core_document::ImportedGeometry {
+            bounds_mm: read.bounds_mm.or_else(|| read.mesh.bounds()),
+            mesh: std::sync::Arc::new(read.mesh),
+            source_asset: Some(asset),
+            revision: 0,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: Some(read.health),
+        };
+        let document = &mut self.session.document;
+        if document.has_base_solid(body) {
+            document.set_base_solid(body, geometry, read.brep_blob, read.face_colors);
+            // Its features build again on the new base.
+            self.registry.invalidate_body(document, body);
+        } else {
+            document.set_imported_geometry(body, geometry);
+            document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+        }
+        let notes = if read.summary.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", read.summary.join(", "))
+        };
+        app_log::success(format!(
+            "`{name}` takes its new shape, read in {:.1} s{notes}",
+            elapsed.as_secs_f32()
+        ));
+    }
+
     /// Land a repaired shape on its body: the mended snapshot, its mesh and
     /// the checker's verdict, which clears the body from the queue.
     pub(crate) fn apply_shape_repair(

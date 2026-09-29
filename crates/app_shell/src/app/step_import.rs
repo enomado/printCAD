@@ -91,6 +91,7 @@ impl PrintCadApp {
                 KernelResponse::SolidBuilt { body_id, .. }
                 | KernelResponse::SolidFailed { body_id, .. }
                 | KernelResponse::ShapeRepaired { body_id, .. }
+                | KernelResponse::SolidRead { body_id, .. }
                 | KernelResponse::RepairFailed { body_id, .. }
                 | KernelResponse::Measured { body_id, .. }
                 | KernelResponse::MeshSolidBuilt { body_id, .. }
@@ -197,6 +198,12 @@ impl PrintCadApp {
                     result,
                     elapsed,
                 } => self.apply_shape_repair(BodyId(body_id), result, elapsed),
+                KernelResponse::SolidRead {
+                    body_id,
+                    asset,
+                    result,
+                    elapsed,
+                } => self.apply_shape_read(BodyId(body_id), asset, result, elapsed),
                 KernelResponse::MeshSolidBuilt {
                     body_id,
                     result,

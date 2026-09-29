@@ -99,6 +99,8 @@ pub enum UiCommand {
     SetToolbarLayout(Vec<Vec<String>>),
     /// Look for a newer printCAD release now and say what was found.
     CheckForUpdates,
+    /// Pick a file whose first solid becomes the body's shape.
+    ReplaceShape(core_document::BodyId),
     /// The tree opens its way to this body and scrolls to it.
     RevealInTree(core_document::BodyId),
     /// The whole body, as a double click would.

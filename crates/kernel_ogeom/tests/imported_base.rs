@@ -165,3 +165,14 @@ fn the_base_goes_last_and_takes_the_body_back_to_its_import() {
     );
     assert!(host.document.imported_brep_blob(body).is_some());
 }
+
+#[test]
+fn a_step_file_reads_as_its_first_solid() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/box_native.step");
+    let read = OgeomKernel::new()
+        .read_solid(&path, &TessellationSettings::default())
+        .unwrap();
+    assert!(read.closed);
+    assert!(read.brep_blob.starts_with(b"ogeom"));
+    assert!(read.mesh.bounds().is_some());
+}

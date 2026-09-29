@@ -472,6 +472,14 @@ undoes it, and the Base deletes only once nothing follows it. Repair on a
 based body mends the base (`set_base_solid`, derived) and invalidates the
 body; `Document::body_health` reads the base's findings where there is
 one. The tree puts an imported part's features under its row.
+Replace shape… (body menus, `doc.replace_shape`) reads a body's shape
+from another file: op `ReplaceBodyShape` carries the file as an asset
+(a history barrier, as an import is) and sets `Body.shape_asset`;
+`bodies_awaiting_shape` lists bodies whose base (or shape, without a
+history) is not yet from that asset, and the host's
+`drive_shape_replacements` reads each on the kernel thread
+(`OgeomKernel::read_solid`: a STEP/IGES file's first body, a mesh file
+converted) into the base, invalidating the body, or into its shape.
 
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,

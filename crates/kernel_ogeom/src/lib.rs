@@ -132,6 +132,43 @@ impl OgeomKernel {
         health::measure_blob(brep_blob)
     }
 
+    /// The first solid of the file at `path`, meshed: a STEP or IGES
+    /// file's first body as read, or a mesh file's triangles converted to
+    /// a solid. What the file held beyond it is said in `summary`.
+    pub fn read_solid(
+        &mut self,
+        path: &Path,
+        detail: &TessellationSettings,
+    ) -> KernelResult<kernel_api::MeshSolidResult> {
+        let model = self.import_step_full_mesh(path, detail)?;
+        let count = model.bodies.len();
+        let Some(body) = model.bodies.into_iter().next() else {
+            return Err(KernelError::Other(anyhow::anyhow!(
+                "{} holds no body",
+                path.display()
+            )));
+        };
+        let mut result = if body.brep_blob.is_empty() {
+            self.mesh_to_solid(&body.mesh, detail)?
+        } else {
+            kernel_api::MeshSolidResult {
+                brep_blob: body.brep_blob,
+                face_colors: body.face_colors,
+                bounds_mm: body.bounds_mm.or_else(|| body.mesh.bounds()),
+                mesh: body.mesh,
+                health: body.health.unwrap_or_default(),
+                closed: true,
+                summary: Vec::new(),
+            }
+        };
+        if count > 1 {
+            result.summary.push(format!(
+                "the file holds {count} bodies; the first was taken"
+            ));
+        }
+        Ok(result)
+    }
+
     /// Read + tessellate in one synchronous shot (legacy path). Useful for
     /// tests comparing meshes against the deferred pipeline.
     pub fn import_step_full_mesh(

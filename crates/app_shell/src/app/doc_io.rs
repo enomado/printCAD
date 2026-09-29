@@ -87,6 +87,8 @@ pub(crate) enum FileDialogKind {
     SaveAnimation(Box<crate::app::animation::Animation>),
     /// A workbench package to install.
     InstallPackage,
+    /// A file whose first solid becomes the body's shape.
+    ReplaceShape(core_document::BodyId),
 }
 
 /// A file a bench asked to save: its suggested name, the dialog's filter
@@ -817,6 +819,11 @@ impl PrintCadApp {
                     self.install_package_from(&path);
                 }
             }
+            FileDialogKind::ReplaceShape(body) => {
+                if let Some(path) = path {
+                    self.replace_shape_from(body, &path);
+                }
+            }
         }
         self.file_dialog_rx = None;
     }
@@ -889,6 +896,15 @@ impl PrintCadApp {
                         &[crate::app::animation::FRAMES_EXTENSION],
                     )
                     .set_file_name(format!("{}.png", animation.name)),
+                FileDialogKind::ReplaceShape(_) => rfd::FileDialog::new()
+                    .set_title("Replace the shape with the first solid of a file")
+                    .add_filter(
+                        "STEP, IGES or mesh file",
+                        &[
+                            "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
+                            "gltf", "wrl", "vrml",
+                        ],
+                    ),
                 FileDialogKind::InstallPackage => rfd::FileDialog::new()
                     .set_title("Install a workbench package")
                     .add_filter("Workbench package", &[workbenches::ARCHIVE_EXTENSION]),
@@ -923,9 +939,9 @@ impl PrintCadApp {
                     FileDialogKind::Export(_)
                     | FileDialogKind::SaveFile(_)
                     | FileDialogKind::SaveAnimation(_) => dialog.save_file(),
-                    FileDialogKind::RunScript | FileDialogKind::InstallPackage => {
-                        dialog.pick_file()
-                    }
+                    FileDialogKind::RunScript
+                    | FileDialogKind::InstallPackage
+                    | FileDialogKind::ReplaceShape(_) => dialog.pick_file(),
                     FileDialogKind::Attach(_) => None,
                 }),
             };

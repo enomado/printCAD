@@ -172,6 +172,9 @@ impl PrintCadApp {
                     intents.persist_settings = true;
                 }
                 UiCommand::CheckForUpdates => self.check_app_release(false),
+                UiCommand::ReplaceShape(body) => {
+                    self.start_file_dialog(FileDialogKind::ReplaceShape(body));
+                }
                 UiCommand::SetToolbarLayout(rows) => {
                     self.user_settings.toolbars.rows = rows;
                     intents.persist_settings = true;
@@ -1033,6 +1036,40 @@ impl PrintCadApp {
         };
         self.session.journal.label_next(label);
         self.close_gesture();
+    }
+
+    /// Read `body`'s shape from `path`, as `doc.replace_shape` does: one
+    /// step of history, recorded as that command.
+    pub(crate) fn replace_shape_from(
+        &mut self,
+        body: core_document::BodyId,
+        path: &std::path::Path,
+    ) {
+        let args =
+            serde_json::json!({"body": body.0.to_string(), "path": path.display().to_string()});
+        let serde_json::Value::Object(args) = args else {
+            return;
+        };
+        let answer = crate::app::scripts::document_command(
+            "doc.replace_shape",
+            &args,
+            &mut self.session.document,
+            &self.registry,
+            self.session.current_file.as_deref(),
+        );
+        match answer {
+            Some(Ok(result)) => {
+                self.record_calls(vec![core_document::Recorded {
+                    id: "doc.replace_shape".into(),
+                    args,
+                    result,
+                }]);
+                self.session.journal.label_next("Replace shape");
+                self.close_gesture();
+            }
+            Some(Err(why)) => app_log::warn(format!("{why}")),
+            None => {}
+        }
     }
 
     /// Give `feature` the formulas of another, where it has the same

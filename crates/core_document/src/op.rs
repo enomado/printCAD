@@ -167,6 +167,14 @@ pub enum DocumentOp {
     RequestBodyRepair {
         id: BodyId,
     },
+    /// Read a body's shape from another file (`asset`, carried whole as
+    /// an import's is): its first solid becomes the body's base, or its
+    /// shape when it has no history. Derived, as an import's geometry is.
+    ReplaceBodyShape {
+        id: BodyId,
+        asset: AssetReference,
+        bytes: BlobPayload,
+    },
     /// Show or hide a body in the scene.
     SetBodyVisible {
         id: BodyId,
