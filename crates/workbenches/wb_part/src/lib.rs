@@ -15,6 +15,7 @@ mod datum_refs;
 mod editors;
 mod feature;
 mod generators;
+mod handles;
 mod hole_tables;
 mod params;
 mod references;
@@ -109,6 +110,8 @@ pub struct PartDesignWorkbench {
     centre: Option<centre::CentreTask>,
     /// Features Edit › Copy or Cut took.
     clipboard: Option<clipboard::Clipboard>,
+    /// The drag handle held, as it was taken and at the number it sets.
+    held: Option<handles::Handle>,
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -890,6 +893,82 @@ fn register(context: &mut WorkbenchContext, tool: ToolDescriptor) {
 }
 
 impl PartDesignWorkbench {
+    /// The feature whose task is open.
+    fn task_feature(&self) -> Option<FeatureId> {
+        #[cfg(feature = "egui")]
+        {
+            self.task.as_ref().map(|t| t.feature)
+        }
+        #[cfg(not(feature = "egui"))]
+        {
+            None
+        }
+    }
+
+    /// The handle held, else the one the open task's feature offers.
+    fn handle(&self, ctx: &WorkbenchRuntimeContext) -> Option<handles::Handle> {
+        self.held.or_else(|| {
+            let eye = glam::Vec3::from_array(ctx.camera_position);
+            handles::handle_of(ctx.document, self.task_feature()?, eye)
+        })
+    }
+
+    /// A press on the open task's handle takes hold of it; moves drag the
+    /// number it stands for, written live as the panel's edits are.
+    fn handle_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> Option<InputResult> {
+        use core_document::MouseButton;
+        match event {
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Left,
+                viewport_pos,
+            } => {
+                let handle = self.handle(ctx)?;
+                if !handles::within_reach(ctx, &handle, *viewport_pos) {
+                    return None;
+                }
+                self.held = Some(handle);
+                Some(InputResult::consumed())
+            }
+            WorkbenchInputEvent::MouseMove { viewport_pos } => {
+                let held = self.held.as_mut()?;
+                let (origin, dir) = ctx.viewport_to_ray(*viewport_pos)?;
+                let value =
+                    held.value_at(glam::Vec3::from_array(origin), glam::Vec3::from_array(dir))?;
+                if value != held.value {
+                    held.value = value;
+                    let feature = held.feature;
+                    if let Some(mut part) = ctx
+                        .document
+                        .get_feature_data(feature)
+                        .and_then(|d| PartFeature::from_json(d).ok())
+                        && handles::set_value(&mut part, value)
+                        && ctx
+                            .document
+                            .update_feature_data(feature, part.to_json())
+                            .is_ok()
+                        && self.options.update_while_editing
+                    {
+                        ctx.document.mark_feature_dirty(feature);
+                    }
+                }
+                Some(InputResult::consumed())
+            }
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Left,
+                ..
+            } => {
+                let held = self.held.take()?;
+                ctx.document.mark_feature_dirty(held.feature);
+                Some(InputResult::consumed())
+            }
+            _ => None,
+        }
+    }
+
     /// Edit › Copy (or Cut) of the feature selected in the tree.
     fn copy(&mut self, ctx: &mut WorkbenchRuntimeContext, cut: bool) -> bool {
         let Some(id) = ctx.active_document_object else {
@@ -959,7 +1038,7 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn editing_feature(&self) -> Option<FeatureId> {
-        self.task.as_ref().map(|task| task.feature)
+        self.task_feature()
     }
 
     fn references(
@@ -1342,10 +1421,13 @@ impl Workbench for PartDesignWorkbench {
 
     fn on_input(
         &mut self,
-        _event: &WorkbenchInputEvent,
+        event: &WorkbenchInputEvent,
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let Some(result) = self.handle_input(event, ctx) {
+            return result;
+        }
         // Feature tools are Actions: the host hands them over the moment they
         // are activated and clears them once handled.
         let base = active_tool.map(base_tool_id);
@@ -1551,7 +1633,11 @@ impl Workbench for PartDesignWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
-        self.centre_overlays(ctx)
+        let mut lines = self.centre_overlays(ctx);
+        if let Some(handle) = self.handle(ctx) {
+            lines.extend(handles::overlays(ctx, &handle));
+        }
+        lines
     }
 
     fn get_screen_space_marks(
@@ -1559,7 +1645,11 @@ impl Workbench for PartDesignWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceMark> {
-        self.centre_marks(ctx)
+        let mut marks = self.centre_marks(ctx);
+        if let Some(handle) = self.handle(ctx) {
+            marks.extend(handles::marks(ctx, &handle, self.held.is_some()));
+        }
+        marks
     }
 
     fn get_screen_space_labels(
@@ -1567,7 +1657,11 @@ impl Workbench for PartDesignWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceLabel> {
-        self.centre_labels(ctx)
+        let mut labels = self.centre_labels(ctx);
+        if let Some(handle) = self.held {
+            labels.extend(handles::labels(ctx, &handle));
+        }
+        labels
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {

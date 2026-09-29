@@ -712,6 +712,64 @@ mod tests {
         wb.apply_part_edit(&mut ctx, id, &before.dependencies(), before.sketch(), &to);
     }
 
+    /// The open pad's end carries a handle; dragging it sets the length.
+    #[test]
+    fn dragging_the_pad_handle_sets_its_length() {
+        use core_document::{MouseButton, Workbench, WorkbenchInputEvent as E};
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        let mut wb = PartDesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+
+        let eye = glam::Vec3::new(60.0, -60.0, 30.0);
+        let view = glam::camera::rh::view::look_at_mat4(
+            eye,
+            glam::Vec3::new(5.0, 2.5, 5.0),
+            glam::Vec3::Z,
+        );
+        let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
+        let mut ctx = WorkbenchRuntimeContext::new(
+            &mut doc,
+            eye.to_array(),
+            [5.0, 2.5, 5.0],
+            (0, 0, 800, 600),
+        );
+        ctx.view_proj = Some((proj * view).to_cols_array_2d());
+
+        let handle = wb.handle(&ctx).expect("the pad offers a handle");
+        assert!((handle.position() - glam::Vec3::new(5.0, 2.5, 10.0)).length() < 1e-4);
+        let at = ctx.world_to_viewport([5.0, 2.5, 10.0]).unwrap();
+        let to = ctx.world_to_viewport([5.0, 2.5, 17.0]).unwrap();
+        let far = ctx.world_to_viewport([40.0, 2.5, 10.0]).unwrap();
+
+        let press = |pos| E::MousePress {
+            button: MouseButton::Left,
+            viewport_pos: pos,
+        };
+        assert!(
+            !wb.on_input(&press(far), None, &mut ctx).consumed,
+            "away from it"
+        );
+        assert!(wb.on_input(&press(at), None, &mut ctx).consumed);
+        assert!(
+            wb.on_input(&E::MouseMove { viewport_pos: to }, None, &mut ctx)
+                .consumed
+        );
+        let release = E::MouseRelease {
+            button: MouseButton::Left,
+            viewport_pos: to,
+        };
+        assert!(wb.on_input(&release, None, &mut ctx).consumed);
+        assert!(wb.held.is_none());
+        let data = PartFeature::from_json(ctx.document.get_feature_data(id).unwrap()).unwrap();
+        let PartFeature::Pad { length, .. } = data else {
+            panic!()
+        };
+        assert!((length - 17.0).abs() < 0.051, "{length}");
+    }
+
     /// Cancel puts back everything the task changed: the data and what it
     /// depends on, the formulas, the name and the sketches it hid or showed.
     #[test]

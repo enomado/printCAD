@@ -203,8 +203,10 @@ and noted on its item, and the rest of the item is built around it.
   row's Duplicate, Edit's Cut, Copy and Paste in Part Design, and
   `part.duplicate`; a copy reads its own copies of the sketches and
   datums of its body it is built from.
-- [ ] **Drag handles in the view** (missing, L). Drag a pad's end or a
-  fillet's radius.
+- [x] **Drag handles in the view** (missing, L). Drag a pad's end or a
+  fillet's radius. The open task of a pad or pocket of a set length
+  along its sketch's normal, or of a fillet or chamfer on picked edges,
+  shows a dot that drags the number, in tenths of a millimetre.
 
 ### Generators and measuring
 
