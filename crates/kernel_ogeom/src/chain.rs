@@ -397,6 +397,7 @@ pub fn execute_named(
                 open_face_names,
                 inward,
                 join,
+                both_sides,
             } => {
                 let solid = base.ok_or_else(|| err("thickness needs an existing solid".into()))?;
                 ops::dressup::thickness(
@@ -405,7 +406,7 @@ pub fn execute_named(
                     *value,
                     open_faces,
                     open_face_names,
-                    *inward,
+                    if *both_sides { None } else { Some(*inward) },
                     *join,
                 )
                 .map_err(&err)?

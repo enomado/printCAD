@@ -501,15 +501,44 @@ pub fn draft(
     .map_err(|e| format!("draft failed: {e}"))
 }
 
+/// Hollow `solid` into walls `value` thick, opened at the faces named,
+/// inward or outward (`side`), or both ways at once when `side` is `None`:
+/// the inward and outward walls fused along the solid's own faces.
 pub fn thickness(
     model: &mut Model,
     solid: &Shape,
     value: f64,
     open_face_points: &[[f64; 3]],
     open_face_names: &[kernel_api::TopoName],
-    inward: bool,
+    side: Option<bool>,
     join: ThicknessJoin,
 ) -> Result<Shape, String> {
+    let Some(inward) = side else {
+        let inner = thickness(
+            model,
+            solid,
+            value,
+            open_face_points,
+            open_face_names,
+            Some(true),
+            join,
+        )?;
+        let outer = thickness(
+            model,
+            solid,
+            value,
+            open_face_points,
+            open_face_names,
+            Some(false),
+            join,
+        )?;
+        return ogeom::boolean::fuse(model, &inner, &outer, tol())
+            .map(|b| {
+                crate::naming::record(&b.history);
+                b.shape
+            })
+            .map_err(|e| format!("joining the two sides' walls failed: {e}"));
+    };
     let mut removed = Vec::with_capacity(open_face_points.len());
     for (i, p) in open_face_points.iter().enumerate() {
         removed.push(face_named_or_nearest(

@@ -173,6 +173,14 @@ impl ExtrudeDirection {
     }
 }
 
+/// What gives a draft's pull direction: a straight edge of the solid, or a
+/// datum line.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum PullRef {
+    Edge(EdgePick),
+    Datum(FeatureId),
+}
+
 /// A plane an extrusion stops on: one of the body's own planes, or a datum
 /// plane (for a coordinate system, the plane of it named).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -578,6 +586,19 @@ pub enum MirrorPlane {
     XZ,
     YZ,
     Face(FacePick),
+    /// A datum plane, or one of a coordinate system's planes.
+    Datum {
+        datum: FeatureId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plane: Option<core_document::BasePlane>,
+    },
+    /// A sketch's plane, or the plane through one of its axes square to
+    /// it.
+    Sketch {
+        sketch: FeatureId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        axis: Option<SketchAxis>,
+    },
 }
 
 impl MirrorPlane {
@@ -589,12 +610,26 @@ impl MirrorPlane {
             MirrorPlane::XZ => "XZ plane",
             MirrorPlane::YZ => "YZ plane",
             MirrorPlane::Face(_) => "Picked face",
+            MirrorPlane::Datum { .. } => "Datum plane",
+            MirrorPlane::Sketch { axis: None, .. } => "Sketch plane",
+            MirrorPlane::Sketch { axis: Some(_), .. } => "Sketch axis",
         }
     }
 
-    /// The plane as (point, normal), in the body's own frame.
+    /// The feature it is taken from, when it is another feature.
+    pub fn reference(&self) -> Option<FeatureId> {
+        match self {
+            MirrorPlane::Datum { datum, .. } => Some(*datum),
+            MirrorPlane::Sketch { sketch, .. } => Some(*sketch),
+            _ => None,
+        }
+    }
+
+    /// The plane as (point, normal), in the body's own frame; a datum's or
+    /// a sketch's, which the build works out, as the XY plane.
     pub fn plane(&self) -> ([f64; 3], [f64; 3]) {
         match self {
+            MirrorPlane::Datum { .. } | MirrorPlane::Sketch { .. } => ([0.0; 3], [0.0, 0.0, 1.0]),
             MirrorPlane::XY => ([0.0; 3], [0.0, 0.0, 1.0]),
             MirrorPlane::XZ => ([0.0; 3], [0.0, 1.0, 0.0]),
             MirrorPlane::YZ => ([0.0; 3], [1.0, 0.0, 0.0]),
@@ -1328,6 +1363,13 @@ pub enum PartFeature {
         faces: Vec<FacePick>,
         #[serde(default)]
         reversed: bool,
+        /// One of the body's planes or a datum plane as the neutral plane,
+        /// in place of `neutral`.
+        #[serde(default)]
+        neutral_plane: Option<PlaneTarget>,
+        /// The way the draft pulls, in place of the neutral plane's normal.
+        #[serde(default)]
+        pull: Option<PullRef>,
     },
     Thickness {
         value: f32,
@@ -1337,6 +1379,9 @@ pub enum PartFeature {
         /// How the walls meet where the solid's faces meet.
         #[serde(default)]
         join: kernel_api::ThicknessJoin,
+        /// Walls on both sides of the faces, the thickness each way.
+        #[serde(default)]
+        both_sides: bool,
     },
     Mirrored {
         originals: Vec<FeatureId>,
@@ -1395,6 +1440,9 @@ pub enum PartFeature {
     BodyBoolean {
         tool_body: BodyId,
         kind: kernel_api::BoolKind,
+        /// Further tool bodies, each taken the same way after the first.
+        #[serde(default)]
+        more_tools: Vec<BodyId>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
@@ -1810,6 +1858,42 @@ impl WorkbenchFeature for PartFeature {
                 if !deps.contains(&reference) {
                     deps.push(reference);
                 }
+            }
+        }
+        if let PartFeature::Draft {
+            neutral_plane,
+            pull,
+            ..
+        } = self
+        {
+            let datum = match neutral_plane {
+                Some(PlaneTarget::Datum { datum, .. }) => Some(*datum),
+                _ => None,
+            };
+            let line = match pull {
+                Some(PullRef::Datum(datum)) => Some(*datum),
+                _ => None,
+            };
+            for reference in [datum, line].into_iter().flatten() {
+                if !deps.contains(&reference) {
+                    deps.push(reference);
+                }
+            }
+        }
+        let mirrors: Vec<&MirrorPlane> = match self {
+            PartFeature::Mirrored { plane, .. } => vec![plane],
+            PartFeature::MultiTransform { steps, .. } => steps
+                .iter()
+                .filter_map(|step| match step {
+                    TransformStep::Mirror { plane } => Some(plane),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for reference in mirrors.into_iter().filter_map(MirrorPlane::reference) {
+            if !deps.contains(&reference) {
+                deps.push(reference);
             }
         }
         if let PartFeature::Primitive {

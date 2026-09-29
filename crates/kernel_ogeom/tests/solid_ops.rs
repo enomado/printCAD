@@ -805,6 +805,7 @@ fn thickness_hollows_the_box() {
                     BooleanOp::NewSolid,
                 ),
                 SolidOp::Thickness {
+                    both_sides: false,
                     open_face_names: Vec::new(),
                     value: 1.5,
                     open_faces: vec![[10.0, 10.0, 10.0]],

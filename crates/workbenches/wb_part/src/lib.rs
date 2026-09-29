@@ -487,6 +487,8 @@ impl PartDesignWorkbench {
                     .ok_or("Click a face in the viewport first (the neutral plane)")?;
                 (
                     PartFeature::Draft {
+                        neutral_plane: None,
+                        pull: None,
                         angle_deg: 1.5,
                         neutral: pick,
                         faces: Vec::new(),
@@ -501,6 +503,7 @@ impl PartDesignWorkbench {
                     .ok_or("Click the face to open in the viewport first")?;
                 (
                     PartFeature::Thickness {
+                        both_sides: false,
                         value: 1.0,
                         faces: vec![pick],
                         inward: true,
@@ -619,6 +622,7 @@ impl PartDesignWorkbench {
                     .ok_or("Create a second body to combine with first")?;
                 (
                     PartFeature::BodyBoolean {
+                        more_tools: Vec::new(),
                         refine: false,
                         tool_body: other,
                         kind: kernel_api::BoolKind::Fuse,

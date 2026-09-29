@@ -1245,6 +1245,10 @@ pub enum SolidOp {
         /// How the walls meet where the solid's faces meet.
         #[serde(default)]
         join: ThicknessJoin,
+        /// The walls stand on both sides of the solid's faces, `value` each
+        /// way, rather than on the one `inward` says.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        both_sides: bool,
     },
     /// Re-apply earlier steps' tool solids (or the whole current solid when
     /// `originals` is empty) under each transform, fusing additive tools and

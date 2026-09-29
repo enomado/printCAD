@@ -184,6 +184,7 @@ fn a_thickness_opens_its_face_by_name() {
     let first = build(&[block(10.0)], &[]);
     let top = face_name(&first.mesh, |p| (p[2] - 10.0).abs() < 1e-3);
     let shell = |name: TopoName| SolidOp::Thickness {
+        both_sides: false,
         value: 1.0,
         open_faces: vec![[10.0, 10.0, 10.0]],
         open_face_names: vec![name],

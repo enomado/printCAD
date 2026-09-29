@@ -274,9 +274,16 @@ fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> 
     part_features_of_body(document, body)
         .into_iter()
         .filter(|(id, _)| !document.get_feature_meta(*id).is_some_and(|n| n.suppressed))
-        .filter_map(|(id, feature)| match feature {
-            PartFeature::BodyBoolean { tool_body, .. } => Some((id, tool_body)),
-            _ => None,
+        .flat_map(|(id, feature)| match feature {
+            PartFeature::BodyBoolean {
+                tool_body,
+                more_tools,
+                ..
+            } => std::iter::once(tool_body)
+                .chain(more_tools)
+                .map(|tool| (id, tool))
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
         })
         .collect()
 }
@@ -850,6 +857,8 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 neutral,
                 faces,
                 reversed,
+                neutral_plane,
+                pull,
             } => {
                 if faces.is_empty() {
                     return Err(fail(
@@ -858,11 +867,28 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                             .into(),
                     ));
                 }
-                let (neutral_point, neutral_normal) = face_pick_plane(neutral);
-                let pull = if *reversed {
-                    Some([-neutral_normal[0], -neutral_normal[1], -neutral_normal[2]])
-                } else {
-                    None
+                let (neutral_point, neutral_normal) = match neutral_plane {
+                    Some(target) => target_plane(document, target).map_err(&fail)?,
+                    None => face_pick_plane(neutral),
+                };
+                // The pull: along an edge or datum line when one is given,
+                // else along the neutral plane's normal; reversed turns it.
+                let along = match pull {
+                    Some(crate::feature::PullRef::Edge(edge)) => {
+                        Some(edge.direction.map(f64::from))
+                    }
+                    Some(crate::feature::PullRef::Datum(datum)) => {
+                        Some(datum_direction(document, *datum).map_err(&fail)?)
+                    }
+                    None => None,
+                };
+                let pull = match (along, *reversed) {
+                    (Some(d), false) => Some(d),
+                    (Some(d), true) => Some([-d[0], -d[1], -d[2]]),
+                    (None, true) => {
+                        Some([-neutral_normal[0], -neutral_normal[1], -neutral_normal[2]])
+                    }
+                    (None, false) => None,
                 };
                 plan.ops.push(SolidOp::Draft {
                     angle_deg: *angle_deg as f64,
@@ -878,6 +904,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 faces,
                 inward,
                 join,
+                both_sides,
             } => {
                 if faces.is_empty() {
                     return Err(fail("select at least one face to open".into()));
@@ -888,6 +915,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     open_face_names: face_names(faces),
                     inward: *inward,
                     join: *join,
+                    both_sides: *both_sides,
                 });
             }
             PartFeature::Mirrored {
@@ -896,7 +924,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 refine: _,
             } => {
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let (point, normal) = plane.plane();
+                let (point, normal) = mirror_plane(document, plane).map_err(&fail)?;
                 plan.ops.push(SolidOp::Transform {
                     transforms: vec![mat_mirror(point, normal)],
                     originals,
@@ -989,42 +1017,45 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
             PartFeature::BodyBoolean {
                 tool_body,
                 kind,
+                more_tools,
                 refine: _,
             } => {
-                if *tool_body == body {
-                    return Err(fail(
-                        "a body cannot be its own tool; pick another body".into(),
-                    ));
-                }
-                if tools_reach(document, *tool_body, body) {
-                    return Err(fail(
-                        "the tool body takes this body as a tool in turn; one of the two \
+                for tool_body in std::iter::once(tool_body).chain(more_tools) {
+                    if *tool_body == body {
+                        return Err(fail(
+                            "a body cannot be its own tool; pick another body".into(),
+                        ));
+                    }
+                    if tools_reach(document, *tool_body, body) {
+                        return Err(fail(
+                            "the tool body takes this body as a tool in turn; one of the two \
                          has to go"
-                            .into(),
-                    ));
+                                .into(),
+                        ));
+                    }
+                    if !document.bodies().iter().any(|b| b.id == *tool_body) {
+                        return Err(fail(
+                            "the tool body is not in this document; pick another body".into(),
+                        ));
+                    }
+                    let tool_brep = document
+                        .imported_brep_blob(*tool_body)
+                        .ok_or_else(|| {
+                            fail("the tool body has no built solid yet (build it first)".into())
+                        })?
+                        .to_vec();
+                    // The tool's shape is in its own body's frame; it meets this
+                    // body's where the two bodies sit.
+                    let relative = document
+                        .body_placement(body)
+                        .inverse()
+                        .after(&document.body_placement(*tool_body));
+                    plan.ops.push(SolidOp::Boolean {
+                        tool_brep,
+                        kind: *kind,
+                        tool_transform: (!relative.is_identity()).then(|| relative.rows()),
+                    });
                 }
-                if !document.bodies().iter().any(|b| b.id == *tool_body) {
-                    return Err(fail(
-                        "the tool body is not in this document; pick another body".into(),
-                    ));
-                }
-                let tool_brep = document
-                    .imported_brep_blob(*tool_body)
-                    .ok_or_else(|| {
-                        fail("the tool body has no built solid yet (build it first)".into())
-                    })?
-                    .to_vec();
-                // The tool's shape is in its own body's frame; it meets this
-                // body's where the two bodies sit.
-                let relative = document
-                    .body_placement(body)
-                    .inverse()
-                    .after(&document.body_placement(*tool_body));
-                plan.ops.push(SolidOp::Boolean {
-                    tool_brep,
-                    kind: *kind,
-                    tool_transform: (!relative.is_identity()).then(|| relative.rows()),
-                });
             }
         }
 
@@ -1125,6 +1156,41 @@ fn side_termination(
                 offset: side.offset as f64,
             })
         }
+    }
+}
+
+/// Where a mirror's plane stands in the body's frame: a point of it and its
+/// normal.
+pub(crate) fn mirror_plane(
+    document: &Document,
+    plane: &crate::feature::MirrorPlane,
+) -> Result<([f64; 3], [f64; 3]), String> {
+    use crate::feature::{MirrorPlane, PlaneTarget, SketchAxis};
+    match plane {
+        MirrorPlane::Datum { datum, plane } => target_plane(
+            document,
+            &PlaneTarget::Datum {
+                datum: *datum,
+                plane: *plane,
+            },
+        ),
+        MirrorPlane::Sketch { sketch, axis } => {
+            let feature = load_sketch(document, *sketch)?;
+            let p = profile::plane_of(&feature.plane);
+            let normal = match axis {
+                None => p.normal,
+                // The plane through the axis square to the sketch.
+                Some(SketchAxis::Horizontal) => p.y_axis,
+                Some(SketchAxis::Vertical) => p.x_axis,
+                Some(SketchAxis::Normal) => {
+                    return Err(
+                        "a mirror plane holds a sketch's axis in its plane, not its normal".into(),
+                    );
+                }
+            };
+            Ok((p.origin, normal))
+        }
+        other => Ok(other.plane()),
     }
 }
 
@@ -2641,7 +2707,7 @@ fn multi_transforms(document: &Document, steps: &[TransformStep]) -> Result<Vec<
                 &[],
             )?,
             TransformStep::Mirror { plane } => {
-                let (point, normal) = plane.plane();
+                let (point, normal) = mirror_plane(document, plane)?;
                 vec![mat_mirror(point, normal)]
             }
             TransformStep::Scale {
@@ -3407,6 +3473,7 @@ mod tests {
             .unwrap();
         doc.add_feature_in_body(
             PartFeature::BodyBoolean {
+                more_tools: Vec::new(),
                 refine: false,
                 tool_body: body,
                 kind: kernel_api::BoolKind::Cut,
@@ -3476,6 +3543,104 @@ mod tests {
                 _ => None,
             })
             .expect("a thread")
+    }
+
+    #[test]
+    fn a_mirror_takes_a_datum_or_a_sketchs_plane_and_axes() {
+        use crate::feature::{MirrorPlane, SketchAxis};
+        use core_document::{
+            AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape,
+        };
+        let (mut doc, body, sketch) = doc_with_body_sketch();
+        let system = doc
+            .add_feature_in_body(
+                DatumFeature {
+                    shape: DatumShape::CoordinateSystem { size: 10.0 },
+                    attachment: DatumAttachment::BasePlane(BasePlane::XY),
+                    offset: AttachmentOffset {
+                        translation: [3.0, 0.0, 0.0],
+                        ..Default::default()
+                    },
+                },
+                "CS".into(),
+                Some(body),
+            )
+            .unwrap();
+        let (p, n) = mirror_plane(
+            &doc,
+            &MirrorPlane::Datum {
+                datum: system,
+                plane: Some(BasePlane::YZ),
+            },
+        )
+        .unwrap();
+        assert_eq!((p, n.map(f64::abs)), ([3.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
+        // The rectangle's sketch lies on XY: its plane, and the plane
+        // through its horizontal axis square to it.
+        let (_, n) = mirror_plane(&doc, &MirrorPlane::Sketch { sketch, axis: None }).unwrap();
+        assert_eq!(n.map(f64::abs), [0.0, 0.0, 1.0]);
+        let (_, n) = mirror_plane(
+            &doc,
+            &MirrorPlane::Sketch {
+                sketch,
+                axis: Some(SketchAxis::Horizontal),
+            },
+        )
+        .unwrap();
+        assert_eq!(n.map(f64::abs), [0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn a_draft_stands_on_a_plane_and_pulls_along_a_datum_line() {
+        use crate::feature::{PlaneTarget, PullRef};
+        use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
+        let (mut doc, body, sketch) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let line = doc
+            .add_feature_in_body(
+                DatumFeature {
+                    shape: DatumShape::Line { length: 10.0 },
+                    attachment: DatumAttachment::BasePlane(BasePlane::YZ),
+                    offset: Default::default(),
+                },
+                "Line".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.add_feature_in_body(
+            PartFeature::Draft {
+                angle_deg: 5.0,
+                neutral: FacePick {
+                    point: [0.0; 3],
+                    normal: [1.0, 0.0, 0.0],
+                    name: 0,
+                },
+                faces: vec![FacePick {
+                    point: [0.0, 2.5, 2.5],
+                    normal: [-1.0, 0.0, 0.0],
+                    name: 0,
+                }],
+                reversed: false,
+                neutral_plane: Some(PlaneTarget::Base(BasePlane::XY)),
+                pull: Some(PullRef::Datum(line)),
+            },
+            "Draft".into(),
+            Some(body),
+        )
+        .unwrap();
+        let ops = body_build_ops(&doc, body).unwrap().ops;
+        let Some(SolidOp::Draft {
+            neutral_normal,
+            pull_dir,
+            ..
+        }) = ops.iter().find(|op| matches!(op, SolidOp::Draft { .. }))
+        else {
+            panic!("{ops:?}");
+        };
+        assert_eq!(*neutral_normal, [0.0, 0.0, 1.0]);
+        // The YZ plane's line runs along its x-axis, the world's y.
+        assert_eq!(pull_dir.map(|d| d.map(f64::abs)), Some([0.0, 1.0, 0.0]));
     }
 
     #[test]

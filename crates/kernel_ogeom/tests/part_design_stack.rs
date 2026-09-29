@@ -1431,6 +1431,7 @@ fn a_boolean_follows_its_tool_body() {
     let tool = doc.create_body(Some("Tool".into()));
     doc.add_feature_in_body(
         PartFeature::BodyBoolean {
+            more_tools: Vec::new(),
             refine: false,
             tool_body: tool,
             kind: kernel_api::BoolKind::Cut,
@@ -1504,6 +1505,7 @@ fn bodies_that_take_each_other_as_tools_fail_once() {
     for (body, tool) in [(a, b), (b, a)] {
         doc.add_feature_in_body(
             PartFeature::BodyBoolean {
+                more_tools: Vec::new(),
                 refine: false,
                 tool_body: tool,
                 kind: kernel_api::BoolKind::Fuse,
@@ -2663,6 +2665,7 @@ fn thickened_block(inward: bool, join: kernel_api::ThicknessJoin) -> Result<f64,
     let (mut doc, body) = block();
     doc.add_feature_in_body(
         PartFeature::Thickness {
+            both_sides: false,
             value: 1.0,
             faces: vec![wb_part::FacePick {
                 name: 0,
@@ -4255,4 +4258,116 @@ fn a_pipe_closes_to_a_point() {
     let (volume, ..) = built_body(&doc, body).unwrap();
     let pyramid = 4.0 * 10.0 / 3.0;
     assert!((volume - pyramid).abs() < 1e-3 * pyramid, "{volume}");
+}
+
+/// A 10 × 20 × 5 block opened at its top with 1 mm walls on both sides of
+/// its faces: the inward walls and the outward ones together.
+#[test]
+fn a_thickness_on_both_sides_stands_either_side_of_the_faces() {
+    let (mut doc, body, sketch) = setup(10.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(sketch, 5.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    doc.add_feature_in_body(
+        PartFeature::Thickness {
+            value: 1.0,
+            faces: vec![wb_part::FacePick {
+                point: [5.0, 10.0, 5.0],
+                normal: [0.0, 0.0, 1.0],
+                name: 0,
+            }],
+            inward: true,
+            join: kernel_api::ThicknessJoin::Intersection,
+            both_sides: true,
+        },
+        "Shell".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, min, max) = built_body(&doc, body).unwrap();
+    let inner = 1000.0 - 8.0 * 18.0 * 4.0;
+    let outer = 12.0 * 22.0 * 6.0 - 1000.0;
+    assert!((volume - (inner + outer)).abs() < 0.5, "{volume}");
+    assert!(
+        (min[2] + 1.0).abs() < 1e-3 && (max[2] - 5.0).abs() < 1e-3,
+        "{min:?}..{max:?}"
+    );
+}
+
+/// One boolean cutting two tool bodies out of a block.
+#[test]
+fn a_boolean_takes_several_tool_bodies() {
+    let mut doc = Document::new("t");
+    let target = doc.create_body(Some("Target".into()));
+    let block = doc
+        .add_feature_in_body(rect_sketch(10.0, 20.0), "block".into(), Some(target))
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(block, 5.0, false, false),
+        "Pad".into(),
+        Some(target),
+    )
+    .unwrap();
+    let tool = |doc: &mut Document, name: &str, x: f32| {
+        let body = doc.create_body(Some(name.into()));
+        let sketch = doc
+            .add_feature_in_body(
+                rect_sketch_on(
+                    wb_sketch::sketch::SketchPlane::from_frame(
+                        [x, 0.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                        [1.0, 0.0, 0.0],
+                    ),
+                    2.0,
+                    2.0,
+                ),
+                "tool".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.add_feature_in_body(
+            pad_feature(sketch, 5.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+        body
+    };
+    let a = tool(&mut doc, "A", 1.0);
+    let b = tool(&mut doc, "B", 6.0);
+    doc.add_feature_in_body(
+        PartFeature::BodyBoolean {
+            tool_body: a,
+            kind: kernel_api::BoolKind::Cut,
+            more_tools: vec![b],
+            refine: false,
+        },
+        "Cut".into(),
+        Some(target),
+    )
+    .unwrap();
+    // The tools build first; then the target cuts them both.
+    let mut kernel = OgeomKernel::new();
+    for _ in 0..4 {
+        for body in [a, b, target] {
+            let Ok(plan) = wb_part::body_build_ops(&doc, body) else {
+                continue;
+            };
+            if let Ok(result) =
+                kernel.execute_solid_chain(&plan.ops, &TessellationSettings::default())
+            {
+                doc.set_imported_brep_data(body, result.brep_blob, Vec::new());
+            }
+        }
+    }
+    let blob = doc.imported_brep_blob(target).unwrap().to_vec();
+    let volume = kernel
+        .physical_properties(&blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    assert!((volume - (1000.0 - 2.0 * 20.0)).abs() < 1e-3, "{volume}");
 }

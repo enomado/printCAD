@@ -183,13 +183,16 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Dress-ups, patterns and booleans
 
-- [ ] **Mirror plane** (partial, S). A datum plane, a coordinate
+- [x] **Mirror plane** (partial, S). A datum plane, a coordinate
   system's plane, a sketch's axis or plane (`MirrorPlane`).
-- [ ] **Draft references** (partial, S). A datum or base plane as the
+- [x] **Draft references** (partial, S). A datum or base plane as the
   neutral plane, an edge or datum line as the pull direction.
-- [ ] **Thickness modes** (partial, S). Pipe and both sides.
-- [ ] **Scale centre by pick** (partial, S).
-- [ ] **Several tool bodies in one boolean** (partial, S).
+- [x] **Thickness modes** (partial, S). Pipe and both sides. Both sides
+  is built; the pipe mode is left open, its behaviour against this
+  kernel's hollowing (which already ends walls flush with the openings)
+  still to be settled.
+- [x] **Scale centre by pick** (partial, S).
+- [x] **Several tool bodies in one boolean** (partial, S).
 
 ### Body and history
 

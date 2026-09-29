@@ -1446,6 +1446,60 @@ fn gaps_editor(
     changed
 }
 
+/// The datum planes (a coordinate system by each of its planes) and the
+/// sketches (each by its plane and its two axes) of the edited feature's
+/// body, as mirror planes.
+fn mirror_references(ctx: &WorkbenchRuntimeContext) -> Vec<(MirrorPlane, String)> {
+    use crate::feature::SketchAxis;
+    use core_document::{BasePlane, DatumShape};
+    let Some(body) = edited_body(ctx) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (datum, name, made) in core_document::datums_of_body(ctx.document, body) {
+        match made.shape {
+            DatumShape::Plane { .. } => out.push((MirrorPlane::Datum { datum, plane: None }, name)),
+            DatumShape::CoordinateSystem { .. } => {
+                for (plane, key) in [
+                    (BasePlane::XY, "XY"),
+                    (BasePlane::XZ, "XZ"),
+                    (BasePlane::YZ, "YZ"),
+                ] {
+                    out.push((
+                        MirrorPlane::Datum {
+                            datum,
+                            plane: Some(plane),
+                        },
+                        format!("{name} {key}"),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut sketches: Vec<(u64, FeatureId, String)> = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.body == Some(body))
+        .map(|(id, n)| (n.seq, *id, n.name.clone()))
+        .collect();
+    sketches.sort_by_key(|(seq, ..)| *seq);
+    for (_, sketch, name) in sketches {
+        for (axis, what) in [
+            (None, "plane"),
+            (Some(SketchAxis::Horizontal), "H axis"),
+            (Some(SketchAxis::Vertical), "V axis"),
+        ] {
+            out.push((
+                MirrorPlane::Sketch { sketch, axis },
+                format!("{name} {what}"),
+            ));
+        }
+    }
+    out
+}
+
 fn mirror_plane_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
@@ -1455,8 +1509,13 @@ fn mirror_plane_editor(
     let mut changed = false;
     ui.horizontal(|ui| {
         label_cell(ui, "Plane");
+        let shown = mirror_references(ctx)
+            .into_iter()
+            .find(|(c, _)| c == plane)
+            .map(|(_, name)| name)
+            .unwrap_or_else(|| plane.label().to_string());
         egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(plane.label())
+            .selected_text(shown)
             .show_ui(ui, |ui| {
                 for candidate in MirrorPlane::BASE {
                     if ui
@@ -1476,6 +1535,14 @@ fn mirror_plane_editor(
                     *plane = MirrorPlane::Face(FacePick::of(face));
                     changed = true;
                 }
+                for (candidate, name) in mirror_references(ctx) {
+                    if ui.selectable_label(*plane == candidate, name).clicked()
+                        && *plane != candidate
+                    {
+                        *plane = candidate;
+                        changed = true;
+                    }
+                }
             });
     });
     if let MirrorPlane::Face(pick) = plane {
@@ -1487,6 +1554,124 @@ fn mirror_plane_editor(
             changed = true;
         }
     }
+    changed
+}
+
+/// A draft's neutral plane (a picked face, one of the body's planes or a
+/// datum plane) and what it pulls along (the neutral plane's normal, a
+/// picked edge or a datum line).
+fn draft_references_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    feature_id: FeatureId,
+    neutral: &mut FacePick,
+    neutral_plane: &mut Option<crate::feature::PlaneTarget>,
+    pull: &mut Option<crate::feature::PullRef>,
+) -> bool {
+    use crate::feature::{PlaneTarget, PullRef};
+    let mut changed = false;
+    let planes: Vec<(PlaneTarget, String)> = end_targets(ctx, body)
+        .into_iter()
+        .filter_map(|(mode, name)| match mode {
+            ExtrudeMode::UpToPlane(target) => {
+                Some((target, name.trim_start_matches("Up to ").to_string()))
+            }
+            _ => None,
+        })
+        .collect();
+    let shown = match neutral_plane {
+        None => "Picked face".to_string(),
+        Some(target) => planes
+            .iter()
+            .find(|(t, _)| t == target)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| "(gone)".into()),
+    };
+    ui.horizontal(|ui| {
+        label_cell(ui, "Neutral plane");
+        egui::ComboBox::from_id_salt(("draft_neutral", feature_id))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(neutral_plane.is_none(), "Picked face")
+                    .clicked()
+                    && neutral_plane.is_some()
+                {
+                    *neutral_plane = None;
+                    changed = true;
+                }
+                for (target, name) in &planes {
+                    if ui
+                        .selectable_label(*neutral_plane == Some(*target), name)
+                        .clicked()
+                        && *neutral_plane != Some(*target)
+                    {
+                        *neutral_plane = Some(*target);
+                        changed = true;
+                    }
+                }
+            });
+    });
+    if neutral_plane.is_none() {
+        let mut neutral_opt = Some(*neutral);
+        if face_pick_row(ui, ctx, &mut neutral_opt, "Neutral face:")
+            && let Some(pick) = neutral_opt
+        {
+            *neutral = pick;
+            changed = true;
+        }
+    }
+    let lines: Vec<(FeatureId, String)> = core_document::datums_of_body(ctx.document, body)
+        .into_iter()
+        .filter(|(_, _, d)| matches!(d.shape, core_document::DatumShape::Line { .. }))
+        .map(|(id, name, _)| (id, name))
+        .collect();
+    let shown = match pull {
+        None => "Neutral plane's normal".to_string(),
+        Some(PullRef::Edge(_)) => "Picked edge".to_string(),
+        Some(PullRef::Datum(id)) => lines
+            .iter()
+            .find(|(l, _)| l == id)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| "(gone)".into()),
+    };
+    ui.horizontal(|ui| {
+        label_cell(ui, "Pull");
+        egui::ComboBox::from_id_salt(("draft_pull", feature_id))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(pull.is_none(), "Neutral plane's normal")
+                    .clicked()
+                    && pull.is_some()
+                {
+                    *pull = None;
+                    changed = true;
+                }
+                let picked = picked_edges(ctx).first().map(EdgePick::of);
+                let is_edge = matches!(pull, Some(PullRef::Edge(_)));
+                if ui
+                    .add_enabled(
+                        picked.is_some() || is_edge,
+                        egui::Button::selectable(is_edge, "Picked edge"),
+                    )
+                    .on_disabled_hover_text("Click a straight edge first")
+                    .clicked()
+                    && let Some(edge) = picked
+                {
+                    *pull = Some(PullRef::Edge(edge));
+                    changed = true;
+                }
+                for (id, name) in &lines {
+                    let current = *pull == Some(PullRef::Datum(*id));
+                    if ui.selectable_label(current, name).clicked() && !current {
+                        *pull = Some(PullRef::Datum(*id));
+                        changed = true;
+                    }
+                }
+            });
+    });
     changed
 }
 
@@ -2446,15 +2631,12 @@ pub fn feature_editor(
             neutral,
             faces,
             reversed,
+            neutral_plane,
+            pull,
         } => {
             changed |= deg_drag(ui, fx, angle_deg, "Angle:", 0.1..=45.0);
-            let mut neutral_opt = Some(*neutral);
-            if face_pick_row(ui, ctx, &mut neutral_opt, "Neutral plane:")
-                && let Some(pick) = neutral_opt
-            {
-                *neutral = pick;
-                changed = true;
-            }
+            changed |=
+                draft_references_editor(ui, ctx, body, feature_id, neutral, neutral_plane, pull);
             changed |= face_list_editor(ui, ctx, faces, "Faces to draft:");
             changed |= check_row(ui, reversed, "Reversed pull").changed();
         }
@@ -2463,10 +2645,16 @@ pub fn feature_editor(
             faces,
             inward,
             join,
+            both_sides,
         } => {
             changed |= mm_drag(ui, fx, value, "Thickness:");
             changed |= face_list_editor(ui, ctx, faces, "Faces to open:");
-            changed |= check_row(ui, inward, "Inward").changed();
+            changed |= check_row(ui, both_sides, "Both sides")
+                .on_hover_text("Walls on both sides of the faces, the thickness each way")
+                .changed();
+            if !*both_sides {
+                changed |= check_row(ui, inward, "Inward").changed();
+            }
             ui.horizontal(|ui| {
                 label_cell(ui, "Join");
                 egui::ComboBox::from_id_salt(("thickness_join", feature_id))
@@ -2668,7 +2856,46 @@ pub fn feature_editor(
                             for v in center.iter_mut() {
                                 changed |= ui.add(egui::DragValue::new(v).speed(0.5)).changed();
                             }
+                            let picked = picked_point(ctx);
+                            if ui
+                                .add_enabled_ui(picked.is_some(), |ui| {
+                                    accent_outline_button(ui, "Use selected")
+                                })
+                                .inner
+                                .on_hover_text(
+                                    "A circular edge's centre, else where an edge or a face was \
+                                     picked",
+                                )
+                                .clicked()
+                                && let Some(at) = picked
+                            {
+                                *center = at;
+                                changed = true;
+                            }
                         });
+                        let points: Vec<(String, [f32; 3])> =
+                            core_document::datums_of_body(ctx.document, body)
+                                .into_iter()
+                                .filter(|(_, _, d)| {
+                                    matches!(d.shape, core_document::DatumShape::Point)
+                                })
+                                .map(|(_, name, d)| (name, d.frame().origin))
+                                .collect();
+                        if !points.is_empty() {
+                            ui.horizontal(|ui| {
+                                label_cell(ui, "");
+                                egui::ComboBox::from_id_salt(("mt_scale_point", feature_id, i))
+                                    .selected_text("A datum point…")
+                                    .show_ui(ui, |ui| {
+                                        for (name, at) in &points {
+                                            if ui.selectable_label(false, name).clicked() {
+                                                *center = *at;
+                                                changed = true;
+                                            }
+                                        }
+                                    });
+                            });
+                        }
                         changed |= count_drag(ui, fx, occurrences, "Occurrences:");
                     }
                 }
@@ -2748,6 +2975,7 @@ pub fn feature_editor(
         PartFeature::BodyBoolean {
             tool_body,
             kind,
+            more_tools,
             refine: _,
         } => {
             let bodies: Vec<(BodyId, String)> = ctx
@@ -2772,6 +3000,42 @@ pub fn feature_editor(
                                 && tool_body != id
                             {
                                 *tool_body = *id;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+            // Further tools, taken the same way in turn.
+            let mut remove = None;
+            for (i, tool) in more_tools.iter().enumerate() {
+                let name = bodies
+                    .iter()
+                    .find(|(id, _)| id == tool)
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_else(|| "(gone)".into());
+                ui.horizontal(|ui| {
+                    label_cell(ui, "");
+                    mono_label(ui, name, FONT_XS, TEXT1);
+                    if small_secondary_button(ui, "✕").clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                more_tools.remove(i);
+                changed = true;
+            }
+            ui.horizontal(|ui| {
+                label_cell(ui, "Add tool");
+                egui::ComboBox::from_id_salt(("bool_more", feature_id))
+                    .selected_text("Another body…")
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &bodies {
+                            if id != tool_body
+                                && !more_tools.contains(id)
+                                && ui.selectable_label(false, name).clicked()
+                            {
+                                more_tools.push(*id);
                                 changed = true;
                             }
                         }
@@ -2820,6 +3084,16 @@ fn picked_face(ctx: &WorkbenchRuntimeContext) -> Option<core_document::FaceRef> 
         Some(body) => ctx.selected_face_in(body),
         None => ctx.selected_face,
     }
+}
+
+/// A point picked in the viewport, in the edited feature's body frame: a
+/// circular edge's centre, else where an edge was picked, else a face.
+fn picked_point(ctx: &WorkbenchRuntimeContext) -> Option<[f32; 3]> {
+    let edges = picked_edges(ctx);
+    edges
+        .first()
+        .map(|e| e.circle.map_or(e.point, |c| c.center))
+        .or_else(|| picked_face(ctx).map(|f| f.point))
 }
 
 /// The picked edges in the edited feature's body frame.
