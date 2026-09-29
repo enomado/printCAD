@@ -69,11 +69,12 @@ pub enum SolveError {
     Conflict { body: BodyId, joints: Vec<String> },
 }
 
-/// The joints the solver reads, rigid groups' holds among them: both
-/// bodies there and different, or a ground.
+/// The joints the solver reads, rigid groups' and rigid components' holds
+/// among them: both bodies there and different, or a ground. A joint
+/// between two bodies of one rigid component rests.
 fn usable(document: &Document) -> Vec<Joint> {
     let exists = |body: BodyId| body == WORLD || document.bodies().iter().any(|b| b.id == body);
-    joints(document)
+    let own: Vec<Joint> = joints(document)
         .into_iter()
         .chain(crate::group::holds(document))
         .map(|j| Joint {
@@ -83,9 +84,13 @@ fn usable(document: &Document) -> Vec<Joint> {
         .filter(|j| {
             exists(j.body)
                 && (j.feature.kind == JointKind::Ground
-                    || (exists(j.feature.other_body) && j.feature.other_body != j.body))
+                    || (exists(j.feature.other_body)
+                        && j.feature.other_body != j.body
+                        && !crate::components::together(document, j.body, j.feature.other_body)))
         })
-        .collect()
+        .collect();
+    let holds = crate::components::holds(document, &own);
+    own.into_iter().chain(holds).collect()
 }
 
 /// The bodies the solver moves: those that own a joint and are not
@@ -208,9 +213,11 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
     Ok(moved)
 }
 
-/// Whether dragging `body` moves it: it has joints and is not grounded.
+/// Whether dragging `body` moves it: it has joints and is not grounded,
+/// and a rigid component it sits in is joined to something outside it.
 pub fn draggable(document: &Document, body: BodyId) -> bool {
-    free_bodies(&usable(document)).contains(&body)
+    let all = usable(document);
+    free_bodies(&all).contains(&body) && crate::components::joined_outside(document, body, &all)
 }
 
 /// `body` dragged so its `point` (in its own frame) follows `target` (in

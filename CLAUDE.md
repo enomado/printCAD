@@ -272,7 +272,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   cached per edit for the status bar), and task panels for picking,
   joint settings and moving a body by numbers. Solves run inside the
   gesture that made or edited a joint and record ordinary
-  `SetBodyPlacement` ops. Couplings (`coupling.rs`, their own kind
+  `SetBodyPlacement` ops. Components (`core_document/src/components.rs`: `Component`
+  with a parent and `flexible`, `Body.component`, ops `SetComponent` and
+  `SetBodyComponent`) nest bodies in the tree (`TreeItemId::Component`);
+  the solver holds a rigid one's bodies together where they sit
+  (`wb_assembly/src/components.rs`, the joints inside it resting) and
+  `move_with_unit` moves them all when one is placed. Couplings (`coupling.rs`, their own kind
   `wb.assembly.coupling`, stored on the driven joint's body) tie two
   hinges or sliders by a `Gearing` (gears, belt, rack and pinion, screw)
   and a ratio, taken from where both joints stand when made (`driver_at`,

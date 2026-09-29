@@ -118,6 +118,16 @@ pub enum DocumentOp {
         id: BodyId,
         link: crate::FileLink,
     },
+    /// A component made, changed, or (for `None`) taken away.
+    SetComponent {
+        id: crate::ComponentId,
+        component: Option<crate::Component>,
+    },
+    /// A body put in a component, or at the top for `None`.
+    SetBodyComponent {
+        id: BodyId,
+        component: Option<crate::ComponentId>,
+    },
     RenameBody {
         id: BodyId,
         name: String,

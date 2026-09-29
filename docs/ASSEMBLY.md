@@ -237,6 +237,23 @@ density you set (g/cm³), with each body's share, and marks the centre of
 mass in the view: what a tip-over check needs. `asm.mass` answers the
 same to a script.
 
+## Components
+
+A component groups bodies into one row of the tree, the way a
+sub-assembly does; components sit inside components to any depth. Right
+click a body's row: New component puts it in one of its own, Move to puts
+it in one already made, Take out of moves it one level up. A component's
+row hides and shows everything in it, renames from the Data tab, and Take
+apart (Delete) removes it and leaves its bodies one level up.
+
+A component is rigid when made: its bodies move as one, whichever of them
+a joint or a drag moves, and the joints between them rest. Make flexible
+(its row's menu) keeps those joints live, so a hinge inside a
+sub-assembly still turns in the assembly around it; a rigid component
+inside a flexible one still moves as one. `asm.component`,
+`asm.component_set`, `asm.component_add` and `asm.component_remove` do
+the same from a script.
+
 ## Parts from other files
 
 File › Import of a printCAD file (`.prtcad`) brings in every visible body

@@ -234,7 +234,7 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Parts from other printCAD files** (missing, L). Inserted linked,
   with an out-of-date mark, reload and open source; today outside parts
   come in only as frozen STEP, IGES or mesh imports (File › Insert).
-- [ ] **Sub-assemblies** (missing, L). Bodies grouped into a component
+- [x] **Sub-assemblies** (missing, L). Bodies grouped into a component
   that moves as one, or keeps its own joints live inside the parent;
   nested. A group node in `core_document` and a group-aware solver.
 - [x] **Rigid group** (partial, S). Several bodies locked in one

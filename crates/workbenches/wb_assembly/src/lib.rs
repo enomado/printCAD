@@ -12,6 +12,7 @@
 
 mod collide;
 mod commands;
+mod components;
 mod coupling;
 mod exploded;
 mod group;
@@ -1026,8 +1027,7 @@ impl AssemblyWorkbench {
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
                 let held = self.handle_held?;
                 if let Some(now) = handles::on(ctx, held.handle, held.centre, *viewport_pos) {
-                    ctx.document
-                        .set_body_placement(body, handles::dragged(&held, now));
+                    components::move_with_unit(ctx.document, body, handles::dragged(&held, now));
                 }
                 Some(InputResult::consumed())
             }
@@ -1096,9 +1096,10 @@ impl AssemblyWorkbench {
             ray
         };
         let jointed = draggable(ctx.document, body);
+        let unit = ctx.document.rigid_unit_of(body);
         let grounded = joints(ctx.document)
             .iter()
-            .any(|j| j.body == body && j.feature.kind == JointKind::Ground);
+            .any(|j| unit.contains(&j.body) && j.feature.kind == JointKind::Ground);
         if !jointed && grounded {
             return;
         }
@@ -1140,7 +1141,8 @@ impl AssemblyWorkbench {
                 .map(|(_, p)| *p)
                 .unwrap_or_default();
             let by = glam::Vec3::from_array(target) - glam::Vec3::from_array(origin);
-            ctx.document.set_body_placement(
+            components::move_with_unit(
+                ctx.document,
                 grab.body,
                 BodyPlacement::new(start.quat(), start.offset() + by),
             );
@@ -2095,8 +2097,57 @@ impl Workbench for AssemblyWorkbench {
         scope: &core_document::MenuScope,
         document: &core_document::Document,
     ) -> Vec<core_document::MenuItem> {
-        let core_document::MenuScope::TreeFeature(id) = scope else {
-            return Vec::new();
+        use core_document::MenuItem;
+        let id = match scope {
+            core_document::MenuScope::TreeFeature(id) => id,
+            core_document::MenuScope::TreeBody(body) => {
+                let own = document.component_of(*body);
+                let mut items = vec![
+                    MenuItem::new("asm.menu.component_new", "New component")
+                        .icon("tree-group")
+                        .hint("Put this body in a component of its own, inside the one it is in")
+                        .separator_before(),
+                ];
+                for component in document.components() {
+                    if Some(component.id) != own {
+                        items.push(
+                            MenuItem::new(
+                                format!("asm.menu.component_to.{}", component.id.0),
+                                format!("Move to {}", component.name),
+                            )
+                            .hint("Put this body in that component"),
+                        );
+                    }
+                }
+                if let Some(own) = own.and_then(|c| document.component(c)) {
+                    items.push(
+                        MenuItem::new(
+                            "asm.menu.component_out",
+                            format!("Take out of {}", own.name),
+                        )
+                        .hint("Put this body one level up"),
+                    );
+                }
+                return items;
+            }
+            core_document::MenuScope::TreeComponent(component) => {
+                let Some(component) = document.component(*component) else {
+                    return Vec::new();
+                };
+                return vec![
+                    if component.flexible {
+                        MenuItem::new("asm.menu.component_rigid", "Make rigid")
+                            .hint("Move it as one; the joints inside it rest")
+                    } else {
+                        MenuItem::new("asm.menu.component_flexible", "Make flexible")
+                            .hint("Keep the joints inside it live in the assembly")
+                    },
+                    MenuItem::new("asm.menu.component_sub", "New component inside")
+                        .icon("tree-group")
+                        .hint("An empty component in this one, to move bodies into"),
+                ];
+            }
+            _ => return Vec::new(),
         };
         let is_state = document
             .get_feature_meta(*id)
@@ -2120,6 +2171,72 @@ impl Workbench for AssemblyWorkbench {
         scope: &core_document::MenuScope,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> bool {
+        let component_call = match scope {
+            core_document::MenuScope::TreeBody(body) => {
+                let bodies = serde_json::json!([body.0.to_string()]);
+                let own = ctx.document.component_of(*body);
+                match id {
+                    "asm.menu.component_new" => Some((
+                        "asm.component",
+                        serde_json::json!({"bodies": bodies, "parent": own.map(|c| c.0.to_string())}),
+                        "New component",
+                    )),
+                    "asm.menu.component_out" => Some((
+                        "asm.component_add",
+                        serde_json::json!({
+                            "bodies": bodies,
+                            "component": own
+                                .and_then(|c| ctx.document.component(c))
+                                .and_then(|c| c.parent)
+                                .map(|c| c.0.to_string()),
+                        }),
+                        "Take out of component",
+                    )),
+                    _ => id.strip_prefix("asm.menu.component_to.").map(|to| {
+                        (
+                            "asm.component_add",
+                            serde_json::json!({"bodies": bodies, "component": to}),
+                            "Move to component",
+                        )
+                    }),
+                }
+            }
+            core_document::MenuScope::TreeComponent(component) => {
+                let c = component.0.to_string();
+                match id {
+                    "asm.menu.component_rigid" | "asm.menu.component_flexible" => Some((
+                        "asm.component_set",
+                        serde_json::json!({
+                            "component": c,
+                            "flexible": id == "asm.menu.component_flexible",
+                        }),
+                        if id == "asm.menu.component_rigid" {
+                            "Make component rigid"
+                        } else {
+                            "Make component flexible"
+                        },
+                    )),
+                    "asm.menu.component_sub" => Some((
+                        "asm.component",
+                        serde_json::json!({"bodies": [], "parent": c}),
+                        "New component",
+                    )),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some((command, args, label)) = component_call {
+            let args = commands::object(args);
+            match commands::run(command, &args, ctx) {
+                Ok(result) => {
+                    ctx.record(command, args, result);
+                    ctx.request(HostRequest::JournalLabel(label.into()));
+                }
+                Err(err) => ctx.log_warn(format!("{label}: {err}")),
+            }
+            return true;
+        }
         let core_document::MenuScope::TreeFeature(state) = scope else {
             return false;
         };

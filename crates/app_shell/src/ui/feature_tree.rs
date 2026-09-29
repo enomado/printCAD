@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use core_document::{
-    Body, BodyId, Document, DocumentService, FeatureId, FeatureInfo, FeatureNode, FeatureTree,
-    MenuScope, WorkbenchId,
+    Body, BodyId, ComponentId, Document, DocumentService, FeatureId, FeatureInfo, FeatureNode,
+    FeatureTree, MenuScope, WorkbenchId,
 };
 use egui::{Response, Ui, Vec2};
 use ui_kit::sans;
@@ -18,6 +18,7 @@ pub enum TreeItemId {
     Body(BodyId),
     Feature(FeatureId),
     ImportedObject(Uuid),
+    Component(ComponentId),
 }
 
 impl From<FeatureId> for TreeItemId {
@@ -193,7 +194,7 @@ impl DocumentTree {
 
         // Build body nodes and attach their feature subtrees. Bodies represented
         // in imported-object hierarchy are shown there instead to avoid duplicates.
-        let mut body_nodes: Vec<TreeNode> = document
+        let body_nodes: Vec<TreeNode> = document
             .bodies()
             .iter()
             .filter(|body| document.imported_object_for_body(body.id).is_none())
@@ -228,6 +229,8 @@ impl DocumentTree {
                 node
             })
             .collect();
+
+        let mut body_nodes = nest_in_components(document, body_nodes);
 
         for &root in document.imported_object_roots() {
             if let Some(node) = build_imported_node(document, root) {
@@ -426,6 +429,125 @@ pub(crate) fn feature_info(registry: &DocumentService, node: &FeatureNode) -> Fe
     registry
         .feature_info(node)
         .unwrap_or_else(|| FeatureInfo::unowned(node))
+}
+
+/// Body rows put in their components' rows, nested as the components
+/// are; a component's row stands where its first body would. Components
+/// with no body come last in the one they sit in.
+fn nest_in_components(document: &Document, rows: Vec<TreeNode>) -> Vec<TreeNode> {
+    if document.components().is_empty() {
+        return rows;
+    }
+    /// A level's rows, in order: rows themselves, or where a component's
+    /// row goes.
+    enum Slot {
+        Row(Box<TreeNode>),
+        Component(ComponentId),
+    }
+    let mut levels: HashMap<Option<ComponentId>, Vec<Slot>> = HashMap::new();
+    let mut placed: HashSet<ComponentId> = HashSet::new();
+    fn place(
+        document: &Document,
+        id: ComponentId,
+        levels: &mut HashMap<Option<ComponentId>, Vec<Slot>>,
+        placed: &mut HashSet<ComponentId>,
+    ) {
+        if !placed.insert(id) {
+            return;
+        }
+        let parent = document
+            .component(id)
+            .and_then(|c| c.parent)
+            .filter(|p| document.component(*p).is_some());
+        if let Some(parent) = parent {
+            place(document, parent, levels, placed);
+        }
+        levels.entry(parent).or_default().push(Slot::Component(id));
+    }
+    for row in rows {
+        let at = row.body.and_then(|b| document.component_of(b));
+        if let Some(component) = at {
+            place(document, component, &mut levels, &mut placed);
+        }
+        levels.entry(at).or_default().push(Slot::Row(Box::new(row)));
+    }
+    for component in document.components() {
+        place(document, component.id, &mut levels, &mut placed);
+    }
+    fn build(
+        document: &Document,
+        level: Option<ComponentId>,
+        levels: &mut HashMap<Option<ComponentId>, Vec<Slot>>,
+        seen: &mut HashSet<ComponentId>,
+    ) -> Vec<TreeNode> {
+        let slots = levels.remove(&level).unwrap_or_default();
+        slots
+            .into_iter()
+            .filter_map(|slot| match slot {
+                Slot::Row(row) => Some(*row),
+                Slot::Component(id) => {
+                    if !seen.insert(id) {
+                        return None;
+                    }
+                    let component = document.component(id)?;
+                    let children = build(document, Some(id), levels, seen);
+                    let bodies = document.component_bodies(id);
+                    let visible = bodies.is_empty()
+                        || bodies
+                            .iter()
+                            .any(|b| document.bodies().iter().any(|x| x.id == *b && !x.hidden));
+                    let kind = if component.flexible {
+                        "Flexible component: the joints inside it move"
+                    } else {
+                        "Rigid component: moves as one"
+                    };
+                    Some(TreeNode {
+                        id: TreeItemId::Component(id),
+                        label: component.name.clone(),
+                        detail: Some(kind.to_string()),
+                        tooltip: Some(kind.to_string()),
+                        visible,
+                        icon: "tree-group",
+                        accent_icon: true,
+                        body: None,
+                        children,
+                        ..build_body_node_blank()
+                    })
+                }
+            })
+            .collect()
+    }
+    build(document, None, &mut levels, &mut HashSet::new())
+}
+
+/// A row with nothing set, for rows built field by field.
+fn build_body_node_blank() -> TreeNode {
+    TreeNode {
+        id: TreeItemId::DocumentRoot,
+        label: String::new(),
+        detail: None,
+        tooltip: None,
+        dirty: false,
+        visible: true,
+        suppressed: false,
+        error: None,
+        defect: false,
+        repairable: Vec::new(),
+        convertible: Vec::new(),
+        needs_package: None,
+        mesh: false,
+        is_tip: false,
+        after_tip: false,
+        feature_menu: None,
+        seq: 0,
+        children: Vec::new(),
+        imported_object_id: None,
+        body: None,
+        icon: "tree-group",
+        accent_icon: false,
+        linked: false,
+        linked_file: false,
+    }
 }
 
 fn build_body_node(body: &Body) -> TreeNode {
@@ -922,6 +1044,18 @@ fn draw_row(
                 TreeItemId::Body(id) => {
                     result.body_visibility_change = Some((id, !visible));
                 }
+                TreeItemId::Component(_) => {
+                    let mut bodies = Vec::new();
+                    if let Some(node) = node {
+                        bodies_below(node, &mut bodies);
+                    }
+                    result.commands.extend(bodies.into_iter().map(|body| {
+                        super::UiCommand::SetBodyVisible {
+                            body,
+                            visible: !visible,
+                        }
+                    }));
+                }
                 _ => {}
             }
         }
@@ -1074,9 +1208,10 @@ fn draw_node(
     let dimmed_by_edit = options.editing.is_some() && !editing_here;
     let eye = match node.id {
         _ if node.linked => None,
-        TreeItemId::ImportedObject(_) | TreeItemId::Feature(_) | TreeItemId::Body(_) => {
-            Some(node.visible)
-        }
+        TreeItemId::ImportedObject(_)
+        | TreeItemId::Feature(_)
+        | TreeItemId::Body(_)
+        | TreeItemId::Component(_) => Some(node.visible),
         _ => None,
     };
     let icon_tint = if editing_here {
@@ -1267,6 +1402,27 @@ fn attach_body_menu(
     options: &TreeDrawOptions<'_>,
     result: &mut TreeUiResult,
 ) -> Response {
+    if let TreeItemId::Component(component) = node.id {
+        let mut delete = false;
+        let mut bench_command = None;
+        response.context_menu(|ui| {
+            if menu_entry(ui, "Take apart", options.key("edit.delete"))
+                .on_hover_text("Remove the component; its bodies stay, one level up")
+                .clicked()
+            {
+                delete = true;
+                ui.close();
+            }
+            bench_command = bench_menu_entries(ui, options, MenuScope::TreeComponent(component));
+        });
+        if delete {
+            result.delete_item = Some(node.id);
+        }
+        if bench_command.is_some() {
+            result.bench_command = bench_command;
+        }
+        return response;
+    }
     if !matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_)) {
         return response;
     }
@@ -1366,6 +1522,14 @@ fn attach_body_menu(
         result.bench_command = bench_command;
     }
     response
+}
+
+/// Every body at or below `node`.
+fn bodies_below(node: &TreeNode, out: &mut Vec<BodyId>) {
+    out.extend(node.body);
+    for child in &node.children {
+        bodies_below(child, out);
+    }
 }
 
 fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult) {
@@ -1694,6 +1858,39 @@ mod tests {
             Some(vec![TreeItemId::Body(body)]),
             "a body with no import above it is its own row"
         );
+    }
+
+    #[test]
+    fn bodies_sit_under_their_components_where_the_first_one_would() {
+        let mut doc = Document::new("tree");
+        let [a, b, c, d] = ["A", "B", "C", "D"].map(|n| doc.create_body(Some(n.into())));
+        let outer = doc.create_component("Outer".into(), None).unwrap();
+        let inner = doc.create_component("Inner".into(), Some(outer)).unwrap();
+        let empty = doc.create_component("Empty".into(), None).unwrap();
+        doc.set_body_component(b, Some(inner)).unwrap();
+        doc.set_body_component(d, Some(outer)).unwrap();
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let ids: Vec<TreeItemId> = tree.nodes().iter().map(|n| n.id).collect();
+        assert_eq!(
+            ids,
+            [
+                TreeItemId::Body(a),
+                TreeItemId::Component(outer),
+                TreeItemId::Body(c),
+                TreeItemId::Component(empty),
+            ]
+        );
+        assert_eq!(
+            tree.path_to_body(b),
+            Some(vec![
+                TreeItemId::Component(outer),
+                TreeItemId::Component(inner),
+                TreeItemId::Body(b),
+            ])
+        );
+        let outer_row = &tree.nodes()[1];
+        let inside: Vec<TreeItemId> = outer_row.children.iter().map(|n| n.id).collect();
+        assert_eq!(inside, [TreeItemId::Component(inner), TreeItemId::Body(d)]);
     }
 
     #[test]

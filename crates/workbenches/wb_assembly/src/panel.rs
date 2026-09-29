@@ -2438,7 +2438,7 @@ impl AssemblyWorkbench {
                 glam::Quat::from_euler(glam::EulerRot::XYZ, ax, ay, az),
                 glam::Vec3::from_array(offset),
             );
-            ctx.document.set_body_placement(body, moved);
+            crate::components::move_with_unit(ctx.document, body, moved);
             // Whatever is joined to it follows.
             self.solve_and_apply(ctx);
         }
@@ -2448,8 +2448,7 @@ impl AssemblyWorkbench {
                 .on_hover_text("No move, no turn")
                 .clicked()
         {
-            ctx.document
-                .set_body_placement(body, BodyPlacement::IDENTITY);
+            crate::components::move_with_unit(ctx.document, body, BodyPlacement::IDENTITY);
             self.solve_and_apply(ctx);
         }
         self.verdict_card(ui);

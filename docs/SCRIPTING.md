@@ -1359,6 +1359,30 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): A new group's name in the tree
 - Returns the group's id
 
+`pc.asm.component`: Put bodies in a new component: one row in the tree that moves as one, or, flexible, keeps the joints inside it live; components nest.
+
+- `bodies` (list): The bodies it holds, taken out of any other
+- `name` (string, optional): Its name in the tree
+- `parent` (id, optional): The component it sits in; the top if left out
+- `flexible` (boolean, optional): The joints inside it move (false: rigid)
+- Returns the component's id
+
+`pc.asm.component_set`: Rename a component, move it, or make it rigid or flexible.
+
+- `component` (id): The component
+- `name` (string, optional): A new name
+- `flexible` (boolean, optional): The joints inside it move
+- `parent` (any, optional): The component it goes in, or null for the top
+
+`pc.asm.component_add`: Put bodies in a component, or take them out.
+
+- `bodies` (list): The bodies
+- `component` (id, optional): The component; left out, the bodies go to the top
+
+`pc.asm.component_remove`: Take a component apart: its bodies and components go one level up.
+
+- `component` (id): The component
+
 `pc.asm.motion`: Keep a motion over time: hinges and sliders each driven by a formula of t, seconds.
 
 - `drives` (list): {{joint = id, formula = "90 * t"}, ...}: a hinge's angle in degrees, a slider's position in mm

@@ -222,13 +222,16 @@ pub(crate) fn tri_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> kernel_ap
     }
 }
 
-pub(crate) fn menu_scope(scope: &core_document::MenuScope) -> bench_api::MenuScope {
+/// The scope as a package reads it; `None` for one packages are not
+/// offered.
+pub(crate) fn menu_scope(scope: &core_document::MenuScope) -> Option<bench_api::MenuScope> {
     use core_document::MenuScope as M;
-    match scope {
+    Some(match scope {
         M::ViewportBody(b) => bench_api::MenuScope::ViewportBody(b.0.to_string()),
         M::TreeFeature(f) => bench_api::MenuScope::TreeFeature(f.0.to_string()),
         M::TreeBody(b) => bench_api::MenuScope::TreeBody(b.0.to_string()),
         M::StartPage => bench_api::MenuScope::StartPage,
         M::EditMenu => bench_api::MenuScope::EditMenu,
-    }
+        M::TreeComponent(_) => return None,
+    })
 }

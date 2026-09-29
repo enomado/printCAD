@@ -7,8 +7,8 @@
 //! joint solves as it is made or changed.
 
 use core_document::{
-    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId,
-    ParamKind, WorkbenchContext, WorkbenchRuntimeContext,
+    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec,
+    ComponentId, FeatureId, ParamKind, WorkbenchContext, WorkbenchRuntimeContext,
 };
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
@@ -416,6 +416,63 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .optional("name", ParamKind::String, "A new group's name in the tree")
         .returns("the group's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.component",
+            "Put bodies in a new component: one row in the tree that moves as one, or, \
+             flexible, keeps the joints inside it live; components nest",
+        )
+        .param(
+            "bodies",
+            ParamKind::List,
+            "The bodies it holds, taken out of any other",
+        )
+        .optional("name", ParamKind::String, "Its name in the tree")
+        .optional(
+            "parent",
+            ParamKind::Id,
+            "The component it sits in; the top if left out",
+        )
+        .optional(
+            "flexible",
+            ParamKind::Bool,
+            "The joints inside it move (false: rigid)",
+        )
+        .returns("the component's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.component_set",
+            "Rename a component, move it, or make it rigid or flexible",
+        )
+        .param("component", ParamKind::Id, "The component")
+        .optional("name", ParamKind::String, "A new name")
+        .optional("flexible", ParamKind::Bool, "The joints inside it move")
+        .optional(
+            "parent",
+            ParamKind::Any,
+            "The component it goes in, or null for the top",
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.component_add",
+            "Put bodies in a component, or take them out",
+        )
+        .param("bodies", ParamKind::List, "The bodies")
+        .optional(
+            "component",
+            ParamKind::Id,
+            "The component; left out, the bodies go to the top",
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.component_remove",
+            "Take a component apart: its bodies and components go one level up",
+        )
+        .param("component", ParamKind::Id, "The component"),
     );
     context.register_command(
         CommandSpec::new(
@@ -1080,8 +1137,11 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 Some(v) if !v.is_null() => quaternion(v)?,
                 _ => now.quat(),
             };
-            ctx.document
-                .set_body_placement(body, BodyPlacement::new(rotation, translation));
+            crate::components::move_with_unit(
+                ctx.document,
+                body,
+                BodyPlacement::new(rotation, translation),
+            );
             Ok(Value::Null)
         }
         "asm.copy" => {
@@ -1173,6 +1233,75 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             };
             ctx.document.clear_feature_dirty(id);
             solved(ctx, json!(id.0.to_string()))
+        }
+        "asm.component" => {
+            let bodies = existing_bodies(&a, ctx)?;
+            let parent = a.opt_id("parent")?.map(ComponentId);
+            let name = match a.opt_string("name")? {
+                Some(n) => n.to_string(),
+                None => next_component_name(ctx.document),
+            };
+            let id = ctx
+                .document
+                .create_component(name, parent)
+                .map_err(|e| CommandError::bad("parent", e.to_string()))?;
+            if a.opt_bool("flexible")? == Some(true)
+                && let Some(mut component) = ctx.document.component(id).cloned()
+            {
+                component.flexible = true;
+                ctx.document
+                    .update_component(component)
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+            }
+            for body in bodies {
+                ctx.document
+                    .set_body_component(body, Some(id))
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+            }
+            solved(ctx, json!(id.0.to_string()))
+        }
+        "asm.component_set" => {
+            let id = ComponentId(a.id("component")?);
+            let mut component = ctx.document.component(id).cloned().ok_or_else(|| {
+                CommandError::bad("component", "is not a component of this document")
+            })?;
+            if let Some(name) = a.opt_string("name")? {
+                component.name = name.to_string();
+            }
+            if let Some(flexible) = a.opt_bool("flexible")? {
+                component.flexible = flexible;
+            }
+            match a.0.get("parent") {
+                None => {}
+                Some(Value::Null) => component.parent = None,
+                Some(Value::String(p)) => {
+                    let parent = uuid::Uuid::parse_str(p)
+                        .map_err(|_| CommandError::bad("parent", "is not an id"))?;
+                    component.parent = Some(ComponentId(parent));
+                }
+                Some(_) => return Err(CommandError::bad("parent", "is an id or null")),
+            }
+            ctx.document
+                .update_component(component)
+                .map_err(|e| CommandError::bad("parent", e.to_string()))?;
+            solved(ctx, Value::Null)
+        }
+        "asm.component_add" => {
+            let bodies = existing_bodies(&a, ctx)?;
+            let component = a.opt_id("component")?.map(ComponentId);
+            for body in bodies {
+                ctx.document
+                    .set_body_component(body, component)
+                    .map_err(|e| CommandError::bad("component", e.to_string()))?;
+            }
+            solved(ctx, Value::Null)
+        }
+        "asm.component_remove" => {
+            let id = ComponentId(a.id("component")?);
+            ctx.document
+                .remove_component(id)
+                .map_err(|e| CommandError::bad("component", e.to_string()))?;
+            solved(ctx, Value::Null)
         }
         "asm.motion" => {
             let defaults = crate::MotionStudy::default();
@@ -1413,7 +1542,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             // Turn about `about`, then step: p -> turn (p - about) + about + by.
             let step = BodyPlacement::new(turn, about - turn * about + by);
             let now = ctx.document.body_placement(body);
-            ctx.document.set_body_placement(body, step.after(&now));
+            crate::components::move_with_unit(ctx.document, body, step.after(&now));
             Ok(Value::Null)
         }
         _ => Err(CommandError::Unknown(id.to_string())),
@@ -1885,6 +2014,29 @@ pub(crate) fn object(value: Value) -> CommandArgs {
 }
 
 /// Solve, and answer `value` when every joint holds.
+/// The `bodies` named, every one a body of the document.
+fn existing_bodies(a: &Args, ctx: &WorkbenchRuntimeContext) -> Result<Vec<BodyId>, CommandError> {
+    let bodies = body_list(a)?.unwrap_or_default();
+    if let Some(b) = bodies
+        .iter()
+        .find(|b| !ctx.document.bodies().iter().any(|x| x.id == **b))
+    {
+        return Err(CommandError::bad(
+            "bodies",
+            format!("{} is not a body of this document", b.0),
+        ));
+    }
+    Ok(bodies)
+}
+
+/// "Component 1", or the next number not taken.
+pub(crate) fn next_component_name(document: &core_document::Document) -> String {
+    (1..)
+        .map(|n| format!("Component {n}"))
+        .find(|name| !document.components().iter().any(|c| &c.name == name))
+        .unwrap_or_default()
+}
+
 fn solved(ctx: &mut WorkbenchRuntimeContext, value: Value) -> CommandResult {
     crate::apply_solve(ctx).map_err(CommandError::failed)?;
     Ok(value)
@@ -2701,6 +2853,123 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// A rigid component moves as one whichever of its bodies a joint
+    /// holds, and the joints inside it rest until it is made flexible.
+    #[test]
+    fn a_rigid_component_moves_as_one_and_a_flexible_one_solves_inside() {
+        let mut doc = Document::new("t");
+        let [base, lid, knob] = [
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+        ];
+        doc.set_body_placement(
+            lid,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 30.0)),
+        );
+        doc.set_body_placement(
+            knob,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(5.0, 0.0, 40.0)),
+        );
+        let component = doc.create_component("Lid".into(), None).unwrap();
+        doc.set_body_component(lid, Some(component)).unwrap();
+        doc.set_body_component(knob, Some(component)).unwrap();
+        // The knob's underside, 40 up, onto the base's top at 10.
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": knob.0.to_string(), "face": {"point": [5, 0, 40], "normal": [0, 0, -1]},
+                   "other": base.0.to_string(), "other_face": {"point": [0, 0, 10], "normal": [0, 0, 1]},
+                   "offset": 0}),
+        )
+        .unwrap();
+        let z = |doc: &Document, b| doc.body_placement(b).translation[2];
+        assert!((z(&doc, knob) - 10.0).abs() < 1e-3, "{}", z(&doc, knob));
+        assert!(
+            (z(&doc, lid) - 0.0).abs() < 1e-3,
+            "the lid follows: {}",
+            z(&doc, lid)
+        );
+        // A joint inside the rigid component rests.
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": lid.0.to_string(), "face": {"point": [0, 0, 0], "normal": [0, 0, 1]},
+                   "other": knob.0.to_string(), "other_face": {"point": [5, 0, 10], "normal": [0, 0, -1]},
+                   "offset": 4}),
+        )
+        .unwrap();
+        assert!((z(&doc, lid) - 0.0).abs() < 1e-3, "{}", z(&doc, lid));
+        // Flexible, it holds: the lid's top 4 under the knob.
+        let mut flexible = doc.component(component).unwrap().clone();
+        flexible.flexible = true;
+        doc.update_component(flexible).unwrap();
+        let moves = crate::solve(&doc).unwrap();
+        crate::place_bodies(&mut doc, &moves);
+        assert!((z(&doc, knob) - 10.0).abs() < 1e-3, "{}", z(&doc, knob));
+        assert!((z(&doc, lid) - 6.0).abs() < 1e-3, "{}", z(&doc, lid));
+    }
+
+    /// Components from commands: made, nested, flexible, emptied, taken
+    /// apart.
+    #[test]
+    fn components_are_made_nested_and_taken_apart() {
+        let mut doc = Document::new("t");
+        let [a, b, c] = [
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+        ];
+        let id = |v: Value| ComponentId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap());
+        let outer = id(call(
+            &mut doc,
+            "asm.component",
+            json!({"bodies": [a.0.to_string()], "parent": null}),
+        )
+        .unwrap());
+        assert_eq!(doc.component(outer).unwrap().name, "Component 1");
+        let inner = id(call(
+            &mut doc,
+            "asm.component",
+            json!({"bodies": [b.0.to_string(), c.0.to_string()], "parent": outer.0.to_string(),
+                   "flexible": true, "name": "Hinge"}),
+        )
+        .unwrap());
+        assert_eq!(doc.component_bodies(outer), vec![a, b, c]);
+        assert!(doc.component(inner).unwrap().flexible);
+        // Inside itself is refused.
+        assert!(
+            call(
+                &mut doc,
+                "asm.component_set",
+                json!({"component": outer.0.to_string(), "parent": inner.0.to_string()}),
+            )
+            .is_err()
+        );
+        call(
+            &mut doc,
+            "asm.component_set",
+            json!({"component": inner.0.to_string(), "parent": null}),
+        )
+        .unwrap();
+        assert_eq!(doc.component_bodies(outer), vec![a]);
+        call(
+            &mut doc,
+            "asm.component_add",
+            json!({"bodies": [c.0.to_string()]}),
+        )
+        .unwrap();
+        assert_eq!(doc.component_of(c), None);
+        call(
+            &mut doc,
+            "asm.component_remove",
+            json!({"component": inner.0.to_string()}),
+        )
+        .unwrap();
+        assert_eq!(doc.component_of(b), None);
+        assert_eq!(doc.components().len(), 1);
     }
 
     /// A joint to the world holds the body to the origin's planes, and

@@ -392,6 +392,8 @@ pub enum MenuScope {
     TreeFeature(FeatureId),
     /// A body row's menu in the tree.
     TreeBody(BodyId),
+    /// A component row's menu in the tree.
+    TreeComponent(crate::ComponentId),
     /// The start page's New cards: each item is a way to begin a document.
     StartPage,
     /// The Edit menu's clipboard entries, run on the active bench:

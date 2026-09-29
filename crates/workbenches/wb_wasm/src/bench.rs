@@ -496,7 +496,7 @@ impl Workbench for WasmWorkbench {
     }
 
     fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
-        let Ok(json) = serde_json::to_string(&convert::menu_scope(scope)) else {
+        let Some(Ok(json)) = convert::menu_scope(scope).map(|s| serde_json::to_string(&s)) else {
             return Vec::new();
         };
         let mut inner = self.inner();
@@ -529,7 +529,7 @@ impl Workbench for WasmWorkbench {
         scope: &MenuScope,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> bool {
-        let Ok(scope) = serde_json::to_string(&convert::menu_scope(scope)) else {
+        let Some(Ok(scope)) = convert::menu_scope(scope).map(|s| serde_json::to_string(&s)) else {
             return false;
         };
         let mut inner = self.inner();

@@ -835,6 +835,8 @@ fn toggle_visibility(document: &core_document::Document, item: TreeItemId) -> Op
                 visible: !visible,
             })
         }
+        // A component shows when any body in it shows.
+        TreeItemId::Component(_) => None,
         TreeItemId::DocumentRoot => None,
     }
 }

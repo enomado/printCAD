@@ -461,6 +461,14 @@ impl PrintCadApp {
             match item {
                 TreeItemId::Feature(id) => self.session.document.rename_feature(id, name),
                 TreeItemId::Body(id) => self.session.document.rename_body(id, name),
+                TreeItemId::Component(id) => {
+                    if let Some(mut component) = self.session.document.component(id).cloned() {
+                        component.name = name;
+                        if let Err(err) = self.session.document.update_component(component) {
+                            app_log::warn(format!("Could not rename the component: {err}"));
+                        }
+                    }
+                }
                 TreeItemId::DocumentRoot | TreeItemId::ImportedObject(_) => {}
             }
         }
@@ -821,6 +829,11 @@ impl PrintCadApp {
                     self.session.document.body_of_imported_object(node_id);
                 self.session.selected_body = self.session.active_body_id.map(|id| id.0);
             }
+            TreeItemId::Component(_) => {
+                self.session.active_document_object = None;
+                self.session.active_body_id = None;
+                self.session.selected_body = None;
+            }
         }
     }
 
@@ -935,6 +948,23 @@ impl PrintCadApp {
             }
             TreeItemId::Body(body) => self.delete_body(body),
             TreeItemId::ImportedObject(node) => self.delete_imported_node(node),
+            TreeItemId::Component(component) => {
+                let name = self
+                    .session
+                    .document
+                    .component(component)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default();
+                match self.session.document.remove_component(component) {
+                    Ok(()) => {
+                        self.session
+                            .journal
+                            .label_next(format!("Take apart {name}"));
+                        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+                    }
+                    Err(err) => app_log::warn(format!("Could not take {name} apart: {err}")),
+                }
+            }
             TreeItemId::DocumentRoot => {}
         }
     }
@@ -1222,6 +1252,9 @@ impl PrintCadApp {
             TreeItemId::Body(body) => Some(body),
             TreeItemId::Feature(f) => self.session.document.get_feature_meta(f)?.body,
             TreeItemId::ImportedObject(id) => self.session.document.body_of_imported_object(id),
+            TreeItemId::Component(id) => {
+                self.session.document.component_bodies(id).first().copied()
+            }
             TreeItemId::DocumentRoot => None,
         }
     }

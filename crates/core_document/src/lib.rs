@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod attach;
 pub mod command;
+pub mod components;
 pub mod configurations;
 pub mod datum;
 pub mod evaluate;
@@ -39,6 +40,7 @@ pub use command::{
     AgentAccess, Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec,
     Recorded,
 };
+pub use components::{Component, ComponentId};
 pub use configurations::{CONFIGURATIONS_KIND, Configuration, Configurations};
 pub use datum::{
     AnchorCircle, AttachmentOffset, BasePlane, DATUM_KIND, DatumAttachment, DatumFeature,
@@ -104,6 +106,9 @@ pub struct Document {
     metadata: DocumentMetadata,
     feature_tree: FeatureTree,
     bodies: Vec<Body>,
+    /// Bodies grouped into components, nested.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    components: Vec<Component>,
     /// Workbench-specific data storage (type-erased).
     workbench_storage: HashMap<String, WorkbenchStorage>,
     /// References to external files stored in the .prtcad archive.
@@ -260,6 +265,9 @@ pub struct Body {
     /// there, read again when the file is reloaded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<FileLink>,
+    /// The component the body sits in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<ComponentId>,
 }
 
 /// Where a linked part's shape comes from: a body of another printCAD
@@ -428,6 +436,7 @@ impl Document {
             metadata: DocumentMetadata::new(name),
             feature_tree: FeatureTree::new(),
             bodies: Vec::new(),
+            components: Vec::new(),
             workbench_storage: HashMap::new(),
             assets: HashMap::new(),
             imported_meshes: HashMap::new(),
@@ -562,6 +571,14 @@ impl Document {
                 link: self.bodies.iter().find(|b| b.id == *id)?.link.clone()?,
             },
             Op::RemoveBody { .. } => return None,
+            Op::SetComponent { id, .. } => Op::SetComponent {
+                id: *id,
+                component: self.component(*id).cloned(),
+            },
+            Op::SetBodyComponent { id, .. } => Op::SetBodyComponent {
+                id: *id,
+                component: self.bodies.iter().find(|b| b.id == *id)?.component,
+            },
             Op::RenameBody { id, .. } => Op::RenameBody {
                 id: *id,
                 name: self.bodies.iter().find(|b| b.id == *id)?.name.clone(),
@@ -731,6 +748,7 @@ impl Document {
                 created_at,
             } => {
                 self.bodies.push(Body {
+                    component: None,
                     link: None,
                     mirror: None,
                     id: *id,
@@ -765,6 +783,7 @@ impl Document {
                     copy_of: Some(*source),
                     mirror: *mirror,
                     link: None,
+                    component: None,
                 });
                 self.refresh_copy(*id);
             }
@@ -787,6 +806,7 @@ impl Document {
                     copy_of: None,
                     mirror: None,
                     link: Some(link.clone()),
+                    component: None,
                 });
             }
             Op::SetBodyLink { id, link } => {
@@ -800,6 +820,14 @@ impl Document {
                 self.imported_brep_face_colors.remove(id);
                 self.link_stale.remove(id);
                 self.refresh_copies_of(*id);
+            }
+            Op::SetComponent { id, component } => {
+                self.apply_set_component(*id, component.as_ref());
+            }
+            Op::SetBodyComponent { id, component } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.component = *component;
+                }
             }
             Op::RenameBody { id, name } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -997,6 +1025,7 @@ impl Document {
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
                 for init in bodies {
                     self.bodies.push(Body {
+                        component: None,
                         link: None,
                         mirror: None,
                         copy_of: None,
@@ -3033,6 +3062,10 @@ pub enum DocumentError {
     ImportWithoutCommand(String),
     #[error("document serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Refused(String),
     #[error("feature not found: {0:?}")]
     FeatureNotFound(FeatureId),
     #[error("feature error: {0}")]

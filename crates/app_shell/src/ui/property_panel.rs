@@ -466,6 +466,26 @@ fn data_groups(
                 PropRow::text("Display unit", unit.short_label()),
             ],
         )],
+        TreeItemId::Component(id) => {
+            let Some(component) = document.component(id) else {
+                return Vec::new();
+            };
+            vec![(
+                "Component".to_string(),
+                vec![
+                    PropRow::text("Label", &component.name),
+                    PropRow::text(
+                        "Moves",
+                        if component.flexible {
+                            "Flexible: its joints move"
+                        } else {
+                            "Rigid: as one"
+                        },
+                    ),
+                    PropRow::mono("Bodies", document.component_bodies(id).len().to_string()),
+                ],
+            )]
+        }
         TreeItemId::Body(id) => {
             let Some(body) = document.bodies().iter().find(|b| b.id == id) else {
                 return Vec::new();
@@ -645,6 +665,10 @@ pub fn draw_property_panel(
         TreeItemId::ImportedObject(id) => document
             .imported_object(id)
             .map(|o| o.name.clone())
+            .unwrap_or_default(),
+        TreeItemId::Component(id) => document
+            .component(id)
+            .map(|c| c.name.clone())
             .unwrap_or_default(),
     };
 

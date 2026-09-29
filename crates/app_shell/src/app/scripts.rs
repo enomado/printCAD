@@ -1094,6 +1094,17 @@ impl PrintCadApp {
                     TreeItemId::ImportedObject(node) => {
                         crate::ui::UiCommand::SetImportedVisibility { node, visible }
                     }
+                    TreeItemId::Component(component) => {
+                        let commands = self
+                            .session
+                            .document
+                            .component_bodies(component)
+                            .into_iter()
+                            .map(|body| crate::ui::UiCommand::SetBodyVisible { body, visible })
+                            .collect();
+                        self.apply_ui_commands(commands, event_loop);
+                        return Ok(Value::Null);
+                    }
                     TreeItemId::DocumentRoot => {
                         return Err(CommandError::bad("id", "cannot be hidden"));
                     }
@@ -1749,6 +1760,8 @@ pub(crate) fn tree_item(
         Ok(TreeItemId::Feature(FeatureId(id)))
     } else if document.imported_object(id).is_some() {
         Ok(TreeItemId::ImportedObject(id))
+    } else if document.component(core_document::ComponentId(id)).is_some() {
+        Ok(TreeItemId::Component(core_document::ComponentId(id)))
     } else {
         Err(CommandError::bad("id", "is not in this document"))
     }
@@ -1899,6 +1912,7 @@ fn item_id(item: TreeItemId) -> Option<Uuid> {
         TreeItemId::Body(b) => Some(b.0),
         TreeItemId::Feature(f) => Some(f.0),
         TreeItemId::ImportedObject(n) => Some(n),
+        TreeItemId::Component(c) => Some(c.0),
         TreeItemId::DocumentRoot => None,
     }
 }
