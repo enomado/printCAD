@@ -100,6 +100,8 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
         let name = element_name(geom.id());
         match geom {
             GeometryElement::Point(_) => {}
+            // A circle of no size encloses nothing.
+            GeometryElement::Circle(c) if c.radius <= f32::EPSILON => {}
             GeometryElement::Circle(c) => {
                 let center = sketch
                     .point_position(c.center)
@@ -252,23 +254,76 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
         return Err(ProfileError::Empty);
     }
 
+    // Projected curves each bring their own end points: where two meet at
+    // one spot they join there, as drawn curves sharing a point do.
+    let mut same: Vec<(Uuid, [f64; 2])> = Vec::new();
+    let mut joined: HashMap<Uuid, Uuid> = HashMap::new();
+    for edge in &edges {
+        for end in [edge.ends.0, edge.ends.1] {
+            if !sketch.is_external(end) || joined.contains_key(&end) {
+                continue;
+            }
+            let Some(at) = sketch.point_position(end).map(v2) else {
+                continue;
+            };
+            let found = same
+                .iter()
+                .find(|(_, p)| (p[0] - at[0]).hypot(p[1] - at[1]) < 1e-6)
+                .map(|(id, _)| *id);
+            match found {
+                Some(first) => {
+                    joined.insert(end, first);
+                }
+                None => {
+                    same.push((end, at));
+                    joined.insert(end, end);
+                }
+            }
+        }
+    }
+    for edge in &mut edges {
+        let canon = |id: Uuid| joined.get(&id).copied().unwrap_or(id);
+        edge.ends = (canon(edge.ends.0), canon(edge.ends.1));
+    }
+
     // Endpoint graph: point id -> indices of edges touching it.
     let mut touching: HashMap<Uuid, Vec<usize>> = HashMap::new();
     for (idx, edge) in edges.iter().enumerate() {
         touching.entry(edge.ends.0).or_default().push(idx);
         touching.entry(edge.ends.1).or_default().push(idx);
     }
-    for (point, list) in &touching {
-        match list.len() {
-            2 => {}
-            1 => return Err(ProfileError::OpenAt(*point)),
-            _ => return Err(ProfileError::BranchingAt(*point)),
+    // What does not close is left out: a curve with a loose end goes, and
+    // then whatever that leaves loose, until only loops remain. A stray
+    // line or a spur off a loop does not stop the loops being a profile.
+    let mut used = vec![false; edges.len()];
+    let mut loose: Option<Uuid> = None;
+    loop {
+        let dangling: Vec<(Uuid, usize)> = touching
+            .iter()
+            .filter_map(|(point, list)| {
+                let live: Vec<usize> = list.iter().copied().filter(|&i| !used[i]).collect();
+                (live.len() == 1).then(|| (*point, live[0]))
+            })
+            .collect();
+        if dangling.is_empty() {
+            break;
+        }
+        for (point, edge) in dangling {
+            loose.get_or_insert(point);
+            used[edge] = true;
         }
     }
+    for (point, list) in &touching {
+        if list.iter().filter(|&&i| !used[i]).count() > 2 {
+            return Err(ProfileError::BranchingAt(*point));
+        }
+    }
+    if used.iter().all(|&u| u) && wires.is_empty() {
+        return Err(loose.map_or(ProfileError::Empty, ProfileError::OpenAt));
+    }
 
-    // Walk loops: every vertex has degree exactly 2, so each unvisited edge
-    // starts a unique cycle.
-    let mut used = vec![false; edges.len()];
+    // Walk loops: every vertex left has degree exactly 2, so each unvisited
+    // edge starts a unique cycle.
     for start_idx in 0..edges.len() {
         if used[start_idx] {
             continue;
@@ -308,10 +363,96 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                 None => return Err(ProfileError::OpenAt(current_point)),
             }
         }
-        wires.push(ProfileWire { segments, names });
+        // A loop that encloses nothing (a line and its copy, a line of no
+        // length) is no region to build.
+        if !encloses_nothing(&segments) {
+            wires.push(ProfileWire { segments, names });
+        }
     }
 
+    if wires.is_empty() {
+        return Err(loose.map_or(ProfileError::Empty, ProfileError::OpenAt));
+    }
     Ok(wires)
+}
+
+/// Whether a loop of lines and arcs has no area: its corners and arcs'
+/// middles, as a polygon, enclose next to none. Loops with other curves
+/// are taken as they come.
+fn encloses_nothing(segments: &[ProfileSegment]) -> bool {
+    let mut corners = Vec::with_capacity(segments.len() * 2);
+    for segment in segments {
+        match segment {
+            ProfileSegment::Line { start, .. } => corners.push(*start),
+            ProfileSegment::Arc { start, mid, .. } => {
+                corners.push(*start);
+                corners.push(*mid);
+            }
+            _ => return false,
+        }
+    }
+    let twice: f64 = (0..corners.len())
+        .map(|i| {
+            let (a, b) = (corners[i], corners[(i + 1) % corners.len()]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum();
+    twice.abs() * 0.5 < 1e-9
+}
+
+/// The loose ends of the curves that count in the profile: points only one
+/// of them reaches, which the profile leaves out with their curves.
+pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
+    let mut reach: HashMap<Uuid, usize> = HashMap::new();
+    for geom in &sketch.geometry {
+        let guide = sketch
+            .external
+            .get(&geom.id())
+            .is_some_and(|source| !source.defining);
+        if sketch.is_construction(geom.id()) || guide {
+            continue;
+        }
+        let ends = match geom {
+            GeometryElement::Line(l) => [l.start, l.end],
+            GeometryElement::Arc(a) => [a.start, a.end],
+            GeometryElement::Conic(c) => [c.start, c.end],
+            GeometryElement::Ellipse(e) => match e.arc {
+                Some(arc) => [arc.start, arc.end],
+                None => continue,
+            },
+            GeometryElement::BSpline(b) if !b.periodic => {
+                match (b.control_points.first(), b.control_points.last()) {
+                    (Some(&a), Some(&z)) => [a, z],
+                    _ => continue,
+                }
+            }
+            _ => continue,
+        };
+        for end in ends {
+            // Projected ends at one spot are one end, as the profile joins
+            // them.
+            let end = if sketch.is_external(end) {
+                let at = sketch.point_position(end).map(v2);
+                reach
+                    .keys()
+                    .copied()
+                    .find(|other| {
+                        sketch.is_external(*other)
+                            && at
+                                .zip(sketch.point_position(*other).map(v2))
+                                .is_some_and(|(a, b)| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-6)
+                    })
+                    .unwrap_or(end)
+            } else {
+                end
+            };
+            *reach.entry(end).or_default() += 1;
+        }
+    }
+    reach
+        .into_iter()
+        .filter_map(|(point, n)| (n == 1).then_some(point))
+        .collect()
 }
 
 /// The profile segment of spline `b` over its control point positions: the
@@ -477,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn open_chain_is_rejected() {
+    fn open_chain_alone_is_rejected() {
         let mut sketch = Sketch::new("t");
         let a = pt(&mut sketch, 0.0, 0.0);
         let b = pt(&mut sketch, 10.0, 0.0);
@@ -508,16 +649,22 @@ mod tests {
         ));
     }
 
+    /// A loop with loose curves around it is still a profile: the spur
+    /// off one of its corners and a stray line elsewhere are left out.
     #[test]
-    fn dangling_edge_is_rejected() {
+    fn loose_curves_are_left_out_of_a_closed_loop() {
         let mut sketch = Sketch::new("t");
         let [a, ..] = rectangle(&mut sketch);
         let e = pt(&mut sketch, -5.0, -5.0);
-        line(&mut sketch, a, e); // open spur off the rectangle
-        assert!(matches!(
-            extract_wires(&sketch),
-            Err(ProfileError::OpenAt(_) | ProfileError::BranchingAt(_))
-        ));
+        let f = pt(&mut sketch, -9.0, -5.0);
+        line(&mut sketch, a, e); // a spur off the rectangle
+        line(&mut sketch, e, f); // and on from it
+        let g = pt(&mut sketch, 30.0, 0.0);
+        let h = pt(&mut sketch, 40.0, 0.0);
+        line(&mut sketch, g, h); // a stray line
+        let wires = extract_wires(&sketch).expect("the rectangle closes");
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].segments.len(), 4, "the rectangle alone");
     }
 
     #[test]

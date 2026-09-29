@@ -4494,7 +4494,17 @@ impl SketchWorkbench {
             self.selected_constraints.extend(malformed);
         }
         match profile::extract_wires(sketch) {
-            Ok(wires) => problems.push(format!("{} closed profile(s)", wires.len())),
+            Ok(wires) => {
+                problems.push(format!("{} closed profile(s)", wires.len()));
+                let loose = profile::loose_ends(sketch);
+                if !loose.is_empty() {
+                    problems.push(format!(
+                        "{} loose end(s) left out of the profile",
+                        loose.len()
+                    ));
+                    self.selected.extend(loose);
+                }
+            }
             Err(profile::ProfileError::Empty) => problems.push("no closed profile".to_string()),
             Err(profile::ProfileError::OpenAt(id)) => {
                 problems.push("an open profile".to_string());
@@ -5006,7 +5016,9 @@ impl SketchWorkbench {
                     point: local.point,
                     direction: local.direction,
                     section: false,
-                    defining: false,
+                    // As the drawing tools do: a guide in construction
+                    // mode, counting in the profile out of it.
+                    defining: !self.construction_mode,
                     reference: None,
                 }
             })
@@ -5046,6 +5058,7 @@ impl SketchWorkbench {
                 commands::args(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "edges": edges,
+                    "counts": !self.construction_mode,
                 })),
                 commands::made_since(&feature.sketch, &before),
             );
@@ -5081,7 +5094,7 @@ impl SketchWorkbench {
             point: local.point,
             direction: local.normal,
             section: true,
-            defining: false,
+            defining: !self.construction_mode,
             reference: None,
         };
         let before = commands::ids_of(&feature.sketch);
@@ -5103,6 +5116,7 @@ impl SketchWorkbench {
                         "point": source.point,
                         "normal": source.direction,
                     }],
+                    "counts": !self.construction_mode,
                 })),
                 commands::made_since(&feature.sketch, &before),
             );

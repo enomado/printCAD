@@ -412,7 +412,9 @@ and stores the result as geometry marked in `Sketch::external` with its
 drawing until marked as counting (`ExternalSource::defining`, which the
 Construction button switches as it does construction for drawn curves),
 drawn in the external colour (dashed while a guide, solid once it
-counts), never dragged, and projected again
+counts), never dragged, and projected again. New projections take the
+Construction mode (a guide in it, counting out of it; the commands' `counts`
+flag, off unless given); projected ends at one spot join in the profile
 once per editing session (in place when the curve is the same kind). Its
 intersection variant takes picked faces instead and adds the curves where
 each crosses the sketch plane (`KernelQueries::section_face`, the face's
@@ -837,7 +839,10 @@ hacks, no silently degraded feature). Instead:
   not safety.
 - **Sketch endpoint snapping REUSES point ids**: that shared-vertex topology
   is what makes profiles closed for `profile::extract_wires`. Don't create
-  coincident duplicate points.
+  coincident duplicate points. The profile is the sketch's closed loops:
+  curves with a loose end (a stray line, a spur off a loop) are pruned away
+  and loops enclosing no area dropped; it fails only when nothing closes
+  (`profile::loose_ends` names what was left out).
 - **Pocket/Groove cut AGAINST the sketch normal by default** (a face
   sketch's normal points out of the material, so the default digs in).
 - **NDC is Y-down**: the camera bakes the Vulkan Y flip into `view_proj`.

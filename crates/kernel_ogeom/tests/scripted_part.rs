@@ -287,3 +287,39 @@ fn a_script_drills_a_standard_hole() {
         "{volume}"
     );
 }
+
+/// A sketch with a closed rectangle and loose lines around it pads the
+/// rectangle: what does not close is left out.
+#[test]
+fn a_pad_takes_the_closed_loop_and_leaves_loose_lines_out() {
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
+        .unwrap();
+    let mut host = Benches {
+        registry,
+        document: Document::new("loose"),
+    };
+    let out = ScriptEngine::new().run_script(
+        r#"
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+        pc.sketch.line{sketch = s, x1 = 20, y1 = 0, x2 = 30, y2 = 8}
+        pc.sketch.line{sketch = s, x1 = 10, y1 = 5, x2 = 14, y2 = 9}
+        pc.design.pad{sketch = s, length = 2}
+        "#,
+        "loose.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let body = host.document.bodies()[0].id;
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
+    let built = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let (lo, hi) = built.mesh.bounds().unwrap();
+    assert!((hi[0] - lo[0] - 10.0).abs() < 1e-3 && (hi[1] - lo[1] - 5.0).abs() < 1e-3);
+}

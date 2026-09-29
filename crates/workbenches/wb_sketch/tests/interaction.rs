@@ -4036,11 +4036,8 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
         .count();
     assert_eq!(conics, 2);
     assert!(h.point_at(15.0, 3.0) && h.point_at(15.0, -1.0));
-    let wires = wb_sketch::profile::extract_wires(&sketch);
-    assert!(
-        matches!(wires, Err(wb_sketch::profile::ProfileError::OpenAt(_))),
-        "the hyperbola's arc is still open"
-    );
+    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 1, "the hyperbola's open arc is left out");
     h.click(15.0, 3.0, "sketch.line");
     h.click(15.0, -1.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));

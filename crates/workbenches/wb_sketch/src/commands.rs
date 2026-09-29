@@ -239,6 +239,12 @@ pub fn register(context: &mut WorkbenchContext) {
              external geometry that follows them",
         )
         .param("from", ParamKind::Id, "A sketch or a datum")
+        .optional(
+            "counts",
+            ParamKind::Bool,
+            "true: it counts in the profile, as drawn geometry does; false (the default): it \
+             only guides the sketch",
+        )
         .returns("the external elements made"),
     ));
     context.register_command(sketch(
@@ -506,6 +512,12 @@ pub fn register(context: &mut WorkbenchContext) {
             "Each {body, point, direction}: a point on the edge and its direction, \
              in the body's own frame",
         )
+        .optional(
+            "counts",
+            ParamKind::Bool,
+            "true: it counts in the profile, as drawn geometry does; false (the default): it \
+             only guides the sketch",
+        )
         .returns("{elements}: what it made"),
     );
     context.register_command(
@@ -518,6 +530,12 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::List,
             "Each {body, point, normal}: a point on the face and its normal there, \
              in the body's own frame",
+        )
+        .optional(
+            "counts",
+            ParamKind::Bool,
+            "true: it counts in the profile, as drawn geometry does; false (the default): it \
+             only guides the sketch",
         )
         .returns("{elements}: what it made"),
     );
@@ -718,6 +736,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             }
             let sources = reference_sources(ctx.document, from)
                 .ok_or_else(|| CommandError::bad("from", "must be a sketch or a datum"))?;
+            let sources = counting(&a, sources)?;
             let before = ids_of(&feature.sketch);
             let placed = crate::placed_plane(
                 &feature.plane,
@@ -810,7 +829,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             return save(ctx, sketch_id, feature, made);
         }
         "sketch.intersection" => {
-            let faces = section_sources(args.get("faces"))?;
+            let faces = counting(&a, section_sources(args.get("faces"))?)?;
             let before = ids_of(&feature.sketch);
             let placed = crate::placed_plane(
                 &feature.plane,
@@ -822,7 +841,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             return save(ctx, sketch_id, feature, made);
         }
         "sketch.external" => {
-            let edges = external_sources(args.get("edges"))?;
+            let edges = counting(&a, external_sources(args.get("edges"))?)?;
             let before = ids_of(&feature.sketch);
             let placed = crate::placed_plane(
                 &feature.plane,
@@ -1799,6 +1818,19 @@ fn new_beside(
         .map_err(|e| CommandError::failed(e.to_string()))
 }
 
+/// `sources` counting in the profile or only guiding, as the call's
+/// `counts` says (guiding when it says nothing).
+fn counting(
+    a: &Args,
+    mut sources: Vec<crate::sketch::ExternalSource>,
+) -> Result<Vec<crate::sketch::ExternalSource>, CommandError> {
+    let counts = a.opt_bool("counts")?.unwrap_or(false);
+    for source in &mut sources {
+        source.defining = counts;
+    }
+    Ok(sources)
+}
+
 /// Edges named as `{body, point, direction}`, in each body's own frame.
 fn external_sources(
     value: Option<&Value>,
@@ -2751,6 +2783,22 @@ mod tests {
             "the lines; their points go with them"
         );
         assert!(copied.external.values().all(|s| s.reference.is_some()));
+        assert!(
+            copied.external.values().all(|s| !s.defining),
+            "said nothing, it only guides"
+        );
+        // Asked to count, it closes a profile of its own.
+        let third = call(&mut doc, "sketch.new", json!({"body": body.0.to_string()})).unwrap();
+        call(
+            &mut doc,
+            "sketch.external_from",
+            json!({"sketch": third, "from": first, "counts": true}),
+        )
+        .unwrap();
+        let counted = sketch_of(&doc, &third);
+        assert!(counted.external.values().all(|s| s.defining));
+        let wires = crate::profile::extract_wires(&counted).expect("the rectangle counts");
+        assert_eq!(wires.len(), 1);
         let corner = copied.geometry.iter().any(|g| matches!(
             g,
             GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4

@@ -663,6 +663,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.sketch.external_from`: Bring another sketch's curves and points, or a datum, into this sketch as external geometry that follows them.
 
 - `from` (id): A sketch or a datum
+- `counts` (boolean, optional): true: it counts in the profile, as drawn geometry does; false (the default): it only guides the sketch
 - `sketch` (id): The sketch to draw in
 - Returns the external elements made
 
@@ -809,12 +810,14 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - `sketch` (id): The sketch to draw in
 - `edges` (list): Each {body, point, direction}: a point on the edge and its direction, in the body's own frame
+- `counts` (boolean, optional): true: it counts in the profile, as drawn geometry does; false (the default): it only guides the sketch
 - Returns {elements}: what it made
 
 `pc.sketch.intersection`: Add where faces of solids cross the sketch plane, as fixed references.
 
 - `sketch` (id): The sketch to draw in
 - `faces` (list): Each {body, point, normal}: a point on the face and its normal there, in the body's own frame
+- `counts` (boolean, optional): true: it counts in the profile, as drawn geometry does; false (the default): it only guides the sketch
 - Returns {elements}: what it made
 
 `pc.sketch.constraints`: List the sketch's constraints.
