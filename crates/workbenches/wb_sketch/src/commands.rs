@@ -1283,7 +1283,9 @@ fn add_sketch(
     // the body, and follows it.
     let attached = match args_value(a, "attachment") {
         Some(value) => {
-            let attachment: core_document::DatumAttachment = serde_json::from_value(value.clone())
+            let mut value = value.clone();
+            following(&mut value);
+            let attachment: core_document::DatumAttachment = serde_json::from_value(value)
                 .map_err(|e| CommandError::bad("attachment", e.to_string()))?;
             let offset = match args_value(a, "attachment_offset") {
                 Some(v) => serde_json::from_value(v.clone())
@@ -1305,6 +1307,27 @@ fn add_sketch(
     ctx.document
         .add_feature_in_body(feature, name, Some(body))
         .map_err(|e| CommandError::failed(e.to_string()))
+}
+
+/// Every face and edge an attachment given to a command names is on the
+/// sketch's own body, so the sketch follows it, unless the script says
+/// otherwise: `follows` set on each anchor (a point with a normal or a
+/// direction) that does not give it.
+fn following(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let anchor = map.contains_key("point")
+                && (map.contains_key("normal") || map.contains_key("direction"));
+            if anchor && !map.contains_key("follows") {
+                map.insert("follows".into(), Value::Bool(true));
+            }
+            for child in map.values_mut() {
+                following(child);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(following),
+        _ => {}
+    }
 }
 
 /// An argument's raw value, when given and not nil.
@@ -2392,6 +2415,34 @@ mod tests {
             .filter(|g| g["kind"] == "point")
             .count();
         assert_eq!(points, 3);
+    }
+
+    /// A face given as an attachment is on the sketch's own body: the
+    /// sketch follows it unless told not to.
+    #[test]
+    fn an_attached_sketch_follows_its_face_unless_told_not_to() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        for (given, follows) in [(None, true), (Some(false), false)] {
+            let mut face = json!({"point": [0, 0, 10], "normal": [0, 0, 1]});
+            if let Some(given) = given {
+                face["follows"] = json!(given);
+            }
+            let sketch = call(
+                &mut doc,
+                "sketch.new",
+                json!({"body": body.0.to_string(), "attachment": {"Face": {"face": face}}}),
+            )
+            .unwrap();
+            let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
+            let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+            let Some(core_document::DatumAttachment::Face { face }) =
+                feature.attached.map(|a| a.attachment)
+            else {
+                panic!("attached on the face");
+            };
+            assert_eq!(face.follows, follows);
+        }
     }
 
     #[test]

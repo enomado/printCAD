@@ -3010,3 +3010,129 @@ fn a_solid_mirrors_across_a_plane() {
     );
     assert!((measured.centre_mm[0] - 35.0).abs() < 1e-6, "{measured:?}");
 }
+
+fn yz_plane() -> ProfilePlane {
+    ProfilePlane {
+        origin: [0.0; 3],
+        x_axis: [0.0, 1.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [1.0, 0.0, 0.0],
+    }
+}
+
+fn revolve_on(plane: ProfilePlane, wire: ProfileWire, angle_deg: f64, op: BooleanOp) -> SolidOp {
+    SolidOp::Sweep {
+        profile: Profile {
+            plane,
+            wires: vec![wire],
+        },
+        kind: SweepKind::Revolve {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            angle_deg,
+            second_angle_deg: None,
+            midplane: false,
+            reversed: false,
+            termination: Default::default(),
+        },
+        op,
+    }
+}
+
+/// A whole turn of a collar over the rim of a whole turned cylinder, both
+/// sketched on the plane holding their axis, fuses and cuts.
+#[test]
+#[ignore = "kernel: booleans of whole revolutions whose seams share a half-plane off the profile plane do not close their shell (ogeom-rs#95)"]
+fn a_whole_collar_fuses_with_and_cuts_a_turned_cylinder() {
+    for plane in [yz_plane(), xz_plane()] {
+        for op in [BooleanOp::Fuse, BooleanOp::Cut] {
+            for angle in [360.0, 359.0] {
+                let mut kernel = new_kernel();
+                let result = kernel.execute_solid_chain(
+                    &[
+                        revolve_on(
+                            plane,
+                            rect_wire(0.0, 0.0, 10.0, 20.0),
+                            360.0,
+                            BooleanOp::NewSolid,
+                        ),
+                        revolve_on(plane, rect_wire(8.0, 18.0, 14.0, 24.0), angle, op),
+                    ],
+                    &TessellationSettings::default(),
+                );
+                assert!(
+                    result.is_ok(),
+                    "{:?} {op:?} {angle}: {:?}",
+                    plane.normal,
+                    result.err()
+                );
+            }
+        }
+    }
+}
+
+/// A loft from a square to a circle, smooth or ruled, builds: the ruled
+/// one through the skinned loft, which through two sections is the ruled
+/// surface.
+#[test]
+#[ignore = "kernel: the skinned loft between unlike sections misses its tolerance in 0.4.1; fixed on the kernel's main, waiting for its release"]
+fn a_loft_from_a_square_to_a_circle_builds() {
+    for ruled in [false, true] {
+        let mut kernel = new_kernel();
+        let result = kernel.execute_solid_chain(
+            &[SolidOp::Loft {
+                sections: vec![
+                    Profile {
+                        plane: xy_plane(),
+                        wires: vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
+                    },
+                    Profile {
+                        plane: plane_at_z(20.0),
+                        wires: vec![circle_wire(0.0, 0.0, 8.0)],
+                    },
+                ],
+                ruled,
+                closed: false,
+                op: BooleanOp::NewSolid,
+            }],
+            &TessellationSettings::default(),
+        );
+        assert!(result.is_ok(), "ruled {ruled}: {:?}", result.err());
+    }
+}
+
+fn cylinder(radius: f64, height: f64) -> SolidOp {
+    blind_pad(
+        vec![circle_wire(0.0, 0.0, radius)],
+        height,
+        BooleanOp::NewSolid,
+    )
+}
+
+/// Every edge of a cylinder, or the edges of its top face, bevel: the
+/// seam, where the side meets itself, is no edge to bevel and is left out.
+#[test]
+fn a_cylinder_bevels_every_edge_and_its_top_face_s_leaving_the_seam() {
+    use kernel_api::{ChamferSpec, EdgeSelection, FaceProbe};
+    let whole = std::f64::consts::PI * 100.0 * 20.0;
+    for edges in [
+        EdgeSelection::All,
+        EdgeSelection::OfPickedFaces(vec![FaceProbe {
+            point: [0.0, 0.0, 20.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        }]),
+    ] {
+        let ops = [
+            cylinder(10.0, 20.0),
+            SolidOp::Chamfer {
+                spec: ChamferSpec::EqualDistance { distance: 1.0 },
+                flip: false,
+                edges: edges.clone(),
+                follow_tangent: false,
+            },
+        ];
+        let got = volume_of(&ops).unwrap_or_else(|e| panic!("{edges:?}: {e}"));
+        assert!(got < whole - 1.0, "{edges:?}: {got}");
+    }
+}

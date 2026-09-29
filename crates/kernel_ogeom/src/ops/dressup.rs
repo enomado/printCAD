@@ -80,25 +80,6 @@ fn pick_reach(model: &Model, solid: &Shape) -> f64 {
         .unwrap_or(f64::INFINITY)
 }
 
-/// A point on (or representative of) an edge, for later re-resolution.
-fn edge_probe(model: &Model, edge: &Shape) -> Option<Point> {
-    let vertices = explore_unique(model, edge, ShapeType::Vertex).ok()?;
-    let mut acc = Vector::new(0.0, 0.0, 0.0);
-    let mut n = 0.0;
-    for v in &vertices {
-        let node = model.node(v)?;
-        if let NodeData::Vertex(data) = node.data() {
-            let placed = v.transform(model.datums()).ok()?.apply(data.point);
-            acc += placed - Point::new(0.0, 0.0, 0.0);
-            n += 1.0;
-        }
-    }
-    if n == 0.0 {
-        return None;
-    }
-    Some(Point::new(acc.x / n, acc.y / n, acc.z / n))
-}
-
 /// What names an edge: the names of the faces it runs between, when the
 /// pick kept them; else the edge nearest `point`, and, when `along` is
 /// set, running that way there.
@@ -118,14 +99,51 @@ impl Probe {
     }
 }
 
-/// Probes for every edge a selection names, resolved on `solid`, and
-/// whether they are picks, which must lie within reach of their edge (the
-/// others are read off the solid's own edges).
-fn selection_probes(
+/// The edges a selection names on `solid`, each once. Every edge, or the
+/// edges of picked faces, are taken as they are, seams left out; edges
+/// picked one by one are found from their picks.
+fn selected_edges(
     model: &mut Model,
     solid: &Shape,
     edges: &EdgeSelection,
-) -> Result<(Vec<Probe>, bool), String> {
+) -> Result<Vec<Shape>, String> {
+    let picks: Vec<([f64; 3], Option<kernel_api::TopoName>)> = match edges {
+        EdgeSelection::All => {
+            let seams = seam_edges(model, solid)?;
+            return Ok(explore_unique(model, solid, ShapeType::Edge)
+                .map_err(|e| format!("exploring edges failed: {e}"))?
+                .into_iter()
+                .filter(|e| !seams.iter().any(|s| s.is_same(e)))
+                .collect());
+        }
+        EdgeSelection::OfPickedFaces(probes) => {
+            probes.iter().map(|p| (p.point, Some(p.name))).collect()
+        }
+        EdgeSelection::OfFaces(points) => points.iter().map(|p| (*p, None)).collect(),
+        EdgeSelection::Picked(_) | EdgeSelection::Near(_) => {
+            let probes = selection_probes(edges)?;
+            return chain_of(model, solid, probes);
+        }
+    };
+    // A seam is where a closed face meets itself, not an edge to round.
+    let seams = seam_edges(model, solid)?;
+    let mut chain: Vec<Shape> = Vec::new();
+    for (p, name) in picks {
+        let face = face_named_or_nearest(model, solid, name, p)?;
+        let face_edges = explore_unique(model, &face, ShapeType::Edge)
+            .map_err(|e| format!("exploring face edges failed: {e}"))?;
+        for edge in face_edges {
+            if !seams.iter().any(|s| s.is_same(&edge)) && !chain.iter().any(|s| s.is_same(&edge)) {
+                chain.push(edge);
+            }
+        }
+    }
+    Ok(chain)
+}
+
+/// Probes for the edges a selection picks one by one, which must lie
+/// within reach of their edge.
+fn selection_probes(edges: &EdgeSelection) -> Result<(Vec<Probe>, bool), String> {
     let probes = match edges {
         EdgeSelection::Near(points) => {
             return Ok((points.iter().map(|p| Probe::at(point3(*p))).collect(), true));
@@ -146,42 +164,35 @@ fn selection_probes(
                 .collect();
             return Ok((probes, true));
         }
-        EdgeSelection::All => {
-            let all = explore_unique(model, solid, ShapeType::Edge)
-                .map_err(|e| format!("exploring edges failed: {e}"))?;
-            all.iter()
-                .filter_map(|e| edge_probe(model, e))
-                .map(Probe::at)
-                .collect()
-        }
-        EdgeSelection::OfFaces(_) | EdgeSelection::OfPickedFaces(_) => {
-            let picks: Vec<([f64; 3], Option<kernel_api::TopoName>)> = match edges {
-                EdgeSelection::OfPickedFaces(probes) => {
-                    probes.iter().map(|p| (p.point, Some(p.name))).collect()
-                }
-                EdgeSelection::OfFaces(points) => points.iter().map(|p| (*p, None)).collect(),
-                _ => Vec::new(),
-            };
-            let mut probes = Vec::new();
-            let mut seen: Vec<Shape> = Vec::new();
-            for (p, name) in picks {
-                let face = face_named_or_nearest(model, solid, name, p)?;
-                let face_edges = explore_unique(model, &face, ShapeType::Edge)
-                    .map_err(|e| format!("exploring face edges failed: {e}"))?;
-                for edge in face_edges {
-                    if seen.iter().any(|s| s.is_same(&edge)) {
-                        continue;
-                    }
-                    if let Some(probe) = edge_probe(model, &edge) {
-                        probes.push(Probe::at(probe));
-                    }
-                    seen.push(edge);
-                }
-            }
-            probes
+        EdgeSelection::All | EdgeSelection::OfFaces(_) | EdgeSelection::OfPickedFaces(_) => {
+            Vec::new()
         }
     };
     Ok((probes, false))
+}
+
+/// The edges of `solid` that border one face only: a closed face's seam,
+/// where the face meets itself (a cylinder's, a sphere's). No blend
+/// rounds them; a selection of every edge, or of a face's, leaves them out.
+fn seam_edges(model: &Model, solid: &Shape) -> Result<Vec<Shape>, String> {
+    let faces = explore_unique(model, solid, ShapeType::Face)
+        .map_err(|e| format!("exploring faces failed: {e}"))?;
+    let mut counted: Vec<(Shape, usize)> = Vec::new();
+    for face in &faces {
+        let edges = explore_unique(model, face, ShapeType::Edge)
+            .map_err(|e| format!("exploring face edges failed: {e}"))?;
+        for edge in edges {
+            match counted.iter_mut().find(|(e, _)| e.is_same(&edge)) {
+                Some((_, n)) => *n += 1,
+                None => counted.push((edge, 1)),
+            }
+        }
+    }
+    Ok(counted
+        .into_iter()
+        .filter(|(_, n)| *n == 1)
+        .map(|(e, _)| e)
+        .collect())
 }
 
 /// How far `point` is from `shape`.
@@ -220,7 +231,7 @@ pub(crate) fn picked_edges(
     solid: &Shape,
     picks: &[kernel_api::EdgeProbe],
 ) -> Result<Vec<Shape>, String> {
-    let probes = selection_probes(model, solid, &EdgeSelection::Picked(picks.to_vec()))?;
+    let probes = selection_probes(&EdgeSelection::Picked(picks.to_vec()))?;
     chain_of(model, solid, probes)
 }
 
@@ -231,11 +242,10 @@ pub fn fillet(
     edges: &EdgeSelection,
     follow_tangent: bool,
 ) -> Result<Shape, String> {
-    let probes = selection_probes(model, solid, edges)?;
-    if probes.0.is_empty() {
+    let mut chain = selected_edges(model, solid, edges)?;
+    if chain.is_empty() {
         return Err("fillet selection matches no edges".into());
     }
-    let mut chain = chain_of(model, solid, probes)?;
     if follow_tangent {
         chain = tangent_chain(model, solid, chain)?;
     }
@@ -401,11 +411,10 @@ pub fn chamfer(
     edges: &EdgeSelection,
     follow_tangent: bool,
 ) -> Result<Shape, String> {
-    let probes = selection_probes(model, solid, edges)?;
-    if probes.0.is_empty() {
+    let mut chain = selected_edges(model, solid, edges)?;
+    if chain.is_empty() {
         return Err("chamfer selection matches no edges".into());
     }
-    let mut chain = chain_of(model, solid, probes)?;
     if follow_tangent {
         chain = tangent_chain(model, solid, chain)?;
     }

@@ -197,7 +197,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.doc.feature`: A feature with its fields.
 
 - `id` (id)
-- Returns {id, name, kind, body, visible, suppressed, error, fields, unset}: unset names the fields holding no value, which fields leaves out
+- Returns {id, name, kind, body, visible, suppressed, error, fields, unset, values}: unset names the fields holding no value, which fields leaves out; values is the data as the feature is built now (formulas worked out, a plane following what it stands on), given when it differs from fields
 
 `pc.doc.selection`: What is selected.
 

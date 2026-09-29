@@ -349,7 +349,21 @@ pub fn run(
     if !FEATURES.iter().any(|(f, _)| *f == id) {
         return Err(CommandError::Unknown(id.to_string()));
     }
-    let sketch = a.opt_id("sketch")?.map(FeatureId);
+    let mut sketch = a.opt_id("sketch")?.map(FeatureId);
+    // A loft's sketch is its first section: given only sections, the first
+    // is that sketch.
+    let lofting = matches!(id, "part.loft" | "part.subtractive_loft");
+    let listed: Vec<FeatureId> = match args.get("sections") {
+        Some(Value::Array(list)) if lofting => list
+            .iter()
+            .filter_map(|v| v.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()))
+            .map(FeatureId)
+            .collect(),
+        _ => Vec::new(),
+    };
+    if sketch.is_none() {
+        sketch = listed.first().copied();
+    }
     if let Some(sketch) = sketch {
         let node = ctx
             .document
@@ -402,11 +416,17 @@ pub fn run(
         Some(variant) => format!("{id}:{variant}"),
         None => id.to_string(),
     };
-    let fields: Map<String, Value> = args
+    let mut fields: Map<String, Value> = args
         .iter()
         .filter(|(k, _)| !OWN_ARGS.contains(&k.as_str()))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    if lofting
+        && let (Some(sketch), Some(Value::Array(list))) = (sketch, fields.get_mut("sections"))
+        && !listed.contains(&sketch)
+    {
+        list.insert(0, json!(sketch.0.to_string()));
+    }
     let made = bench
         .create_feature(ctx, &tool, body, |feature| apply_fields(feature, &fields))
         .map_err(CommandError::failed)?;
@@ -1095,6 +1115,36 @@ mod tests {
             )
             .unwrap();
         (body, sketch)
+    }
+
+    /// A loft's sketch is its first section: given with more sections it
+    /// goes before them, and sections alone take the first as the sketch.
+    #[test]
+    fn a_loft_s_sketch_leads_its_sections() {
+        let mut doc = Document::new("t");
+        let (_, a) = sketch_in(&mut doc);
+        let body = doc.get_feature_meta(a).unwrap().body.unwrap();
+        let b = doc
+            .add_feature_in_body(
+                wb_sketch::SketchFeature::new(
+                    wb_sketch::sketch::Sketch::new("b"),
+                    wb_sketch::sketch::SketchPlane::default(),
+                ),
+                "b".to_string(),
+                Some(body),
+            )
+            .unwrap();
+        let mut bench = PartDesignWorkbench::default();
+        let id = |f: FeatureId| json!(f.0.to_string());
+        for args in [
+            json!({"sketch": id(a), "sections": [id(b)]}),
+            json!({"sections": [id(a), id(b)]}),
+            json!({"sketch": id(a), "sections": [id(a), id(b)]}),
+        ] {
+            let made = call(&mut bench, &mut doc, "part.loft", args.clone()).unwrap();
+            let sections = fields(&doc, &made)["Loft"]["sections"].clone();
+            assert_eq!(sections, json!([id(a), id(b)]), "{args}");
+        }
     }
 
     fn fields(doc: &Document, id: &Value) -> Value {

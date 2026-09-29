@@ -174,11 +174,17 @@ fn loft_wires(
         .iter()
         .any(|w| model.kind_of(w) == Ok(ogeom::topo::ShapeType::Vertex));
     if ruled || (to_point && wires.len() == 2) {
-        // Chain of two-section ruled lofts, fused.
+        // Chain of two-section ruled lofts, fused. The ruled construction
+        // takes circles on one axis and polygons of one corner count;
+        // between other sections (a square and a circle) the skinned loft,
+        // which through two sections is the ruled one, builds the pair.
         let mut parts = Vec::with_capacity(wires.len() - 1);
         for pair in wires.windows(2) {
-            let part = make_loft(model, &pair[0], &pair[1], tol())
-                .map_err(|e| format!("ruled loft failed: {e}"))?;
+            let part = match make_loft(model, &pair[0], &pair[1], tol()) {
+                Ok(part) => part,
+                Err(ruled) => make_loft_skinned(model, pair, SKIN_TOLERANCE, tol())
+                    .map_err(|e| format!("ruled loft failed: {ruled}; skinned: {e}"))?,
+            };
             parts.push(part.shape);
         }
         fuse_all(model, parts)

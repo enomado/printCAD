@@ -51,8 +51,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         CommandSpec::new("doc.feature", "A feature with its fields")
             .param("id", ParamKind::Id, "")
             .returns(
-                "{id, name, kind, body, visible, suppressed, error, fields, unset}: unset \
-                 names the fields holding no value, which fields leaves out",
+                "{id, name, kind, body, visible, suppressed, error, fields, unset, values}: \
+                 unset names the fields holding no value, which fields leaves out; values \
+                 is the data as the feature is built now (formulas worked out, a plane \
+                 following what it stands on), given when it differs from fields",
             )
             .read_only(),
         CommandSpec::new("doc.selection", "What is selected")
@@ -1503,6 +1505,12 @@ pub(crate) fn document_command(
                 "error": node.error,
                 "fields": node.data,
                 "unset": unset_fields(&node.data),
+                // What it is built from now, where that is not what is kept:
+                // formulas worked out, a plane where what it stands on is.
+                "values": document
+                    .feature_values(node.id)
+                    .filter(|v| **v != node.data)
+                    .cloned(),
             }))
         }
         "doc.suppress" => {

@@ -79,8 +79,8 @@ pub fn part_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
 pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
     let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
     for body in &bodies {
-        for (feature, tool) in boolean_tools(document, *body) {
-            if document.built_against(feature) != Some(tool_inputs(document, *body, tool)) {
+        for (feature, inputs) in boolean_inputs(document, *body) {
+            if document.built_against(feature) != Some(inputs) {
                 document.mark_feature_stale(feature);
             }
         }
@@ -119,8 +119,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
             for id in features.iter().chain(&inputs) {
                 document.clear_feature_dirty(*id);
             }
-            for (feature, tool) in boolean_tools(document, body) {
-                let seen = tool_inputs(document, body, tool);
+            for (feature, seen) in boolean_inputs(document, body) {
                 document.note_built_against(feature, seen);
             }
             for (datum, asks) in following_datums(document, body) {
@@ -286,6 +285,25 @@ fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> 
             _ => Vec::new(),
         })
         .collect()
+}
+
+/// Each Boolean of `body` with what its tools are now, all of them in one
+/// sum: a Boolean with several tools is out of date when any of them is.
+fn boolean_inputs(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
+    use std::hash::{Hash, Hasher};
+    let mut out: Vec<(FeatureId, std::collections::hash_map::DefaultHasher)> = Vec::new();
+    for (feature, tool) in boolean_tools(document, body) {
+        let inputs = tool_inputs(document, body, tool);
+        match out.iter_mut().find(|(f, _)| *f == feature) {
+            Some((_, hasher)) => inputs.hash(hasher),
+            None => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                inputs.hash(&mut hasher);
+                out.push((feature, hasher));
+            }
+        }
+    }
+    out.into_iter().map(|(f, h)| (f, h.finish())).collect()
 }
 
 /// Each live borrow of `body` with what it follows now. A borrow of a
@@ -1358,6 +1376,10 @@ fn extrude_op(
     let mut second_side = second_mode
         .map(|mode| side_termination(document, mode, &second))
         .transpose()?;
+    // Through all, centred: through all both ways.
+    if symmetric && first_mode == ExtrudeMode::ThroughAll && second_side.is_none() {
+        second_side = Some(ExtrudeTermination::ThroughAll);
+    }
 
     let normal = match (profile_face, sketch) {
         (Some(face), _) => face_pick_plane(face).1,
@@ -3403,6 +3425,32 @@ mod tests {
         ));
     }
 
+    /// Through all, centred on the sketch: through all both ways.
+    #[test]
+    fn a_symmetric_through_all_pocket_cuts_both_ways() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut centred = pocket(sketch_id, 1.0, false, true);
+        if let PartFeature::Pocket { symmetric, .. } = &mut centred {
+            *symmetric = true;
+        }
+        doc.add_feature_in_body(centred, "Pocket".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        assert!(matches!(
+            &plan.ops[1],
+            SolidOp::Sweep {
+                kind: SweepKind::Extrude {
+                    termination: ExtrudeTermination::ThroughAll,
+                    second_side: Some(ExtrudeTermination::ThroughAll),
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn hole_feature_emits_cut_circles() {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
@@ -3484,6 +3532,51 @@ mod tests {
         .unwrap();
         let error = body_build_ops(&doc, body).unwrap_err();
         assert!(error.message.contains("its own tool"), "{}", error.message);
+    }
+
+    /// A Boolean with two tool bodies is planned once and then left alone
+    /// until one of its tools changes.
+    #[test]
+    fn a_boolean_with_two_tools_rebuilds_once() {
+        let (mut doc, body, base_sketch) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let tools: Vec<BodyId> = (0..2)
+            .map(|_| {
+                let tool = doc.create_body(None);
+                doc.set_imported_geometry(
+                    tool,
+                    core_document::ImportedGeometry {
+                        mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                        source_asset: None,
+                        revision: 0,
+                        bounds_mm: None,
+                        brep_blob_path: None,
+                        face_colors_path: None,
+                        health: None,
+                    },
+                );
+                tool
+            })
+            .collect();
+        doc.add_feature_in_body(
+            PartFeature::BodyBoolean {
+                more_tools: vec![tools[1]],
+                refine: false,
+                tool_body: tools[0],
+                kind: kernel_api::BoolKind::Cut,
+            },
+            "Boolean".into(),
+            Some(body),
+        )
+        .unwrap();
+        let first = rebuild_jobs(&mut doc);
+        assert!(first.iter().any(|j| j.body == body));
+        let again = rebuild_jobs(&mut doc);
+        assert!(
+            again.iter().all(|j| j.body != body),
+            "nothing changed, nothing to rebuild"
+        );
     }
 
     /// An M6 hole 10 deep, its thread modeled `length` long or cleared
