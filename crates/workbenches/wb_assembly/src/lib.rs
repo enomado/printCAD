@@ -703,6 +703,7 @@ impl AssemblyWorkbench {
             .count()
             + 1;
         let name = format!("{label} {number}");
+        commands::ground_first(ctx, joint.other_body);
         match ctx
             .document
             .add_feature_in_body(joint, name.clone(), Some(body))
@@ -1430,7 +1431,17 @@ mod tests {
         frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
         assert!(wb.picking.is_none());
         let joints = joints(&doc);
-        assert_eq!(joints.len(), 1);
+        assert_eq!(joints.len(), 2, "the mate, and the base grounded");
+        assert!(
+            joints
+                .iter()
+                .any(|j| j.body == base && j.feature.kind == JointKind::Ground),
+            "the first joint grounds the body it holds to"
+        );
+        let joints: Vec<_> = joints
+            .into_iter()
+            .filter(|j| j.feature.kind != JointKind::Ground)
+            .collect();
         assert_eq!(joints[0].body, part);
         assert_eq!(joints[0].name, "Mate 1");
         // The part's face now lies on the base's, turned to face it.
@@ -2017,7 +2028,10 @@ mod tests {
         edge_frame(&mut wb, &mut doc, rim(part, [35.0, 5.0, 40.0]));
         edge_frame(&mut wb, &mut doc, rim(base, [5.0, 5.0, 0.0]));
         assert!(wb.picking.is_none(), "two rims make the hinge");
-        let joint = joints(&doc).into_iter().next().expect("a hinge");
+        let joint = joints(&doc)
+            .into_iter()
+            .find(|j| j.feature.kind != JointKind::Ground)
+            .expect("a hinge");
         assert!(matches!(joint.feature.kind, JointKind::Hinge { .. }));
         let origin = doc.body_placement(part).point([0.0; 3]);
         assert!(

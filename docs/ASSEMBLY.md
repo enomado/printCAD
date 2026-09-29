@@ -30,7 +30,8 @@ bodies make now (an angle, a distance), so making the joint moves nothing
 it need not.
 
 Ground (F) keeps a body where it is; the bodies joined to it are placed
-against it. The status bar says how many motions the joints leave open,
+against it. The first joint of an assembly grounds the body it holds to
+when nothing is grounded yet. The status bar says how many motions the joints leave open,
 and for the selected body which ones.
 
 ## Driving and limits

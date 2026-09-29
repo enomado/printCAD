@@ -578,6 +578,7 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
         other_body: other,
         fixed,
     };
+    ground_first(ctx, other);
     let feature = ctx
         .document
         .add_feature_in_body(joint, name, Some(moving_body))
@@ -955,6 +956,16 @@ fn quaternion(value: &Value) -> Result<Quat, CommandError> {
         return Err(bad());
     }
     Ok(q.normalize())
+}
+
+/// The first joint of an assembly grounds the body it holds against, when
+/// nothing is grounded yet: the assembly then stands on it, and what its
+/// joints leave free reads true from the start.
+pub(crate) fn ground_first(ctx: &mut WorkbenchRuntimeContext, other: BodyId) {
+    let all = crate::joints(ctx.document);
+    if all.is_empty() {
+        set_grounded(ctx, other, true);
+    }
 }
 
 /// Ground `body`, or let it move again: a ground joint on it, or none.

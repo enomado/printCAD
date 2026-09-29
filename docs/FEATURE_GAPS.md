@@ -244,8 +244,9 @@ and noted on its item, and the rest of the item is built around it.
 - [ ] **Insert several copies, place by dragging** (missing, S).
 - [ ] **Replace a component** (missing, M), keeping its joints where the
   new faces allow.
-- [ ] **Ground the first component** (partial, S), so the free motions
-  read true from the start.
+- [x] **Ground the first component** (partial, S), so the free motions
+  read true from the start. The first joint grounds the body it holds to
+  when nothing is grounded.
 
 ### Joints
 
