@@ -134,6 +134,35 @@ impl MotionStudy {
     }
 }
 
+/// A point of `body` (in its own frame) followed through `frames`: where
+/// it is at each, and how fast it goes there (mm/s, by the frames either
+/// side).
+pub fn trace(
+    frames: &crate::Frames,
+    body: core_document::BodyId,
+    point: [f32; 3],
+) -> Vec<(f32, [f32; 3], f32)> {
+    let at: Vec<(f32, glam::Vec3)> = frames
+        .iter()
+        .filter_map(|(t, placements)| {
+            let (_, p) = placements.iter().find(|(b, _)| *b == body)?;
+            Some((*t, glam::Vec3::from_array(p.point(point))))
+        })
+        .collect();
+    (0..at.len())
+        .map(|i| {
+            let (a, b) = (i.saturating_sub(1), (i + 1).min(at.len() - 1));
+            let dt = at[b].0 - at[a].0;
+            let speed = if dt > 0.0 {
+                at[b].1.distance(at[a].1) / dt
+            } else {
+                0.0
+            };
+            (at[i].0, at[i].1.to_array(), speed)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +179,30 @@ mod tests {
             drives: Vec::new(),
         };
         assert_eq!(study.times(), [0.0, 0.25, 0.5, 0.75, 1.0]);
+    }
+
+    #[test]
+    fn a_traced_point_has_its_path_and_speed() {
+        use core_document::{BodyId, BodyPlacement};
+        let body = BodyId::new();
+        // Turning about Z at 90° a second, a point 10 out.
+        let frames: crate::Frames = (0..=4)
+            .map(|i| {
+                let t = i as f32 * 0.25;
+                let turn = glam::Quat::from_rotation_z((90.0 * t).to_radians());
+                (t, vec![(body, BodyPlacement::new(turn, glam::Vec3::ZERO))])
+            })
+            .collect();
+        let path = trace(&frames, body, [10.0, 0.0, 0.0]);
+        assert_eq!(path.len(), 5);
+        assert!((path[4].1[1] - 10.0).abs() < 1e-4);
+        let expected = 10.0 * std::f32::consts::FRAC_PI_2;
+        // By the chord across the frames either side: a little under the
+        // arc at this coarse step.
+        assert!(
+            (path[2].2 - expected).abs() / expected < 0.05,
+            "{}",
+            path[2].2
+        );
     }
 }

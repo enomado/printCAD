@@ -103,6 +103,11 @@ pub(crate) struct Studying {
     pub(crate) playing: bool,
     pub(crate) clock: f32,
     pub(crate) placements: Vec<(BodyId, BodyPlacement)>,
+    /// Points followed through the frames: a body and a point of it in its
+    /// own frame.
+    pub(crate) traces: Vec<(BodyId, [f32; 3])>,
+    /// A click on a body adds a point to follow.
+    pub(crate) tracing: bool,
 }
 
 /// A motion's frames: each time and every body's placement then.
@@ -661,6 +666,20 @@ impl AssemblyWorkbench {
     /// A body clicked while a group's bodies are picked goes in, or out
     /// when it is in.
     fn take_group_pick(&mut self, ctx: &WorkbenchRuntimeContext) {
+        if let Some(Task::Motion(studying)) = &mut self.task {
+            let clicked = ctx.selected_face.map(|f| f.point);
+            let key = ctx.selected_body_id;
+            if studying.tracing
+                && key != self.group_seen
+                && let (Some(body), Some(point)) = (key.map(BodyId), clicked)
+            {
+                let local = ctx.document.body_placement(body).inverse().point(point);
+                studying.traces.push((body, local));
+                studying.tracing = false;
+            }
+            self.group_seen = key;
+            return;
+        }
         if let Some(Task::Explode { steps, .. }) = &mut self.task {
             let clicked = ctx.selected_body_id;
             if clicked != self.group_seen {
@@ -2387,6 +2406,8 @@ impl Workbench for AssemblyWorkbench {
                     playing: false,
                     clock: 0.0,
                     placements: all_placements(ctx),
+                    traces: Vec::new(),
+                    tracing: false,
                 })));
             }
             Some("asm.save_state") => {
@@ -2569,6 +2590,8 @@ impl Workbench for AssemblyWorkbench {
                 playing: false,
                 clock: 0.0,
                 placements: all_placements(ctx),
+                traces: Vec::new(),
+                tracing: false,
             })));
             return;
         }
@@ -2755,6 +2778,27 @@ impl Workbench for AssemblyWorkbench {
             .collect();
         if let Some((joint, _, _)) = self.joint_drawing(ctx) {
             lines.extend(joint);
+        }
+        if let Some(Task::Motion(studying)) = &self.task
+            && let Some(frames) = &studying.frames
+        {
+            for (body, point) in &studying.traces {
+                let path = motion::trace(frames, *body, *point);
+                let px: Vec<Option<(f32, f32)>> = path
+                    .iter()
+                    .map(|(_, p, _)| ctx.world_to_viewport(*p))
+                    .collect();
+                for w in px.windows(2) {
+                    if let (Some(a), Some(b)) = (w[0], w[1]) {
+                        lines.push(core_document::ScreenSpaceOverlay::new(
+                            [a.0, a.1],
+                            [b.0, b.1],
+                            ctx.sketch_palette.selected,
+                            1.5,
+                        ));
+                    }
+                }
+            }
         }
         for (from, to) in self.explode_lines(ctx) {
             if let (Some(a), Some(b)) = (ctx.world_to_viewport(from), ctx.world_to_viewport(to)) {

@@ -462,6 +462,21 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.trace",
+            "Follow a point of a body through a motion: where it is and how fast at each frame",
+        )
+        .param("study", ParamKind::Id, "The motion")
+        .param("body", ParamKind::Id, "The body")
+        .param(
+            "point",
+            ParamKind::List,
+            "{x, y, z} in the body's own frame",
+        )
+        .returns("a list of {t, point, speed (mm/s)}")
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.exploded_view",
             "Keep an exploded view: steps, each moving some bodies by a shift, played in order",
         )
@@ -1220,6 +1235,25 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                             .collect();
                         json!({"t": t, "bodies": bodies})
                     })
+                    .collect(),
+            ))
+        }
+        "asm.trace" => {
+            let id = FeatureId(a.id("study")?);
+            let study = ctx
+                .document
+                .get_feature_data(id)
+                .and_then(|d| {
+                    <crate::MotionStudy as core_document::WorkbenchFeature>::from_json(d).ok()
+                })
+                .ok_or_else(|| CommandError::bad("study", "is not a motion"))?;
+            let body = body(&a, ctx)?;
+            let point = vector(a.0.get("point").unwrap_or(&Value::Null), "point")?;
+            let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
+            Ok(Value::Array(
+                crate::motion::trace(&frames, body, point.to_array())
+                    .into_iter()
+                    .map(|(t, p, v)| json!({"t": t, "point": p, "speed": v}))
                     .collect(),
             ))
         }

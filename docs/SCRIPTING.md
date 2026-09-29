@@ -1369,6 +1369,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `study` (id): The motion
 - Returns a list of {t, bodies = {{body, translation, rotation}, ...}}
 
+`pc.asm.trace`: Follow a point of a body through a motion: where it is and how fast at each frame.
+
+- `study` (id): The motion
+- `body` (id): The body
+- `point` (list): {x, y, z} in the body's own frame
+- Returns a list of {t, point, speed (mm/s)}
+
 `pc.asm.exploded_view`: Keep an exploded view: steps, each moving some bodies by a shift, played in order.
 
 - `steps` (list): {{bodies = {ids}, shift = {x, y, z}}, ...}, in the order they play

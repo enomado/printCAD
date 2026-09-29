@@ -139,9 +139,11 @@ each by a formula of the time `t` in seconds (`90 * t`, `30 * sin(t *
 from a start to an end in steps. Work out the motion solves every frame on
 a copy of the document and keeps the motion as a row of the tree; the
 scrubber shows any frame, Play plays them at their own pace, and Record
-saves them as an animation. The bodies go back when it closes.
-`asm.motion` keeps one from a script and `asm.motion_frames` lists its
-frames.
+saves them as an animation. The bodies go back when it closes. Follow a
+point, then a click on a body, traces that point through the motion: its
+path drawn in the view, its speed now and at most, and a plot of its speed
+and of the drives over time. `asm.motion` keeps one from a script,
+`asm.motion_frames` lists its frames and `asm.trace` follows a point.
 
 ## Gears, belts, racks and screws
 

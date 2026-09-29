@@ -735,6 +735,64 @@ impl AssemblyWorkbench {
                 }
             });
         }
+        if let Some(frames) = &studying.frames {
+            ui.add_space(SPACE_2);
+            overline(ui, "Traces");
+            if ui_kit::widgets::small_secondary_button(
+                ui,
+                if studying.tracing {
+                    "Click a point on a body…"
+                } else {
+                    "Follow a point"
+                },
+            )
+            .on_hover_text("Click a face of a body: its path and speed through the motion")
+            .clicked()
+            {
+                studying.tracing = !studying.tracing;
+            }
+            let mut remove = None;
+            let mut curves: Vec<Vec<(f32, f32)>> = Vec::new();
+            for (i, (body, point)) in studying.traces.iter().enumerate() {
+                let path = crate::motion::trace(frames, *body, *point);
+                let now = path.get(studying.frame).map_or(0.0, |(_, _, v)| *v);
+                let top = path.iter().map(|(_, _, v)| *v).fold(0.0f32, f32::max);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "{}: {now:.1} mm/s now, {top:.1} at most",
+                            body_name(ctx, *body)
+                        ))
+                        .font(sans(FONT_SM))
+                        .color(TEXT1),
+                    );
+                    if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
+                        remove = Some(i);
+                    }
+                });
+                curves.push(path.iter().map(|(t, _, v)| (*t, *v)).collect());
+            }
+            if let Some(i) = remove {
+                studying.traces.remove(i);
+            }
+            // Each driven joint's value over time too, scaled to the plot.
+            for drive in &studying.draft.drives {
+                let values: Vec<(f32, f32)> = frames
+                    .iter()
+                    .filter_map(|(t, _)| {
+                        Some((
+                            *t,
+                            crate::motion::value_at(&drive.formula, f64::from(*t)).ok()? as f32,
+                        ))
+                    })
+                    .collect();
+                curves.push(values);
+            }
+            if !curves.is_empty() {
+                let time = frames.get(studying.frame).map(|(t, _)| *t);
+                plot(ui, &curves, studying.traces.len(), time);
+            }
+        }
         self.task = Some(Task::Motion(Box::new(studying)));
         if show {
             self.show_frame(ctx);
@@ -2670,4 +2728,64 @@ fn mass_text(grams: f64) -> String {
     } else {
         format!("{grams:.2} g")
     }
+}
+
+/// Curves over time, each scaled to its own range: the first `speeds` in
+/// the accent colour (traced points' speeds), the rest (driven joints'
+/// values) in the second; a line where the frame shown stands.
+fn plot(ui: &mut egui::Ui, curves: &[Vec<(f32, f32)>], speeds: usize, at: Option<f32>) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(width, 90.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, BG1);
+    let (t0, t1) = curves
+        .iter()
+        .flatten()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), (t, _)| {
+            (lo.min(*t), hi.max(*t))
+        });
+    let span = (t1 - t0).max(1e-6);
+    let x = |t: f32| rect.left() + rect.width() * (t - t0) / span;
+    for (i, curve) in curves.iter().enumerate() {
+        let (lo, hi) = curve.iter().fold((f32::MAX, f32::MIN), |(lo, hi), (_, v)| {
+            (lo.min(*v), hi.max(*v))
+        });
+        let range = (hi - lo).max(1e-6);
+        let points: Vec<egui::Pos2> = curve
+            .iter()
+            .map(|(t, v)| {
+                egui::pos2(
+                    x(*t),
+                    rect.bottom() - 4.0 - (rect.height() - 8.0) * (v - lo) / range,
+                )
+            })
+            .collect();
+        let color = if i < speeds { ACCENT } else { WARNING };
+        painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, color)));
+    }
+    if let Some(t) = at {
+        painter.line_segment(
+            [
+                egui::pos2(x(t), rect.top()),
+                egui::pos2(x(t), rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, TEXT3),
+        );
+    }
+    ui.horizontal(|ui| {
+        if speeds > 0 {
+            ui.label(
+                RichText::new("speed")
+                    .font(ui_kit::mono(FONT_SM))
+                    .color(ACCENT),
+            );
+        }
+        if curves.len() > speeds {
+            ui.label(
+                RichText::new("drives")
+                    .font(ui_kit::mono(FONT_SM))
+                    .color(WARNING),
+            );
+        }
+    });
 }
