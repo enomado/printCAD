@@ -1215,6 +1215,8 @@ impl AssemblyWorkbench {
             // A ball is its centre; any other face its plane or axis.
             (Takes::Anything, _) if sphere => pointed(),
             (Takes::Anything, _) => flat().map(|a| (a, None)).or_else(round).or_else(pointed),
+            (Takes::PointAndLine, None) => pointed(),
+            (Takes::PointAndLine, Some(_)) => round(),
         };
         let Some((anchor, radius)) = picked else {
             ctx.log_warn(picking.kind.refusal());

@@ -1249,6 +1249,24 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the joint's id
 
+`pc.asm.universal`: Cross two yokes' pins at one point, square to each other: the body turns about either.
+
+- `body` (id): The body that moves
+- `face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
+- `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
+- `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
+- `name` (string, optional): Its name in the tree
+- Returns the joint's id
+
+`pc.asm.slot`: Keep a point on a line: a pin sliding in a slot.
+
+- `body` (id): The body that moves
+- `face` (any): The pin: a point ({centre} or {point}) on the moving body; the slot: a line {axis = {point, direction}} on the other
+- `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
+- `other_face` (any): The pin: a point ({centre} or {point}) on the moving body; the slot: a line {axis = {point, direction}} on the other
+- `name` (string, optional): Its name in the tree
+- Returns the joint's id
+
 `pc.asm.couple`: Tie two joints' motions together: gears or a belt between two hinges, a rack and pinion or a screw between a hinge and a slider.
 
 - `driver` (id): The hinge or slider that leads

@@ -128,6 +128,12 @@ pub enum JointKind {
     /// Two points as one: a ball in its socket. The body may turn every
     /// way about the point.
     Ball,
+    /// A cross between two yokes: the two pins' axes meet at one point and
+    /// stay square to each other. The body may turn about either pin.
+    Universal,
+    /// A pin in a slot: the moving point stays on the fixed line, free to
+    /// slide along it and turn every way.
+    Slot,
 }
 
 /// What is done with the one motion a hinge or a slider leaves: held at
@@ -236,6 +242,8 @@ impl JointKind {
             JointKind::Distance { .. } => "Distance",
             JointKind::Tangent { .. } => "Tangent",
             JointKind::Ball => "Ball",
+            JointKind::Universal => "Universal",
+            JointKind::Slot => "Slot",
         }
     }
 
@@ -253,6 +261,8 @@ impl JointKind {
             JointKind::Distance { .. } => "constraint-distance",
             JointKind::Tangent { .. } => "constraint-tangent",
             JointKind::Ball => "point",
+            JointKind::Universal => "constraint-perpendicular",
+            JointKind::Slot => "constraint-point-on-object",
         }
     }
 }
@@ -544,7 +554,9 @@ impl JointFeature {
             | JointKind::Parallel
             | JointKind::Perpendicular
             | JointKind::Tangent { .. }
-            | JointKind::Ball => {}
+            | JointKind::Ball
+            | JointKind::Universal
+            | JointKind::Slot => {}
         }
     }
 
@@ -658,6 +670,14 @@ impl JointFeature {
                 out.push(self.apart(moving, fixed) - f64::from(offset));
             }
             JointKind::Ball => out.extend((pm - pf).to_array()),
+            JointKind::Universal => {
+                out.extend((pm - pf).to_array());
+                out.push(dm.dot(df) * ARM_MM);
+            }
+            JointKind::Slot => {
+                let off = pm - pf;
+                out.extend((off - df * off.dot(df)).to_array());
+            }
             JointKind::Tangent { radius } => {
                 // Whichever end is the flat face.
                 let (plane_point, normal, axis_point, axis) = match self.moving {
@@ -712,6 +732,8 @@ pub enum Takes {
     Directed,
     /// A flat face, an axis or a point on each.
     Anything,
+    /// A point on the moving body and an axis (a line) on the other.
+    PointAndLine,
 }
 
 /// A tool that makes a joint from a face on each of two bodies.
@@ -728,10 +750,12 @@ pub enum JointTool {
     Distance,
     Tangent,
     Ball,
+    Universal,
+    Slot,
 }
 
 impl JointTool {
-    pub const ALL: [JointTool; 11] = [
+    pub const ALL: [JointTool; 13] = [
         JointTool::Mate,
         JointTool::Align,
         JointTool::Angle,
@@ -743,6 +767,8 @@ impl JointTool {
         JointTool::Distance,
         JointTool::Tangent,
         JointTool::Ball,
+        JointTool::Universal,
+        JointTool::Slot,
     ];
 
     /// Its tool and command id.
@@ -759,6 +785,8 @@ impl JointTool {
             JointTool::Distance => "asm.distance",
             JointTool::Tangent => "asm.tangent",
             JointTool::Ball => "asm.ball",
+            JointTool::Universal => "asm.universal",
+            JointTool::Slot => "asm.slot",
         }
     }
 
@@ -786,6 +814,8 @@ impl JointTool {
             (Takes::Point, _) => point,
             (Takes::Directed, _) => !point,
             (Takes::Any, _) | (Takes::Anything, _) => true,
+            (Takes::PointAndLine, None) => point,
+            (Takes::PointAndLine, Some(_)) => axis,
             (Takes::FlatAndRound, None) => !point,
             (Takes::FlatAndRound, Some(first)) => {
                 !point && matches!(first, Anchor::Plane { .. }) != flat
@@ -813,6 +843,8 @@ impl JointTool {
             JointKind::Distance { .. } => JointTool::Distance,
             JointKind::Tangent { .. } => JointTool::Tangent,
             JointKind::Ball => JointTool::Ball,
+            JointKind::Universal => JointTool::Universal,
+            JointKind::Slot => JointTool::Slot,
         })
     }
 
@@ -829,6 +861,8 @@ impl JointTool {
             JointTool::Distance => "Distance between faces",
             JointTool::Tangent => "Tangent faces",
             JointTool::Ball => "Ball joint",
+            JointTool::Universal => "Universal joint",
+            JointTool::Slot => "Pin in a slot",
         }
     }
 
@@ -845,6 +879,8 @@ impl JointTool {
             JointTool::Distance => "constraint-distance",
             JointTool::Tangent => "constraint-tangent",
             JointTool::Ball => "point",
+            JointTool::Universal => "constraint-perpendicular",
+            JointTool::Slot => "constraint-point-on-object",
         }
     }
 
@@ -861,6 +897,8 @@ impl JointTool {
             JointTool::Distance => "D",
             JointTool::Tangent => "T",
             JointTool::Ball => "Shift+B",
+            JointTool::Universal => "Shift+U",
+            JointTool::Slot => "Shift+S",
         }
     }
 
@@ -883,6 +921,11 @@ impl JointTool {
             }
             JointTool::Tangent => "Rest a round face on a flat one",
             JointTool::Ball => "Put two points together: the body can turn every way about them",
+            JointTool::Universal => {
+                "Cross two yokes' pins at one point, square to each other: the body turns \
+                 about either"
+            }
+            JointTool::Slot => "Keep a point on a line: a pin sliding in a slot",
         }
     }
 
@@ -895,6 +938,8 @@ impl JointTool {
             JointTool::Fixed => Takes::Any,
             JointTool::Tangent => Takes::FlatAndRound,
             JointTool::Ball => Takes::Point,
+            JointTool::Universal => Takes::Round,
+            JointTool::Slot => Takes::PointAndLine,
         }
     }
 
@@ -919,6 +964,8 @@ impl JointTool {
             (Takes::Directed, true) => "Click the face or edge it keeps to, on another body",
             (Takes::Anything, false) => "Click a face, an edge or a ball on the body to move",
             (Takes::Anything, true) => "Click what it keeps its distance from, on another body",
+            (Takes::PointAndLine, false) => "Click the pin: a round edge, a ball or a point",
+            (Takes::PointAndLine, true) => "Click the slot's line: an edge or a round face",
         }
     }
 
@@ -934,6 +981,7 @@ impl JointTool {
             Takes::Point => "This joint takes points: a ball, a round edge's centre, a face",
             Takes::Directed => "This joint takes faces or edges with a direction",
             Takes::Anything => "Click a face, an edge or a ball",
+            Takes::PointAndLine => "This joint takes a point, then a line: an edge or an axis",
         }
     }
 
@@ -993,6 +1041,8 @@ impl JointTool {
             }
             JointTool::Tangent => JointKind::Tangent { radius },
             JointTool::Ball => JointKind::Ball,
+            JointTool::Universal => JointKind::Universal,
+            JointTool::Slot => JointKind::Slot,
         }
     }
 }

@@ -841,7 +841,9 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
             | JointKind::Perpendicular
             | JointKind::Distance { .. }
             | JointKind::Tangent { .. }
-            | JointKind::Ball => return None,
+            | JointKind::Ball
+            | JointKind::Universal
+            | JointKind::Slot => return None,
         };
         (dm.length_squared() > 0.0 && target.length_squared() > 0.0)
             .then(|| DQuat::from_rotation_arc(dm, target))

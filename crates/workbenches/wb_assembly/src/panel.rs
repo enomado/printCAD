@@ -1427,6 +1427,15 @@ impl AssemblyWorkbench {
                     "The two points are held as one; the body can still turn every way \
                      about them.",
                 ),
+                JointKind::Universal => note(
+                    ui,
+                    "The pins cross at one point, square to each other: the body turns \
+                     about either pin.",
+                ),
+                JointKind::Slot => note(
+                    ui,
+                    "The pin stays on the slot's line: it slides along it and turns every way.",
+                ),
             }
             if joint.kind != JointKind::Ground {
                 ui.add_space(SPACE_1);

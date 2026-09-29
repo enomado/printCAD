@@ -236,6 +236,10 @@ pub fn register(context: &mut WorkbenchContext) {
                 "A flat face {point, normal}, a round face or edge {axis}, or a point \
                  ({centre} of a ball, or {point} alone)"
             }
+            Takes::PointAndLine => {
+                "The pin: a point ({centre} or {point}) on the moving body; the slot: a line \
+                 {axis = {point, direction}} on the other"
+            }
         };
         let spec = if tool == JointTool::Fixed {
             CommandSpec::new(tool.command(), tool.summary())
@@ -710,7 +714,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 | JointKind::Fixed { .. }
                 | JointKind::Parallel
                 | JointKind::Perpendicular
-                | JointKind::Ball => {}
+                | JointKind::Ball
+                | JointKind::Universal
+                | JointKind::Slot => {}
             }
             let data =
                 serde_json::to_value(&feature).map_err(|e| CommandError::failed(e.to_string()))?;
@@ -1255,7 +1261,9 @@ pub(crate) fn record_joint(
         | JointKind::Fixed { .. }
         | JointKind::Parallel
         | JointKind::Perpendicular
-        | JointKind::Ball => json!({}),
+        | JointKind::Ball
+        | JointKind::Universal
+        | JointKind::Slot => json!({}),
     };
     match before {
         None => {
@@ -1605,6 +1613,9 @@ fn anchor_of(value: Option<&Value>, name: &str, takes: Takes) -> Result<Anchor, 
         Takes::Anything if face.contains_key("normal") => flat(),
         Takes::Anything if face.contains_key("axis") => round(),
         Takes::Anything => point(),
+        // The pin is a point, the slot a line.
+        Takes::PointAndLine if name == "face" => point(),
+        Takes::PointAndLine => round(),
     }
 }
 
@@ -1940,6 +1951,48 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// A pin in a slot rides on the slot's line with four motions left; a
+    /// universal joint crosses two pins at a point with two.
+    #[test]
+    fn a_slot_and_a_universal_joint_leave_what_they_should() {
+        let motions = |doc: &Document, body: BodyId| {
+            crate::freedom(doc)
+                .into_iter()
+                .find(|(b, _)| *b == body)
+                .map(|(_, m)| m.len())
+                .unwrap()
+        };
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        call(
+            &mut doc,
+            "asm.slot",
+            json!({"body": a.0.to_string(), "face": {"point": [0, 0, 5]}, "other": b.0.to_string(),
+                   "other_face": {"axis": {"point": [10, 0, 0], "direction": [1, 0, 0]}}}),
+        )
+        .unwrap();
+        let pin = doc.body_placement(a).point([0.0, 0.0, 5.0]);
+        assert!(pin[1].abs() < 1e-3 && pin[2].abs() < 1e-3, "{pin:?}");
+        assert_eq!(motions(&doc, a), 4);
+
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        doc.set_body_placement(
+            a,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(3.0, 2.0, 1.0)),
+        );
+        call(
+            &mut doc,
+            "asm.universal",
+            json!({"body": a.0.to_string(), "face": {"axis": {"point": [3, 2, 1], "direction": [1, 0, 0]}},
+                   "other": b.0.to_string(), "other_face": {"axis": {"point": [0, 0, 0], "direction": [0, 1, 0]}}}),
+        )
+        .unwrap();
+        let centre = doc.body_placement(a).point([0.0; 3]);
+        assert!(glam::Vec3::from_array(centre).length() < 1e-3, "{centre:?}");
+        assert_eq!(motions(&doc, a), 2);
     }
 
     /// An end moved along its normal moves the body with it: a mate with

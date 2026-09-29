@@ -23,6 +23,8 @@ body it goes against. The first body moves; the second stays where it is.
 | Distance (D) | a face, an axis or a point on each | everything but the distance |
 | Tangent (T) | a flat face and a round one | rolling and sliding on the flat face |
 | Ball joint (Shift+B) | two points | turning every way about the point |
+| Universal joint (Shift+U) | two axes, the yokes' pins | turning about either pin |
+| Pin in a slot (Shift+S) | a point, then a line | sliding along the line, turning every way |
 
 An axis is a round face (a hole, a pin, a boss) or an edge: a circular
 edge gives its circle's axis, so a hole's rim works, and a straight edge
