@@ -1,10 +1,10 @@
 # printCAD
 
-Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
+Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust and Vulkan.
 
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.98%2B-orange)
-![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)
 
 > **Early development.** The full path from sketch to printable file works,
 > but expect rough edges.
