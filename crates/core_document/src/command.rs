@@ -104,6 +104,21 @@ pub enum AgentAccess {
     Never(String),
 }
 
+/// `value` with every empty list in it an empty table instead. A script's
+/// `{}` reaches a command as an empty list, since it cannot say which it
+/// is; a command reading a table of names where it found an empty list
+/// reads it again this way (`params = {}`, `{Angled = {}}`).
+pub fn empty_lists_as_tables(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(items) if items.is_empty() => {
+            *value = serde_json::Value::Object(Default::default());
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(empty_lists_as_tables),
+        serde_json::Value::Object(map) => map.values_mut().for_each(empty_lists_as_tables),
+        _ => {}
+    }
+}
+
 impl CommandSpec {
     pub fn new(id: impl Into<String>, summary: impl Into<String>) -> Self {
         Self {

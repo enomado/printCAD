@@ -364,6 +364,16 @@ pub fn run(
     if sketch.is_none() {
         sketch = listed.first().copied();
     }
+    // A borrowed face as the profile: its borrow stands selected, as the
+    // toolbar reads it.
+    if let Some(borrow) = args
+        .get("profile_borrowed")
+        .and_then(|r| r.get("borrow"))
+        .and_then(Value::as_str)
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+    {
+        ctx.active_document_object = Some(FeatureId(borrow));
+    }
     if let Some(sketch) = sketch {
         let node = ctx
             .document
@@ -1044,6 +1054,60 @@ fn as_field(current: &Value, given: &Value) -> Value {
     }
 }
 
+/// A feature from its fields as a script gives them, which may say a
+/// thing more than one way: `{}` comes as an empty list where a table is
+/// wanted, and a datum is `{Datum = id}` or `{Datum = {datum = id}}`
+/// wherever a feature takes one. Each way is tried; the first error is the
+/// one told.
+fn read_fields(value: Value) -> Result<PartFeature, serde_json::Error> {
+    let first = match serde_json::from_value(value.clone()) {
+        Ok(read) => return Ok(read),
+        Err(first) => first,
+    };
+    let mut tables = value;
+    core_document::command::empty_lists_as_tables(&mut tables);
+    if let Ok(read) = serde_json::from_value(tables.clone()) {
+        return Ok(read);
+    }
+    for to_table in [true, false] {
+        let mut again = tables.clone();
+        datum_forms(&mut again, to_table);
+        if let Ok(read) = serde_json::from_value(again) {
+            return Ok(read);
+        }
+    }
+    Err(first)
+}
+
+/// Every `{Datum = ...}` in `value` said the other way: an id alone as
+/// `{datum = id}` (`to_table`), or `{datum = id}` alone as the id.
+fn datum_forms(value: &mut Value, to_table: bool) {
+    match value {
+        Value::Object(map) => {
+            if map.len() == 1
+                && let Some(datum) = map.get_mut("Datum")
+            {
+                match datum {
+                    Value::String(id) if to_table => {
+                        *datum = json!({"datum": id.clone()});
+                        return;
+                    }
+                    Value::Object(inner) if !to_table && inner.keys().all(|k| k == "datum") => {
+                        if let Some(id) = inner.get("datum").cloned() {
+                            *datum = id;
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            map.values_mut().for_each(|v| datum_forms(v, to_table));
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| datum_forms(v, to_table)),
+        _ => {}
+    }
+}
+
 /// Replace fields of `feature` with `fields`, refusing a name the feature
 /// does not have or a value of the wrong kind.
 fn apply_fields(feature: &mut PartFeature, fields: &Map<String, Value>) -> Result<(), String> {
@@ -1068,7 +1132,7 @@ fn apply_fields(feature: &mut PartFeature, fields: &Map<String, Value>) -> Resul
         own.insert(name.clone(), value);
     }
     let kind = kind.clone();
-    *feature = serde_json::from_value(value).map_err(|e| format!("{kind}: {e}"))?;
+    *feature = read_fields(value).map_err(|first| format!("{kind}: {first}"))?;
     // A Pocket's flag and its ThroughAll mode are one setting: a flag given
     // moves the mode (true to ThroughAll, false back to a plain depth), and
     // the flag then reads what the mode is.
@@ -1145,6 +1209,64 @@ mod tests {
             let sections = fields(&doc, &made)["Loft"]["sections"].clone();
             assert_eq!(sections, json!([id(a), id(b)]), "{args}");
         }
+    }
+
+    /// A script names a datum either way, and writes `{}` for an empty
+    /// table: the fields read all the same.
+    #[test]
+    fn fields_read_whichever_way_a_script_writes_them() {
+        let datum = FeatureId::new();
+        let id = datum.0.to_string();
+        let mut revolve = PartFeature::Revolution {
+            sketch: FeatureId::new(),
+            angle_deg: 360.0,
+            axis: crate::feature::RevolveAxis::default(),
+            reversed: false,
+            midplane: false,
+            second_angle_deg: None,
+            refine: false,
+            mode: Default::default(),
+            up_to_face: None,
+        };
+        for axis in [json!({"Datum": id}), json!({"Datum": {"datum": id}})] {
+            apply_fields(&mut revolve, json!({"axis": axis}).as_object().unwrap()).unwrap();
+            assert!(matches!(
+                &revolve,
+                PartFeature::Revolution { axis: crate::feature::RevolveAxis::Datum(d), .. } if *d == datum
+            ));
+        }
+        // A mirror's plane is a table: a bare id reads as one too.
+        let mut value = json!({"Mirrored": {"originals": [], "plane": {"Datum": id}}});
+        datum_forms(&mut value, true);
+        assert_eq!(value["Mirrored"]["plane"], json!({"Datum": {"datum": id}}));
+        // `{Angled = {}}`: the drill's usual point.
+        let point: crate::feature::DrillPoint = {
+            let mut v = json!({"Angled": []});
+            core_document::command::empty_lists_as_tables(&mut v);
+            serde_json::from_value(v).unwrap()
+        };
+        assert_eq!(
+            point,
+            crate::feature::DrillPoint::Angled { angle_deg: 118.0 }
+        );
+    }
+
+    /// A thread is a size alone, or whole; a wrong one says what is taken.
+    #[test]
+    fn a_thread_reads_as_a_size_or_whole_and_says_what_it_takes() {
+        use crate::feature::ThreadSpec;
+        use crate::hole_tables::ThreadStandard;
+        let m6: ThreadSpec = serde_json::from_value(json!("M6")).unwrap();
+        assert_eq!(m6.standard, ThreadStandard::IsoMetricCoarse);
+        let unc: ThreadSpec = serde_json::from_value(json!("1/4-20")).unwrap();
+        assert_eq!(unc.standard, ThreadStandard::Unc);
+        let whole: ThreadSpec =
+            serde_json::from_value(json!({"standard": "Unf", "size": "1/4-28"})).unwrap();
+        assert_eq!(whole.size, "1/4-28");
+        let old: ThreadSpec = serde_json::from_value(json!(5)).unwrap();
+        assert_eq!(old.size, "M6");
+        let wrong = serde_json::from_value::<ThreadSpec>(json!("M7.3")).unwrap_err();
+        assert!(wrong.to_string().contains("IsoMetricCoarse"), "{wrong}");
     }
 
     fn fields(doc: &Document, id: &Value) -> Value {

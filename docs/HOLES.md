@@ -97,7 +97,9 @@ pc.part.hole{
 
 `standard` is one of `IsoMetricCoarse`, `IsoMetricFine`, `Unc`, `Unf`,
 `Unef`, `Bsw`, `Bsf`, `BspParallel`, `BspTaper` or `Npt`; `size` is the
-designation the panel lists. A screw seat is `cut = {Seat = {seat =
+designation the panel lists. A size alone, `thread = "M6"` or
+`thread = "1/4-20"`, takes the first standard that has it. A drill point is
+`drill_point = {Angled = {angle_deg = 135}}`, or `{Angled = {}}` for 118°. A screw seat is `cut = {Seat = {seat =
 "SocketHead"}}`, or `"Countersunk"`, `"ButtonHead"`, `"SlottedCountersunk"`,
 `"CrossCountersunk"`, `"LowHeadCap"`, `"CapScrewWithWasher"`, `"HexHead"`.
 `clearance` sets a clearance of your own; `thread_length` is `"Given"`,

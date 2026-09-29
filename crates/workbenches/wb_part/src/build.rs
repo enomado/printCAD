@@ -1329,6 +1329,15 @@ fn extrude_op(
             ),
             _ => return Err("not a pad or a pocket".into()),
         };
+    let borrowed = match feature {
+        PartFeature::Pad {
+            profile_borrowed, ..
+        }
+        | PartFeature::Pocket {
+            profile_borrowed, ..
+        } => *profile_borrowed,
+        _ => None,
+    };
     let (first, second) = match feature {
         PartFeature::Pad {
             length,
@@ -1382,6 +1391,9 @@ fn extrude_op(
     }
 
     let normal = match (profile_face, sketch) {
+        _ if let Some(r) = borrowed => crate::borrow::lent_face(document, r.borrow, r.index)
+            .map(|(_, n)| n.map(f64::from))
+            .ok_or("the borrowed face is not flat, or the borrow no longer lends it")?,
         (Some(face), _) => face_pick_plane(face).1,
         (None, Some(sketch)) => profile::plane_of(&load_sketch(document, sketch)?.plane).normal,
         (None, None) => return Err("pick a sketch or a flat face for the profile".into()),
@@ -1479,6 +1491,22 @@ fn extrude_op(
     } else {
         boolean
     };
+    if let Some(r) = borrowed {
+        if extras.start_offset != 0.0 || second.is_some() {
+            return Err(
+                "a start offset or a second side's own taper takes a sketch's profile, not a face"
+                    .into(),
+            );
+        }
+        let face = crate::borrow::kernel_face(document, &r)?;
+        return Ok(vec![SolidOp::SweepFaceOf {
+            shape: face.shape,
+            transform: face.transform.map(Box::new),
+            point: face.point,
+            kind,
+            op: boolean,
+        }]);
+    }
     Ok(match (profile_face, sketch) {
         (Some(_), _) if extras.start_offset != 0.0 => {
             return Err("a start offset takes a sketch's profile, not a face".into());
@@ -2950,6 +2978,7 @@ mod tests {
 
     fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         PartFeature::Pad {
+            profile_borrowed: None,
             extras: Default::default(),
             refine: false,
             sketch: Some(sketch),
@@ -2973,6 +3002,7 @@ mod tests {
 
     fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> PartFeature {
         PartFeature::Pocket {
+            profile_borrowed: None,
             extras: Default::default(),
             refine: false,
             sketch: Some(sketch),
@@ -4559,6 +4589,7 @@ mod tests {
         let pocket = doc
             .add_feature_in_body(
                 PartFeature::Pocket {
+                    profile_borrowed: None,
                     extras: Default::default(),
                     refine: false,
                     sketch: Some(cut_sketch),

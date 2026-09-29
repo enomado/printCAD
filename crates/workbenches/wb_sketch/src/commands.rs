@@ -62,7 +62,8 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.polyline",
-            "Add lines through a list of points, each ending where the next starts",
+            "Add lines through a list of points, each ending where the next starts; a level \
+             or upright one is held so",
         ))
         .param("points", ParamKind::List, "Points as {x, y} pairs")
         .optional(
@@ -75,7 +76,8 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.rect",
-            "Add a rectangle from its corner (x, y), its width and its height",
+            "Add a rectangle from its corner (x, y), its width and its height, its sides held \
+             level and upright",
         ))
         .param("x", ParamKind::Number, "")
         .param("y", ParamKind::Number, "")
@@ -621,8 +623,11 @@ fn placing(spec: CommandSpec) -> CommandSpec {
     .optional(
         "attachment",
         ParamKind::Any,
-        "Attached as a datum plane is, by a mode on the body's faces, edges and points \
-         (as part.datum lists them): the sketch follows what it stands on",
+        "Attached as a datum plane is, the attachment as a datum keeps it (doc.feature \
+         on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, \
+         {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces \
+         and edges on the body's own solid; the sketch follows what it stands on. \
+         part.datum makes the same from plainer arguments, and `on` takes that datum",
     )
     .optional(
         "attachment_offset",
@@ -1397,12 +1402,20 @@ fn polyline(
     if points.len() < 2 {
         return Err(CommandError::bad("points", "needs at least two points"));
     }
-    let mut ids = Vec::new();
-    for pair in points.windows(2) {
-        ids.push(line(sketch, pair[0], pair[1])?.to_string());
-    }
+    let mut segments: Vec<(Vec2D, Vec2D)> = points.windows(2).map(|p| (p[0], p[1])).collect();
     if closed && points.len() > 2 {
-        ids.push(line(sketch, points[points.len() - 1], points[0])?.to_string());
+        segments.push((points[points.len() - 1], points[0]));
+    }
+    let mut ids = Vec::new();
+    for (from, to) in segments {
+        let id = line(sketch, from, to)?;
+        // Level or upright as given, it stays so, as the line tool holds it.
+        if (to.y - from.y).abs() <= 1e-9 && (to.x - from.x).abs() > 1e-9 {
+            sketch.add_constraint(crate::sketch::ConstraintKind::Horizontal { element: id });
+        } else if (to.x - from.x).abs() <= 1e-9 && (to.y - from.y).abs() > 1e-9 {
+            sketch.add_constraint(crate::sketch::ConstraintKind::Vertical { element: id });
+        }
+        ids.push(id.to_string());
     }
     Ok(ids)
 }
@@ -2528,6 +2541,39 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("sketch.array"), "{error}");
+    }
+
+    /// A rectangle keeps its sides level and upright, as the drawing
+    /// tool's does, and so do a polyline's level and upright segments.
+    #[test]
+    fn a_rectangle_and_a_polyline_hold_their_level_and_upright_sides() {
+        let mut doc = Document::new("t");
+        let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
+        call(
+            &mut doc,
+            "sketch.rect",
+            json!({"sketch": sketch, "x": 0, "y": 0, "width": 10, "height": 5}),
+        )
+        .unwrap();
+        call(
+            &mut doc,
+            "sketch.polyline",
+            json!({"sketch": sketch, "points": [[20, 0], [30, 0], [34, 6]]}),
+        )
+        .unwrap();
+        let kinds: Vec<String> = call(&mut doc, "sketch.constraints", json!({"sketch": sketch}))
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["kind"].as_str().unwrap().to_string())
+            .collect();
+        let count = |k: &str| kinds.iter().filter(|x| *x == k).count();
+        assert_eq!(
+            (count("Horizontal"), count("Vertical")),
+            (3, 2),
+            "{kinds:?}"
+        );
     }
 
     #[test]

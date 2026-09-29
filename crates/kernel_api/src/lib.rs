@@ -1149,6 +1149,16 @@ pub enum SolidOp {
         kind: SweepKind,
         op: BooleanOp,
     },
+    /// Extrude a flat face of another shape (native-format `shape`, moved by
+    /// `transform` into this body's frame): the face of it at `point`, a
+    /// face another body lends this one.
+    SweepFaceOf {
+        shape: Vec<u8>,
+        transform: Option<Box<[[f64; 4]; 4]>>,
+        point: [f64; 3],
+        kind: SweepKind,
+        op: BooleanOp,
+    },
     /// Skin through two or more sections (in order), each a profile, a
     /// flat face of the running solid (its boundary) or a point, which
     /// only the first or last may be.
@@ -1276,6 +1286,7 @@ impl SolidOp {
         match self {
             SolidOp::Sweep { op, .. }
             | SolidOp::SweepFace { op, .. }
+            | SolidOp::SweepFaceOf { op, .. }
             | SolidOp::Loft { op, .. }
             | SolidOp::LoftThrough { op, .. }
             | SolidOp::PipeThrough { op, .. }

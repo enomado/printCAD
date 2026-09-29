@@ -545,6 +545,7 @@ mod tests {
 
     fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         PartFeature::Pad {
+            profile_borrowed: None,
             extras: Default::default(),
             refine: false,
             sketch: Some(sketch),

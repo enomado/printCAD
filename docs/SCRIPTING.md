@@ -52,7 +52,10 @@ pc.part.set{feature = pad, length = 20}
   carries values is a table under its name:
   `axis = {Custom = {origin = {0, 5}, dir = {0, 1}}}` turns a revolution
   about the line through (0, 5) along the sketch's Y, in sketch
-  coordinates.
+  coordinates. A datum is `{Datum = id}` wherever a feature takes one (a
+  revolution's axis, a mirror's plane, a pattern's direction), and an
+  empty `{}` stands for a table of settings where one is wanted
+  (`params = {}`).
 - A command that fails raises a Lua error with the reason, which stops the
   script. `pcall(pc.part.pad, {sketch = s})` catches it instead.
 - Every change is an ordinary edit, so Undo takes it back. A console line
@@ -527,7 +530,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `plane` (string, optional): XY (the default), XZ or YZ
 - `offset` (number, optional): How far along the plane's normal it sits
 - `name` (string, optional): Its name in the tree
-- `attachment` (any, optional): Attached as a datum plane is, by a mode on the body's faces, edges and points (as part.datum lists them): the sketch follows what it stands on
+- `attachment` (any, optional): Attached as a datum plane is, the attachment as a datum keeps it (doc.feature on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces and edges on the body's own solid; the sketch follows what it stands on. part.datum makes the same from plainer arguments, and `on` takes that datum
 - `attachment_offset` (any, optional): The attachment's offset, as a datum's
 - `on` (id, optional): A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
@@ -541,7 +544,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `plane` (string, optional): XY (the default), XZ or YZ
 - `offset` (number, optional): How far along the plane's normal it sits
 - `name` (string, optional): Its name in the tree
-- `attachment` (any, optional): Attached as a datum plane is, by a mode on the body's faces, edges and points (as part.datum lists them): the sketch follows what it stands on
+- `attachment` (any, optional): Attached as a datum plane is, the attachment as a datum keeps it (doc.feature on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces and edges on the body's own solid; the sketch follows what it stands on. part.datum makes the same from plainer arguments, and `on` takes that datum
 - `attachment_offset` (any, optional): The attachment's offset, as a datum's
 - `on` (id, optional): A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
@@ -567,14 +570,14 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `y2` (number)
 - Returns the line's id
 
-`pc.sketch.polyline`: Add lines through a list of points, each ending where the next starts.
+`pc.sketch.polyline`: Add lines through a list of points, each ending where the next starts; a level or upright one is held so.
 
 - `sketch` (id): The sketch to draw in
 - `points` (list): Points as {x, y} pairs
 - `closed` (boolean, optional): Join the last point to the first
 - Returns the lines' ids
 
-`pc.sketch.rect`: Add a rectangle from its corner (x, y), its width and its height.
+`pc.sketch.rect`: Add a rectangle from its corner (x, y), its width and its height, its sides held level and upright.
 
 - `sketch` (id): The sketch to draw in
 - `x` (number)

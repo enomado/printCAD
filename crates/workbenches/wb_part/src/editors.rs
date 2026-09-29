@@ -270,6 +270,15 @@ fn mm_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool
     field(ui, label, |ui| QtyField::mm(value).speed(0.5).show(ui))
 }
 
+/// Which way a positive taper leans, under its field.
+fn taper_note(ui: &mut Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .font(ui_kit::sans(ui_kit::tokens::FONT_XS))
+            .color(ui_kit::tokens::TEXT3),
+    );
+}
+
 fn deg_drag(
     ui: &mut Ui,
     fx: &mut Formulas,
@@ -2053,6 +2062,7 @@ pub fn feature_editor(
             up_to_face,
             up_to_offset,
             profile_face: _,
+            profile_borrowed: _,
             direction,
             up_to_shape,
             mode2,
@@ -2102,6 +2112,7 @@ pub fn feature_editor(
             changed |= extrude_direction_editor(ui, ctx, body, direction, ("pad_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
+            taper_note(ui, "Positive opens the pad out as it rises.");
             let two_sided = mode.sides(*mode2).1.is_some();
             changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
         }
@@ -2118,6 +2129,7 @@ pub fn feature_editor(
             up_to_face,
             up_to_offset,
             profile_face: _,
+            profile_borrowed: _,
             direction,
             up_to_shape,
             mode2,
@@ -2183,6 +2195,7 @@ pub fn feature_editor(
                 .on_hover_text("Cut along the sketch normal instead of against it")
                 .changed();
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
+            taper_note(ui, "Positive widens the pocket as it goes deeper.");
             let two_sided = mode.sides(*mode2).1.is_some();
             changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
         }

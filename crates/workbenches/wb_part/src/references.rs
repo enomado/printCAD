@@ -192,6 +192,7 @@ mod tests {
 
     fn pad(sketch: FeatureId) -> PartFeature {
         PartFeature::Pad {
+            profile_borrowed: None,
             extras: Default::default(),
             refine: false,
             sketch: Some(sketch),

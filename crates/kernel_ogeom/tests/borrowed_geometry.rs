@@ -713,3 +713,48 @@ fn closed_borrowed_edges_fill_to_a_face_a_pad_takes() {
     settle(&mut doc, &mut kernel);
     assert_close(volume(&doc, &mut kernel, b), 2000.0, "the top padded");
 }
+
+/// A face another body lends is a pad's profile, live and frozen: the
+/// pad stands on it where the two bodies sit.
+#[test]
+fn a_borrowed_face_is_a_pad_s_profile() {
+    for frozen in [false, true] {
+        let mut kernel = OgeomKernel::new();
+        let mut doc = Document::new("t");
+        let a = block(&mut doc, "A", 20.0, 20.0, 10.0);
+        let b = doc.create_body(Some("B".into()));
+        wb_part::mark_all_part_features_dirty(&mut doc);
+        settle(&mut doc, &mut kernel);
+        let top = borrow(
+            &mut doc,
+            b,
+            BorrowSource::Solid {
+                body: a,
+                faces: vec![FacePick {
+                    name: 0,
+                    point: [10.0, 10.0, 10.0],
+                    normal: [0.0, 0.0, 1.0],
+                }],
+                edges: Vec::new(),
+            },
+        );
+        if frozen {
+            freeze(&mut doc, top);
+        }
+        let pad = serde_json::json!({ "Pad": {
+            "sketch": null,
+            "length": 5.0,
+            "reversed": false,
+            "profile_borrowed": { "borrow": top.0.to_string(), "index": 0 },
+        }});
+        doc.add_feature_in_body(PartFeature::from_json(&pad).unwrap(), "Pad".into(), Some(b))
+            .unwrap();
+        wb_part::mark_all_part_features_dirty(&mut doc);
+        settle(&mut doc, &mut kernel);
+        assert_close(
+            volume(&doc, &mut kernel, b),
+            20.0 * 20.0 * 5.0,
+            "a pad on A's top",
+        );
+    }
+}

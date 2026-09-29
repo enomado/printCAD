@@ -63,6 +63,7 @@ fn setup(width: f32, height: f32) -> (Document, BodyId, FeatureId) {
 
 fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) -> PartFeature {
     PartFeature::Pad {
+        profile_borrowed: None,
         extras: Default::default(),
         refine: false,
         sketch: Some(sketch),
@@ -86,6 +87,7 @@ fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) 
 
 fn pocket_feature(sketch: FeatureId, depth: f32) -> PartFeature {
     PartFeature::Pocket {
+        profile_borrowed: None,
         extras: Default::default(),
         refine: false,
         sketch: Some(sketch),
@@ -767,6 +769,7 @@ fn bore_rim_fillets() {
         .unwrap();
     doc.add_feature_in_body(
         PartFeature::Pocket {
+            profile_borrowed: None,
             extras: Default::default(),
             refine: false,
             sketch: Some(bore),
@@ -1331,6 +1334,7 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
             .unwrap();
         doc.add_feature_in_body(
             PartFeature::Pocket {
+                profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,
                 sketch: Some(hole),

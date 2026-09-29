@@ -298,6 +298,10 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
     let Some(value) = value.filter(|v| !v.is_null()) else {
         return Ok(p);
     };
+    // A script's `{}` comes as an empty list: no settings.
+    if value.as_array().is_some_and(Vec::is_empty) {
+        return Ok(p);
+    }
     let fields = value
         .as_object()
         .ok_or("params must be a table of tool settings")?;

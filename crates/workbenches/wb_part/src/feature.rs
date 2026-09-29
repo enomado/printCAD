@@ -844,8 +844,7 @@ impl HoleFit {
 }
 
 /// The thread a standards-driven hole is sized from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(from = "ThreadSpecRepr")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ThreadSpec {
     pub standard: ThreadStandard,
     /// The size's designation in its standard: "M6", "1/4-20", "1/2".
@@ -864,43 +863,60 @@ const INDEXED_METRIC_SIZES: [&str; 10] = [
     "M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16",
 ];
 
-/// A thread as a document holds it: whole, or as a `metric_index`, the
-/// place of an ISO metric coarse size in [`INDEXED_METRIC_SIZES`].
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ThreadSpecRepr {
-    Index(usize),
-    Spec {
-        standard: ThreadStandard,
-        size: String,
-        #[serde(default)]
-        class: String,
-        #[serde(default)]
-        left_handed: bool,
-    },
-}
-
-impl From<ThreadSpecRepr> for ThreadSpec {
-    fn from(repr: ThreadSpecRepr) -> Self {
-        match repr {
-            ThreadSpecRepr::Index(index) => ThreadSpec::new(
-                ThreadStandard::IsoMetricCoarse,
-                &INDEXED_METRIC_SIZES
-                    .get(index)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("#{index}")),
-            ),
-            ThreadSpecRepr::Spec {
-                standard,
-                size,
-                class,
-                left_handed,
-            } => ThreadSpec {
-                standard,
-                size,
-                class,
-                left_handed,
-            },
+/// A thread read as a document or a script gives it: whole, {standard,
+/// size, class, left_handed}; as a designation alone, "M6" or "1/4-20",
+/// found in the standards that have it; or as a `metric_index`, the place
+/// of an ISO metric coarse size in [`INDEXED_METRIC_SIZES`].
+impl<'de> Deserialize<'de> for ThreadSpec {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(d)?;
+        let shapes = "a thread is a size such as \"M6\" or \"1/4-20\", or {standard, size, \
+                      class, left_handed} with standard one of IsoMetricCoarse, IsoMetricFine, \
+                      Unc, Unf, Unef, Bsw, Bsf, BspParallel, BspTaper, Npt";
+        match &value {
+            serde_json::Value::Number(n) => {
+                let index = n.as_u64().ok_or_else(|| D::Error::custom(shapes))? as usize;
+                Ok(ThreadSpec::new(
+                    ThreadStandard::IsoMetricCoarse,
+                    &INDEXED_METRIC_SIZES
+                        .get(index)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("#{index}")),
+                ))
+            }
+            serde_json::Value::String(size) => ThreadStandard::ALL
+                .into_iter()
+                .find(|standard| standard.sizes().iter().any(|s| s.name == size))
+                .map(|standard| ThreadSpec::new(standard, size))
+                .ok_or_else(|| {
+                    D::Error::custom(format!("no standard has a thread {size:?}: {shapes}"))
+                }),
+            serde_json::Value::Object(map) => {
+                let standard: ThreadStandard = match map.get("standard") {
+                    Some(s) => serde_json::from_value(s.clone())
+                        .map_err(|_| D::Error::custom(format!("unknown standard {s}: {shapes}")))?,
+                    None => ThreadStandard::default(),
+                };
+                let size = map
+                    .get("size")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| D::Error::custom(format!("the thread has no size: {shapes}")))?;
+                Ok(ThreadSpec {
+                    standard,
+                    size: size.to_string(),
+                    class: map
+                        .get("class")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    left_handed: map
+                        .get("left_handed")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                })
+            }
+            _ => Err(D::Error::custom(shapes)),
         }
     }
 }
@@ -987,8 +1003,15 @@ pub enum DrillPoint {
     #[default]
     Flat,
     /// A cone of the drill's included point angle (118° and 135° are the
-    /// usual ones).
-    Angled { angle_deg: f32 },
+    /// usual ones; 118° when none is given).
+    Angled {
+        #[serde(default = "drill_point_angle")]
+        angle_deg: f32,
+    },
+}
+
+fn drill_point_angle() -> f32 {
+    118.0
 }
 
 /// What a body borrows from another: one of its sketches, or faces and
@@ -1095,6 +1118,10 @@ pub enum PartFeature {
         /// boundaries are the profile and its outward normal the sketch's.
         #[serde(default)]
         profile_face: Option<FacePick>,
+        /// A flat face another body lends this one, extruded in place of a
+        /// sketch as `profile_face` is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile_borrowed: Option<BorrowedRef>,
         #[serde(default)]
         direction: ExtrudeDirection,
         /// The faces an up-to-shape extrusion stops on.
@@ -1146,6 +1173,10 @@ pub enum PartFeature {
         /// A flat face of the solid cut in place of a sketch's profile.
         #[serde(default)]
         profile_face: Option<FacePick>,
+        /// A flat face another body lends this one, cut in place of a
+        /// sketch's profile.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile_borrowed: Option<BorrowedRef>,
         /// A direction set here is the way the cut runs; along the normal
         /// it runs against it.
         #[serde(default)]

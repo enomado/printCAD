@@ -283,21 +283,43 @@ impl PartDesignWorkbench {
 
         // With no sketch chosen, a flat face picked on the solid is the
         // profile of a pad or a pocket.
-        let extrude_profile = || -> Result<(Option<FeatureId>, Option<FacePick>), String> {
+        // A borrow of faces selected in the tree lends its first face.
+        let lent = ctx.active_document_object.filter(|id| {
+            crate::borrow::borrow_of(ctx.document, *id).is_some_and(|b| b.body == body)
+                && crate::borrow::lent_face(ctx.document, *id, 0).is_some()
+        });
+        type Profile = (
+            Option<FeatureId>,
+            Option<FacePick>,
+            Option<crate::feature::BorrowedRef>,
+        );
+        let extrude_profile = || -> Result<Profile, String> {
             if sketch.is_some() {
-                return Ok((sketch, None));
+                return Ok((sketch, None, None));
+            }
+            if let Some(borrow) = lent {
+                return Ok((
+                    None,
+                    None,
+                    Some(crate::feature::BorrowedRef { borrow, index: 0 }),
+                ));
             }
             match Self::selected_profile_face(ctx, body) {
-                Some(face) if has_solid => Ok((None, Some(face))),
-                _ => Err("Select a sketch in the tree, or a flat face of the solid, first".into()),
+                Some(face) if has_solid => Ok((None, Some(face), None)),
+                _ => Err(
+                    "Select a sketch in the tree, a flat face of the solid, or a borrow of \
+                     faces, first"
+                        .into(),
+                ),
             }
         };
 
         let feature = match tool {
             "part.pad" => {
-                let (sketch, profile_face) = extrude_profile()?;
+                let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
                     PartFeature::Pad {
+                        profile_borrowed,
                         extras: Default::default(),
                         refine: false,
                         sketch,
@@ -322,9 +344,10 @@ impl PartDesignWorkbench {
             }
             "part.pocket" => {
                 need_material(has_solid)?;
-                let (sketch, profile_face) = extrude_profile()?;
+                let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
                     PartFeature::Pocket {
+                        profile_borrowed,
                         extras: Default::default(),
                         refine: false,
                         sketch,
@@ -2280,6 +2303,7 @@ mod icon_coverage {
         let node = core_document::FeatureNode::new(
             FeatureId(uuid::Uuid::new_v4()),
             &PartFeature::Pad {
+                profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,
                 sketch: Some(FeatureId(uuid::Uuid::new_v4())),

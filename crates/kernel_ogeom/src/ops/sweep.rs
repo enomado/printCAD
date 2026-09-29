@@ -128,20 +128,57 @@ pub fn build_face_tool(
     }
     let found = face_by_name(model, base, face.name, point3(face.point))?
         .ok_or("no face of the solid lies where the face was picked")?;
-    let (_, normal) = face_plane(model, &found).ok_or("the picked face is not flat")?;
+    face_tool(model, Some(base), &found, kind)
+}
+
+/// Extrude the face at `point` of `shape` (native format, moved by
+/// `transform`): a face another body lends, as a pad's or pocket's profile.
+pub fn build_face_of_tool(
+    model: &mut Model,
+    base: Option<&Shape>,
+    shape: &[u8],
+    transform: Option<&[[f64; 4]; 4]>,
+    point: [f64; 3],
+    kind: &SweepKind,
+) -> Result<Shape, String> {
+    if !matches!(kind, SweepKind::Extrude { .. }) {
+        return Err("a borrowed face is only ever extruded".into());
+    }
+    let mut other = crate::chain::absorb_shape(model, shape)?;
+    if let Some(matrix) = transform {
+        other = super::pattern::moved(model, &other, matrix)?;
+    }
+    let at = point3(point);
+    let found = face_at(model, &other, at)?.ok_or_else(|| {
+        format!(
+            "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), where it was picked",
+            at.x, at.y, at.z
+        )
+    })?;
+    face_tool(model, base, &found, kind)
+}
+
+/// Extrude `found`, a flat face, out of the solid it faces out of.
+fn face_tool(
+    model: &mut Model,
+    base: Option<&Shape>,
+    found: &Shape,
+    kind: &SweepKind,
+) -> Result<Shape, String> {
+    let (_, normal) = face_plane(model, found).ok_or("the picked face is not flat")?;
     let outward = if found.orientation() == ogeom::topo::Orientation::Reversed {
         normal.reversed()
     } else {
         normal
     };
-    let copy = ogeom::algo::copied(model, &found)
+    let copy = ogeom::algo::copied(model, found)
         .map_err(|e| format!("copying the picked face failed: {e}"))?
         .shape;
     let built = BuiltProfile {
         faces: vec![copy],
         groups: Vec::new(),
     };
-    extrude(model, Some(base), &built, outward, kind)
+    extrude(model, base, &built, outward, kind)
 }
 
 fn extrude(
