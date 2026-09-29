@@ -646,6 +646,7 @@ fn reset_group(state: &mut PreferencesState) {
             camera.axis_preset = defaults.camera.axis_preset;
             state.draft.lighting = defaults.lighting;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
+            state.draft.rendering.curve_step_deg = defaults.rendering.curve_step_deg;
             state.draft.rendering.selection_color = defaults.rendering.selection_color;
             state.draft.rendering.selection_opacity = defaults.rendering.selection_opacity;
             state.draft.rendering.preview_color = defaults.rendering.preview_color;
@@ -1154,6 +1155,17 @@ fn display_page(
                     &[(1, "Off"), (2, "2× MSAA"), (4, "4× MSAA"), (8, "8× MSAA")],
                 )
                 .hint("Takes effect after a restart"),
+            );
+            gpu_rows.push(
+                PrefRow::qty(
+                    "Curve smoothness",
+                    QtyField::new(&mut draft.rendering.curve_step_deg)
+                        .unit("°")
+                        .range(2.0..=45.0)
+                        .speed(0.5)
+                        .decimals(1),
+                )
+                .hint("The turn between two drawn facets of a curved face; smaller is rounder"),
             );
             pref_group(ui, "Rendering", gpu_rows, filter);
 

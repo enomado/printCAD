@@ -81,13 +81,22 @@ pub(crate) struct QueuedBuild {
 }
 
 impl PrintCadApp {
+    /// How finely built, repaired, converted and replaced solids are meshed
+    /// for the scene (Preferences › Display › Rendering, Curve smoothness).
+    pub(crate) fn solid_detail(&self) -> TessellationSettings {
+        TessellationSettings {
+            angular_tolerance_deg: self.user_settings.rendering.curve_step_deg.clamp(2.0, 45.0),
+            ..TessellationSettings::default()
+        }
+    }
+
     fn submit_build(&mut self, body: uuid::Uuid, build: QueuedBuild) {
         self.session.builds_in_flight.insert(body, None);
         self.kernel_worker.request_build_solid(
             body,
             build.ops,
             build.op_features,
-            TessellationSettings::default(),
+            self.solid_detail(),
             build.preview,
             build.probes,
         );
@@ -204,12 +213,8 @@ impl PrintCadApp {
             let face_colors = face_colors.unwrap_or_default();
             self.session.repairs_in_flight.insert(body.0);
             app_log::info(format!("Repairing `{}`…", self.body_name(body)));
-            self.kernel_worker.request_repair(
-                body.0,
-                blob,
-                face_colors,
-                TessellationSettings::default(),
-            );
+            self.kernel_worker
+                .request_repair(body.0, blob, face_colors, self.solid_detail());
         }
     }
 
@@ -248,12 +253,8 @@ impl PrintCadApp {
                 "Reading the new shape of `{}`…",
                 self.body_name(body)
             ));
-            self.kernel_worker.request_read_solid(
-                body.0,
-                asset,
-                path,
-                TessellationSettings::default(),
-            );
+            self.kernel_worker
+                .request_read_solid(body.0, asset, path, self.solid_detail());
         }
     }
 
@@ -487,7 +488,7 @@ impl PrintCadApp {
                 mesh.indices.len() / 3
             ));
             self.kernel_worker
-                .request_mesh_solid(body.0, mesh, TessellationSettings::default());
+                .request_mesh_solid(body.0, mesh, self.solid_detail());
         }
     }
 

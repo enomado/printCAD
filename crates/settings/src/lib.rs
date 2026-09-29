@@ -543,10 +543,19 @@ pub struct RenderingSettings {
     /// Colours the user keeps to pick again, in the order added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_colors: Vec<[f32; 3]>,
+    /// The largest turn, in degrees, a curved face of a built solid takes
+    /// between two drawn facets: smaller draws rounder circles with more
+    /// triangles. The solid itself is exact whatever this is.
+    #[serde(default = "default_curve_step_deg")]
+    pub curve_step_deg: f32,
 }
 
 fn default_show_annotations() -> bool {
     true
+}
+
+fn default_curve_step_deg() -> f32 {
+    10.0
 }
 
 /// How the scene draws its bodies.
@@ -627,6 +636,7 @@ impl Default for RenderingSettings {
             draw_style: DrawStyle::default(),
             show_annotations: default_show_annotations(),
             custom_colors: Vec::new(),
+            curve_step_deg: default_curve_step_deg(),
         }
     }
 }
@@ -1003,6 +1013,13 @@ mod tests {
         let loaded: UserSettings =
             serde_json::from_value(serde_json::Value::Object(older)).unwrap();
         assert!(!loaded.diagnostics.import_report);
+    }
+    #[test]
+    fn curves_draw_finer_than_the_kernel_s_default_and_old_files_take_it() {
+        let mut older = serde_json::to_value(RenderingSettings::default()).unwrap();
+        older.as_object_mut().unwrap().remove("curve_step_deg");
+        let loaded: RenderingSettings = serde_json::from_value(older).unwrap();
+        assert_eq!(loaded.curve_step_deg, 10.0);
     }
 }
 

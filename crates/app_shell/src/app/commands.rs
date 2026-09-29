@@ -527,6 +527,7 @@ impl PrintCadApp {
                 intents.apply_camera_settings = true;
             }
             let packages_before = self.user_settings.packages.clone();
+            let detail_before = self.user_settings.rendering.curve_step_deg;
             if *settings != self.user_settings {
                 self.user_settings = *settings;
             }
@@ -539,6 +540,16 @@ impl PrintCadApp {
             intents.persist_settings = true;
             if self.user_settings.packages != packages_before {
                 self.packages_changed(&packages_before);
+            }
+            // Solids are meshed at the detail they were built with: a new
+            // curve smoothness rebuilds every tab's.
+            if self.user_settings.rendering.curve_step_deg != detail_before {
+                self.registry.invalidate_all(&mut self.session.document);
+                for slot in &mut self.tabs {
+                    if let Some(parked) = slot.parked.as_mut() {
+                        self.registry.invalidate_all(&mut parked.document);
+                    }
+                }
             }
             if display_unit != self.session.document.display_unit() {
                 self.session.document.set_display_unit(display_unit);
