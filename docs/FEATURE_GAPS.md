@@ -210,8 +210,9 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Generators and measuring
 
-- [ ] **Internal (ring) gear** (partial, S), and addendum and dedendum
-  coefficients (`wb_sketch/src/generator/gear.rs`).
+- [x] **Internal (ring) gear** (partial, S), and addendum and dedendum
+  coefficients (`wb_sketch/src/generator/gear.rs`). A ring's roots are
+  left sharp.
 - [ ] **Shaft loads and stresses** (partial, L).
 - [ ] **Measure angles, radii and face areas** (partial, M). The tool
   measures distance only (`app_shell/src/app/input.rs::measure_click`).

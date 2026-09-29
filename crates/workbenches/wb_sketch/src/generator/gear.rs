@@ -1,5 +1,11 @@
 //! An involute spur gear: module, teeth and pressure angle, with a
-//! profile shift, clearance, backlash, a root fillet and a bore.
+//! profile shift, addendum and dedendum, backlash, a root fillet and a
+//! bore; or an internal (ring) gear, its teeth pointing in from a rim.
+//!
+//! A ring's tooth spaces have the shape of an outer gear's teeth, so its
+//! inner outline is drawn as that of an outer gear whose teeth are the
+//! spaces: from the ring's tip circle up to its root circle. Its roots
+//! are left sharp.
 //!
 //! Each flank is the involute of the base circle from where the root
 //! fillet meets it to the tip circle, as a B-spline within
@@ -17,25 +23,95 @@ use super::{Edge, Loop, Outline, P2, add, fit, norm, polar, rotate, scale};
 pub const FLANK_TOLERANCE: f64 = 0.001;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, from = "StoredGear")]
 pub struct GearSpec {
     /// Pitch diameter over teeth, mm.
     pub module: f32,
     #[serde(deserialize_with = "super::count")]
     pub teeth: u32,
     pub pressure_angle_deg: f32,
-    /// Profile shift coefficient: the tooth moved out by this many modules.
+    /// Profile shift coefficient: the tooth moved out, away from the
+    /// gear's centre, by this many modules.
     pub profile_shift: f32,
-    /// Root clearance coefficient: the root sits this many modules below
-    /// the mating tip.
-    pub clearance: f32,
+    /// Addendum coefficient: the tip stands this many modules beyond the
+    /// pitch circle.
+    pub addendum: f32,
+    /// Dedendum coefficient: the root sits this many modules inside the
+    /// pitch circle (outside it, on a ring).
+    pub dedendum: f32,
     /// How much thinner each tooth is than half the circular pitch at the
     /// pitch circle, mm.
     pub backlash: f32,
     /// Root fillet radius coefficient, in modules; 0 leaves a sharp root.
     pub root_fillet: f32,
-    /// Bore diameter, mm; 0 leaves the gear solid.
+    /// Bore diameter, mm; 0 leaves the gear solid. Not used by a ring.
     pub bore: f32,
+    /// An internal (ring) gear.
+    pub internal: bool,
+    /// A ring's outside diameter, mm; 0 makes it three modules beyond the
+    /// root circle.
+    pub rim: f32,
+}
+
+/// A gear as files hold it: one written before the addendum and dedendum
+/// were set by hand gives its root as a clearance past the mating tip.
+#[derive(Deserialize)]
+#[serde(default)]
+struct StoredGear {
+    module: f32,
+    #[serde(deserialize_with = "super::count")]
+    teeth: u32,
+    pressure_angle_deg: f32,
+    profile_shift: f32,
+    addendum: Option<f32>,
+    dedendum: Option<f32>,
+    clearance: Option<f32>,
+    backlash: f32,
+    root_fillet: f32,
+    bore: f32,
+    internal: bool,
+    rim: f32,
+}
+
+impl Default for StoredGear {
+    fn default() -> Self {
+        let d = GearSpec::default();
+        Self {
+            module: d.module,
+            teeth: d.teeth,
+            pressure_angle_deg: d.pressure_angle_deg,
+            profile_shift: d.profile_shift,
+            addendum: None,
+            dedendum: None,
+            clearance: None,
+            backlash: d.backlash,
+            root_fillet: d.root_fillet,
+            bore: d.bore,
+            internal: d.internal,
+            rim: d.rim,
+        }
+    }
+}
+
+impl From<StoredGear> for GearSpec {
+    fn from(s: StoredGear) -> Self {
+        let addendum = s.addendum.unwrap_or(1.0);
+        Self {
+            module: s.module,
+            teeth: s.teeth,
+            pressure_angle_deg: s.pressure_angle_deg,
+            profile_shift: s.profile_shift,
+            addendum,
+            dedendum: s
+                .dedendum
+                .unwrap_or_else(|| addendum + s.clearance.unwrap_or(0.25)),
+            backlash: s.backlash,
+            root_fillet: s.root_fillet,
+            bore: s.bore,
+            internal: s.internal,
+            rim: s.rim,
+        }
+    }
 }
 
 impl Default for GearSpec {
@@ -45,10 +121,13 @@ impl Default for GearSpec {
             teeth: 20,
             pressure_angle_deg: 20.0,
             profile_shift: 0.0,
-            clearance: 0.25,
+            addendum: 1.0,
+            dedendum: 1.25,
             backlash: 0.0,
             root_fillet: 0.38,
             bore: 5.0,
+            internal: false,
+            rim: 0.0,
         }
     }
 }
@@ -59,6 +138,9 @@ pub fn involute_function(phi: f64) -> f64 {
 }
 
 /// The measured circles and angles of a gear, in millimetres and radians.
+/// For a ring these describe its tooth spaces as an outer gear's teeth:
+/// `tip_radius` is the ring's root circle and `root_radius` its tip
+/// circle.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GearGeometry {
     pub pitch_radius: f64,
@@ -116,23 +198,37 @@ impl GearSpec {
         if !(alpha > 0.0 && alpha < 45f64.to_radians()) {
             return Err("the pressure angle must be between 0° and 45°".into());
         }
+        let (ha, hf) = (f64::from(self.addendum), f64::from(self.dedendum));
+        if !(ha >= 0.0 && hf > 0.0 && ha.is_finite() && hf.is_finite()) {
+            return Err("the addendum and dedendum must be more than zero".into());
+        }
         let z = f64::from(self.teeth);
         let x = f64::from(self.profile_shift);
         let r = m * z / 2.0;
-        let s = m * (PI / 2.0 + 2.0 * x * alpha.tan()) - f64::from(self.backlash);
+        let shifted = m * (PI / 2.0 + 2.0 * x * alpha.tan());
+        let backlash = f64::from(self.backlash);
+        // A ring's space, drawn as a tooth, reaches out to its root circle
+        // and in to its tip circle; backlash widens it.
+        let (s, tip, root) = if self.internal {
+            (shifted + backlash, r + m * (hf + x), r - m * (ha - x))
+        } else {
+            (shifted - backlash, r + m * (ha + x), r - m * (hf - x))
+        };
         let g = GearGeometry {
             pitch_radius: r,
             base_radius: r * alpha.cos(),
-            tip_radius: r + m * (1.0 + x),
-            root_radius: r - m * (1.0 + f64::from(self.clearance) - x),
+            tip_radius: tip,
+            root_radius: root,
             half_thickness: s / (2.0 * r),
             pressure_angle: alpha,
             teeth: self.teeth,
         };
         if g.root_radius <= 0.0 {
-            return Err(
-                "the root circle comes to nothing: use more teeth or less clearance".into(),
-            );
+            return Err(if self.internal {
+                "the tip circle comes to nothing: use more teeth or a smaller addendum".into()
+            } else {
+                "the root circle comes to nothing: use more teeth or a smaller dedendum".into()
+            });
         }
         if g.root_radius >= g.tip_radius {
             return Err("the root circle is outside the tip circle".into());
@@ -147,6 +243,12 @@ impl GearSpec {
         if g.half_angle(g.root_radius) >= PI / z {
             return Err("the teeth meet at the root: use a larger backlash or fewer teeth".into());
         }
+        if self.internal {
+            if self.rim_radius(&g) <= g.tip_radius {
+                return Err("the rim must be outside the root circle".into());
+            }
+            return Ok(g);
+        }
         let bore = f64::from(self.bore);
         if bore < 0.0 || bore / 2.0 >= g.root_radius {
             return Err("the bore must fit inside the root circle".into());
@@ -154,11 +256,36 @@ impl GearSpec {
         Ok(g)
     }
 
+    /// A ring's outside radius.
+    fn rim_radius(&self, g: &GearGeometry) -> f64 {
+        if self.rim > 0.0 {
+            f64::from(self.rim) / 2.0
+        } else {
+            g.tip_radius + 3.0 * f64::from(self.module)
+        }
+    }
+
+    /// The tip and root diameters of the gear as made: a ring's tip circle
+    /// is inside its root circle.
+    pub fn tip_and_root_diameters(&self) -> Result<(f64, f64), String> {
+        let g = self.geometry()?;
+        let (tip, root) = if self.internal {
+            (g.root_radius, g.tip_radius)
+        } else {
+            (g.tip_radius, g.root_radius)
+        };
+        Ok((2.0 * tip, 2.0 * root))
+    }
+
     pub fn outline(&self) -> Result<Outline, String> {
         let g = self.geometry()?;
         let z = self.teeth as usize;
         let pitch = 2.0 * PI / z as f64;
-        let rho = f64::from(self.root_fillet.max(0.0)) * f64::from(self.module);
+        let rho = if self.internal {
+            0.0
+        } else {
+            f64::from(self.root_fillet.max(0.0)) * f64::from(self.module)
+        };
         let foot = root_foot(&g, rho);
 
         // The left flank of tooth 0, bottom to top: the fillet's end on
@@ -234,7 +361,9 @@ impl GearSpec {
             guides: vec![([0.0, 0.0], g.pitch_radius)],
             ..Outline::default()
         };
-        if self.bore > 0.0 {
+        if self.internal {
+            outline.circles.push(([0.0, 0.0], self.rim_radius(&g)));
+        } else if self.bore > 0.0 {
             outline
                 .circles
                 .push(([0.0, 0.0], f64::from(self.bore) / 2.0));
@@ -473,6 +602,55 @@ mod tests {
         assert!((norm(f.center) - (g.root_radius + rho)).abs() < 1e-9);
         let on_flank = g.flank_point(foot.flank_radius);
         assert!((norm(sub(on_flank, f.center)) - rho).abs() < 1e-9);
+    }
+
+    #[test]
+    fn addendum_and_dedendum_set_the_tip_and_root() {
+        let g = GearSpec {
+            addendum: 0.8,
+            dedendum: 1.0,
+            ..spec()
+        }
+        .geometry()
+        .unwrap();
+        assert!((g.tip_radius - (20.0 + 1.6)).abs() < 1e-6);
+        assert!((g.root_radius - (20.0 - 2.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_old_gear_keeps_its_root_from_the_clearance() {
+        let spec: GearSpec = serde_json::from_value(
+            serde_json::json!({"module": 2.0, "teeth": 20, "clearance": 0.4}),
+        )
+        .unwrap();
+        assert!((spec.addendum - 1.0).abs() < 1e-6);
+        assert!((spec.dedendum - 1.4).abs() < 1e-6);
+        let round: GearSpec = serde_json::from_value(serde_json::to_value(&spec).unwrap()).unwrap();
+        assert_eq!(round, spec);
+    }
+
+    #[test]
+    fn a_ring_points_its_teeth_in_from_a_rim() {
+        let ring = GearSpec {
+            internal: true,
+            teeth: 40,
+            ..spec()
+        };
+        let (tip, root) = ring.tip_and_root_diameters().unwrap();
+        assert!((tip - (80.0 - 4.0)).abs() < 1e-6, "{tip}");
+        assert!((root - (80.0 + 5.0)).abs() < 1e-6, "{root}");
+        let outline = ring.outline().unwrap();
+        let (lo, hi) = outline_radii(&outline);
+        assert!((2.0 * lo - tip).abs() < 1e-6 && (2.0 * hi - root).abs() < 1e-6);
+        assert_eq!(outline.circles.len(), 1, "the rim");
+        assert!((outline.circles[0].1 - (42.5 + 6.0)).abs() < 1e-6);
+        // Its spaces are half the circular pitch wide at the pitch circle,
+        // as a mating pinion's teeth are thick.
+        let g = ring.geometry().unwrap();
+        let space = 2.0 * g.half_angle(g.pitch_radius) * g.pitch_radius;
+        assert!((space - PI).abs() < 1e-9);
+        let small = GearSpec { rim: 80.0, ..ring };
+        assert!(small.outline().unwrap_err().contains("rim"));
     }
 
     #[test]

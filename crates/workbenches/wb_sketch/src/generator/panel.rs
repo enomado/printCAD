@@ -8,7 +8,7 @@ use egui::RichText;
 use serde_json::{Map, Value, json};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Card, FormulaEdit, FormulaField, Note, field_label, mono_label, note_card, overline,
+    Card, FormulaEdit, FormulaField, Note, check_row, field_label, mono_label, note_card, overline,
     secondary_button, select_field, small_secondary_button,
 };
 use ui_kit::{icon, sans_semibold};
@@ -73,8 +73,20 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
                 edited.extend(["pitch".to_string(), "roller".to_string()]);
             }
         }
+        if let Generator::Gear(spec) = &generator {
+            let mut internal = spec.internal;
+            if check_row(ui, &mut internal, "Internal (ring) gear").changed() {
+                set_value(&mut data, "/generator/Gear/internal", json!(internal));
+                edited.push("internal".into());
+            }
+        }
         let params = generator.parameters();
         for (i, p) in params.iter().enumerate() {
+            match (&generator, p.key.as_str()) {
+                (Generator::Gear(spec), "bore" | "root_fillet") if spec.internal => continue,
+                (Generator::Gear(spec), "rim") if !spec.internal => continue,
+                _ => {}
+            }
             if let Some(section) = shaft_section_start(p) {
                 ui.add_space(SPACE_2);
                 overline(ui, &format!("Section {section}"));
@@ -274,6 +286,17 @@ fn field_of(pointer: &str) -> String {
 fn set(data: &mut Value, pointer: &str, value: f64) {
     if let Some(slot) = data.pointer_mut(pointer) {
         *slot = json!(value);
+    }
+}
+
+/// Set the field at `pointer`, adding it to its object when a file
+/// written before it had none.
+fn set_value(data: &mut Value, pointer: &str, value: Value) {
+    let Some((parent, field)) = pointer.rsplit_once('/') else {
+        return;
+    };
+    if let Some(object) = data.pointer_mut(parent).and_then(Value::as_object_mut) {
+        object.insert(field.to_string(), value);
     }
 }
 

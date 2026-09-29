@@ -1100,14 +1100,14 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `tolerance` (number, optional): How closely it follows the sections' centres, mm (0.02 when left out)
 - Returns {length, points, deviation, straight}: its length in mm, points along it in the body's frame, the largest distance measured from a section's centre to it, and whether it is one straight segment
 
-`pc.part.gear`: Make an involute spur gear's profile: a sketch to pad.
+`pc.part.gear`: Make an involute spur gear's profile, outer or internal (ring): a sketch to pad.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
 - `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
 - `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `name` (string, optional): Its name in the tree
-- Other arguments: module, teeth, pressure_angle_deg, profile_shift, clearance, backlash, root_fillet (in modules), bore
+- Other arguments: module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in modules), backlash, root_fillet (in modules), bore, internal (true for a ring), rim (a ring's outside diameter)
 - Returns the sketch's id
 
 `pc.part.sprocket`: Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad.

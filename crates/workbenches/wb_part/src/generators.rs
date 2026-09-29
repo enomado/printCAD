@@ -43,9 +43,10 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
     let fields = [
         (
             "part.gear",
-            "Make an involute spur gear's profile: a sketch to pad",
-            "module, teeth, pressure_angle_deg, profile_shift, clearance, backlash, \
-             root_fillet (in modules), bore",
+            "Make an involute spur gear's profile, outer or internal (ring): a sketch to pad",
+            "module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in \
+             modules), backlash, root_fillet (in modules), bore, internal (true for a ring), \
+             rim (a ring's outside diameter)",
         ),
         (
             "part.sprocket",

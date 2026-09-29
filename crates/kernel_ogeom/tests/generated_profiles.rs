@@ -135,6 +135,33 @@ fn a_padded_gear_has_its_teeth_its_tip_and_its_area_times_its_thickness() {
 }
 
 #[test]
+fn a_padded_ring_gear_is_its_rim_less_its_teeth_spaces() {
+    let spec = GearSpec {
+        module: 1.5,
+        teeth: 36,
+        internal: true,
+        ..GearSpec::default()
+    };
+    let (tip, _) = spec.tip_and_root_diameters().unwrap();
+    let generator = Generator::Gear(spec);
+    let area = outline_area(&generator);
+    let (doc, body, _) = scene(generator, SketchPlane::xy(), |s| pad(s, 6.0));
+    let (volume, mesh) = build(&doc, body);
+    let expected = area * 6.0;
+    assert!(
+        (volume - expected).abs() < 1e-3 * expected,
+        "volume {volume} vs {expected}"
+    );
+    let inner = mesh
+        .positions
+        .iter()
+        .map(|p| p[0].hypot(p[1]))
+        .fold(f32::MAX, f32::min);
+    assert!((f64::from(inner) - tip / 2.0).abs() < 1e-3, "tip {inner}");
+    assert_eq!(runs_on_circle(&mesh, inner), 36, "one tip land a tooth");
+}
+
+#[test]
 fn a_padded_sprocket_seats_its_rollers_and_measures_its_area() {
     let spec = SprocketSpec {
         teeth: 21,

@@ -114,10 +114,12 @@ impl Generator {
                     at("Gear", "pressure_angle_deg"),
                 ),
                 number("profile_shift", "Profile shift", "Gear", "profile_shift"),
-                number("clearance", "Clearance", "Gear", "clearance"),
+                number("addendum", "Addendum", "Gear", "addendum"),
+                number("dedendum", "Dedendum", "Gear", "dedendum"),
                 length("backlash", "Backlash", "Gear", "backlash"),
                 number("root_fillet", "Root fillet", "Gear", "root_fillet"),
                 length("bore", "Bore", "Gear", "bore"),
+                length("rim", "Ring rim", "Gear", "rim"),
             ],
             Generator::Sprocket(_) => vec![
                 length("pitch", "Chain pitch", "Sprocket", "pitch"),
@@ -309,12 +311,15 @@ pub fn command(
 pub fn summary(generator: &Generator) -> serde_json::Value {
     use serde_json::json;
     match generator {
-        Generator::Gear(spec) => match spec.geometry() {
-            Ok(g) => json!({
+        Generator::Gear(spec) => match spec
+            .geometry()
+            .and_then(|g| spec.tip_and_root_diameters().map(|d| (g, d)))
+        {
+            Ok((g, (tip, root))) => json!({
                 "pitch_diameter": 2.0 * g.pitch_radius,
                 "base_diameter": 2.0 * g.base_radius,
-                "tip_diameter": 2.0 * g.tip_radius,
-                "root_diameter": 2.0 * g.root_radius,
+                "tip_diameter": tip,
+                "root_diameter": root,
             }),
             Err(why) => json!({ "error": why }),
         },
@@ -576,8 +581,8 @@ impl Outline {
         }
     }
 
-    /// The area the outline encloses: its loops, less its circles (the
-    /// bores inside them).
+    /// The area the outline encloses: its loops less its circles (the
+    /// bores inside them), or a ring's rim less its loop.
     pub fn area(&self) -> f64 {
         let loops: f64 = self
             .loops
@@ -589,7 +594,7 @@ impl Outline {
             .iter()
             .map(|(_, r)| std::f64::consts::PI * r * r)
             .sum();
-        loops - holes
+        (loops - holes).abs()
     }
 }
 
