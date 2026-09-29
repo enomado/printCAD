@@ -264,6 +264,29 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(align_drives(set));
     context.register_command(
         CommandSpec::new(
+            "asm.motion_clashes",
+            "Step a hinge's or a slider's drive through a range and find where bodies collide",
+        )
+        .param("joint", ParamKind::Id, "The hinge or slider")
+        .param(
+            "low",
+            ParamKind::Number,
+            "Where the steps start: degrees or mm",
+        )
+        .param("high", ParamKind::Number, "Where they end")
+        .optional(
+            "steps",
+            ParamKind::Number,
+            "How many steps (24 when left out)",
+        )
+        .returns(
+            "a list of {at, a, b, volume (mm³)}: each step and pair sharing more material \
+             than where the joint stands",
+        )
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.turn",
             "Turn a joint's body about the joint's axis or normal, the joint keeping it there",
         )
@@ -766,6 +789,38 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             ctx.document
                 .set_body_placement(body, BodyPlacement::new(rotation, translation));
             Ok(Value::Null)
+        }
+        "asm.motion_clashes" => {
+            let kernel = ctx
+                .kernel
+                .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
+            let joint = FeatureId(a.id("joint")?);
+            let steps = a.opt_number("steps")?.unwrap_or(24.0).clamp(2.0, 1000.0) as usize;
+            let (low, high) = (a.number("low")? as f32, a.number("high")? as f32);
+            let Some(check) = crate::sweep_check::plan(ctx.document, joint, low, high, steps)
+            else {
+                return Ok(json!([]));
+            };
+            let found = check
+                .run(
+                    kernel,
+                    &std::sync::atomic::AtomicUsize::new(0),
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+                .map_err(CommandError::failed)?;
+            Ok(Value::Array(
+                found
+                    .iter()
+                    .map(|c| {
+                        json!({
+                            "at": c.at,
+                            "a": c.a.0.to_string(),
+                            "b": c.b.0.to_string(),
+                            "volume": c.volume_mm3,
+                        })
+                    })
+                    .collect(),
+            ))
         }
         "asm.turn" | "asm.flip" => {
             let joint = FeatureId(a.id("joint")?);

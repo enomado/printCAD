@@ -72,6 +72,12 @@ show the motion, and puts it back when stopped. Record saves the same
 sweep, there and back, seen from the current view: as an animated PNG, a
 GIF, or a folder of numbered PNG frames, by the kind of file chosen.
 
+Check collisions through the motion, in a hinge's or a slider's
+settings, steps the drive across its limits (a whole turn, or 25 mm either
+way, without them) and lists each step where two bodies share more
+material than where the joint stands, away from the window.
+`asm.motion_clashes` does the same from a script.
+
 An alignment leaves two motions, the turn about its axis and the slide
 along it, and each can be driven or limited the same way (`turn_drive`,
 `turn_limits`, `slide_drive` and `slide_limits` in a script).

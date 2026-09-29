@@ -1046,6 +1046,18 @@ impl AssemblyWorkbench {
                 });
             }
         }
+        if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = joint.kind {
+            let hinge = matches!(joint.kind, JointKind::Hinge { .. });
+            let (low, high) = match drive.limits {
+                Some([low, high]) => (low, high),
+                None if hinge => (-180.0, 180.0),
+                None => {
+                    let at = now.unwrap_or(0.0) as f32;
+                    (at - 25.0, at + 25.0)
+                }
+            };
+            self.motion_section(ui, ctx, id, (low, high), if hinge { "°" } else { " mm" });
+        }
         if joint.kind != JointKind::Ground {
             ui.add_space(SPACE_2);
             let mut by = self.turn_by.unwrap_or(90.0);
@@ -1098,6 +1110,93 @@ impl AssemblyWorkbench {
             };
         }
         TaskOutcome::Open
+    }
+
+    /// The check of a joint's motion for collisions: its button, its
+    /// progress, what it found.
+    fn motion_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        (low, high): (f32, f32),
+        unit: &str,
+    ) {
+        ui.add_space(SPACE_2);
+        self.collect_sweep(ctx);
+        match self.sweep_progress() {
+            Some((joint, done, total)) if joint == id => {
+                ui.label(
+                    RichText::new(format!("Checking the motion: {done} of {total} pairs"))
+                        .font(sans(FONT_SM))
+                        .color(TEXT1),
+                );
+                ui.add(egui::ProgressBar::new(if total == 0 {
+                    0.0
+                } else {
+                    done as f32 / total as f32
+                }));
+                if ui_kit::widgets::secondary_button(ui, "Stop").clicked() {
+                    self.sweeping = None;
+                }
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
+            _ => {
+                if ui_kit::widgets::secondary_button(ui, "Check collisions through the motion")
+                    .on_hover_text(format!(
+                        "Step the drive from {low:.1}{unit} to {high:.1}{unit} and look for \
+                         bodies that share material on the way"
+                    ))
+                    .clicked()
+                {
+                    self.check_sweep(ctx, id, (low, high));
+                }
+            }
+        }
+        let Some((joint, found)) = &self.motion_clashes else {
+            return;
+        };
+        if *joint != id {
+            return;
+        }
+        match found {
+            Ok(found) if found.is_empty() => {
+                note_card(ui, Note::Success, None, "No collisions through the motion");
+            }
+            Ok(found) => {
+                note_card(
+                    ui,
+                    Note::Error,
+                    Some(&format!(
+                        "{} collision{}",
+                        found.len(),
+                        if found.len() == 1 { "" } else { "s" }
+                    )),
+                    "Click one to select its first body",
+                );
+                for clash in found.clone() {
+                    let text = format!(
+                        "At {:.1}{unit}: {} and {}, {:.2} mm³",
+                        clash.at,
+                        body_name(ctx, clash.a),
+                        body_name(ctx, clash.b),
+                        clash.volume_mm3
+                    );
+                    let row = ui.add(
+                        egui::Button::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
+                            .frame(false),
+                    );
+                    if row.clicked() {
+                        ctx.request(core_document::HostRequest::SelectBody(clash.a));
+                    }
+                }
+            }
+            Err(why) => {
+                note_card(ui, Note::Error, Some("Not checked"), why);
+            }
+        }
     }
 
     /// Make the joint another kind, from where the bodies stand, as

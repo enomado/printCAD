@@ -20,6 +20,7 @@ mod mass;
 mod panel;
 mod parts;
 mod solve;
+mod sweep_check;
 
 use core_document::{
     BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult,
@@ -37,6 +38,7 @@ pub use parts::{Part, parts_csv, parts_list};
 pub use solve::{
     HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints, solve,
 };
+pub use sweep_check::MotionClash;
 
 /// A joint being made: the kind, and the first face once picked.
 #[derive(Debug, Clone)]
@@ -114,6 +116,10 @@ pub struct AssemblyWorkbench {
     checking: Option<Checking>,
     /// The bodies being measured for their mass, on their own thread.
     measuring: Option<Measuring>,
+    /// A joint's motion being checked for collisions, on its own thread.
+    sweeping: Option<Sweeping>,
+    /// What the last check of a joint's motion found, for that joint.
+    motion_clashes: Option<(FeatureId, Result<Vec<MotionClash>, String>)>,
     /// The clearance the interference panel checks for, mm, as last typed.
     clearance_mm: Option<f32>,
     /// How far a joint's Turn turns its body, degrees, as last typed.
@@ -169,6 +175,25 @@ impl Drop for Measuring {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
+
+/// A joint's motion checked for collisions: the answer to come, pairs
+/// done of `total`, and the flag that stops it.
+struct Sweeping {
+    joint: FeatureId,
+    answer: std::sync::mpsc::Receiver<Result<Vec<MotionClash>, String>>,
+    done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    total: usize,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Sweeping {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Steps a joint's range is checked at for collisions.
+const SWEEP_STEPS: usize = 24;
 
 /// How far, in pixels, the mouse goes before a press is a drag.
 const DRAG_PX: f32 = 4.0;
@@ -575,6 +600,85 @@ impl AssemblyWorkbench {
         }
     }
 
+    /// Check `joint`'s motion from `low` to `high` for collisions, away
+    /// from the window.
+    pub(crate) fn check_sweep(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        joint: FeatureId,
+        (low, high): (f32, f32),
+    ) {
+        let Some(kernel) = ctx.kernel else {
+            ctx.log_warn("No kernel to check collisions with");
+            return;
+        };
+        let Some(check) = sweep_check::plan(ctx.document, joint, low, high, SWEEP_STEPS) else {
+            self.motion_clashes = Some((joint, Ok(Vec::new())));
+            ctx.log_info("Nothing moves through this joint's range");
+            return;
+        };
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (send, answer) = std::sync::mpsc::channel();
+        let total = check.pairs();
+        {
+            let (done, stop) = (done.clone(), stop.clone());
+            let spawned = std::thread::Builder::new()
+                .name("printcad-sweep-check".into())
+                .spawn(move || {
+                    let _ = send.send(check.run(kernel, &done, &stop));
+                });
+            if let Err(why) = spawned {
+                ctx.log_warn(format!("The check could not start: {why}"));
+                return;
+            }
+        }
+        self.motion_clashes = None;
+        self.sweeping = Some(Sweeping {
+            joint,
+            answer,
+            done,
+            total,
+            stop,
+        });
+    }
+
+    /// A finished motion check's answer, when it has come.
+    pub(crate) fn collect_sweep(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(sweeping) = &self.sweeping else {
+            return;
+        };
+        let answer = match sweeping.answer.try_recv() {
+            Ok(answer) => answer,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("the check ended without an answer".to_string())
+            }
+        };
+        let joint = sweeping.joint;
+        self.sweeping = None;
+        match &answer {
+            Ok(found) if found.is_empty() => ctx.log_info("No collisions through the motion"),
+            Ok(found) => ctx.log_warn(format!(
+                "{} collision{} through the motion",
+                found.len(),
+                if found.len() == 1 { "" } else { "s" }
+            )),
+            Err(why) => ctx.log_warn(format!("The motion could not be checked: {why}")),
+        }
+        self.motion_clashes = Some((joint, answer));
+    }
+
+    /// How far a motion check has got, and for which joint.
+    pub(crate) fn sweep_progress(&self) -> Option<(FeatureId, usize, usize)> {
+        let s = self.sweeping.as_ref()?;
+        Some((
+            s.joint,
+            s.done.load(std::sync::atomic::Ordering::Relaxed),
+            s.total,
+        ))
+    }
+
     /// How far a measuring has got: bodies done, of how many.
     pub(crate) fn mass_progress(&self) -> Option<(usize, usize)> {
         let m = self.measuring.as_ref()?;
@@ -791,6 +895,32 @@ pub fn sweep_frames(
     high: f32,
     count: usize,
 ) -> Vec<Vec<(BodyId, BodyPlacement)>> {
+    let values: Vec<f32> = (0..count)
+        .map(|i| {
+            let t = i as f64 / count as f64;
+            (f64::from(low)
+                + f64::from(high - low) * (0.5 - 0.5 * (std::f64::consts::TAU * t).cos()))
+                as f32
+        })
+        .collect();
+    let frames = sweep_values(document, joint, &values);
+    let start: Vec<(BodyId, BodyPlacement)> = document
+        .bodies()
+        .iter()
+        .map(|b| (b.id, b.placement))
+        .collect();
+    let moved = frames.iter().any(|f| *f != start);
+    if moved { frames } else { Vec::new() }
+}
+
+/// A hinge's or a slider's drive held at each of `values` in turn, on a
+/// copy of the document: every body's placement at each. Empty for a
+/// joint that is not a hinge or a slider.
+pub fn sweep_values(
+    document: &core_document::Document,
+    joint: FeatureId,
+    values: &[f32],
+) -> Vec<Vec<(BodyId, BodyPlacement)>> {
     let Some(mut feature) = document
         .get_feature_data(joint)
         .and_then(|d| JointFeature::from_json(d).ok())
@@ -798,15 +928,11 @@ pub fn sweep_frames(
         return Vec::new();
     };
     let mut copy = document.clone();
-    let mut frames = Vec::with_capacity(count);
-    let mut moved_any = false;
-    for i in 0..count {
-        let t = i as f64 / count as f64;
-        let value = f64::from(low)
-            + f64::from(high - low) * (0.5 - 0.5 * (std::f64::consts::TAU * t).cos());
+    let mut frames = Vec::with_capacity(values.len());
+    for value in values {
         match &mut feature.kind {
             JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } => {
-                drive.to = Some(value as f32);
+                drive.to = Some(*value);
             }
             _ => return Vec::new(),
         }
@@ -814,12 +940,11 @@ pub fn sweep_frames(
             return Vec::new();
         }
         if let Ok(moves) = solve(&copy) {
-            moved_any |= !moves.is_empty();
             place_bodies(&mut copy, &moves);
         }
         frames.push(copy.bodies().iter().map(|b| (b.id, b.placement)).collect());
     }
-    if moved_any { frames } else { Vec::new() }
+    frames
 }
 
 /// Put bodies where `moves` say, the couplings whose drivers they turn
@@ -1494,7 +1619,7 @@ impl Workbench for AssemblyWorkbench {
     /// A check or a measuring running away from the window: its answer
     /// shows once it comes.
     fn busy(&self) -> bool {
-        self.checking.is_some() || self.measuring.is_some()
+        self.checking.is_some() || self.measuring.is_some() || self.sweeping.is_some()
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
@@ -1649,6 +1774,7 @@ impl Workbench for AssemblyWorkbench {
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.collect_interference(ctx);
         self.collect_mass(ctx);
+        self.collect_sweep(ctx);
         if self.picking.is_some() {
             self.take_pick(ctx);
             return;
@@ -2720,6 +2846,90 @@ mod tests {
 
     /// Two 10 mm cubes, the second on a slider along X, 20 mm along; the
     /// second dragged from its middle to `to`, and where it ends up.
+    /// A slider swept from where the cube stands (20 mm off) down to
+    /// nothing runs into the other cube for the steps under 10 mm.
+    #[test]
+    fn a_motion_is_checked_for_collisions_step_by_step() {
+        use glam::Vec3;
+        let mut doc = Document::new("t");
+        let cube = || TriMesh {
+            positions: vec![[0.0; 3], [10.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            ..TriMesh::default()
+        };
+        let [base, part] = [doc.create_body(None), doc.create_body(None)];
+        for body in [base, part] {
+            doc.set_imported_geometry(
+                body,
+                ImportedGeometry {
+                    mesh: Arc::new(cube()),
+                    source_asset: None,
+                    revision: 0,
+                    bounds_mm: Some(([0.0; 3], [10.0; 3])),
+                    brep_blob_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+            doc.set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
+        }
+        doc.set_body_placement(
+            part,
+            BodyPlacement::new(glam::Quat::IDENTITY, Vec3::new(20.0, 0.0, 0.0)),
+        );
+        let rail = Anchor::Axis {
+            point: [0.0, 5.0, 5.0],
+            direction: [1.0, 0.0, 0.0],
+        };
+        let at = |b: BodyId| Rigid::from(doc.body_placement(b));
+        let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
+        let slider = doc
+            .add_feature_in_body(
+                JointFeature {
+                    kind,
+                    moving: rail,
+                    other_body: base,
+                    fixed: rail,
+                },
+                "Slider 1".into(),
+                Some(part),
+            )
+            .unwrap();
+        let check = sweep_check::plan(&doc, slider, 20.0, 0.0, 5).expect("the part moves");
+        let found = check
+            .run(
+                &CUBES,
+                &std::sync::atomic::AtomicUsize::new(0),
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .unwrap();
+        let at: Vec<f32> = found.iter().map(|c| c.at).collect();
+        assert_eq!(at, [5.0, 0.0], "{found:?}");
+        assert!((found[0].volume_mm3 - 500.0).abs() < 1e-6);
+        assert_eq!(
+            doc.body_placement(part).translation[0],
+            20.0,
+            "the document is not moved"
+        );
+
+        let mut wb = AssemblyWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.kernel = Some(&CUBES);
+        wb.check_sweep(&mut ctx, slider, (20.0, 0.0));
+        let started = std::time::Instant::now();
+        while wb.sweeping.is_some() {
+            assert!(started.elapsed().as_secs() < 5);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            wb.on_frame(0.016, &mut ctx);
+        }
+        let Some((joint, Ok(found))) = &wb.motion_clashes else {
+            panic!("the answer is kept")
+        };
+        assert_eq!(*joint, slider);
+        assert!(!found.is_empty());
+    }
+
     fn slide_cube_to(to: [f32; 3], collisions_off: bool) -> f32 {
         use glam::{Mat4, Vec3};
         let mut doc = Document::new("t");

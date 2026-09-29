@@ -1269,6 +1269,14 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `slide_drive` (any, optional): How far along the axis (mm) to hold an alignment; false lets it slide
 - `slide_limits` (any, optional): {low, high}: the range an alignment's slide stays in, mm; false takes it away
 
+`pc.asm.motion_clashes`: Step a hinge's or a slider's drive through a range and find where bodies collide.
+
+- `joint` (id): The hinge or slider
+- `low` (number): Where the steps start: degrees or mm
+- `high` (number): Where they end
+- `steps` (number, optional): How many steps (24 when left out)
+- Returns a list of {at, a, b, volume (mm³)}: each step and pair sharing more material than where the joint stands
+
 `pc.asm.turn`: Turn a joint's body about the joint's axis or normal, the joint keeping it there.
 
 - `joint` (id): The joint

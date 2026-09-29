@@ -125,6 +125,14 @@ fn plan_with(document: &Document, among: Option<&[BodyId]>, clearance: Option<f6
 }
 
 impl Check {
+    /// Only the pairs with a body of `moved` in them.
+    pub fn moving(mut self, moved: &[BodyId]) -> Self {
+        let solids = &self.solids;
+        self.pairs
+            .retain(|(i, j)| moved.contains(&solids[*i].body) || moved.contains(&solids[*j].body));
+        self
+    }
+
     /// Only the pairs `body` is one of.
     pub fn around(mut self, body: BodyId) -> Self {
         let solids = &self.solids;
