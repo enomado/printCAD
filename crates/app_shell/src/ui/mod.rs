@@ -94,6 +94,8 @@ pub struct UiLayer {
     preferences: preferences::PreferencesState,
     /// `PRINTCAD_BENCH_PREFS=<page>` opened Preferences there once.
     bench_prefs_opened: bool,
+    /// The newer release whose notice was put away.
+    dismissed_release: Option<String>,
     palette: command_palette::PaletteState,
     orientation_cube_config: OrientationCubeConfig,
     /// Substring filter over the model tree; UI-local.
@@ -195,6 +197,7 @@ impl UiLayer {
             state,
             preferences: preferences::PreferencesState::default(),
             bench_prefs_opened: false,
+            dismissed_release: None,
             palette: command_palette::PaletteState::default(),
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
@@ -238,6 +241,37 @@ impl UiLayer {
         self.ctx
             .layer_id_at(pos)
             .is_some_and(|layer| layer.order != egui::Order::Background)
+    }
+
+    /// A newer printCAD is out: a card at the view's bottom right, kept
+    /// until put away, with the release and the Updates page a click away.
+    fn release_notice(
+        preferences: &mut preferences::PreferencesState,
+        dismissed_release: &mut Option<String>,
+        ctx: &Context,
+        release: &crate::app::updates::ReleaseCheck,
+        viewport: egui::Rect,
+        settings: &settings::UserSettings,
+        unit: core_document::Unit,
+    ) {
+        let crate::app::updates::ReleaseCheck::Found {
+            tag,
+            page,
+            newer: true,
+        } = release
+        else {
+            return;
+        };
+        if dismissed_release.as_ref() == Some(tag) {
+            return;
+        }
+        let (details, dismiss) = hud::draw_release_notice(ctx, viewport, tag, page);
+        if details {
+            preferences.open_at(settings, unit, preferences::PrefGroup::Updates, 0);
+        }
+        if dismiss || details {
+            *dismissed_release = Some(tag.clone());
+        }
     }
 
     /// The workbench consumed `key`: keep egui from acting on it too.
@@ -558,6 +592,15 @@ impl UiLayer {
                     commands.push(request);
                 }
                 hud::draw_toasts(ui.ctx(), viewport_rect_logical);
+                Self::release_notice(
+                    &mut self.preferences,
+                    &mut self.dismissed_release,
+                    ui.ctx(),
+                    release,
+                    viewport_rect_logical,
+                    settings,
+                    unit,
+                );
                 return;
             }
 
@@ -910,6 +953,15 @@ impl UiLayer {
                 &mut commands,
             );
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);
+            Self::release_notice(
+                &mut self.preferences,
+                &mut self.dismissed_release,
+                ui.ctx(),
+                release,
+                viewport_rect_logical,
+                settings,
+                unit,
+            );
 
             if let Some(input) = orientation_input {
                 cube_result =

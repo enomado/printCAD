@@ -48,11 +48,10 @@ impl PrintCadApp {
 
     pub(crate) fn take_app_release(&mut self, found: ReleaseCheck, quiet: bool) {
         match &found {
+            // The notice card says it; the log keeps it quietly.
             ReleaseCheck::Found {
                 tag, newer: true, ..
-            } => app_log::success(format!(
-                "printCAD {tag} is out: Help › Check for updates has the link"
-            )),
+            } => app_log::info(format!("printCAD {tag} is out")),
             ReleaseCheck::Found { tag, .. } if !quiet => {
                 app_log::info(format!("printCAD is up to date (latest release {tag})"));
             }

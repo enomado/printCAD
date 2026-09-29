@@ -268,6 +268,49 @@ pub fn draw_hover_card(
         });
 }
 
+/// The card saying printCAD `tag` is out, at the view's bottom right, with
+/// the release's `page`. Whether Details or the close button was pressed.
+pub fn draw_release_notice(
+    ctx: &Context,
+    viewport: egui::Rect,
+    tag: &str,
+    page: &str,
+) -> (bool, bool) {
+    let mut details = false;
+    let mut dismiss = false;
+    Area::new(egui::Id::new("release_notice"))
+        .order(Order::Foreground)
+        .pivot(Align2::RIGHT_BOTTOM)
+        .fixed_pos(viewport.right_bottom() - Vec2::splat(SPACE_4))
+        .show(ctx, |ui| {
+            Card::floating()
+                .border(with_alpha(SUCCESS, 0.6))
+                .padding(SPACE_3)
+                .show(ui, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = SPACE_2;
+                        ui_kit::icon::draw(ui, "info", 16.0, SUCCESS);
+                        ui.label(
+                            RichText::new(format!("printCAD {tag} is out"))
+                                .font(sans_medium(FONT_SM))
+                                .color(TEXT1),
+                        );
+                        ui.add_space(SPACE_2);
+                        ui.hyperlink_to(RichText::new("Get it").font(ui_kit::sans(FONT_SM)), page);
+                        details = ui_kit::widgets::small_secondary_button(ui, "Details")
+                            .on_hover_text("Preferences › Updates")
+                            .clicked();
+                        dismiss = ui
+                            .add(egui::Button::new(RichText::new("×").color(TEXT3)).frame(false))
+                            .on_hover_text("Put the notice away")
+                            .clicked();
+                    });
+                });
+        });
+    (details, dismiss)
+}
+
 /// Good news, warnings and errors from the last few seconds, as cards under
 /// the view toolbar, so they are seen without reading the log. They draw
 /// over dialogs too: an install finishing in Preferences shows there.
@@ -325,6 +368,28 @@ pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
 #[cfg(test)]
 mod toast_tests {
     use super::*;
+
+    #[test]
+    fn a_newer_release_draws_as_a_card_that_stays() {
+        let ctx = Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        for time in [0.0, 60.0] {
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let (details, dismiss) =
+                    draw_release_notice(ui.ctx(), viewport, "v9.0.0", "https://example.org");
+                assert!(!details && !dismiss);
+            });
+            output.textures_delta.clear();
+            let card = ctx.memory(|m| m.area_rect(egui::Id::new("release_notice")));
+            let card = card.expect("the notice is on screen");
+            assert!(viewport.contains_rect(card), "inside the view: {card:?}");
+        }
+    }
 
     #[test]
     fn good_news_draws_as_a_card_over_the_view() {
