@@ -140,6 +140,11 @@ pub(crate) struct DocumentSession {
     pub previews: std::collections::HashMap<core_document::BodyId, BodyPreview>,
     /// Bodies whose repair the kernel worker is running.
     pub repairs_in_flight: std::collections::HashSet<Uuid>,
+    /// Bodies with a build on the kernel thread, each with the newest plan
+    /// made for it since, which goes when that build lands: while a drag
+    /// changes a feature every frame, only the latest shape is built.
+    pub builds_in_flight:
+        std::collections::HashMap<Uuid, Option<crate::app::recompute::QueuedBuild>>,
     /// Bodies whose new shape is being read, and the asset each failed to
     /// read from, which is not tried again.
     pub shapes_in_flight: std::collections::HashSet<Uuid>,
@@ -231,6 +236,7 @@ impl DocumentSession {
             face_colored: Default::default(),
             pick_depths: None,
             repairs_in_flight: Default::default(),
+            builds_in_flight: Default::default(),
             shapes_in_flight: Default::default(),
             shapes_failed: Default::default(),
             solids_in_flight: Default::default(),

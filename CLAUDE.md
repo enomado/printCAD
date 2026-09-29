@@ -689,7 +689,11 @@ dependency DAG → `drive_part_recompute` (each frame) asks every bench for
 its `rebuild_jobs` (a `BuildPlan` of `SolidOp`s per body, the bench settling
 the dirty flags of the plan's features and inputs itself) → kernel worker
 thread → results land in the document's imported-geometry sidecar →
-rendered/picked like any body. A history that changed shape goes through
+rendered/picked like any body. A body has one build out at a time
+(`session.builds_in_flight`): a plan made while it builds waits in its
+place, a newer one replacing it, and goes when the build lands
+(`build_landed`), so a drag that changes a feature every frame builds only
+the latest shape rather than replaying each step. A history that changed shape goes through
 `invalidate_body`; a history jump or Recompute All through `invalidate_all`.
 
 Import performance: the per-solid work and each mesh's face pass go through

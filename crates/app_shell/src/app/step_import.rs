@@ -107,6 +107,11 @@ impl PrintCadApp {
     }
 
     fn apply_kernel_response(&mut self, response: KernelResponse) {
+        if let KernelResponse::SolidBuilt { body_id, .. }
+        | KernelResponse::SolidFailed { body_id, .. } = &response
+        {
+            self.build_landed(*body_id);
+        }
         {
             match response {
                 KernelResponse::StepImported {

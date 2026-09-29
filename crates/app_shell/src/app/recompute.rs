@@ -13,6 +13,17 @@ use crate::log_panel as app_log;
 impl PrintCadApp {
     pub(crate) fn drive_part_recompute(&mut self) {
         self.sync_feature_preview();
+        // Nothing is out on the kernel thread: a body still marked as
+        // building lost its answer (it left the tab while it built), and
+        // what waits for it goes now.
+        if self.kernel_worker.in_flight() == 0 && !self.session.builds_in_flight.is_empty() {
+            let waiting: Vec<_> = self.session.builds_in_flight.drain().collect();
+            for (body, next) in waiting {
+                if let Some(next) = next {
+                    self.submit_build(body, next);
+                }
+            }
+        }
         for job in self.registry.rebuild_jobs(&mut self.session.document) {
             let body_id = job.body;
             self.session.document.clear_body_feature_errors(body_id);
@@ -30,14 +41,18 @@ impl PrintCadApp {
                         .preview_feature
                         .filter(|f| plan.op_features.contains(f))
                         .map(|f| f.0);
-                    self.kernel_worker.request_build_solid(
-                        body_id.0,
-                        plan.ops,
-                        plan.op_features.iter().map(|id| id.0).collect(),
-                        TessellationSettings::default(),
+                    let build = QueuedBuild {
+                        ops: plan.ops,
+                        op_features: plan.op_features.iter().map(|id| id.0).collect(),
                         preview,
-                        plan.probes,
-                    );
+                        probes: plan.probes,
+                    };
+                    // One build per body at a time; a newer plan waits in
+                    // its place, replacing any older one waiting.
+                    match self.session.builds_in_flight.get_mut(&body_id.0) {
+                        Some(waiting) => *waiting = Some(build),
+                        None => self.submit_build(body_id.0, build),
+                    }
                 }
                 Err(err) => {
                     let name = err
@@ -57,7 +72,34 @@ impl PrintCadApp {
     }
 }
 
+/// A body's build plan, as it goes to the kernel thread.
+pub(crate) struct QueuedBuild {
+    ops: Vec<kernel_api::SolidOp>,
+    op_features: Vec<uuid::Uuid>,
+    preview: Option<uuid::Uuid>,
+    probes: Vec<core_document::PlanProbe>,
+}
+
 impl PrintCadApp {
+    fn submit_build(&mut self, body: uuid::Uuid, build: QueuedBuild) {
+        self.session.builds_in_flight.insert(body, None);
+        self.kernel_worker.request_build_solid(
+            body,
+            build.ops,
+            build.op_features,
+            TessellationSettings::default(),
+            build.preview,
+            build.probes,
+        );
+    }
+
+    /// A body's build landed: the newest plan made meanwhile goes now.
+    pub(crate) fn build_landed(&mut self, body: uuid::Uuid) {
+        if let Some(Some(next)) = self.session.builds_in_flight.remove(&body) {
+            self.submit_build(body, next);
+        }
+    }
+
     /// Follow the feature the active bench edits: while a task edits one
     /// that builds solid, its body is built with a preview of it, and when
     /// the task closes the whole solids go back.
