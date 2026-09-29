@@ -314,7 +314,7 @@ pub struct SketchOptions {
     /// Splines mark their knots.
     pub spline_knots: bool,
     /// Editing a sketch cuts the view at its plane unless the sketch was
-    /// set otherwise.
+    /// set otherwise; off, only a sketch switched on is cut.
     pub section_on_open: bool,
 }
 
@@ -336,7 +336,7 @@ impl Default for SketchOptions {
             dimension_labels: glyphs::DimensionLabels::Value,
             spline_comb: false,
             spline_knots: false,
-            section_on_open: true,
+            section_on_open: false,
         }
     }
 }
