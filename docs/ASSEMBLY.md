@@ -55,6 +55,11 @@ A selected joint is drawn in the view: a dot where each end takes hold,
 a flat face's normal and a square in its plane, an axis as a dashed line,
 and a dashed link between the ends with the joint's name.
 
+Rigid group (U) locks several bodies together as they sit, in one
+feature: click each body (a second click takes one out) and press OK. The
+group moves as one, the first body the one the rest hold to; its settings
+change the members or dissolve it. `asm.group` makes one from a script.
+
 Ground (F) keeps a body where it is; the bodies joined to it are placed
 against it. The first joint of an assembly grounds the body it holds to
 when nothing is grounded yet. The status bar says how many motions the joints leave open,

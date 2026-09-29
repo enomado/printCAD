@@ -1269,6 +1269,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `slide_drive` (any, optional): How far along the axis (mm) to hold an alignment; false lets it slide
 - `slide_limits` (any, optional): {low, high}: the range an alignment's slide stays in, mm; false takes it away
 
+`pc.asm.group`: Lock bodies together where they sit, in one rigid group.
+
+- `bodies` (list): Two bodies or more; the first the one the rest hold to
+- `group` (id, optional): A group to change to these bodies, rather than a new one
+- `name` (string, optional): A new group's name in the tree
+- Returns the group's id
+
 `pc.asm.motion_clashes`: Step a hinge's or a slider's drive through a range and find where bodies collide.
 
 - `joint` (id): The hinge or slider

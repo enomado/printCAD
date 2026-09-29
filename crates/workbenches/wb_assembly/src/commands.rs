@@ -264,6 +264,24 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(align_drives(set));
     context.register_command(
         CommandSpec::new(
+            "asm.group",
+            "Lock bodies together where they sit, in one rigid group",
+        )
+        .param(
+            "bodies",
+            ParamKind::List,
+            "Two bodies or more; the first the one the rest hold to",
+        )
+        .optional(
+            "group",
+            ParamKind::Id,
+            "A group to change to these bodies, rather than a new one",
+        )
+        .optional("name", ParamKind::String, "A new group's name in the tree")
+        .returns("the group's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.motion_clashes",
             "Step a hinge's or a slider's drive through a range and find where bodies collide",
         )
@@ -789,6 +807,42 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             ctx.document
                 .set_body_placement(body, BodyPlacement::new(rotation, translation));
             Ok(Value::Null)
+        }
+        "asm.group" => {
+            let bodies = body_list(&a)?.unwrap_or_default();
+            if bodies.len() < 2 {
+                return Err(CommandError::bad("bodies", "must name two bodies or more"));
+            }
+            if let Some(b) = bodies
+                .iter()
+                .find(|b| !ctx.document.bodies().iter().any(|x| x.id == **b))
+            {
+                return Err(CommandError::bad(
+                    "bodies",
+                    &format!("{} is not a body of this document", b.0),
+                ));
+            }
+            let group = crate::RigidGroup::of(ctx.document, &bodies);
+            let id = match a.opt_id("group")? {
+                Some(id) => {
+                    let id = FeatureId(id);
+                    ctx.document
+                        .update_feature_data(id, core_document::WorkbenchFeature::to_json(&group))
+                        .map_err(|e| CommandError::failed(e.to_string()))?;
+                    id
+                }
+                None => {
+                    let name = match a.opt_string("name")? {
+                        Some(n) => n.to_string(),
+                        None => next_name(ctx.document, "Group"),
+                    };
+                    ctx.document
+                        .add_feature_in_body(group, name, Some(bodies[0]))
+                        .map_err(|e| CommandError::failed(e.to_string()))?
+                }
+            };
+            ctx.document.clear_feature_dirty(id);
+            solved(ctx, json!(id.0.to_string()))
         }
         "asm.motion_clashes" => {
             let kernel = ctx
@@ -1559,6 +1613,57 @@ mod tests {
         let mut both = vec![a, b];
         both.sort();
         assert_eq!(not_made, both);
+    }
+
+    /// A group moves as one: the body held to its first member follows it
+    /// when a mate moves that one.
+    #[test]
+    fn a_rigid_group_moves_as_one() {
+        let mut doc = Document::new("t");
+        let [base, lid, knob] = [
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+        ];
+        doc.set_body_placement(
+            lid,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 30.0)),
+        );
+        doc.set_body_placement(
+            knob,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(5.0, 0.0, 40.0)),
+        );
+        let group = call(
+            &mut doc,
+            "asm.group",
+            json!({"bodies": [lid.0.to_string(), knob.0.to_string()]}),
+        )
+        .unwrap();
+        assert!(group.is_string());
+        // The lid's underside, 30 up, onto the base's top at 10.
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": lid.0.to_string(), "face": {"point": [0, 0, 30], "normal": [0, 0, -1]},
+                   "other": base.0.to_string(), "other_face": {"point": [0, 0, 10], "normal": [0, 0, 1]},
+                   "offset": 0}),
+        )
+        .unwrap();
+        let lid_z = doc.body_placement(lid).translation[2];
+        let knob_z = doc.body_placement(knob).translation[2];
+        assert!((lid_z - 10.0).abs() < 1e-3, "{lid_z}");
+        assert!(
+            (knob_z - 20.0).abs() < 1e-3,
+            "the knob keeps its 10 above: {knob_z}"
+        );
+        assert!(
+            call(
+                &mut doc,
+                "asm.group",
+                json!({"bodies": [lid.0.to_string()]})
+            )
+            .is_err()
+        );
     }
 
     /// A joint to the world holds the body to the origin's planes, and

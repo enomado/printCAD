@@ -13,6 +13,7 @@
 mod collide;
 mod commands;
 mod coupling;
+mod group;
 mod interference;
 mod joint;
 mod mass;
@@ -29,6 +30,7 @@ use core_document::{
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
+pub use group::{GROUP_KIND, RigidGroup};
 pub use interference::{Clash, Interference, interference};
 pub use joint::{
     Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, ORIGIN, Rigid, Takes, WORLD,
@@ -89,6 +91,12 @@ enum Task {
     },
     /// Every part and how many of it.
     Parts,
+    /// Bodies picked for a rigid group, one click each (a second click
+    /// takes one out); `editing` the group changed, `None` for a new one.
+    Group {
+        editing: Option<FeatureId>,
+        members: Vec<BodyId>,
+    },
     /// The assembly's mass and centre of mass at `density` g/cm³; `None`
     /// while it is measured.
     Mass {
@@ -124,6 +132,9 @@ pub struct AssemblyWorkbench {
     clearance_mm: Option<f32>,
     /// How far a joint's Turn turns its body, degrees, as last typed.
     turn_by: Option<f32>,
+    /// The body last clicked while a group's bodies are picked, so a click
+    /// counts once.
+    group_seen: Option<uuid::Uuid>,
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
@@ -534,6 +545,58 @@ impl AssemblyWorkbench {
 }
 
 impl AssemblyWorkbench {
+    /// A body clicked while a group's bodies are picked goes in, or out
+    /// when it is in.
+    fn take_group_pick(&mut self, ctx: &WorkbenchRuntimeContext) {
+        let Some(Task::Group { members, .. }) = &mut self.task else {
+            return;
+        };
+        let clicked = ctx.selected_body_id;
+        if clicked == self.group_seen {
+            return;
+        }
+        self.group_seen = clicked;
+        let Some(body) = clicked.map(BodyId) else {
+            return;
+        };
+        match members.iter().position(|b| *b == body) {
+            Some(i) => {
+                members.remove(i);
+            }
+            None => members.push(body),
+        }
+    }
+
+    /// The group being picked made, or the one edited changed to the
+    /// bodies picked, where they sit now.
+    pub(crate) fn make_group(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        editing: Option<FeatureId>,
+        members: &[BodyId],
+    ) -> Option<FeatureId> {
+        if members.len() < 2 {
+            ctx.log_warn("A group takes two bodies or more");
+            return None;
+        }
+        let group = RigidGroup::of(ctx.document, members);
+        let id = match editing {
+            Some(id) => {
+                ctx.document.update_feature_data(id, group.to_json()).ok()?;
+                id
+            }
+            None => {
+                let name = commands::next_name(ctx.document, "Group");
+                ctx.document
+                    .add_feature_in_body(group, name, Some(members[0]))
+                    .ok()?
+            }
+        };
+        ctx.document.clear_feature_dirty(id);
+        self.solve_and_apply(ctx);
+        Some(id)
+    }
+
     /// Measure the visible solid bodies away from the window and show
     /// their mass and centre of mass.
     pub(crate) fn measure_mass(&mut self, ctx: &mut WorkbenchRuntimeContext, density: f32) {
@@ -1509,7 +1572,7 @@ impl Workbench for AssemblyWorkbench {
             "Place bodies against each other with joints",
         )
         .icon("workbench-assembly")
-        .feature_kinds([JOINT_KIND, COUPLING_KIND, parts::PARTS_KIND])
+        .feature_kinds([JOINT_KIND, COUPLING_KIND, parts::PARTS_KIND, GROUP_KIND])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -1535,6 +1598,7 @@ impl Workbench for AssemblyWorkbench {
         );
         context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
         context.register_tool(tool("asm.mass", "Mass and centre of mass", "measure").shortcut("W"));
+        context.register_tool(tool("asm.group", "Rigid group", "tree-group").shortcut("U"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
@@ -1549,6 +1613,14 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == GROUP_KIND {
+            return FeatureInfo {
+                icon: "tree-group",
+                kind_label: "Rigid group".to_string(),
+                family_label: "Assembly rigid group".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == parts::PARTS_KIND {
             return FeatureInfo {
                 icon: "file-document",
@@ -1631,6 +1703,7 @@ impl Workbench for AssemblyWorkbench {
             id if JointTool::of_command(id).is_some() => ctx.document.bodies().len() >= 2,
             "asm.interference" | "asm.explode" => ctx.document.bodies().len() >= 2,
             "asm.parts" | "asm.mass" => !ctx.document.bodies().is_empty(),
+            "asm.group" => ctx.document.bodies().len() >= 2,
             "asm.collisions" => true,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
@@ -1711,6 +1784,14 @@ impl Workbench for AssemblyWorkbench {
                 self.picking = None;
                 self.task = Some(Task::Parts);
             }
+            Some("asm.group") => {
+                self.picking = None;
+                self.group_seen = ctx.selected_body_id;
+                self.task = Some(Task::Group {
+                    editing: None,
+                    members: ctx.selected_body_id.map(BodyId).into_iter().collect(),
+                });
+            }
             Some("asm.mass") => {
                 self.picking = None;
                 self.measure_mass(ctx, commands::DEFAULT_DENSITY);
@@ -1779,6 +1860,7 @@ impl Workbench for AssemblyWorkbench {
             self.take_pick(ctx);
             return;
         }
+        self.take_group_pick(ctx);
         // A joint's settings stay open while it is selected; picking
         // something else closes them, keeping what was set. They open on a
         // double click (`edit_feature`), never on selection alone.
@@ -1804,6 +1886,20 @@ impl Workbench for AssemblyWorkbench {
         }
         if kind.as_deref() == Some(parts::PARTS_KIND) {
             self.task = Some(Task::Parts);
+            return;
+        }
+        if kind.as_deref() == Some(GROUP_KIND) {
+            let members = ctx
+                .document
+                .get_feature_data(id)
+                .and_then(|d| RigidGroup::from_json(d).ok())
+                .map(|g| g.bodies())
+                .unwrap_or_default();
+            self.group_seen = ctx.selected_body_id;
+            self.task = Some(Task::Group {
+                editing: Some(id),
+                members,
+            });
             return;
         }
         if kind.as_deref() == Some(COUPLING_KIND) {
@@ -1882,6 +1978,12 @@ impl Workbench for AssemblyWorkbench {
                 title: "Parts list".to_string(),
                 icon: "file-document",
                 confirmable: false,
+                stepwise: false,
+            }),
+            Task::Group { .. } => Some(core_document::TaskInfo {
+                title: "Rigid group".to_string(),
+                icon: "tree-group",
+                confirmable: true,
                 stepwise: false,
             }),
             Task::Mass { .. } => Some(core_document::TaskInfo {

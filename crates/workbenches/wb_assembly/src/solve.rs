@@ -69,12 +69,13 @@ pub enum SolveError {
     Conflict { body: BodyId, joints: Vec<String> },
 }
 
-/// The joints the solver reads: both bodies there and different, or a
-/// ground.
+/// The joints the solver reads, rigid groups' holds among them: both
+/// bodies there and different, or a ground.
 fn usable(document: &Document) -> Vec<Joint> {
     let exists = |body: BodyId| body == WORLD || document.bodies().iter().any(|b| b.id == body);
     joints(document)
         .into_iter()
+        .chain(crate::group::holds(document))
         .filter(|j| {
             exists(j.body)
                 && (j.feature.kind == JointKind::Ground

@@ -122,6 +122,9 @@ impl AssemblyWorkbench {
                 self.explode_panel(ui, ctx, request, placements, spread)
             }
             Some(Task::Parts) => self.parts_panel(ui, ctx, request),
+            Some(Task::Group { editing, members }) => {
+                self.group_panel(ui, ctx, request, editing, &members)
+            }
             Some(Task::Mass { found, density }) => {
                 self.mass_panel(ui, ctx, request, found.as_ref(), density)
             }
@@ -368,6 +371,98 @@ impl AssemblyWorkbench {
             .font(sans(FONT_XS))
             .color(TEXT3),
         );
+        TaskOutcome::Open
+    }
+
+    /// The bodies of a rigid group, picked one click each; OK locks them
+    /// where they sit.
+    fn group_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        editing: Option<FeatureId>,
+        members: &[BodyId],
+    ) -> TaskOutcome {
+        if request.cancel {
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        }
+        if request.accept {
+            let Some(id) = self.make_group(ctx, editing, members) else {
+                return TaskOutcome::Open;
+            };
+            let bodies: Vec<String> = members.iter().map(|b| b.0.to_string()).collect();
+            let args = match editing {
+                Some(_) => serde_json::json!({"group": id.0.to_string(), "bodies": bodies}),
+                None => serde_json::json!({"bodies": bodies}),
+            };
+            ctx.record(
+                "asm.group",
+                crate::commands::object(args),
+                serde_json::json!(id.0.to_string()),
+            );
+            self.task = None;
+            ctx.active_document_object = Some(id);
+            return TaskOutcome::Accepted {
+                label: if editing.is_some() {
+                    "Edit rigid group"
+                } else {
+                    "Rigid group"
+                }
+                .to_string(),
+            };
+        }
+        header(ui, "tree-group", "Rigid group");
+        ui.add_space(SPACE_2);
+        ui.label(
+            RichText::new(
+                "Click the bodies to lock together; a second click takes one out. They \
+                 move as one, held as they sit now, the first the one the rest hold to.",
+            )
+            .font(sans(FONT_SM))
+            .color(TEXT2),
+        );
+        ui.add_space(SPACE_2);
+        let mut remove = None;
+        for (i, body) in members.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(body_name(ctx, *body))
+                        .font(sans(FONT_SM))
+                        .color(TEXT1),
+                );
+                if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let (Some(i), Some(Task::Group { members, .. })) = (remove, &mut self.task) {
+            members.remove(i);
+        }
+        if members.len() < 2 {
+            ui.add_space(SPACE_1);
+            note_card(ui, Note::Info, None, "A group takes two bodies or more");
+        }
+        if let Some(id) = editing {
+            ui.add_space(SPACE_2);
+            if destructive_button(ui, "Dissolve group")
+                .on_hover_text("Remove the group; the bodies stay where they are")
+                .clicked()
+                && ctx.document.remove_feature(id).is_ok()
+            {
+                ctx.record(
+                    "doc.delete",
+                    crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
+                    serde_json::Value::Null,
+                );
+                self.task = None;
+                ctx.active_document_object = None;
+                return TaskOutcome::Accepted {
+                    label: "Dissolve rigid group".to_string(),
+                };
+            }
+        }
         TaskOutcome::Open
     }
 

@@ -237,7 +237,7 @@ and noted on its item, and the rest of the item is built around it.
 - [ ] **Sub-assemblies** (missing, L). Bodies grouped into a component
   that moves as one, or keeps its own joints live inside the parent;
   nested. A group node in `core_document` and a group-aware solver.
-- [ ] **Rigid group** (partial, S). Several bodies locked in one
+- [x] **Rigid group** (partial, S). Several bodies locked in one
   action, not pairwise fixed joints.
 - [ ] **Patterns and mirrors of components** (missing, M). Arrays and
   mirrored copies of bodies in the assembly, built on linked copies.
