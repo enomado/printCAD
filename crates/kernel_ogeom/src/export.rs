@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use kernel_api::{KernelError, KernelResult, TessellationSettings, TriMesh};
-use ogeom::math::{Point, Vector};
-use ogeom::topo::{Model, Triangulation};
+use ogeom::math::{Point, Transform, Vector};
+use ogeom::topo::{Model, Shape, Triangulation};
 
 use crate::{progress, tess};
 
@@ -109,11 +109,17 @@ pub fn export(
     }
 }
 
+/// A rigid row-major 4×4 matrix.
+type Matrix = [[f64; 4]; 4];
+
 fn export_step(bodies: &[ExportBody<'_>], nurbs: bool) -> KernelResult<Exported> {
     progress::context("Writing STEP");
     let mut model = Model::new();
-    let mut parts = Vec::new();
     let mut skipped = Vec::new();
+    // Each distinct shape once, as a part in its own frame; each body an
+    // instance of its part where the body sits.
+    let mut shapes: Vec<(&[u8], String, Vec<Shape>)> = Vec::new();
+    let mut placed: Vec<(usize, String, Option<Matrix>)> = Vec::new();
     for body in bodies {
         progress::checkpoint()
             .map_err(|e| KernelError::Other(anyhow::anyhow!("export stopped: {e}")))?;
@@ -121,47 +127,95 @@ fn export_step(bodies: &[ExportBody<'_>], nurbs: bool) -> KernelResult<Exported>
             skipped.push(body.name.clone());
             continue;
         };
-        let text = std::str::from_utf8(blob).map_err(|_| {
-            KernelError::InvalidInput(format!("{}: snapshot is not UTF-8", body.name))
-        })?;
-        let absorbed = ogeom::io::native::read_into(&mut model, text).map_err(|e| {
-            KernelError::InvalidInput(format!("{}: snapshot failed to parse: {e}", body.name))
-        })?;
-        for shape in absorbed.shapes {
-            let shape = match &body.transform {
-                Some(matrix) => crate::ops::pattern::moved(&mut model, &shape, matrix)
-                    .map_err(|e| KernelError::Other(anyhow::anyhow!("{}: {e}", body.name)))?,
-                None => shape,
-            };
-            let shape = if nurbs {
-                ogeom::algo::to_nurbs_within(
-                    &mut model,
-                    &shape,
-                    NURBS_TOLERANCE,
-                    tess::tolerances(),
-                )
-                .map(|built| built.shape)
-                .map_err(|e| {
-                    KernelError::Other(anyhow::anyhow!(
-                        "{}: converting to NURBS failed: {e}",
+        let part = match shapes.iter().position(|(b, _, _)| *b == blob) {
+            Some(part) => part,
+            None => {
+                let text = std::str::from_utf8(blob).map_err(|_| {
+                    KernelError::InvalidInput(format!("{}: snapshot is not UTF-8", body.name))
+                })?;
+                let absorbed = ogeom::io::native::read_into(&mut model, text).map_err(|e| {
+                    KernelError::InvalidInput(format!(
+                        "{}: snapshot failed to parse: {e}",
                         body.name
                     ))
-                })?
-            } else {
-                shape
-            };
-            parts.push((body.name.clone(), shape));
-        }
+                })?;
+                let mut own = Vec::new();
+                for shape in absorbed.shapes {
+                    own.push(if nurbs {
+                        ogeom::algo::to_nurbs_within(
+                            &mut model,
+                            &shape,
+                            NURBS_TOLERANCE,
+                            tess::tolerances(),
+                        )
+                        .map(|built| built.shape)
+                        .map_err(|e| {
+                            KernelError::Other(anyhow::anyhow!(
+                                "{}: converting to NURBS failed: {e}",
+                                body.name
+                            ))
+                        })?
+                    } else {
+                        shape
+                    });
+                }
+                shapes.push((blob, body.name.clone(), own));
+                shapes.len() - 1
+            }
+        };
+        placed.push((part, body.name.clone(), body.transform));
     }
-    if parts.is_empty() {
+    if placed.is_empty() {
         return Err(KernelError::InvalidInput(
             "no body has a shape to write as STEP".into(),
         ));
     }
-    let written = bodies.len() - skipped.len();
+    let written = placed.len();
     let mut document = ogeom::doc::Document::over(model);
-    for (name, shape) in parts {
-        document.add_part(name, shape);
+    let fail = |e: ogeom::core::OgeomError| {
+        KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}"))
+    };
+    if placed.len() == 1 {
+        // One body: the part itself, where it sits.
+        let (part, name, transform) = placed.remove(0);
+        for shape in &shapes[part].2 {
+            let shape = match &transform {
+                Some(matrix) => crate::ops::pattern::moved(document.model_mut(), shape, matrix)
+                    .map_err(|e| KernelError::Other(anyhow::anyhow!("{name}: {e}")))?,
+                None => shape.clone(),
+            };
+            document.add_part(name.clone(), shape);
+        }
+    } else {
+        let root = document.add_assembly("Assembly");
+        let mut products = Vec::with_capacity(shapes.len());
+        for (_, name, own) in &shapes {
+            let product = match own.as_slice() {
+                [one] => document.add_part(name.clone(), one.clone()),
+                many => {
+                    let group = document.add_assembly(name.clone());
+                    for (i, shape) in many.iter().enumerate() {
+                        let piece = document.add_part(format!("{name} {}", i + 1), shape.clone());
+                        document
+                            .add_instance(group, piece, Transform::IDENTITY, None)
+                            .map_err(fail)?;
+                    }
+                    group
+                }
+            };
+            products.push(product);
+        }
+        for (part, name, transform) in placed {
+            let at = match &transform {
+                Some(matrix) => crate::ops::pattern::rigid_of(matrix).ok_or_else(|| {
+                    KernelError::InvalidInput(format!("{name}: its placement is not rigid"))
+                })?,
+                None => Transform::IDENTITY,
+            };
+            document
+                .add_instance(root, products[part], at, Some(name))
+                .map_err(fail)?;
+        }
     }
     let text = ogeom::io::write_step(&document, tess::tolerances())
         .map_err(|e| KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}")))?;

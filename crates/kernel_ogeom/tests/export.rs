@@ -250,3 +250,60 @@ fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
         "{volume} against {want}"
     );
 }
+
+/// Two bodies of one shape written together are one part placed twice in
+/// an assembly: they read back as two bodies where they stood, from one
+/// shape.
+#[test]
+fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
+    let source = import(&fixture("box_native.step"));
+    let body = &source.bodies[0];
+    let at = |x: f64| {
+        let mut m = [[0.0; 4]; 4];
+        for (i, row) in m.iter_mut().enumerate() {
+            row[i] = 1.0;
+        }
+        m[0][3] = x;
+        m
+    };
+    let bodies = [
+        ExportBody {
+            name: "left".into(),
+            brep: Some(&body.brep_blob),
+            transform: None,
+            mesh: &body.mesh,
+        },
+        ExportBody {
+            name: "right".into(),
+            brep: Some(&body.brep_blob),
+            transform: Some(at(100.0)),
+            mesh: &body.mesh,
+        },
+    ];
+    let out = export(
+        &bodies,
+        ExportFormat::Step,
+        &TessellationSettings::default(),
+    )
+    .unwrap();
+    assert_eq!(out.written, 2);
+    let text = String::from_utf8(out.bytes.clone()).unwrap();
+    assert_eq!(
+        text.matches("MANIFOLD_SOLID_BREP").count(),
+        1,
+        "one shape, written once"
+    );
+    let path =
+        std::env::temp_dir().join(format!("printcad-export-asm-{}.step", std::process::id()));
+    std::fs::write(&path, &out.bytes).unwrap();
+    let back = import(&path);
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(back.bodies.len(), 2);
+    let (lo, _) = body.bounds_mm.unwrap();
+    let mut lows: Vec<f32> = back.bodies.iter().map(|b| bounds(&b.mesh).0[0]).collect();
+    lows.sort_by(f32::total_cmp);
+    assert!(
+        (lows[0] - lo[0]).abs() < 1e-2 && (lows[1] - (lo[0] + 100.0)).abs() < 1e-2,
+        "{lows:?}"
+    );
+}

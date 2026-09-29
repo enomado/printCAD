@@ -538,7 +538,7 @@ pub(crate) fn mirrored(
 
 /// The similarity transform when the matrix is rigid (orthonormal, unit
 /// scale, right-handed); `None` for reflections and the general path.
-fn rigid_of(m: &[[f64; 4]; 4]) -> Option<Transform> {
+pub(crate) fn rigid_of(m: &[[f64; 4]; 4]) -> Option<Transform> {
     let c0 = Vector::new(m[0][0], m[1][0], m[2][0]);
     let c1 = Vector::new(m[0][1], m[1][1], m[2][1]);
     let c2 = Vector::new(m[0][2], m[1][2], m[2][2]);

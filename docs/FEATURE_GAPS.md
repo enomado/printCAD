@@ -330,7 +330,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Interchange
 
-- [ ] **STEP export with the assembly's structure** (partial, M).
+- [x] **STEP export with the assembly's structure** (partial, M).
   Identical bodies as shared instances in a product tree; likely a kernel
   addition.
 

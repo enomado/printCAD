@@ -237,6 +237,12 @@ density you set (g/cm³), with each body's share, and marks the centre of
 mass in the view: what a tip-over check needs. `asm.mass` answers the
 same to a script.
 
+## Export
+
+File › Export as STEP writes several bodies as an assembly: each shape
+once, as a part, and each body an instance of it where it sits, so linked
+copies and other bodies of one shape share their part in the file.
+
 ## From a script
 
 Every joint tool is a command (`asm.mate`, `asm.hinge`, ...) taking faces
