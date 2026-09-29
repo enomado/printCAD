@@ -1405,6 +1405,9 @@ pub enum DesignFeature {
         #[serde(default)]
         pull: Option<PullRef>,
     },
+    /// Delete faces of the solid and close the openings from their
+    /// neighbours: a hole, a boss or a round taken away.
+    DeleteFaces { faces: Vec<FacePick> },
     Thickness {
         value: f32,
         faces: Vec<FacePick>,
@@ -1661,6 +1664,7 @@ impl DesignFeature {
             DesignFeature::Chamfer { .. } => "Chamfer",
             DesignFeature::Draft { .. } => "Draft",
             DesignFeature::Thickness { .. } => "Thickness",
+            DesignFeature::DeleteFaces { .. } => "Delete Faces",
             DesignFeature::Mirrored { .. } => "Mirrored",
             DesignFeature::LinearPattern { .. } => "Linear Pattern",
             DesignFeature::PolarPattern { .. } => "Polar Pattern",
@@ -1721,6 +1725,7 @@ impl DesignFeature {
             DesignFeature::Chamfer { .. } => "chamfer",
             DesignFeature::Draft { .. } => "draft",
             DesignFeature::Thickness { .. } => "thickness",
+            DesignFeature::DeleteFaces { .. } => "delete",
             DesignFeature::Mirrored { .. } => "mirrored",
             DesignFeature::LinearPattern { .. } => "linear-pattern",
             DesignFeature::PolarPattern { .. } => "polar-pattern",
@@ -1806,6 +1811,7 @@ impl DesignFeature {
                 | DesignFeature::Chamfer { .. }
                 | DesignFeature::Draft { .. }
                 | DesignFeature::Thickness { .. }
+                | DesignFeature::DeleteFaces { .. }
                 | DesignFeature::Mirrored { .. }
                 | DesignFeature::LinearPattern { .. }
                 | DesignFeature::PolarPattern { .. }

@@ -513,6 +513,34 @@ pub fn draft(
 /// Hollow `solid` into walls `value` thick, opened at the faces named,
 /// inward or outward (`side`), or both ways at once when `side` is `None`:
 /// the inward and outward walls fused along the solid's own faces.
+/// Remove the faces at `points` (by name first) from `solid` and close
+/// the openings from the neighbours' own geometry.
+pub fn remove_faces(
+    model: &mut Model,
+    solid: &Shape,
+    points: &[[f64; 3]],
+    names: &[kernel_api::TopoName],
+) -> Result<Shape, String> {
+    if points.is_empty() {
+        return Err("pick at least one face to delete".into());
+    }
+    let mut faces = Vec::with_capacity(points.len());
+    for (i, p) in points.iter().enumerate() {
+        faces.push(face_named_or_nearest(
+            model,
+            solid,
+            names.get(i).copied(),
+            *p,
+        )?);
+    }
+    ogeom::boolean::remove_faces(model, solid, &faces, tol())
+        .map(|b| {
+            crate::naming::record(&b.history);
+            b.shape
+        })
+        .map_err(|e| format!("deleting the faces failed: {e}"))
+}
+
 pub fn thickness(
     model: &mut Model,
     solid: &Shape,

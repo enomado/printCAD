@@ -76,6 +76,11 @@ features after it build again on the new shape, finding their faces by
 name. On a body without features it simply replaces the shape. It clears
 the undo history, as an import does.
 
+**Delete faces** takes picked faces out of the solid and closes each
+opening from the faces around it: a bore, a boss or a round taken away,
+on any solid, an imported one included. What the kernel does not close
+yet it refuses by name, on the feature.
+
 ## The tree
 
 - Double clicking a feature opens it for editing in the workbench that owns

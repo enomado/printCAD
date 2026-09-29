@@ -2671,6 +2671,14 @@ pub fn feature_editor(
             changed |= face_list_editor(ui, ctx, faces, "Faces to draft:");
             changed |= check_row(ui, reversed, "Reversed pull").changed();
         }
+        DesignFeature::DeleteFaces { faces } => {
+            changed |= face_list_editor(ui, ctx, faces, "Faces to delete:");
+            taper_note(
+                ui,
+                "The faces around each opening grow to close it: a bore, a boss or a round \
+                 taken away.",
+            );
+        }
         DesignFeature::Thickness {
             value,
             faces,

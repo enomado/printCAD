@@ -1244,6 +1244,14 @@ pub enum SolidOp {
     /// a fuse or cut leaves where two pieces meet flush.
     Refine,
     /// Hollow the solid, removing the faces sampled by `open_faces`.
+    /// Remove faces of the running solid and close the openings from the
+    /// neighbouring faces' own geometry: a hole, a boss or a fillet taken
+    /// away. Faces as points on them, named where they have names.
+    RemoveFaces {
+        faces: Vec<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        face_names: Vec<TopoName>,
+    },
     Thickness {
         value: f64,
         open_faces: Vec<[f64; 3]>,

@@ -413,6 +413,11 @@ pub fn execute_named(
                     })
                     .map_err(|e| err(format!("refine failed: {e}")))?
             }
+            SolidOp::RemoveFaces { faces, face_names } => {
+                let solid =
+                    base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;
+                ops::dressup::remove_faces(&mut model, &solid, faces, face_names).map_err(&err)?
+            }
             SolidOp::Thickness {
                 value,
                 open_faces,

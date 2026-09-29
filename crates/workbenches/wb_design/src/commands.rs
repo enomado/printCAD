@@ -48,6 +48,10 @@ const FEATURES: &[(&str, &str)] = &[
     ("design.chamfer", "Bevel edges"),
     ("design.draft", "Tilt faces"),
     ("design.thickness", "Hollow the solid"),
+    (
+        "design.delete_faces",
+        "Delete faces and close the openings from their neighbours",
+    ),
     ("design.mirror", "Mirror the last feature"),
     (
         "design.linear_pattern",
@@ -416,13 +420,17 @@ pub fn run(
             surface: None,
         });
     }
-    // A thickness opens a face and a draft turns about one: in a script
-    // that face is an argument.
-    if matches!(id, "design.thickness" | "design.draft") && ctx.selected_face.is_none() {
+    // A thickness opens a face, a draft turns about one and a deletion
+    // takes one away: in a script that face is an argument.
+    if matches!(
+        id,
+        "design.thickness" | "design.draft" | "design.delete_faces"
+    ) && ctx.selected_face.is_none()
+    {
         return Err(CommandError::bad(
             "face_point",
-            "is required with face_normal: a point on the face (the one to open, or the \
-             neutral plane) and its outward normal, in the body's own frame",
+            "is required with face_normal: a point on the face (the one to open or to \
+             delete, or the neutral plane) and its outward normal, in the body's own frame",
         ));
     }
     let tool = match a.opt_string("variant")? {

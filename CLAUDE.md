@@ -480,6 +480,10 @@ history) is not yet from that asset, and the host's
 `drive_shape_replacements` reads each on the kernel thread
 (`OgeomKernel::read_solid`: a STEP/IGES file's first body, a mesh file
 converted) into the base, invalidating the body, or into its shape.
+Design's Delete Faces (`DesignFeature::DeleteFaces`, `SolidOp::RemoveFaces`)
+takes picked faces away through the kernel's `remove_faces`, the
+neighbours closing the openings. Moving or offsetting faces waits on the
+kernel (ogeom-rs#98).
 
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,

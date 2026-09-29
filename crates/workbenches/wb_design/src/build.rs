@@ -929,6 +929,15 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     face_names: face_names(faces),
                 });
             }
+            DesignFeature::DeleteFaces { faces } => {
+                if faces.is_empty() {
+                    return Err(fail("select at least one face to delete".into()));
+                }
+                plan.ops.push(SolidOp::RemoveFaces {
+                    faces: face_points(faces),
+                    face_names: face_names(faces),
+                });
+            }
             DesignFeature::Thickness {
                 value,
                 faces,

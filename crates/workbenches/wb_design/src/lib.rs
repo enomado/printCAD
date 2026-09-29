@@ -570,6 +570,15 @@ impl DesignWorkbench {
                     "Draft",
                 )
             }
+            "design.delete_faces" => {
+                need_material(has_solid)?;
+                let pick = Self::selected_face_pick(ctx, body)
+                    .ok_or("Click the face to delete in the viewport first")?;
+                (
+                    DesignFeature::DeleteFaces { faces: vec![pick] },
+                    "DeleteFaces",
+                )
+            }
             "design.thickness" => {
                 need_material(has_solid)?;
                 let pick = Self::selected_face_pick(ctx, body)
@@ -1404,6 +1413,10 @@ impl Workbench for DesignWorkbench {
             context,
             action("design.thickness", "Thickness", "thickness", "dressup"),
         );
+        register(
+            context,
+            action("design.delete_faces", "Delete faces", "delete", "dressup"),
+        );
         // Boolean.
         register(
             context,
@@ -1795,6 +1808,7 @@ impl Workbench for DesignWorkbench {
             | "design.chamfer"
             | "design.draft"
             | "design.thickness"
+            | "design.delete_faces"
             | "design.mirror"
             | "design.linear_pattern"
             | "design.polar_pattern"

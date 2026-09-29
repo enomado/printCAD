@@ -176,3 +176,56 @@ fn a_step_file_reads_as_its_first_solid() {
     assert!(read.brep_blob.starts_with(b"ogeom"));
     assert!(read.mesh.bounds().is_some());
 }
+
+#[test]
+fn deleting_a_bore_closes_it_again() {
+    let (document, body, lo, hi) = imported_box();
+    let mut host = benches(document);
+    let (cx, cy) = ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0);
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            local s = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.circle{{sketch = s, x = {cx}, y = {cy}, radius = 2}}
+            pc.design.pocket{{sketch = s, through_all = true}}
+            deleted = pc.design.delete_faces{{body = "{body}",
+                face_point = {{{bx}, {cy}, {mz}}}, face_normal = {{-1, 0, 0}}}}
+            "#,
+            body = body.0,
+            top = hi[2],
+            cx = cx,
+            cy = cy,
+            bx = cx + 2.0,
+            mz = (lo[2] + hi[2]) / 2.0,
+        ),
+        "bore.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
+    assert!(matches!(
+        ops.last(),
+        Some(kernel_api::SolidOp::RemoveFaces { .. })
+    ));
+    let volume = |ops: &[kernel_api::SolidOp]| {
+        let built = OgeomKernel::new()
+            .execute_solid_chain(ops, &TessellationSettings::default())
+            .unwrap();
+        OgeomKernel::new()
+            .physical_properties(&built.brep_blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap()
+    };
+    let whole = volume(&ops[..1]);
+    let bored = volume(&ops[..ops.len() - 1]);
+    let closed = volume(&ops);
+    assert!(
+        bored < whole - 1.0,
+        "the bore takes material: {bored} of {whole}"
+    );
+    assert!(
+        (closed - whole).abs() < 1e-3,
+        "closed again: {closed} of {whole}"
+    );
+}
