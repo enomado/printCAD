@@ -89,7 +89,7 @@ stands for, and the recording is the list of those commands.
 - Constraint tools, dimension edits, drags, deletes and construction record
   as `sketch.constrain`, `sketch.set_value`, `sketch.drag`, `sketch.delete`
   and `sketch.construction`.
-- A Part Design feature records when its task closes with OK, as the
+- A Design feature records when its task closes with OK, as the
   command that makes it with the fields that differ from what that command
   makes on its own. An edit records as `part.set` with the fields changed.
 - A joint records with its faces where the bodies were before it moved
@@ -1083,7 +1083,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.set`: Change fields of a Part Design feature or a datum.
+`pc.part.set`: Change fields of a Design feature or a datum.
 
 - `feature` (id): The feature to change
 - Other arguments: The fields to change, such as length = 25; a datum takes offset {x, y, z}, rotation and flip as part.datum does

@@ -1,4 +1,4 @@
-//! The numbers of Part Design's features and of datums, as formulas set
+//! The numbers of Design's features and of datums, as formulas set
 //! and read them: `Pad.length`, `Pocket.depth`, `Hole.diameter`,
 //! `Fillet.radius`, `Plane.offset_z`.
 //!
@@ -178,7 +178,7 @@ fn parameter(pointer: String, name: &str, label: &str, dim: Option<Dim>) -> Para
     }
 }
 
-/// The numbers of a Part Design feature.
+/// The numbers of a Design feature.
 pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
     let Some((variant, body)) = node.data.as_object().and_then(|m| m.iter().next()) else {
         return Vec::new();

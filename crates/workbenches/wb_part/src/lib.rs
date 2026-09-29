@@ -1,4 +1,4 @@
-//! Part Design workbench: feature-based solid modeling.
+//! Design workbench: feature-based solid modeling.
 //!
 //! The workbench edits the document's feature tree; the app shell watches
 //! for dirty part features and drives the kernel rebuild (see `build.rs`).
@@ -69,7 +69,7 @@ fn duplicate_recorded(ctx: &mut WorkbenchRuntimeContext, feature: FeatureId, bod
     }
 }
 
-/// The switches on the Part Design Preferences page.
+/// The switches on the Design Preferences page.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PartOptions {
@@ -92,7 +92,7 @@ impl Default for PartOptions {
     }
 }
 
-/// Part Design workbench: feature-based solid modeling.
+/// Design workbench: feature-based solid modeling.
 #[derive(Default)]
 pub struct PartDesignWorkbench {
     /// The Preferences page's switches.
@@ -1045,7 +1045,7 @@ impl Workbench for PartDesignWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             "wb.part",
-            "Part Design",
+            "Design",
             "Feature-based solid modeling workbench.",
         )
         .icon("workbench-part-design")
@@ -1112,8 +1112,8 @@ impl Workbench for PartDesignWorkbench {
             kind_label: feature
                 .as_ref()
                 .map(|f| f.kind_label().to_string())
-                .unwrap_or_else(|| "Part design feature".to_string()),
-            family_label: "Part design feature".to_string(),
+                .unwrap_or_else(|| "Design feature".to_string()),
+            family_label: "Design feature".to_string(),
             builds_solid: !matches!(feature, Some(PartFeature::Borrow { .. })),
         }
     }
@@ -1443,7 +1443,7 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Part Design workbench activated");
+        ctx.log_info("Design workbench activated");
     }
 
     fn on_input(
@@ -1736,7 +1736,7 @@ impl Workbench for PartDesignWorkbench {
         true
     }
 
-    /// The Part Design preferences page.
+    /// The Design preferences page.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
         use ui_kit::widgets::{PrefRow, pref_group};

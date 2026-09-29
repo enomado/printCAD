@@ -1,4 +1,4 @@
-//! Full-stack Part Design test: sketch geometry → Pad/Pocket features →
+//! Full-stack Design test: sketch geometry → Pad/Pocket features →
 //! `wb_part::body_build_ops` → `OgeomKernel::execute_solid_chain` → mesh.
 //! This exercises the exact pipeline the app's recompute driver runs.
 

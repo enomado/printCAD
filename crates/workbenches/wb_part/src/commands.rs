@@ -1,4 +1,4 @@
-//! Part Design's commands: add a feature, or change one, by numbers, for
+//! Design's commands: add a feature, or change one, by numbers, for
 //! scripts and other callers that are not a click.
 //!
 //! A feature is made the way its toolbar button makes it, from the sketch
@@ -101,16 +101,13 @@ pub fn register(context: &mut WorkbenchContext) {
         );
     }
     context.register_command(
-        CommandSpec::new(
-            "part.set",
-            "Change fields of a Part Design feature or a datum",
-        )
-        .param("feature", ParamKind::Id, "The feature to change")
-        .extra_args(
-            "The fields to change, such as length = 25; a datum takes offset {x, y, z}, \
+        CommandSpec::new("part.set", "Change fields of a Design feature or a datum")
+            .param("feature", ParamKind::Id, "The feature to change")
+            .extra_args(
+                "The fields to change, such as length = 25; a datum takes offset {x, y, z}, \
              rotation and flip as part.datum does",
-        )
-        .returns("nothing"),
+            )
+            .returns("nothing"),
     );
     context.register_command(
         CommandSpec::new(
@@ -449,7 +446,7 @@ pub fn run(
 
 fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let id = FeatureId(a.id("feature")?);
-    let not_ours = || CommandError::bad("feature", "is not a Part Design feature or a datum");
+    let not_ours = || CommandError::bad("feature", "is not a Design feature or a datum");
     let data = ctx.document.get_feature_data(id).ok_or_else(not_ours)?;
     let fields: Map<String, Value> = args
         .iter()

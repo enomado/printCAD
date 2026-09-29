@@ -2068,7 +2068,7 @@ fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, Comm
 
 /// The names of a feature's fields that hold no value, which a script's
 /// table cannot show (a nil is no entry): at the top of the data or inside
-/// its one variant, as a Part Design feature keeps it.
+/// its one variant, as a Design feature keeps it.
 fn unset_fields(data: &Value) -> Vec<String> {
     let Value::Object(top) = data else {
         return Vec::new();

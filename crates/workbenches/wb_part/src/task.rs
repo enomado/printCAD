@@ -1,4 +1,4 @@
-//! The Part Design task: one feature (or datum) open for editing in the
+//! The Design task: one feature (or datum) open for editing in the
 //! task panel. Edits apply live; Cancel restores the payload captured when
 //! the task opened, or deletes a feature the tool itself just created.
 

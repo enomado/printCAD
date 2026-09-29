@@ -47,7 +47,7 @@ dirty when a feature changes.
 A body is a name and a place in the tree. Its solid is not stored in the
 feature tree. It is derived:
 
-- A Part Design body is rebuilt from its features by the kernel.
+- A Design body is rebuilt from its features by the kernel.
 - An imported body keeps the kernel shape it was read with.
 - A mesh body (from STL, OBJ, 3MF, PLY, glTF or VRML) has triangles only, until it is
   converted to a solid.

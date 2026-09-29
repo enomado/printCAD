@@ -307,7 +307,7 @@ recording is on.
 Topological references stay the host's business. A plugin that stores a
 reference to a face or an edge stores the `face-ref` or `edge-ref` the host
 gave it and hands it back in its plan; the kernel resolves it at build time
-(`EdgeSelection::Near`, face picks), exactly as Part Design does. When the
+(`EdgeSelection::Near`, face picks), exactly as Design does. When the
 host's references improve, plugins improve with them.
 
 ### Rebuilds
@@ -316,7 +316,7 @@ Each frame, for every bench whose feature kinds have dirty features, the
 host collects the dirty bodies and calls `rebuild` with them. The bench
 answers a plan per body, `SolidOp`s as JSON. The host clears the dirty flags
 of the features it passed, then hands the plans to the kernel worker as it
-does for Part Design. A plan error attaches to the feature named in the
+does for Design. A plan error attaches to the feature named in the
 result, as `BuildError` does today.
 
 A bench whose feature must start from another body's solid uses
@@ -465,7 +465,7 @@ Assembly bench, the smallest and newest, moves first:
 
 1. **Declared panels.** Its task panels and Preferences page become panel
    lists drawn by the `ui_kit` renderer. The renderer covers the widget set
-   above; Part Design's editors follow later.
+   above; Design's editors follow later.
 2. **Commands for every edit.** Its hooks stop mutating `Document` directly
    and call commands through the same `call` path a plugin uses.
 3. **Owned strings.** `&'static str` fields in `ToolDescriptor`,

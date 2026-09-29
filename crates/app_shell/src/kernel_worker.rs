@@ -30,7 +30,7 @@ pub enum KernelRequest {
         path: PathBuf,
         detail: TessellationSettings,
     },
-    /// Rebuild a body's solid from its Part Design feature chain.
+    /// Rebuild a body's solid from its Design feature chain.
     /// `op_features` maps each op index to its owning feature id so a
     /// failure can be pinned on the culprit in the tree.
     BuildSolid {
@@ -229,7 +229,7 @@ impl KernelWorker {
         }
     }
 
-    /// Submit a Part Design solid rebuild. One response arrives per request.
+    /// Submit a Design solid rebuild. One response arrives per request.
     /// Submit a body's chain. With `preview`, a feature being edited, the
     /// result also carries what that feature does (its tool, and the body
     /// without it).

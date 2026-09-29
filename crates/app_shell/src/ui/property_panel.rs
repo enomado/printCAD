@@ -1109,7 +1109,7 @@ fn display_rows(
 mod tests {
     use super::*;
 
-    /// The keys Part Design's payloads use, as its hints declare them.
+    /// The keys Design's payloads use, as its hints declare them.
     fn hints() -> PropertyHints {
         PropertyHints {
             length_keys: vec!["length", "length2", "depth", "depth2", "radius", "diameter"],

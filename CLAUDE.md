@@ -162,7 +162,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   plane/line/point/coordinate system + attachment + offset, shared across workbenches;
   an attachment on its own body's solid (a face, edge or point picked, a
   circle's centre, the centre of mass and axes of inertia) keeps its picks
-  as `ShapeProbe`s, which Part Design's plan asks of the solid where the
+  as `ShapeProbe`s, which Design's plan asks of the solid where the
   datum stands in the history (`BuildPlan::probes`, answered by
   `execute_solid_chain_probing`); the answers are derived state
   (`Document::store_probe_answers`) that `datum::derive` folds into the
@@ -355,7 +355,7 @@ host never names a bench: `app/seam_lint.rs` and a CI grep over
 line that does. `descriptor()` says
 what a bench is: `icon`, the `feature_kinds` it claims (the
 `FeatureNode::workbench_id` values it presents, edits, renders, picks and
-deletes; Part Design claims `core.datum` too; a kind claimed twice fails
+deletes; Design claims `core.datum` too; a kind claimed twice fails
 registration), and `modal` for an edit-session bench (entering it remembers
 the bench to return to; the first non-modal registration is where a new
 document lands, `DocumentService::landing_workbench`). The registry answers
@@ -383,7 +383,7 @@ everything and the slicer leave out (bought parts); `edit_feature` is
 the double click that opens a feature's task
 (selecting one never does, so a feature stays selected after its task
 closes); `references`/`set_reference` offer the inputs the property
-panel's Inputs group swaps (Part Design's profile, kept out of its task); `busy` keeps frames coming while a bench's work runs away from
+panel's Inputs group swaps (Design's profile, kept out of its task); `busy` keeps frames coming while a bench's work runs away from
 the window; `rebuild_jobs`/`invalidate_body`/`invalidate_all` drive solids;
 `menu_items`/`on_command` add entries to the viewport body menu, tree rows
 and the start page's New cards; `register_import` (a `FileImport`: label,
@@ -432,7 +432,7 @@ CPU edge picking skips what it hides; the toolbar's Measure arms a readout
 drawn over the scene (`app/measure.rs`: a point, an edge or a face picked
 gives a length, radius or area, two give the distance and angle between
 them; Escape puts it away); the print bed is a
-line box from the Printing preferences. The design shows Part Design and Sketcher elements the app
+line box from the Printing preferences. The mockup shows Design and Sketcher elements the app
 does not implement yet. They stay on screen as disabled controls with a
 `// PLANNED: <what it does when built>` comment next to them and a
 `ToolDescriptor::planned(note)` on tools (`tool_button` renders them dim,
@@ -445,7 +445,7 @@ snapshot and face colours are derived from the source's
 (`refresh_copy`, run whenever the source's geometry is set or dropped and
 after a load; a copy's snapshot is not saved), placed by its own
 placement. It takes no features (`body_solid_is_imported` is true for it,
-Part Design's target body skips it). A mirrored copy (`mirror`, a plane in
+Design's target body skips it). A mirrored copy (`mirror`, a plane in
 the source's frame) draws the source's mesh mirrored at once and waits for
 its snapshot, the kernel's mirror of the source's (`KernelQueries::mirror`),
 which `drive_mirrored_copies` asks the kernel worker for
@@ -515,7 +515,7 @@ Tools end in commands, which is what recording rests on: a bench calls
 command runs (`HookOutcome.recorded`, carried through `PanelWriteback`
 for panel hooks). The sketcher's click is `step::click`, shared with
 `sketch.draw` (a shape is one call, flushed when the tool returns to rest);
-drags are `step::drag`; Part Design records in `record_task` when a task
+drags are `step::drag`; Design records in `record_task` when a task
 closes, diffing against what the command makes alone (`default_feature`);
 Assembly in `record_joint`. The host maps its own UI commands in
 `recorded_of` and keeps calls in `PrintCadApp.recording`
@@ -531,7 +531,7 @@ bindings (`Target::Script`), the Scripts menu, toolbar button and palette.
 on the calling thread, logs to stderr. `docs/SCRIPTING.md`'s command
 reference is generated; a test fails when it drifts
 (`PRINTCAD_WRITE_DOCS=1` rewrites it).
-Commands never open a task; Part Design's make features through
+Commands never open a task; Design's make features through
 `create_feature`, the toolbar's own path, then merge named fields into the
 feature's JSON. `kernel_ogeom/tests/scripted_part.rs` runs a script through
 the real benches to a solid.
@@ -615,7 +615,7 @@ an edit and what it moves are one step; headless runs settle after every
 command. A value set by hand goes through
 `DocumentService::set_parameter_value`. The UI: `ui_kit::widgets::
 FormulaField` over `core_document::DocumentFormulas` (the document's last
-values) in the property panel's Parameters group, Part Design's and the
+values) in the property panel's Parameters group, Design's and the
 Assembly's task fields and the sketcher's dimensions (bound ones drawn in
 `SketchPalette::formula`); a selected variable set or the configurations
 table shows its editor in the Data tab (`ui/variables_view.rs`), and the
@@ -632,7 +632,7 @@ sketcher's editing session) is the exception: each edit in it is an undo
 step of its own.
 
 **Feature preview.** While a bench's `editing_feature` is one that builds
-solid (Part Design's open task), `recompute.rs` asks its body's builds for a
+solid (Design's open task), `recompute.rs` asks its body's builds for a
 preview (`request_build_solid`'s `preview`, `execute_solid_chain_previewing`
 over the feature's op range): the chain keeps the feature's tool and the
 body before it (an adding feature) or after it (a cutting one) in
@@ -874,7 +874,7 @@ draws it and answers with commands; tree rows and the start page's New
 cards take bench entries the same way, and a pick runs the bench's
 `on_command`) · wheel = zoom · LMB = select (click sketch → tree-select; click
 solid → face-first, double click → the whole body the face belongs to, one
-part of an assembly, and in Part Design the tree opens to its row; LMB drag
+part of an assembly, and in Design the tree opens to its row; LMB drag
 in sketch = box select; ctrl = additive). The
 face under the cursor draws translucent in the hover paint (an edge within
 reach takes the hover instead, as a line), resolved from the pick's point
@@ -969,7 +969,7 @@ on the start page (`Screen::Start`); the recent list lives in
   a named face or edge by name first (`naming::find_face`/`find_edge`,
   reading the running solid's names the chain sets for the op), falling
   back to the stored point + normal. A sketch placed on its body's face
-  follows it: Part Design's plan asks where the face stands at the
+  follows it: Design's plan asks where the face stands at the
   sketch's place in history, and `Workbench::derive_on_solid` moves the
   plane from the placement it recorded. One on a face a borrow lends
   (`FaceSupport::lent_by`) is answered from the borrow instead
@@ -982,7 +982,7 @@ on the start page (`Screen::Start`); the recent list lives in
   whole edge (`app/edges.rs`: hover, Ctrl-additive selection, highlight line
   bodies, the hover card's edge length, the measure tool's snap). Benches
   see picked edges as `ctx.selected_edges` (point, direction, length,
-  faces); Part Design's fillet and chamfer store them as `EdgeSel::Edges`
+  faces); Design's fillet and chamfer store them as `EdgeSel::Edges`
   picks the kernel resolves through `EdgeSelection::Picked`.
 - "Through all" derives its length from the base solid's bounding box.
   Up to face (`ExtrudeTermination::UpToFace`, the base's face nearest the

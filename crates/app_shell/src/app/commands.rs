@@ -885,7 +885,7 @@ impl PrintCadApp {
 
     /// A double click on a row: a feature opens for editing in the bench
     /// that claims its kind (a sketch in the sketcher, a part feature or
-    /// datum in Part Design's task panel), through `Workbench::edit_feature`.
+    /// datum in Design's task panel), through `Workbench::edit_feature`.
     /// A single click only selects.
     pub(crate) fn apply_tree_activation(&mut self, item: TreeItemId) {
         let TreeItemId::Feature(id) = item else {
@@ -1268,7 +1268,7 @@ impl PrintCadApp {
 }
 
 impl PrintCadApp {
-    /// A fresh document from a start-page card: one body in Part Design,
+    /// A fresh document from a start-page card: one body in Design,
     /// plus an XY sketch open for editing when asked.
     fn start_new_document(&mut self, kind: StartKind) {
         let walkthrough = kind == StartKind::ExportWalkthrough;

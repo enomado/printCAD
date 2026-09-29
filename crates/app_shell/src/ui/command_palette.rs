@@ -183,7 +183,7 @@ const SHELL: &[ShellEntry] = &[
 /// One row the palette can show.
 struct Entry {
     label: String,
-    /// "Sketcher", "Part Design" or "printCAD".
+    /// "Sketcher", "Design" or "printCAD".
     scope: String,
     icon: &'static str,
     keys: Option<String>,

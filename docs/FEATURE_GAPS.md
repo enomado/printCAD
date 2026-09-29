@@ -1,6 +1,6 @@
 # What is left to build
 
-What the Sketcher, Part Design and Assembly workbenches still lack, from a
+What the Sketcher, Design and Assembly workbenches still lack, from a
 feature-by-feature check against a mature parametric CAD. Only open items
 are listed; what is built is in the release notes. Sizes are rough effort
 (S: a day or less, M: a few days, L: a week or more).
@@ -8,7 +8,7 @@ are listed; what is built is in the release notes. Sizes are rough effort
 A kernel capability that is missing is filed on the kernel's repository
 and noted on its item, and the rest of the item is built around it.
 
-## Part Design
+## Design
 
 - [ ] **Direction by formula** (S). A custom extrusion direction's
   components are not numbers a formula can set.

@@ -1,4 +1,4 @@
-//! Translation of a body's Part Design features into kernel solid ops.
+//! Translation of a body's Design features into kernel solid ops.
 //!
 //! The host drives the recompute loop through the registry: each frame it
 //! collects every bench's [`RebuildJob`]s and hands each plan to the kernel

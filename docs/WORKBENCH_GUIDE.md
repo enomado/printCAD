@@ -5,7 +5,7 @@ application never refers to a workbench by name. Everything a workbench
 shows, draws, picks, rebuilds or asks for goes through this trait and the
 workbench registry (`DocumentService`).
 
-Part Design (`crates/workbenches/wb_part`) and the Sketcher
+Design (`crates/workbenches/wb_part`) and the Sketcher
 (`crates/workbenches/wb_sketch`) are complete examples.
 
 ## 1. Create the crate
@@ -53,7 +53,7 @@ fn descriptor(&self) -> WorkbenchDescriptor {
   `scripts/vendor-icons.mjs`.
 - `feature_kinds` lists the feature kinds this workbench owns. The owner
   draws, picks, edits and deletes features of those kinds. Each kind can
-  have one owner only; registration fails otherwise. Part Design also owns
+  have one owner only; registration fails otherwise. Design also owns
   `core.datum`.
 - `.modal()` marks an editing session, like the Sketcher. Entering it
   remembers the previous workbench, and leaving returns there.

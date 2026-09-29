@@ -1,4 +1,4 @@
-//! Part Design feature payloads stored in the document feature tree.
+//! Design feature payloads stored in the document feature tree.
 
 use core_document::{
     BodyId, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,

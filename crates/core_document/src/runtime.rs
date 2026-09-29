@@ -276,7 +276,7 @@ pub enum HostRequest {
         workbench: crate::WorkbenchId,
         attach: SketchAttachRequest,
     },
-    /// Switch the active workbench (Part Design's "Edit sketch" jumps to
+    /// Switch the active workbench (Design's "Edit sketch" jumps to
     /// the sketcher, which picks the active object up as its session).
     SwitchWorkbench(crate::WorkbenchId),
     /// Look square onto this plane.

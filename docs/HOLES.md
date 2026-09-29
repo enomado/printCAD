@@ -1,6 +1,6 @@
 # Holes
 
-Part Design's Hole drills at every circle centre and lone point of a
+Design's Hole drills at every circle centre and lone point of a
 sketch. The task panel sets the rows below; a script sets the same fields
 by name (`pc.part.hole`, `pc.part.set`).
 

@@ -490,7 +490,7 @@ pub struct FeatureInfo {
     pub icon: &'static str,
     /// What this particular feature is: "Pad", "Datum plane", "Sketch".
     pub kind_label: String,
-    /// The family the tree's Kind row names: "Part design feature".
+    /// The family the tree's Kind row names: "Design feature".
     pub family_label: String,
     /// The feature contributes to its body's solid; the hover card names
     /// a body after the last such feature.

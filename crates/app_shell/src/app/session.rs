@@ -107,7 +107,7 @@ pub(crate) struct DocumentSession {
     /// used or dismissed.
     pub viewport_menu: Option<crate::ui::ViewportMenu>,
     /// Workbench to return to when an edit session finishes, when the flow
-    /// was started from another workbench (e.g. Part Design).
+    /// was started from another workbench (e.g. Design).
     pub return_workbench: Option<ActiveWorkbench>,
     /// A workbench task is open in the right panel; its edits form one undo
     /// entry until it closes.

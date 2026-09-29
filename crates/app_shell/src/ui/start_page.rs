@@ -549,7 +549,7 @@ pub fn draw_start_page(
                                 bench_fixtures::Scene::Sketch,
                             ),
                             (
-                                "Part Design workflow",
+                                "Design workflow",
                                 "Sketch → Pad → Pocket, ready to fillet",
                                 bench_fixtures::Scene::Pocket,
                             ),

@@ -1,4 +1,4 @@
-//! The inputs of a Part Design feature the property panel can swap: the
+//! The inputs of a Design feature the property panel can swap: the
 //! profile a pad, pocket, revolution, groove, pipe or helix was made from.
 //! The task panel keeps the settings of the operation itself.
 

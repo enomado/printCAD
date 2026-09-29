@@ -15,7 +15,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   slots, text and more, with geometric and dimensional constraints solved
   live. Solid edges, other sketches and datums come in as references, and
   generators draw gears, sprockets and shafts from their numbers.
-- **Part Design:** pad, pocket, revolve, loft, pipe, helix, holes to thread
+- **Design:** pad, pocket, revolve, loft, pipe, helix, holes to thread
   standards, fillets, chamfers, draft, thickness, patterns and booleans, all
   editable in a feature tree, with datums and geometry borrowed from other
   bodies.
@@ -174,7 +174,7 @@ A plain letter picks a tool; Shift and a letter picks its partner.
 
 While a length is being typed, number keys go to the length.
 
-| Part Design | Keys |
+| Design | Keys |
 | --- | --- |
 | Body, sketch | B, S |
 | Pad, pocket | E, Shift+E |
@@ -241,7 +241,7 @@ Preferences (Ctrl+,).
 | `ui_kit` | Colours, widgets, icons and fonts |
 | `axes` | Axis presets, so no code assumes which way is up |
 | `workbenches/wb_sketch` | Sketcher |
-| `workbenches/wb_part` | Part Design |
+| `workbenches/wb_part` | Design |
 | `workbenches/wb_assembly` | Assembly: joints between bodies |
 | `workbenches/wb_wasm` | Workbench packages, run sandboxed |
 | `workbenches/fixtures` | Ready-made scenes for tests and demos |

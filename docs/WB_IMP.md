@@ -6,7 +6,7 @@ How documents, bodies, sketches and features behave in the app today.
 
 - Each tab holds one document. **New** reuses the current tab if it is
   untouched, and opens a new tab otherwise.
-- A new document is empty and opens in Part Design.
+- A new document is empty and opens in Design.
 - The start page's New cards also create a first body. The "Empty sketch"
   card then opens an XY sketch in it, and the example cards load a ready-made
   model.
@@ -33,7 +33,7 @@ solid has no history to add to.
 
 ## Sketches
 
-**Creating one.** Part Design's New sketch switches to the Sketcher and shows
+**Creating one.** Design's New sketch switches to the Sketcher and shows
 a plane picker:
 
 - the face selected in the viewport, if any
@@ -52,7 +52,7 @@ roll work, orbit and standard views do not.
 **Finishing.** Close in the task panel, or Enter or Escape, ends the edit and
 returns to the workbench you came from.
 
-## Part Design features
+## Design features
 
 1. A tool such as Pad adds the feature, hides the sketch it uses, and opens
    the feature's task panel.
