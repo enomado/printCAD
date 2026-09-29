@@ -629,6 +629,8 @@ impl PrintCadApp {
         };
 
         let commands;
+        // The cursor is on the scene itself, not on a menu or card over it.
+        let over_scene;
 
         {
             let tabs = self.tab_infos();
@@ -851,15 +853,20 @@ impl PrintCadApp {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
 
-            // Retrieve pick result from GPU picking (processed during render)
+            // Retrieve pick result from GPU picking (processed during render).
+            // The pick answers for where the cursor last was on the scene; a
+            // menu or card opened under a still cursor, or the cursor gone
+            // off the view, leaves nothing hovered, rather than the last
+            // answer coming back each frame.
+            over_scene = self.cursor_in_viewport.is_some() && !ui_layer.pointer_over_floating_ui();
             let pick_result = renderer.latest_pick_result();
-            self.session.hovered_body = pick_result.body_id;
-            self.session.hovered_world_pos = pick_result.world_position;
+            self.session.hovered_body = pick_result.body_id.filter(|_| over_scene);
+            self.session.hovered_world_pos = pick_result.world_position.filter(|_| over_scene);
             self.session.pick_depths = pick_result.depth_window;
         }
         // The edge under the cursor, on the body the pick found; an edge
         // takes the hover from the face it borders.
-        let hovered_edge = self.edge_under_cursor();
+        let hovered_edge = self.edge_under_cursor().filter(|_| over_scene);
         if hovered_edge != self.session.hovered_edge {
             self.session.hovered_edge = hovered_edge;
             self.redraw_needed = true;
@@ -913,9 +920,14 @@ impl PrintCadApp {
     }
 
     fn build_scene_submission(&mut self, dt_secs: f32) -> ViewportData {
-        self.session
-            .camera
-            .set_orbit_lock(self.sketch_editing_active());
+        let editing = self.sketch_editing_active();
+        // An edit session opening on a picked face or body: the pick has
+        // done its work, and left painted it would cover what is edited.
+        if editing && !self.session.plane_session_open {
+            self.clear_view_selection();
+        }
+        self.session.plane_session_open = editing;
+        self.session.camera.set_orbit_lock(editing);
         self.session
             .camera
             .flush_pending_wheel(&self.user_settings.camera);

@@ -557,6 +557,7 @@ impl UiLayer {
                     scripts,
                     console_open: self.console.open,
                     recording,
+                    layout: &settings.toolbars.rows,
                 },
                 &mut active_workbench,
                 &mut active_tool,

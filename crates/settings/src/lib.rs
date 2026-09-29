@@ -60,6 +60,18 @@ pub struct UserSettings {
     /// Workbench packages: which are turned off and what each may reach.
     #[serde(default)]
     pub packages: PackageSettings,
+    /// Where the toolbar groups sit, as the user dragged them.
+    #[serde(default)]
+    pub toolbars: ToolbarLayout,
+}
+
+/// The toolbar rows, top to bottom, each the ids of its groups left to
+/// right. Groups of every bench share it; a group not listed goes where
+/// its bench puts it. Empty: every group where its bench puts it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolbarLayout {
+    pub rows: Vec<Vec<String>>,
 }
 
 /// What the user allowed each installed workbench package.
@@ -221,6 +233,7 @@ impl Default for UserSettings {
             keyboard: KeyboardSettings::default(),
             ai: AiSettings::default(),
             packages: PackageSettings::default(),
+            toolbars: ToolbarLayout::default(),
         }
     }
 }

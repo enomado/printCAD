@@ -317,8 +317,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   them built),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
   which `camera::apply_device_motion` integrates once per frame).
-  `ui/` is one module per region: `menu_bar`, `toolbar` (rows from
-  `ToolDescriptor.row`, variant dropdowns), `combo_view` (tree +
+  `ui/` is one module per region: `menu_bar`, `toolbar` (groups: the
+  standard runs, Scripts, the bench switcher and each run of a bench
+  category along `ToolDescriptor.row`; each dragged by its grip along a
+  row, to another or to a new one, kept in `UserSettings.toolbars`, a
+  group it does not list placed where its bench puts it; variant
+  dropdowns), `combo_view` (tree +
   `property_panel`), `feature_tree`, `task_panel` (host of the workbench
   task; OK/Cancel/Enter/Esc), `status_bar`, `view_toolbar` (floating
   pill; in perspective it carries the field of view, dragged or typed,
@@ -326,6 +330,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (line/mark/label painters), `start_page`, `preferences` (modal on a
   draft `UserSettings`, committed by `CommitSettings`), `command_palette`
   (Ctrl+K), `step_import_modal`, `log_view`, `host_ctx`.
+  Every menu's rows are egui buttons (hover and disabled states come
+  with them), inside `ui_kit::widgets::fitted_menu`, which scrolls what
+  would run past the window's bottom. The scene hovers and picks only
+  while the pointer is on it, not on a menu or card over it. An edit
+  session on a plane opening clears the view's selection.
   Row menus (`feature_tree.rs`, `context_menu.rs`, the shared
   `body_menu.rs`) are flat; what needs numbers or choices is an
   application task (`host_tasks.rs`: Placement, Appearance, History),

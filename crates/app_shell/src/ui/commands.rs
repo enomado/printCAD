@@ -94,6 +94,9 @@ pub enum UiCommand {
     },
     /// The colours kept under "Your colours".
     SetCustomColors(Vec<[f32; 3]>),
+    /// Keep the toolbar groups where the user dragged them; empty puts
+    /// every group back where its bench puts it.
+    SetToolbarLayout(Vec<Vec<String>>),
     /// The tree opens its way to this body and scrolls to it.
     RevealInTree(core_document::BodyId),
     /// The whole body, as a double click would.

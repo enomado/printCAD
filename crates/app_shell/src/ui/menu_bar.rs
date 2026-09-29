@@ -4,7 +4,7 @@ use core_document::{DocumentService, WorkbenchId};
 use egui::RichText;
 use settings::ProjectionMode;
 use ui_kit::tokens::*;
-use ui_kit::widgets::mono_label;
+use ui_kit::widgets::{fitted_menu, mono_label};
 use ui_kit::{sans, sans_semibold};
 use workbenches::REGISTERED_WORKBENCHES;
 
@@ -151,232 +151,231 @@ pub fn draw_menu_bar(
                     ui.spacing_mut().item_spacing.x = SPACE_2;
                     ui.spacing_mut().button_padding = egui::vec2(SPACE_2, 4.0);
                     ui.menu_button(menu_title("File"), |ui| {
-                        if item(ui, "New", key("file.new")) {
-                            commands.push(UiCommand::File(FileCommand::New));
-                        }
-                        if item(ui, "Open…", key("file.open")) {
-                            commands.push(UiCommand::File(FileCommand::Open));
-                        }
-                        if item(ui, "New tab", key("tab.new")) {
-                            commands.push(UiCommand::NewTab);
-                        }
-                        ui.menu_button(RichText::new("Open recent").font(sans(FONT_SM)), |ui| {
-                            if inputs.recent.is_empty() {
-                                ui.add_enabled(
-                                    false,
-                                    egui::Button::new(
-                                        RichText::new("Nothing yet").font(sans(FONT_SM)),
-                                    ),
-                                );
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "New", key("file.new")) {
+                                commands.push(UiCommand::File(FileCommand::New));
                             }
-                            for entry in inputs.recent {
-                                if item(ui, &entry.name(), None) {
-                                    commands.push(UiCommand::OpenRecent(entry.path.clone()));
-                                    ui.close();
+                            if item(ui, "Open…", key("file.open")) {
+                                commands.push(UiCommand::File(FileCommand::Open));
+                            }
+                            if item(ui, "New tab", key("tab.new")) {
+                                commands.push(UiCommand::NewTab);
+                            }
+                            ui.menu_button(
+                                RichText::new("Open recent").font(sans(FONT_SM)),
+                                |ui| {
+                                    if inputs.recent.is_empty() {
+                                        ui.add_enabled(
+                                            false,
+                                            egui::Button::new(
+                                                RichText::new("Nothing yet").font(sans(FONT_SM)),
+                                            ),
+                                        );
+                                    }
+                                    for entry in inputs.recent {
+                                        if item(ui, &entry.name(), None) {
+                                            commands
+                                                .push(UiCommand::OpenRecent(entry.path.clone()));
+                                            ui.close();
+                                        }
+                                    }
+                                },
+                            );
+                            ui.separator();
+                            if item_needing_document(ui, "Save", key("file.save"), have_document) {
+                                commands.push(UiCommand::File(FileCommand::Save));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Save As…",
+                                key("file.save_as"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SaveAs));
+                            }
+                            ui.separator();
+                            if item_needing_document(
+                                ui,
+                                "Import…",
+                                key("file.import"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::ImportStep));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Export…",
+                                key("file.export"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::Export));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Send to slicer",
+                                key("file.send_to_slicer"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SendToSlicer));
+                            }
+                            ui.separator();
+                            if let Some(active) = inputs.active_tab
+                                && item(ui, "Close tab", key("tab.close"))
+                            {
+                                commands.push(UiCommand::CloseTab(active));
+                            }
+                            ui.separator();
+                            if inputs.screen == Screen::Start {
+                                if item(ui, "Workspace", None) {
+                                    commands.push(if inputs.active_tab_blank {
+                                        UiCommand::StartNew(super::StartKind::Landing)
+                                    } else {
+                                        UiCommand::ShowWorkspace
+                                    });
                                 }
+                            } else if item(ui, "Start page", None) {
+                                commands.push(UiCommand::ShowStartPage);
+                            }
+                            ui.separator();
+                            if item(ui, "Preferences…", key("app.preferences")) {
+                                result.show_preferences = true;
+                            }
+                            ui.separator();
+                            if item(ui, "Quit", key("app.quit")) {
+                                commands.push(UiCommand::Quit);
                             }
                         });
-                        ui.separator();
-                        if item_needing_document(ui, "Save", key("file.save"), have_document) {
-                            commands.push(UiCommand::File(FileCommand::Save));
-                        }
-                        if item_needing_document(ui, "Save As…", key("file.save_as"), have_document)
-                        {
-                            commands.push(UiCommand::File(FileCommand::SaveAs));
-                        }
-                        ui.separator();
-                        if item_needing_document(ui, "Import…", key("file.import"), have_document)
-                        {
-                            commands.push(UiCommand::File(FileCommand::ImportStep));
-                        }
-                        if item_needing_document(ui, "Export…", key("file.export"), have_document)
-                        {
-                            commands.push(UiCommand::File(FileCommand::Export));
-                        }
-                        if item_needing_document(
-                            ui,
-                            "Send to slicer",
-                            key("file.send_to_slicer"),
-                            have_document,
-                        ) {
-                            commands.push(UiCommand::File(FileCommand::SendToSlicer));
-                        }
-                        ui.separator();
-                        if let Some(active) = inputs.active_tab
-                            && item(ui, "Close tab", key("tab.close"))
-                        {
-                            commands.push(UiCommand::CloseTab(active));
-                        }
-                        ui.separator();
-                        if inputs.screen == Screen::Start {
-                            if item(ui, "Workspace", None) {
-                                commands.push(if inputs.active_tab_blank {
-                                    UiCommand::StartNew(super::StartKind::Landing)
-                                } else {
-                                    UiCommand::ShowWorkspace
-                                });
-                            }
-                        } else if item(ui, "Start page", None) {
-                            commands.push(UiCommand::ShowStartPage);
-                        }
-                        ui.separator();
-                        if item(ui, "Preferences…", key("app.preferences")) {
-                            result.show_preferences = true;
-                        }
-                        ui.separator();
-                        if item(ui, "Quit", key("app.quit")) {
-                            commands.push(UiCommand::Quit);
-                        }
                     });
                     ui.menu_button(menu_title("Edit"), |ui| {
-                        if item_needing_document(ui, "Undo", key("edit.undo"), have_document) {
-                            commands.push(UiCommand::Undo);
-                        }
-                        if item_needing_document(ui, "Redo", key("edit.redo"), have_document) {
-                            commands.push(UiCommand::Redo);
-                        }
-                        ui.separator();
-                        for (label, command, id) in [
-                            ("Cut", super::EditCommand::Cut, "edit.cut"),
-                            ("Copy", super::EditCommand::Copy, "edit.copy"),
-                            ("Paste", super::EditCommand::Paste, "edit.paste"),
-                        ] {
-                            if item_needing_document(ui, label, key(id), have_document) {
-                                commands.push(UiCommand::Edit(command));
+                        fitted_menu(ui, |ui| {
+                            if item_needing_document(ui, "Undo", key("edit.undo"), have_document) {
+                                commands.push(UiCommand::Undo);
                             }
-                        }
-                        ui.separator();
-                        if item(ui, "Preferences…", key("app.preferences")) {
-                            result.show_preferences = true;
-                        }
+                            if item_needing_document(ui, "Redo", key("edit.redo"), have_document) {
+                                commands.push(UiCommand::Redo);
+                            }
+                            ui.separator();
+                            for (label, command, id) in [
+                                ("Cut", super::EditCommand::Cut, "edit.cut"),
+                                ("Copy", super::EditCommand::Copy, "edit.copy"),
+                                ("Paste", super::EditCommand::Paste, "edit.paste"),
+                            ] {
+                                if item_needing_document(ui, label, key(id), have_document) {
+                                    commands.push(UiCommand::Edit(command));
+                                }
+                            }
+                            ui.separator();
+                            if item(ui, "Preferences…", key("app.preferences")) {
+                                result.show_preferences = true;
+                            }
+                        });
                     });
                     ui.menu_button(menu_title("View"), |ui| {
-                        if item(ui, "Fit view", key("view.fit_all")) {
-                            commands.push(UiCommand::FitView);
-                        }
-                        if item_needing_document(
-                            ui,
-                            "Fit selection",
-                            key("view.fit_selection"),
-                            have_document,
-                        ) {
-                            commands.push(UiCommand::FitSelection);
-                        }
-                        if item_needing_document(
-                            ui,
-                            "Isolate selection",
-                            key("view.isolate"),
-                            have_document,
-                        ) {
-                            commands.push(UiCommand::Isolate(None));
-                        }
-                        if item_needing_document(
-                            ui,
-                            "Show all bodies",
-                            key("view.show_all"),
-                            have_document,
-                        ) {
-                            commands.push(UiCommand::ShowAllBodies);
-                        }
-                        ui.separator();
-                        ui.menu_button(RichText::new("Standard views").font(sans(FONT_SM)), |ui| {
-                            for (label, view, id) in [
-                                ("Isometric", CameraSnapView::FrontTopRight, "view.isometric"),
-                                ("Front", CameraSnapView::Front, "view.front"),
-                                ("Top", CameraSnapView::Top, "view.top"),
-                                ("Right", CameraSnapView::Right, "view.right"),
-                                ("Rear", CameraSnapView::Rear, "view.rear"),
-                                ("Bottom", CameraSnapView::Bottom, "view.bottom"),
-                                ("Left", CameraSnapView::Left, "view.left"),
-                            ] {
-                                if item(ui, label, key(id)) {
-                                    commands.push(UiCommand::CameraSnap(view));
-                                }
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "Fit view", key("view.fit_all")) {
+                                commands.push(UiCommand::FitView);
                             }
-                        });
-                        let ortho = inputs.projection == ProjectionMode::Orthographic;
-                        if choice(ui, ortho, "Orthographic", key("view.orthographic")) {
-                            commands.push(UiCommand::SetProjection(ProjectionMode::Orthographic));
-                        }
-                        if choice(ui, !ortho, "Perspective", key("view.perspective")) {
-                            commands.push(UiCommand::SetProjection(ProjectionMode::Perspective));
-                        }
-                        ui.separator();
-                        ui.menu_button(RichText::new("Draw style").font(sans(FONT_SM)), |ui| {
-                            for style in settings::DrawStyle::ALL {
-                                let id = match style {
-                                    settings::DrawStyle::ShadedEdges => "view.shaded_edges",
-                                    settings::DrawStyle::Shaded => "view.shaded",
-                                    settings::DrawStyle::Wireframe => "view.wireframe",
-                                };
-                                if choice(ui, inputs.draw_style == style, style.label(), key(id)) {
-                                    commands.push(UiCommand::SetDrawStyle(style));
-                                }
+                            if item_needing_document(
+                                ui,
+                                "Fit selection",
+                                key("view.fit_selection"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::FitSelection);
                             }
-                        });
-                        if ui
-                            .checkbox(
-                                &mut inputs.show_annotations.clone(),
-                                RichText::new("Annotations").font(sans(FONT_SM)),
-                            )
-                            .on_hover_text(
-                                "Dimensions, tolerances, datums and notes \
-                                 carried by imported files",
-                            )
-                            .clicked()
-                        {
-                            commands.push(UiCommand::ToggleAnnotations);
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui
-                            .checkbox(
-                                &mut inputs.show_log_panel.clone(),
-                                RichText::new("Log panel").font(sans(FONT_SM)),
-                            )
-                            .clicked()
-                        {
-                            commands.push(UiCommand::ToggleLogPanel);
-                            ui.close();
-                        }
-                        if ui
-                            .checkbox(
-                                &mut inputs.show_console.clone(),
-                                RichText::new("Console").font(sans(FONT_SM)),
-                            )
-                            .clicked()
-                        {
-                            result.toggle_console = true;
-                            ui.close();
-                        }
-                        if ui
-                            .checkbox(
-                                &mut inputs.show_assistant.clone(),
-                                RichText::new("Assistant").font(sans(FONT_SM)),
-                            )
-                            .clicked()
-                        {
-                            result.toggle_assistant = true;
-                            ui.close();
-                        }
-                        ui.separator();
-                        ui.menu_button(RichText::new("Workbench").font(sans(FONT_SM)), |ui| {
-                            let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
-                            for wb in workbenches.iter() {
-                                let target = ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
-                                let is_active = *active_workbench == target;
-                                if ui
-                                    .selectable_label(
-                                        is_active,
-                                        RichText::new(&wb.label).font(sans(FONT_SM)),
-                                    )
-                                    .on_hover_text(&wb.description)
-                                    .clicked()
-                                {
-                                    *active_workbench = target;
-                                    ui.close();
-                                }
+                            if item_needing_document(
+                                ui,
+                                "Isolate selection",
+                                key("view.isolate"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::Isolate(None));
                             }
+                            if item_needing_document(
+                                ui,
+                                "Show all bodies",
+                                key("view.show_all"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::ShowAllBodies);
+                            }
+                            ui.separator();
+                            ui.menu_button(
+                                RichText::new("Standard views").font(sans(FONT_SM)),
+                                |ui| {
+                                    for (label, view, id) in [
+                                        (
+                                            "Isometric",
+                                            CameraSnapView::FrontTopRight,
+                                            "view.isometric",
+                                        ),
+                                        ("Front", CameraSnapView::Front, "view.front"),
+                                        ("Top", CameraSnapView::Top, "view.top"),
+                                        ("Right", CameraSnapView::Right, "view.right"),
+                                        ("Rear", CameraSnapView::Rear, "view.rear"),
+                                        ("Bottom", CameraSnapView::Bottom, "view.bottom"),
+                                        ("Left", CameraSnapView::Left, "view.left"),
+                                    ] {
+                                        if item(ui, label, key(id)) {
+                                            commands.push(UiCommand::CameraSnap(view));
+                                        }
+                                    }
+                                },
+                            );
+                            let ortho = inputs.projection == ProjectionMode::Orthographic;
+                            if choice(ui, ortho, "Orthographic", key("view.orthographic")) {
+                                commands
+                                    .push(UiCommand::SetProjection(ProjectionMode::Orthographic));
+                            }
+                            if choice(ui, !ortho, "Perspective", key("view.perspective")) {
+                                commands
+                                    .push(UiCommand::SetProjection(ProjectionMode::Perspective));
+                            }
+                            ui.separator();
+                            ui.menu_button(RichText::new("Draw style").font(sans(FONT_SM)), |ui| {
+                                for style in settings::DrawStyle::ALL {
+                                    let id = match style {
+                                        settings::DrawStyle::ShadedEdges => "view.shaded_edges",
+                                        settings::DrawStyle::Shaded => "view.shaded",
+                                        settings::DrawStyle::Wireframe => "view.wireframe",
+                                    };
+                                    if choice(
+                                        ui,
+                                        inputs.draw_style == style,
+                                        style.label(),
+                                        key(id),
+                                    ) {
+                                        commands.push(UiCommand::SetDrawStyle(style));
+                                    }
+                                }
+                            });
+                            if choice(
+                                ui,
+                                inputs.show_annotations,
+                                "Annotations",
+                                key("view.annotations"),
+                            ) {
+                                commands.push(UiCommand::ToggleAnnotations);
+                            }
+                            ui.separator();
+                            ui.menu_button(RichText::new("Workbench").font(sans(FONT_SM)), |ui| {
+                                let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
+                                for wb in workbenches.iter() {
+                                    let target = ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
+                                    let is_active = *active_workbench == target;
+                                    if ui
+                                        .selectable_label(
+                                            is_active,
+                                            RichText::new(&wb.label).font(sans(FONT_SM)),
+                                        )
+                                        .on_hover_text(&wb.description)
+                                        .clicked()
+                                    {
+                                        *active_workbench = target;
+                                        ui.close();
+                                    }
+                                }
+                            });
                         });
                     });
 
@@ -400,137 +399,119 @@ pub fn draw_menu_bar(
                             .map(|t| t.to_vec())
                             .unwrap_or_default();
                         ui.menu_button(menu_title(&label), |ui| {
-                            let mut last_category: Option<String> = None;
-                            for tool in &tools {
-                                if last_category.is_some() && tool.category != last_category {
-                                    ui.separator();
-                                }
-                                last_category = tool.category.clone();
-                                let row = ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = SPACE_2;
-                                    ui_kit::icon::draw(
-                                        ui,
+                            fitted_menu(ui, |ui| {
+                                let mut last_category: Option<String> = None;
+                                for tool in &tools {
+                                    if last_category.is_some() && tool.category != last_category {
+                                        ui.separator();
+                                    }
+                                    last_category = tool.category.clone();
+                                    let text = RichText::new(&tool.label).font(sans(FONT_SM));
+                                    let mut button = match ui_kit::icon::image(
+                                        ui.ctx(),
                                         tool.icon.unwrap_or("more"),
                                         16.0,
                                         if tool.planned.is_some() { TEXT3 } else { TEXT2 },
-                                    );
-                                    let text = RichText::new(&tool.label).font(sans(FONT_SM));
-                                    ui.label(if tool.planned.is_some() {
-                                        text.color(TEXT3)
-                                    } else {
-                                        text.color(TEXT1)
-                                    });
+                                    ) {
+                                        Some(image) => egui::Button::image_and_text(image, text),
+                                        None => egui::Button::new(text),
+                                    };
                                     if let Some(keys) = key(&tool.id) {
-                                        ui.add_space(SPACE_3);
-                                        mono_label(ui, keys, FONT_XS, TEXT3);
+                                        button = button.shortcut_text(keys);
                                     }
-                                });
-                                let r = ui.interact(
-                                    row.response.rect,
-                                    ui.id().with(&tool.id),
-                                    egui::Sense::click(),
-                                );
-                                if let Some(note) = tool.planned {
-                                    r.on_hover_text(format!("{} (planned)\n{note}", tool.label));
-                                    continue;
+                                    let r = ui.add_enabled(tool.planned.is_none(), button);
+                                    if let Some(note) = tool.planned {
+                                        r.on_disabled_hover_text(format!(
+                                            "{} (planned)\n{note}",
+                                            tool.label
+                                        ));
+                                        continue;
+                                    }
+                                    if r.clicked() {
+                                        activate_tool(active_tool, &tools, tool, &tool.id);
+                                        ui.close();
+                                    }
                                 }
-                                if r.clicked() {
-                                    activate_tool(active_tool, &tools, tool, &tool.id);
-                                    ui.close();
+                                if tools.is_empty() {
+                                    ui.label(
+                                        RichText::new("No tools").font(sans(FONT_SM)).color(TEXT3),
+                                    );
                                 }
-                            }
-                            if tools.is_empty() {
-                                ui.label(
-                                    RichText::new("No tools").font(sans(FONT_SM)).color(TEXT3),
-                                );
-                            }
+                            });
                         });
                     }
 
                     ui.menu_button(menu_title("Scripts"), |ui| {
-                        if item(ui, "Run script…", key("file.run_script")) {
-                            commands.push(UiCommand::File(super::FileCommand::RunScript));
-                        }
-                        if choice(ui, inputs.show_console, "Console", key("app.console")) {
-                            result.toggle_console = true;
-                        }
-                        let record = if inputs.recording {
-                            "Stop recording"
-                        } else {
-                            "Record…"
-                        };
-                        if item(ui, record, key("app.record")) {
-                            commands.push(UiCommand::ToggleRecording);
-                        }
-                        ui.separator();
-                        if inputs.scripts.is_empty() {
-                            ui.label(
-                                RichText::new("No scripts in the scripts folder yet")
-                                    .font(sans(FONT_SM))
-                                    .color(TEXT3),
-                            );
-                        }
-                        for script in inputs.scripts {
-                            let mut button =
-                                egui::Button::new(RichText::new(&script.name).font(sans(FONT_SM)));
-                            if let Some(k) = key(&script.id) {
-                                button = button.shortcut_text(k);
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "Run script…", key("file.run_script")) {
+                                commands.push(UiCommand::File(super::FileCommand::RunScript));
                             }
-                            let response = ui.add(button);
-                            let response = match &script.about {
-                                Some(about) => response.on_hover_text(about),
-                                None => response,
+                            if choice(ui, inputs.show_console, "Console", key("app.console")) {
+                                result.toggle_console = true;
+                            }
+                            let record = if inputs.recording {
+                                "Stop recording"
+                            } else {
+                                "Record…"
                             };
-                            if response.clicked() {
-                                commands.push(UiCommand::RunScriptFile(script.path.clone()));
-                                ui.close();
+                            if item(ui, record, key("app.record")) {
+                                commands.push(UiCommand::ToggleRecording);
                             }
-                        }
-                        ui.separator();
-                        if item(ui, "New script", None) {
-                            commands.push(UiCommand::NewScript);
-                        }
-                        if item(ui, "Open scripts folder", None) {
-                            commands.push(UiCommand::EditScript(None));
-                        }
+                            ui.separator();
+                            if inputs.scripts.is_empty() {
+                                ui.label(
+                                    RichText::new("No scripts in the scripts folder yet")
+                                        .font(sans(FONT_SM))
+                                        .color(TEXT3),
+                                );
+                            }
+                            for script in inputs.scripts {
+                                let mut button = egui::Button::new(
+                                    RichText::new(&script.name).font(sans(FONT_SM)),
+                                );
+                                if let Some(k) = key(&script.id) {
+                                    button = button.shortcut_text(k);
+                                }
+                                let response = ui.add(button);
+                                let response = match &script.about {
+                                    Some(about) => response.on_hover_text(about),
+                                    None => response,
+                                };
+                                if response.clicked() {
+                                    commands.push(UiCommand::RunScriptFile(script.path.clone()));
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            if item(ui, "New script", None) {
+                                commands.push(UiCommand::NewScript);
+                            }
+                            if item(ui, "Open scripts folder", None) {
+                                commands.push(UiCommand::EditScript(None));
+                            }
+                        });
                     });
 
                     ui.menu_button(menu_title("Windows"), |ui| {
-                        if ui
-                            .checkbox(
-                                &mut inputs.show_log_panel.clone(),
-                                RichText::new("Log panel").font(sans(FONT_SM)),
-                            )
-                            .clicked()
-                        {
-                            commands.push(UiCommand::ToggleLogPanel);
-                            ui.close();
-                        }
-                        if ui
-                            .checkbox(
-                                &mut inputs.show_console.clone(),
-                                RichText::new("Console").font(sans(FONT_SM)),
-                            )
-                            .clicked()
-                        {
-                            result.toggle_console = true;
-                            ui.close();
-                        }
-                        if ui
-                            .checkbox(
-                                &mut inputs.show_assistant.clone(),
-                                RichText::new("Assistant").font(sans(FONT_SM)),
-                            )
-                            .clicked()
-                        {
-                            result.toggle_assistant = true;
-                            ui.close();
-                        }
+                        fitted_menu(ui, |ui| {
+                            if choice(ui, inputs.show_log_panel, "Log panel", key("app.log")) {
+                                commands.push(UiCommand::ToggleLogPanel);
+                            }
+                            if choice(ui, inputs.show_console, "Console", key("app.console")) {
+                                result.toggle_console = true;
+                            }
+                            if choice(ui, inputs.show_assistant, "Assistant", key("app.assistant"))
+                            {
+                                result.toggle_assistant = true;
+                            }
+                        });
                     });
                     ui.menu_button(menu_title("Help"), |ui| {
-                        if item(ui, "About printCAD", None) {
-                            result.show_about = true;
-                        }
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "About printCAD", None) {
+                                result.show_about = true;
+                            }
+                        });
                     });
                 });
 

@@ -1147,22 +1147,26 @@ fn draw_row(
         Some(node) => attach_feature_menu(response, node, options, result),
         None if spec.id == TreeItemId::DocumentRoot => {
             response.context_menu(|ui| {
-                if ui
-                    .button("New variable set")
-                    .on_hover_text("Named values any number in the model can follow")
-                    .clicked()
-                {
-                    result.new_variable_set = true;
-                    ui.close();
-                }
-                if ui
-                    .button("New configurations table")
-                    .on_hover_text("Versions of the model, each giving variables values of its own")
-                    .clicked()
-                {
-                    result.new_configurations = true;
-                    ui.close();
-                }
+                ui_kit::widgets::fitted_menu(ui, |ui| {
+                    if ui
+                        .button("New variable set")
+                        .on_hover_text("Named values any number in the model can follow")
+                        .clicked()
+                    {
+                        result.new_variable_set = true;
+                        ui.close();
+                    }
+                    if ui
+                        .button("New configurations table")
+                        .on_hover_text(
+                            "Versions of the model, each giving variables values of its own",
+                        )
+                        .clicked()
+                    {
+                        result.new_configurations = true;
+                        ui.close();
+                    }
+                });
             });
             response
         }
@@ -1291,161 +1295,165 @@ fn attach_feature_menu(
         .and_then(|d| d.get_feature_meta(feature_id))
         .and_then(|n| n.body);
     response.context_menu(|ui| {
-        if let Some((id, repo)) = &node.needs_package {
-            if ui
-                .button(format!("Install {id}"))
-                .on_hover_text(format!("From github.com/{repo}"))
+        ui_kit::widgets::fitted_menu(ui, |ui| {
+            if let Some((id, repo)) = &node.needs_package {
+                if ui
+                    .button(format!("Install {id}"))
+                    .on_hover_text(format!("From github.com/{repo}"))
+                    .clicked()
+                {
+                    install = Some(repo.clone());
+                    ui.close();
+                }
+                ui.separator();
+            } else if ui
+                .button(egui::RichText::new(format!("Edit {}", node.label)).strong())
                 .clicked()
             {
-                install = Some(repo.clone());
+                result.activation = Some(node.id);
+                ui.close();
+            }
+            if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
+                result.local = Some(super::MenuLocal::Rename(node.id));
+                ui.close();
+            }
+            if let Some(body) = body {
+                ui.separator();
+                if ui
+                    .button("Appearance…")
+                    .on_hover_text("Its body's colour, see-through, face colours and material")
+                    .clicked()
+                {
+                    result.local = Some(super::MenuLocal::Task(super::OpenTask::Appearance(
+                        body, None,
+                    )));
+                    ui.close();
+                }
+                if ui
+                    .button("Placement…")
+                    .on_hover_text("Move or turn its body by numbers")
+                    .clicked()
+                {
+                    result.local = Some(super::MenuLocal::Task(super::OpenTask::Placement(body)));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            let suppress_label = if node.suppressed {
+                "Unsuppress"
+            } else {
+                "Suppress"
+            };
+            if ui.button(suppress_label).clicked() {
+                command = Some(TreeFeatureCommand::Suppress(!node.suppressed));
+                ui.close();
+            }
+            let visible_label = if node.visible { "Hide" } else { "Show" };
+            if menu_entry(ui, visible_label, options.key("view.toggle_visibility")).clicked() {
+                command = Some(TreeFeatureCommand::SetVisible(!node.visible));
+                ui.close();
+            }
+            if node.is_tip {
+                if ui
+                    .button("Clear tip")
+                    .on_hover_text("Expose the full history again")
+                    .clicked()
+                {
+                    command = Some(TreeFeatureCommand::ClearTip);
+                    ui.close();
+                }
+            } else if ui
+                .button("Set as tip")
+                .on_hover_text(
+                    "Preview the history up to this feature; later features are excluded",
+                )
+                .clicked()
+            {
+                command = Some(TreeFeatureCommand::SetTip);
                 ui.close();
             }
             ui.separator();
-        } else if ui
-            .button(egui::RichText::new(format!("Edit {}", node.label)).strong())
-            .clicked()
-        {
-            result.activation = Some(node.id);
-            ui.close();
-        }
-        if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
-            result.local = Some(super::MenuLocal::Rename(node.id));
-            ui.close();
-        }
-        if let Some(body) = body {
+            if ui
+                .button("Move up")
+                .on_hover_text("Swap with the previous feature in the build history")
+                .clicked()
+            {
+                command = Some(TreeFeatureCommand::MoveUp);
+                ui.close();
+            }
+            if ui
+                .button("Move down")
+                .on_hover_text("Swap with the next feature in the build history")
+                .clicked()
+            {
+                command = Some(TreeFeatureCommand::MoveDown);
+                ui.close();
+            }
+            if ui
+                .button("Move after…")
+                .on_hover_text("Pick where it goes in its body's history, in the task panel")
+                .clicked()
+            {
+                result.local = Some(super::MenuLocal::Task(super::OpenTask::History(feature_id)));
+                ui.close();
+            }
+            if let (Some(document), Some(body)) = (document, body) {
+                let frozen = document.body_frozen(body);
+                let label = if frozen { "Thaw body" } else { "Freeze body" };
+                if ui
+                    .button(label)
+                    .on_hover_text("A frozen body keeps its shape; its features are not rebuilt")
+                    .clicked()
+                {
+                    result.commands.push(super::UiCommand::BodyEdit {
+                        body,
+                        edit: super::BodyEdit::Frozen(!frozen),
+                    });
+                    ui.close();
+                }
+            }
             ui.separator();
-            if ui
-                .button("Appearance…")
-                .on_hover_text("Its body's colour, see-through, face colours and material")
-                .clicked()
-            {
-                result.local = Some(super::MenuLocal::Task(super::OpenTask::Appearance(
-                    body, None,
-                )));
+            clipboard_entries(ui, options, node.id, result);
+            if menu_entry(ui, "Delete", options.key("edit.delete")).clicked() {
+                delete = true;
                 ui.close();
             }
-            if ui
-                .button("Placement…")
-                .on_hover_text("Move or turn its body by numbers")
-                .clicked()
-            {
-                result.local = Some(super::MenuLocal::Task(super::OpenTask::Placement(body)));
-                ui.close();
+            if let Some(document) = document {
+                formula_entries(ui, document, feature_id, result);
             }
-        }
-        ui.separator();
-        let suppress_label = if node.suppressed {
-            "Unsuppress"
-        } else {
-            "Suppress"
-        };
-        if ui.button(suppress_label).clicked() {
-            command = Some(TreeFeatureCommand::Suppress(!node.suppressed));
-            ui.close();
-        }
-        let visible_label = if node.visible { "Hide" } else { "Show" };
-        if menu_entry(ui, visible_label, options.key("view.toggle_visibility")).clicked() {
-            command = Some(TreeFeatureCommand::SetVisible(!node.visible));
-            ui.close();
-        }
-        if node.is_tip {
-            if ui
-                .button("Clear tip")
-                .on_hover_text("Expose the full history again")
-                .clicked()
-            {
-                command = Some(TreeFeatureCommand::ClearTip);
-                ui.close();
-            }
-        } else if ui
-            .button("Set as tip")
-            .on_hover_text("Preview the history up to this feature; later features are excluded")
-            .clicked()
-        {
-            command = Some(TreeFeatureCommand::SetTip);
-            ui.close();
-        }
-        ui.separator();
-        if ui
-            .button("Move up")
-            .on_hover_text("Swap with the previous feature in the build history")
-            .clicked()
-        {
-            command = Some(TreeFeatureCommand::MoveUp);
-            ui.close();
-        }
-        if ui
-            .button("Move down")
-            .on_hover_text("Swap with the next feature in the build history")
-            .clicked()
-        {
-            command = Some(TreeFeatureCommand::MoveDown);
-            ui.close();
-        }
-        if ui
-            .button("Move after…")
-            .on_hover_text("Pick where it goes in its body's history, in the task panel")
-            .clicked()
-        {
-            result.local = Some(super::MenuLocal::Task(super::OpenTask::History(feature_id)));
-            ui.close();
-        }
-        if let (Some(document), Some(body)) = (document, body) {
-            let frozen = document.body_frozen(body);
-            let label = if frozen { "Thaw body" } else { "Freeze body" };
-            if ui
-                .button(label)
-                .on_hover_text("A frozen body keeps its shape; its features are not rebuilt")
-                .clicked()
+            ui.separator();
+            if let Some(body) = body
+                && ui
+                    .button("Recompute")
+                    .on_hover_text("Build the feature's body again from its history")
+                    .clicked()
             {
                 result.commands.push(super::UiCommand::BodyEdit {
                     body,
-                    edit: super::BodyEdit::Frozen(!frozen),
+                    edit: super::BodyEdit::Recompute,
                 });
                 ui.close();
             }
-        }
-        ui.separator();
-        clipboard_entries(ui, options, node.id, result);
-        if menu_entry(ui, "Delete", options.key("edit.delete")).clicked() {
-            delete = true;
-            ui.close();
-        }
-        if let Some(document) = document {
-            formula_entries(ui, document, feature_id, result);
-        }
-        ui.separator();
-        if let Some(body) = body
-            && ui
-                .button("Recompute")
-                .on_hover_text("Build the feature's body again from its history")
+            if ui
+                .button("Send to console")
+                .on_hover_text("Put the feature in the script console's input")
                 .clicked()
-        {
-            result.commands.push(super::UiCommand::BodyEdit {
-                body,
-                edit: super::BodyEdit::Recompute,
-            });
-            ui.close();
-        }
-        if ui
-            .button("Send to console")
-            .on_hover_text("Put the feature in the script console's input")
-            .clicked()
-        {
-            result.local = Some(super::MenuLocal::Console(format!(
-                "pc.doc.feature{{id = \"{}\"}}",
-                feature_id.0
-            )));
-            ui.close();
-        }
-        if menu_entry(ui, "Properties", options.key("edit.properties")).clicked() {
-            result.local = Some(super::MenuLocal::Properties(
-                node.id,
-                super::property_panel::PropertyTab::Data,
-            ));
-            ui.close();
-        }
-        bench_command = bench_menu_entries(ui, options, MenuScope::TreeFeature(feature_id));
+            {
+                result.local = Some(super::MenuLocal::Console(format!(
+                    "pc.doc.feature{{id = \"{}\"}}",
+                    feature_id.0
+                )));
+                ui.close();
+            }
+            if menu_entry(ui, "Properties", options.key("edit.properties")).clicked() {
+                result.local = Some(super::MenuLocal::Properties(
+                    node.id,
+                    super::property_panel::PropertyTab::Data,
+                ));
+                ui.close();
+            }
+            bench_command = bench_menu_entries(ui, options, MenuScope::TreeFeature(feature_id));
+        });
     });
     if delete {
         result.delete_item = Some(node.id);
@@ -1586,14 +1594,17 @@ fn attach_body_menu(
         let mut delete = false;
         let mut bench_command = None;
         response.context_menu(|ui| {
-            if menu_entry(ui, "Take apart", options.key("edit.delete"))
-                .on_hover_text("Remove the component; its bodies stay, one level up")
-                .clicked()
-            {
-                delete = true;
-                ui.close();
-            }
-            bench_command = bench_menu_entries(ui, options, MenuScope::TreeComponent(component));
+            ui_kit::widgets::fitted_menu(ui, |ui| {
+                if menu_entry(ui, "Take apart", options.key("edit.delete"))
+                    .on_hover_text("Remove the component; its bodies stay, one level up")
+                    .clicked()
+                {
+                    delete = true;
+                    ui.close();
+                }
+                bench_command =
+                    bench_menu_entries(ui, options, MenuScope::TreeComponent(component));
+            });
         });
         if delete {
             result.delete_item = Some(node.id);
@@ -1612,120 +1623,122 @@ fn attach_body_menu(
     let mut convert = false;
     let mut bench_command = None;
     response.context_menu(|ui| {
-        if !node.convertible.is_empty() {
-            let label = match node.convertible.len() {
-                1 => "Convert to solid".to_string(),
-                n => format!("Convert {n} meshes to solids"),
-            };
-            if ui
-                .button(label)
-                .on_hover_text(
-                    "Build a B-rep solid from the mesh's triangles, flat regions merged \
+        ui_kit::widgets::fitted_menu(ui, |ui| {
+            if !node.convertible.is_empty() {
+                let label = match node.convertible.len() {
+                    1 => "Convert to solid".to_string(),
+                    n => format!("Convert {n} meshes to solids"),
+                };
+                if ui
+                    .button(label)
+                    .on_hover_text(
+                        "Build a B-rep solid from the mesh's triangles, flat regions merged \
                      into faces, so it can be measured, checked and cloned into a body \
                      for features. This clears the undo history.",
-                )
-                .clicked()
-            {
-                convert = true;
-                ui.close();
-            }
-            ui.separator();
-        }
-        if !node.repairable.is_empty() {
-            let label = match node.repairable.len() {
-                1 => "Repair shape".to_string(),
-                n => format!("Repair {n} shapes"),
-            };
-            if ui
-                .button(label)
-                .on_hover_text(
-                    "Run the kernel's repair on the shapes its checker calls broken. \
-                     This clears the undo history.",
-                )
-                .clicked()
-            {
-                repair = true;
-                ui.close();
-            }
-            ui.separator();
-        }
-        if let (true, Some(body)) = (node.linked_file, node.body) {
-            if ui
-                .button("Reload from file")
-                .on_hover_text("Read the part again from its file as it is now")
-                .clicked()
-            {
-                result.commands.push(super::UiCommand::ReloadLink(body));
-                ui.close();
-            }
-            if ui.button("Open the file").clicked() {
-                result.commands.push(super::UiCommand::OpenLinkSource(body));
-                ui.close();
-            }
-            ui.separator();
-        }
-        if node.body.is_some() {
-            if ui
-                .button("Select body")
-                .on_hover_text("Select the whole body in the viewport")
-                .clicked()
-            {
-                select = true;
-                ui.close();
-            }
-            if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
-                result.local = Some(super::MenuLocal::Rename(node.id));
-                ui.close();
-            }
-            ui.separator();
-            let visible_label = if node.visible { "Hide" } else { "Show" };
-            if menu_entry(ui, visible_label, options.key("view.toggle_visibility")).clicked() {
-                if let Some(body) = node.body {
-                    result.commands.push(super::UiCommand::SetBodyVisible {
-                        body,
-                        visible: !node.visible,
-                    });
+                    )
+                    .clicked()
+                {
+                    convert = true;
+                    ui.close();
                 }
+                ui.separator();
+            }
+            if !node.repairable.is_empty() {
+                let label = match node.repairable.len() {
+                    1 => "Repair shape".to_string(),
+                    n => format!("Repair {n} shapes"),
+                };
+                if ui
+                    .button(label)
+                    .on_hover_text(
+                        "Run the kernel's repair on the shapes its checker calls broken. \
+                     This clears the undo history.",
+                    )
+                    .clicked()
+                {
+                    repair = true;
+                    ui.close();
+                }
+                ui.separator();
+            }
+            if let (true, Some(body)) = (node.linked_file, node.body) {
+                if ui
+                    .button("Reload from file")
+                    .on_hover_text("Read the part again from its file as it is now")
+                    .clicked()
+                {
+                    result.commands.push(super::UiCommand::ReloadLink(body));
+                    ui.close();
+                }
+                if ui.button("Open the file").clicked() {
+                    result.commands.push(super::UiCommand::OpenLinkSource(body));
+                    ui.close();
+                }
+                ui.separator();
+            }
+            if node.body.is_some() {
+                if ui
+                    .button("Select body")
+                    .on_hover_text("Select the whole body in the viewport")
+                    .clicked()
+                {
+                    select = true;
+                    ui.close();
+                }
+                if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
+                    result.local = Some(super::MenuLocal::Rename(node.id));
+                    ui.close();
+                }
+                ui.separator();
+                let visible_label = if node.visible { "Hide" } else { "Show" };
+                if menu_entry(ui, visible_label, options.key("view.toggle_visibility")).clicked() {
+                    if let Some(body) = node.body {
+                        result.commands.push(super::UiCommand::SetBodyVisible {
+                            body,
+                            visible: !node.visible,
+                        });
+                    }
+                    ui.close();
+                }
+                if menu_entry(ui, "Show only this", options.key("view.isolate")).clicked() {
+                    result.commands.push(super::UiCommand::Isolate(node.body));
+                    ui.close();
+                }
+                if menu_entry(ui, "Show all", options.key("view.show_all")).clicked() {
+                    result.commands.push(super::UiCommand::ShowAllBodies);
+                    ui.close();
+                }
+                ui.separator();
+            }
+            if let (Some(body), Some((document, _))) = (node.body, options.bench_menus) {
+                let mut local = None;
+                if super::body_menu::body_entries(
+                    ui,
+                    document,
+                    body,
+                    None,
+                    &mut result.commands,
+                    &mut local,
+                ) {
+                    ui.close();
+                }
+                if local.is_some() {
+                    result.local = local;
+                }
+                ui.separator();
+            }
+            clipboard_entries(ui, options, node.id, result);
+            if menu_entry(ui, "Delete", options.key("edit.delete"))
+                .on_hover_text("Remove this body, its features and its geometry")
+                .clicked()
+            {
+                delete = true;
                 ui.close();
             }
-            if menu_entry(ui, "Show only this", options.key("view.isolate")).clicked() {
-                result.commands.push(super::UiCommand::Isolate(node.body));
-                ui.close();
+            if let Some(body) = node.body {
+                bench_command = bench_menu_entries(ui, options, MenuScope::TreeBody(body));
             }
-            if menu_entry(ui, "Show all", options.key("view.show_all")).clicked() {
-                result.commands.push(super::UiCommand::ShowAllBodies);
-                ui.close();
-            }
-            ui.separator();
-        }
-        if let (Some(body), Some((document, _))) = (node.body, options.bench_menus) {
-            let mut local = None;
-            if super::body_menu::body_entries(
-                ui,
-                document,
-                body,
-                None,
-                &mut result.commands,
-                &mut local,
-            ) {
-                ui.close();
-            }
-            if local.is_some() {
-                result.local = local;
-            }
-            ui.separator();
-        }
-        clipboard_entries(ui, options, node.id, result);
-        if menu_entry(ui, "Delete", options.key("edit.delete"))
-            .on_hover_text("Remove this body, its features and its geometry")
-            .clicked()
-        {
-            delete = true;
-            ui.close();
-        }
-        if let Some(body) = node.body {
-            bench_command = bench_menu_entries(ui, options, MenuScope::TreeBody(body));
-        }
+        });
     });
     if select {
         result.selection = Some(node.id);

@@ -155,6 +155,16 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     response
 }
 
+/// A menu's rows, scrolling when they would run past the bottom of the
+/// window. Wraps what a menu or context menu shows.
+pub fn fitted_menu<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let room = ui.ctx().content_rect().bottom() - ui.cursor().top() - SPACE_3;
+    egui::ScrollArea::vertical()
+        .max_height(room.max(MENU_BAR * 3.0))
+        .show(ui, add)
+        .inner
+}
+
 /// A checkbox row: 14px box, accent when on, label text1/text2.
 pub fn check_row(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
     let text = RichText::new(label)

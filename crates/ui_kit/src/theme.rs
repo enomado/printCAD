@@ -146,7 +146,9 @@ pub fn visuals() -> Visuals {
     v.error_fg_color = DANGER;
     v.widgets.noninteractive = widget(BG2, BG1, BORDER, TEXT2);
     v.widgets.inactive = widget(BG3, BG2, BORDER, TEXT2);
-    v.widgets.hovered = widget(BG3, BG3, BORDER_STRONG, TEXT1);
+    // A step above the inactive fill and two above a menu's surface, so a
+    // row under the pointer reads at a glance.
+    v.widgets.hovered = widget(BG3, BG4, BORDER_STRONG, TEXT1);
     v.widgets.active = widget(ACCENT_DIM, ACCENT_DIM, ACCENT, ACCENT);
     v.widgets.open = widget(BG3, BG3, BORDER_STRONG, TEXT1);
     v.striped = false;

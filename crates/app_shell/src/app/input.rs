@@ -529,6 +529,15 @@ impl PrintCadApp {
         true
     }
 
+    /// Drop what is picked in the view: the body, its face and its edges.
+    pub(crate) fn clear_view_selection(&mut self) {
+        self.session.selected_body = None;
+        self.session.last_face_hit = None;
+        self.session.face_highlight = None;
+        self.session.selected_edges.clear();
+        self.session.last_select_click = None;
+    }
+
     pub(crate) fn toggle_body_under_cursor_selection(&mut self) -> bool {
         // Sketch curves first: their tessellated lines are far too thin for
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
@@ -652,11 +661,7 @@ impl PrintCadApp {
                 app_log::info("Selected face (double-click for the whole body)");
             }
         } else if self.session.selected_body.is_some() || !self.session.selected_edges.is_empty() {
-            self.session.selected_body = None;
-            self.session.last_face_hit = None;
-            self.session.face_highlight = None;
-            self.session.selected_edges.clear();
-            self.session.last_select_click = None;
+            self.clear_view_selection();
             app_log::info("Deselected (clicked empty space)");
         }
         true

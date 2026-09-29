@@ -53,121 +53,130 @@ pub fn draw(
         .interactable(true)
         .show(ctx, |ui| {
             Card::floating().padding(6.0).radius(5.0).show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                    // An area offers the rest of the screen; the menu takes a
-                    // column's worth of it.
-                    ui.set_max_width(MENU_WIDTH);
-                    ui.set_min_width(MENU_WIDTH);
-                    // Rows as the tree's menus draw them: no frame until hovered,
-                    // the full width of the menu.
-                    ui.visuals_mut().button_frame = false;
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.label(RichText::new(&name).font(sans(FONT_XS)).color(TEXT3));
-                    ui.separator();
-                    if item(ui, "Show in tree") {
-                        commands.push(UiCommand::RevealInTree(menu.body));
-                    }
-                    if item(ui, "Select body") {
-                        commands.push(UiCommand::SelectBody(menu.body));
-                    }
-                    let repairable = document
-                        .imported_geometry(menu.body)
-                        .and_then(|g| g.health.as_ref())
-                        .is_some_and(|h| h.is_broken())
-                        && document
-                            .bodies()
-                            .iter()
-                            .any(|b| b.id == menu.body && !b.repair_requested);
-                    if repairable && item(ui, "Repair shape") {
-                        commands.push(UiCommand::RepairShapes(vec![menu.body]));
-                        commands.push(UiCommand::CloseViewportMenu);
-                    }
-                    let convertible = document.is_mesh_body(menu.body)
-                        && document
-                            .bodies()
-                            .iter()
-                            .any(|b| b.id == menu.body && !b.solid_requested);
-                    if convertible && item(ui, "Convert to solid") {
-                        commands.push(UiCommand::ConvertToSolid(vec![menu.body]));
-                        commands.push(UiCommand::CloseViewportMenu);
-                    }
-                    if item(ui, "Hide") {
-                        // An imported part hides as its row does; any other
-                        // body hides itself.
-                        commands.push(match imported {
-                            Some(node) => UiCommand::SetImportedVisibility {
-                                node,
-                                visible: false,
-                            },
-                            None => UiCommand::SetBodyVisible {
-                                body: menu.body,
-                                visible: false,
-                            },
-                        });
-                        commands.push(UiCommand::CloseViewportMenu);
-                    }
-                    let linked = document
-                        .bodies()
-                        .iter()
-                        .any(|b| b.id == menu.body && b.link.is_some());
-                    if linked {
-                        if item(ui, "Reload from file") {
-                            commands.push(UiCommand::ReloadLink(menu.body));
-                            commands.push(UiCommand::CloseViewportMenu);
-                        }
-                        if item(ui, "Open the file") {
-                            commands.push(UiCommand::OpenLinkSource(menu.body));
-                            commands.push(UiCommand::CloseViewportMenu);
-                        }
-                    }
-                    if item(ui, "Isolate") {
-                        commands.push(UiCommand::Isolate(Some(menu.body)));
-                        commands.push(UiCommand::CloseViewportMenu);
-                    }
-                    if document.bodies().iter().any(|b| b.hidden) && item(ui, "Show all bodies") {
-                        commands.push(UiCommand::ShowAllBodies);
-                        commands.push(UiCommand::CloseViewportMenu);
-                    }
-                    ui.separator();
-                    if super::body_menu::body_entries(
-                        ui, document, menu.body, menu.face, commands, local,
-                    ) {
-                        commands.push(UiCommand::CloseViewportMenu);
-                    }
-                    // What the benches offer for this body, after the host's
-                    // own entries.
-                    let scope = core_document::MenuScope::ViewportBody(menu.body);
-                    let bench_items = registry.menu_items(&scope, document);
-                    if !bench_items.is_empty() {
-                        ui.separator();
-                    }
-                    for (workbench, entry) in bench_items {
-                        if entry.separator_before {
+                // Taller than the window, the menu scrolls rather than
+                // running off it.
+                let room = ctx.content_rect().height() - 2.0 * SPACE_4;
+                egui::ScrollArea::vertical()
+                    .max_height(room)
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                            // An area offers the rest of the screen; the menu takes a
+                            // column's worth of it.
+                            ui.set_max_width(MENU_WIDTH);
+                            ui.set_min_width(MENU_WIDTH);
+                            // Rows as the tree's menus draw them: no frame until hovered,
+                            // the full width of the menu.
+                            egui::containers::menu::menu_style(ui.style_mut());
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.label(RichText::new(&name).font(sans(FONT_XS)).color(TEXT3));
                             ui.separator();
-                        }
-                        let mut button =
-                            egui::Button::new(RichText::new(&entry.label).font(sans(FONT_SM)))
-                                .frame(false)
-                                .min_size(egui::vec2(MENU_WIDTH, 22.0));
-                        if let Some(key) = keymap.text(&entry.id) {
-                            button = button
-                                .shortcut_text(RichText::new(key).font(sans(FONT_SM)).color(TEXT3));
-                        }
-                        let button = ui.add_enabled(entry.enabled, button);
-                        let button = match &entry.hint {
-                            Some(hint) => button.on_hover_text(hint),
-                            None => button,
-                        };
-                        if button.clicked() {
-                            commands.push(UiCommand::BenchCommand {
-                                workbench: workbench.clone(),
-                                id: entry.id.clone(),
-                                scope: scope.clone(),
-                            });
-                            commands.push(UiCommand::CloseViewportMenu);
-                        }
-                    }
-                });
+                            if item(ui, "Show in tree") {
+                                commands.push(UiCommand::RevealInTree(menu.body));
+                            }
+                            if item(ui, "Select body") {
+                                commands.push(UiCommand::SelectBody(menu.body));
+                            }
+                            let repairable = document
+                                .imported_geometry(menu.body)
+                                .and_then(|g| g.health.as_ref())
+                                .is_some_and(|h| h.is_broken())
+                                && document
+                                    .bodies()
+                                    .iter()
+                                    .any(|b| b.id == menu.body && !b.repair_requested);
+                            if repairable && item(ui, "Repair shape") {
+                                commands.push(UiCommand::RepairShapes(vec![menu.body]));
+                                commands.push(UiCommand::CloseViewportMenu);
+                            }
+                            let convertible = document.is_mesh_body(menu.body)
+                                && document
+                                    .bodies()
+                                    .iter()
+                                    .any(|b| b.id == menu.body && !b.solid_requested);
+                            if convertible && item(ui, "Convert to solid") {
+                                commands.push(UiCommand::ConvertToSolid(vec![menu.body]));
+                                commands.push(UiCommand::CloseViewportMenu);
+                            }
+                            if item(ui, "Hide") {
+                                // An imported part hides as its row does; any other
+                                // body hides itself.
+                                commands.push(match imported {
+                                    Some(node) => UiCommand::SetImportedVisibility {
+                                        node,
+                                        visible: false,
+                                    },
+                                    None => UiCommand::SetBodyVisible {
+                                        body: menu.body,
+                                        visible: false,
+                                    },
+                                });
+                                commands.push(UiCommand::CloseViewportMenu);
+                            }
+                            let linked = document
+                                .bodies()
+                                .iter()
+                                .any(|b| b.id == menu.body && b.link.is_some());
+                            if linked {
+                                if item(ui, "Reload from file") {
+                                    commands.push(UiCommand::ReloadLink(menu.body));
+                                    commands.push(UiCommand::CloseViewportMenu);
+                                }
+                                if item(ui, "Open the file") {
+                                    commands.push(UiCommand::OpenLinkSource(menu.body));
+                                    commands.push(UiCommand::CloseViewportMenu);
+                                }
+                            }
+                            if item(ui, "Isolate") {
+                                commands.push(UiCommand::Isolate(Some(menu.body)));
+                                commands.push(UiCommand::CloseViewportMenu);
+                            }
+                            if document.bodies().iter().any(|b| b.hidden)
+                                && item(ui, "Show all bodies")
+                            {
+                                commands.push(UiCommand::ShowAllBodies);
+                                commands.push(UiCommand::CloseViewportMenu);
+                            }
+                            ui.separator();
+                            if super::body_menu::body_entries(
+                                ui, document, menu.body, menu.face, commands, local,
+                            ) {
+                                commands.push(UiCommand::CloseViewportMenu);
+                            }
+                            // What the benches offer for this body, after the host's
+                            // own entries.
+                            let scope = core_document::MenuScope::ViewportBody(menu.body);
+                            let bench_items = registry.menu_items(&scope, document);
+                            if !bench_items.is_empty() {
+                                ui.separator();
+                            }
+                            for (workbench, entry) in bench_items {
+                                if entry.separator_before {
+                                    ui.separator();
+                                }
+                                let mut button = egui::Button::new(
+                                    RichText::new(&entry.label).font(sans(FONT_SM)),
+                                );
+                                if let Some(key) = keymap.text(&entry.id) {
+                                    button = button.shortcut_text(
+                                        RichText::new(key).font(sans(FONT_SM)).color(TEXT3),
+                                    );
+                                }
+                                let button = ui.add_enabled(entry.enabled, button);
+                                let button = match &entry.hint {
+                                    Some(hint) => button.on_hover_text(hint),
+                                    None => button,
+                                };
+                                if button.clicked() {
+                                    commands.push(UiCommand::BenchCommand {
+                                        workbench: workbench.clone(),
+                                        id: entry.id.clone(),
+                                        scope: scope.clone(),
+                                    });
+                                    commands.push(UiCommand::CloseViewportMenu);
+                                }
+                            }
+                        });
+                    });
             });
         });
 

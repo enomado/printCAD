@@ -87,6 +87,8 @@ pub(crate) struct DocumentSession {
     /// A workbench asked to create a sketch on this body; carried between
     /// hooks until the sketch workbench consumes it (plane picker).
     pub pending_sketch_creation: Option<core_document::SketchAttachRequest>,
+    /// A bench's edit session on a plane was open last frame.
+    pub plane_session_open: bool,
     /// Face under the most recent body selection click (surface point +
     /// normal derived from the picked mesh triangle).
     pub last_face_hit: Option<(Uuid, core_document::FaceRef)>,
@@ -209,6 +211,7 @@ impl DocumentSession {
             step_import_pending: None,
             journal: core_document::history::OpJournal::new(64),
             pending_sketch_creation: None,
+            plane_session_open: false,
             last_face_hit: None,
             face_highlight: None,
             hovered_feature: None,

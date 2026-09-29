@@ -171,6 +171,10 @@ impl PrintCadApp {
                     self.user_settings.rendering.custom_colors = colors;
                     intents.persist_settings = true;
                 }
+                UiCommand::SetToolbarLayout(rows) => {
+                    self.user_settings.toolbars.rows = rows;
+                    intents.persist_settings = true;
+                }
                 UiCommand::PasteFormulas { feature, formulas } => {
                     self.paste_formulas(feature, formulas);
                 }
@@ -759,6 +763,9 @@ impl PrintCadApp {
         }
         if self.registry.is_modal(&target) {
             self.session.return_workbench = Some(self.session.active_workbench.clone());
+            // The face or body picked to start the session has done its
+            // work: left painted, it would cover what is edited on it.
+            self.clear_view_selection();
         }
         let old = self.session.active_workbench.0.clone();
         self.call_workbench_deactivate(&old);
