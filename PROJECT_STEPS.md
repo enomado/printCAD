@@ -28,28 +28,36 @@ What is built, by area. The plan for what comes next is in
   files and a preview.
 - One operation per edit, undo by inverse operations, and a document server
   process per document.
-- STEP and IGES import, STL, OBJ and 3MF import as meshes, and conversion of
-  a mesh to a solid.
+- STEP and IGES import, STL, OBJ, 3MF, PLY, glTF and VRML import as meshes,
+  and conversion of a mesh to a solid.
+- Parts linked from other `.prtcad` files, marked when the file changes.
 - Shape health checks and repair for imported bodies.
-- Export to STEP, STL and 3MF, and Send to slicer: every visible body
+- Export to STEP (several bodies as an assembly of shared parts), STL and
+  3MF, and Send to slicer: every visible body
   written to a temporary 3MF or STL and opened with the slicer command from
   Preferences › 3D printing.
 
 ## Sketcher
 
 - Points, lines, polylines, rectangles, polygons, circles, arcs, ellipses,
-  arcs of ellipses, B-splines and slots.
+  conics, weighted B-splines, slots and text.
+- Generators: gears (ring gears too), sprockets and shafts with their loads.
 - Constraints solved live, with degrees of freedom and conflict reports.
 - Trim, extend, split, fillet, chamfer, offset, mirror, move, rotate, scale,
   arrays, carbon copy and merge.
-- External geometry: a solid's edges projected in as fixed references.
+- External geometry from a solid's edges, another sketch or a datum, kept
+  up to date.
+- Attachment by the same modes as datums.
 
 ## Part Design
 
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, in
   additive and subtractive forms.
 - Hole, fillet, chamfer, draft, thickness, patterns, mirror and booleans.
-- Datum points, lines, planes and local coordinate systems.
+- Datum points, lines, planes and local coordinate systems, attached in many
+  ways and following what they stand on.
+- Borrowed geometry from other bodies, drag handles, copy and paste of
+  features, and moving a feature to another body.
 - Volume, surface area and centre of mass of a body.
 
 ## Assembly
@@ -64,7 +72,19 @@ What is built, by area. The plan for what comes next is in
   motions by a ratio.
 - Dragging bodies on their joints, stopping at collisions, interference
   checks, an exploded view and a parts list.
-- Move a body by numbers.
+- Move a body by numbers or with arrows and rings.
+- Ball, universal, slot, path, cam and width joints, joints to the origin
+  and to datums.
+- Components (rigid or flexible, nested), rigid groups, linked copies,
+  mirrored copies and replacing a body.
+- Motion over time with traces and plots, saved states, stepped exploded
+  views, clearance and mass checks, and a parts list kept in the document.
+
+## Interface
+
+- Row and body menus with Appearance, Placement, material, face colours,
+  freezing and more; settings open in the task panel with live preview.
+- Measure tool for edges, faces, radii, areas and angles.
 
 ## Scripting
 

@@ -11,20 +11,25 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
 
 ## Features
 
-- **Sketcher:** lines, polylines, arcs, circles, ellipses, splines, slots and
-  more, with geometric and dimensional constraints solved live. Edges of a
-  solid can be projected in as fixed reference geometry.
-- **Part Design:** pad, pocket, revolve, loft, pipe, helix, holes, fillets,
-  chamfers, patterns and booleans, all editable in a feature tree.
-- **Assembly:** place bodies against each other with joints: mate two flat
-  faces, line up two round ones on one axis, or hold two faces at an angle.
+- **Sketcher:** lines, arcs, circles, ellipses, conics, weighted splines,
+  slots, text and more, with geometric and dimensional constraints solved
+  live. Solid edges, other sketches and datums come in as references, and
+  generators draw gears, sprockets and shafts from their numbers.
+- **Part Design:** pad, pocket, revolve, loft, pipe, helix, holes to thread
+  standards, fillets, chamfers, draft, thickness, patterns and booleans, all
+  editable in a feature tree, with datums and geometry borrowed from other
+  bodies.
+- **Assembly:** joints of every common kind (mate, align, hinge, slider,
+  ball, cam, gears and more), components that move as one, linked copies
+  and parts linked from other files, motion over time, interference and
+  clearance checks, exploded views and a parts list.
 - **Import:** STEP and IGES as solids, with the dimensions, tolerances,
   datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
   as meshes that can be converted to solids.
 - **Export:** STEP, STL and 3MF, or straight to your slicer.
 - **Documents:** `.prtcad` files, one tab each, with undo and redo.
-- **View:** GPU picking of faces and edges, a clipping plane, and 6-DoF mouse
-  support.
+- **View:** GPU picking of faces and edges, a clipping plane, a measure
+  tool, body and face colours, and 6-DoF mouse support.
 - **Scripting:** a Lua console that reaches every command of the
   application and the workbenches.
 - **Variables and formulas:** any number can follow named variables and
@@ -101,7 +106,7 @@ Every shortcut can be changed in Preferences › Keyboard. The defaults:
 | Undo, Redo | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y |
 | New tab, Close tab | Ctrl+T, Ctrl+W |
 | Next, Previous tab | Ctrl+Tab, Ctrl+Shift+Tab |
-| Cut, Copy, Paste in a sketch | Ctrl+X, Ctrl+C, Ctrl+V |
+| Cut, Copy, Paste sketch geometry or features | Ctrl+X, Ctrl+C, Ctrl+V |
 | Preferences | Ctrl+, |
 | Recompute all | Ctrl+R |
 | Delete the selected tree row | Delete |
@@ -181,8 +186,14 @@ While a length is being typed, number keys go to the length.
 
 | Assembly | Keys |
 | --- | --- |
-| Mate, align, angle | M, A, N |
+| Mate, align, angle, hinge, slider | M, A, N, H, L |
+| Fixed, parallel, perpendicular, distance, tangent | X, R, Shift+R, D, T |
+| Ball, universal, pin in a slot, path, cam, width | Shift+B, Shift+U, Shift+S, Shift+P, Shift+C, Shift+W |
+| Couple joints, rigid group, ground | K, U, F |
 | Move a body, solve | G, S |
+| Interference, collisions on drag, mass | I, C, W |
+| Exploded view, parts list | E, B |
+| Linked copies, replace a body | Y, Shift+Y |
 
 ## Scripting
 
@@ -232,6 +243,10 @@ Preferences (Ctrl+,).
 | `workbenches/wb_sketch` | Sketcher |
 | `workbenches/wb_part` | Part Design |
 | `workbenches/wb_assembly` | Assembly: joints between bodies |
+| `workbenches/wb_wasm` | Workbench packages, run sandboxed |
+| `workbenches/fixtures` | Ready-made scenes for tests and demos |
+| `bench_api` | What a workbench package and the app exchange |
+| `local_ipc` | Local sockets and helpers the app's processes talk through |
 | `scripting` | The Lua engine scripts and the console run in |
 | `agents` | Agent Client Protocol client and MCP server core |
 
@@ -242,13 +257,20 @@ More detail in [docs](docs/):
 - [Document model](docs/DOCUMENT_MODEL.md)
 - [Writing a workbench](docs/WORKBENCH_GUIDE.md)
 - [Scripting](docs/SCRIPTING.md)
+- [Variables and formulas](docs/VARIABLES.md)
+- [Assembly](docs/ASSEMBLY.md)
+- [Holes](docs/HOLES.md)
+- [Workbench packages](docs/PLUGINS.md)
 - [AI agents](docs/AI.md)
+- [What is left to build](docs/FEATURE_GAPS.md)
 - [Camera](camera_system.md)
 - [Project status](PROJECT_STEPS.md)
 
 ## Roadmap
 
-- More joint kinds: gears, limits on a slide or a turn
+What each workbench still lacks, feature by feature, is in
+[docs/FEATURE_GAPS.md](docs/FEATURE_GAPS.md). Features for printing
+(filament use, print layout, nut traps) come next.
 
 ## License
 

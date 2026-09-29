@@ -4,6 +4,69 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.2.0
+
+### Sketcher
+- Text: a string in a font, size and spacing, as outlines that pad and pocket like any profile, standing on a point constraints can hold.
+- Splines can be weighted; Convert to B-spline turns lines, arcs, circles, ellipses and conics into exact splines; degree, knots and weights are edited in the panel, with curvature combs to check the shape.
+- Trim, extend and split work on ellipses, parabolas, hyperbolas and splines, and every curve stops at the ones it crosses.
+- Fillet and chamfer between any two lines, arcs or circles, even ones that do not meet.
+- Offset rounds corners, copies to both sides, replaces the original or stays linked to it by one dimension.
+- Linked copies and arrays keep the originals' size and are spaced by one editable pitch.
+- A sketch attaches by a mode (on a face, through three points, square to an edge…) as a datum does, and one on a datum can shift across it and turn on it.
+- External geometry from another sketch or a datum, followed when they change, and external geometry that counts in the profile.
+- Constraints on every kind of curve, smooth joins, an ellipse's radii and a spline's or conic's length as dimensions, and more constraints.
+- Repair a sketch that has lost points, and set how far the solver goes.
+- Rounded rectangles, slots and arc slots keep their tangents and equal radii when dragged.
+- A negative horizontal or vertical distance puts the point the other way.
+- Generators: internal ring gears with addendum and dedendum settings, and a shaft's loads with its stresses and deflection.
+
+### Part Design
+- Drag handles in the view set a pad's or pocket's length and a fillet's or chamfer's size.
+- Duplicate, copy and paste features, and move a feature to another body.
+- Pads and pockets stop on planes, run along a datum, a sketch line or the body's axes, start away from their profile, and take a borrowed face as their profile.
+- Lofts go to a point or from faces of the solid, pipes run along edges of the solid or from a face, and a ruled loft joins unlike shapes.
+- Revolutions turn about the body's own axes, and a helix about its sketch's normal.
+- Datums attach in more ways: on another datum, square to a face, along an edge, through a line and a point, where a line meets a plane; and tilt.
+- Borrowed geometry can be moved, fill closed edges into a face, or lend a whole solid.
+- Mirror, draft and boolean take datum and edge references; thickness can grow both sides; one boolean takes several tools.
+- Holes: a clearance of your own, more screw seats, and thread lengths.
+- Primitives attach like datums; ellipsoids can be cut; prisms can lean.
+- A through-all pocket centred on its sketch cuts both ways.
+
+### Assembly
+- More joints: ball, universal, pin in a slot, along a path, cam and follower, and a tab centred in a slot, with point anchors and an offset on each end.
+- Joints go to the origin's planes and axes and to datums, follow the faces they were picked on, can change kind and faces, and are listed under the body they hold to.
+- Components: bodies grouped in the tree, nested, rigid (moving as one) or flexible (their joints live).
+- Parts from other printCAD files, linked: marked when the file changes, reloaded or opened from the tree.
+- Linked copies of a body, in a row, turned about an axis or mirrored, placed by dragging; replace a body and keep its joints.
+- Rigid groups, redundant-joint report, and one conflicting joint no longer holds up the rest; a joint that cannot hold is not made.
+- Motion over time: joints driven by formulas of t, with traces, speeds and plots, and a check for collisions along a motion.
+- Saved states to return to, stepped exploded views kept in the document, and move arrows and rings on a body.
+- Clearance check, mass and centre of mass, and interference checks that work at any turn.
+- A numbered parts list kept in the document, with bought parts and columns of your own, listed by component if you like.
+- Turning either of two coupled hinges turns both; a slider turns its body onto its axis.
+
+### Documents
+- STEP export writes several bodies as an assembly of shared parts.
+- Configurations can leave bodies out.
+- Record animations as GIF or numbered PNG frames as well as animated PNG.
+
+### Interface
+- Right-click menus on tree rows and bodies: Appearance, Placement, material, face colours, freeze, make unselectable, linked copy, move in history, copy formulas and more.
+- Appearance, Placement and Move after open in the task panel and show every change as you make it; OK keeps it, Cancel puts it back.
+- A palette of colours plus your own kept colours; single faces can have their own colour.
+- A material gives a body its mass.
+- Measure edges, faces, radii, areas and angles.
+- Isolate a body and show every body again.
+- F2 renames and Alt+Enter shows the properties of the selected tree row.
+- An application icon, and a Linux install script in the download.
+
+### Scripting
+- `doc.set_body`, `doc.set_face_color`, `doc.linked_copy`, `doc.move_after` and `doc.recompute`.
+- Datum references work either way, a thread can be given as `"M6"`, and `{}` stands for an empty table of settings.
+- `sketch.rect` and `sketch.polyline` hold level and upright sides.
+
 ## 0.1.0
 
 ### Documents

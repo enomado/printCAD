@@ -67,9 +67,15 @@ Everything done in one task panel is one undo step.
 - Double clicking a feature opens it for editing in the workbench that owns
   it.
 - The eye on a row shows or hides a feature, a body or an imported part.
-- A feature's right-click menu offers suppress, hide, move up or down, set
-  or clear the tip, and delete. Features after the tip are shown muted and
-  are not built.
+- A feature's right-click menu offers edit, rename, its body's appearance
+  and placement, suppress, hide, move up, down or after another, set or
+  clear the tip, freeze the body, cut, copy, paste, delete, copy and paste
+  formulas, recompute and properties. A body's menu, in the tree or the
+  view, offers appearance, placement, freeze, make unselectable, linked copy
+  and the rest. Features after the tip are shown muted and are not built.
+- Appearance, placement and moving in history open in the task panel: the
+  view shows each change at once, OK keeps it as one undo step and Cancel
+  puts back what was there.
 - Deleting a body removes its features and clears the undo history.
 
 ## Rebuilding
