@@ -49,6 +49,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/arc-of-parabola.svg"),
     ),
     ("arc-slot", include_str!("../icons/arc-slot.svg")),
+    ("assistant", include_str!("../icons/assistant.svg")),
     (
         "auto-constraints",
         include_str!("../icons/auto-constraints.svg"),
@@ -247,6 +248,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/linear-pattern.svg"),
     ),
     ("lock", include_str!("../icons/lock.svg")),
+    ("log", include_str!("../icons/log.svg")),
     ("material", include_str!("../icons/material.svg")),
     ("measure", include_str!("../icons/measure.svg")),
     ("minus", include_str!("../icons/minus.svg")),

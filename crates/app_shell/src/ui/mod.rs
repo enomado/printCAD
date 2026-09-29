@@ -664,8 +664,22 @@ impl UiLayer {
                     dimensions: dimensions.as_deref(),
                     script_running,
                     recording,
+                    panels: status_bar::Panels {
+                        log: settings.rendering.show_log_panel,
+                        console: self.console.open,
+                        assistant: self.assistant.open,
+                    },
                 },
             );
+            if status.toggle_log {
+                commands.push(UiCommand::ToggleLogPanel);
+            }
+            if status.toggle_console {
+                self.console.toggle();
+            }
+            if status.toggle_assistant {
+                self.assistant.toggle();
+            }
             if status.stop_recording {
                 commands.push(UiCommand::ToggleRecording);
             }

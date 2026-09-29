@@ -51,6 +51,16 @@ pub struct StatusBarInputs<'a> {
     pub script_running: Option<&'a str>,
     /// A recording is on.
     pub recording: bool,
+    /// Which of the log, the console and the assistant are showing.
+    pub panels: Panels,
+}
+
+/// The panels the bar's buttons open and close.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Panels {
+    pub log: bool,
+    pub console: bool,
+    pub assistant: bool,
 }
 
 /// What the status bar's buttons asked for.
@@ -62,6 +72,10 @@ pub struct StatusBarResult {
     pub stop_script: bool,
     /// Stop the recording and save it.
     pub stop_recording: bool,
+    /// Open or close the log panel, the console, the assistant.
+    pub toggle_log: bool,
+    pub toggle_console: bool,
+    pub toggle_assistant: bool,
 }
 
 /// A thin bar, `done` of `total` filled, the counts on hover.
@@ -105,9 +119,37 @@ fn quiet_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     )
 }
 
+/// A panel's switch: its icon, lit while the panel shows. Whether it was
+/// clicked.
+fn panel_button(ui: &mut egui::Ui, icon: &str, name: &str, open: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::click());
+    if open || response.hovered() {
+        ui.painter()
+            .rect_filled(rect, RADIUS_SM, if open { ACCENT_DIM } else { BG3 });
+    }
+    let tint = if open {
+        ACCENT
+    } else if response.hovered() {
+        TEXT1
+    } else {
+        TEXT3
+    };
+    let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(2.0)));
+    ui_kit::icon::draw(&mut slot, icon, 14.0, tint);
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(if open {
+            format!("Hide the {}", name.to_lowercase())
+        } else {
+            format!("Show the {}", name.to_lowercase())
+        })
+        .clicked()
+}
+
 /// Draws the bar; says which of its buttons were pressed.
 pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
     let mut result = StatusBarResult::default();
+    let mut right = StatusBarResult::default();
     egui::Panel::bottom("status_bar")
         .exact_size(STATUS_BAR)
         .frame(
@@ -136,7 +178,7 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
                     },
                     |ui| {
                         ui.spacing_mut().item_spacing.x = SPACE_3;
-                        draw_right(ui, inputs);
+                        right = draw_right(ui, inputs);
                     },
                 );
         });
@@ -186,7 +228,14 @@ fn draw_left(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, result: &mut Statu
 
 /// The readouts, laid out from the right edge: navigation, performance,
 /// the server, then what the bench or the cursor says.
-fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) {
+fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
+    let mut result = StatusBarResult::default();
+    // The panels' switches at the end, the assistant outermost.
+    let panels = inputs.panels;
+    result.toggle_assistant = panel_button(ui, "assistant", "Assistant", panels.assistant);
+    result.toggle_console = panel_button(ui, "console", "Console", panels.console);
+    result.toggle_log = panel_button(ui, "log", "Log panel", panels.log);
+    vseparator(ui, 12.0);
     text(ui, inputs.nav_style, TEXT3).on_hover_text("Navigation style (Preferences › Input)");
     if let Some(device) = inputs.nav_device {
         text(ui, device, TEXT3).on_hover_text("6-DoF mouse connected");
@@ -234,6 +283,7 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) {
     if let Some(coords) = coords {
         mono_label(ui, coords, FONT_XS, TEXT2).on_hover_text("The point under the cursor");
     }
+    result
 }
 
 /// The document server: a dot while all is well, words when it is not.
