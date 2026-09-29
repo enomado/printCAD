@@ -171,6 +171,7 @@ impl PrintCadApp {
                     self.user_settings.rendering.custom_colors = colors;
                     intents.persist_settings = true;
                 }
+                UiCommand::CheckForUpdates => self.check_app_release(false),
                 UiCommand::SetToolbarLayout(rows) => {
                     self.user_settings.toolbars.rows = rows;
                     intents.persist_settings = true;

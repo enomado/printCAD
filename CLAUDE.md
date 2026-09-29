@@ -315,6 +315,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   the last few solids per body by what they were built from, so moving a
   body's tip back and forth through its history, or undo and redo, finds
   them built),
+  `updates.rs` (the latest release on GitHub, read on a package thread
+  at start when `UserSettings.updates.check_at_start` allows, when the
+  Preferences › Updates page opens unlooked and from Help › Check for
+  updates; it only informs, nothing downloads),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
   which `camera::apply_device_motion` integrates once per frame).
   `ui/` is one module per region: `menu_bar`, `toolbar` (groups: the

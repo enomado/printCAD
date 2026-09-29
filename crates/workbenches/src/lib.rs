@@ -160,6 +160,17 @@ pub fn install_from_github(text: &str, root: &std::path::Path) -> Result<Package
     wb_wasm::remote::install_from_github(&wb_wasm::remote::Http::default(), text, root)
 }
 
+/// The latest published release of `repo` (`owner/repo`), and whether it
+/// is newer than `version`. It reaches the network.
+pub fn latest_release(
+    repo: &str,
+    version: &str,
+) -> Result<(wb_wasm::remote::Latest, bool), String> {
+    let latest = wb_wasm::remote::latest(&wb_wasm::remote::Http::default(), repo)?;
+    let newer = wb_wasm::remote::newer(&latest.tag, "", version);
+    Ok((latest, newer))
+}
+
 /// Every package installed from GitHub under `root`, each with the newer
 /// release's tag when there is one. It reaches the network.
 pub fn check_updates(root: &std::path::Path) -> Vec<(String, Result<Option<String>, String>)> {

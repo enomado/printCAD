@@ -154,6 +154,9 @@ fn main() -> Result<()> {
     if check_updates {
         app.check_package_updates();
     }
+    if app.user_settings.updates.check_at_start {
+        app.check_app_release(true);
+    }
     app.start_agent_server();
     event_loop.run_app(&mut app).context("event loop error")?;
     Ok(())
@@ -328,6 +331,8 @@ struct PrintCadApp {
     packages: Vec<workbenches::PackageStatus>,
     /// Package installs, update checks and updates running on threads.
     package_work: app::packages::PackageWork,
+    /// What the last look for a newer printCAD found.
+    release_check: app::updates::ReleaseCheck,
     script_library_read: Option<Instant>,
     /// A script printed or failed: the console opens to show it.
     console_attention: bool,
@@ -452,6 +457,7 @@ impl PrintCadApp {
             script_library: Vec::new(),
             packages: Vec::new(),
             package_work: Default::default(),
+            release_check: Default::default(),
             script_library_read: None,
             console_attention: false,
             command_ids: Vec::new(),

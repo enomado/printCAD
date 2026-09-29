@@ -63,6 +63,25 @@ pub struct UserSettings {
     /// Where the toolbar groups sit, as the user dragged them.
     #[serde(default)]
     pub toolbars: ToolbarLayout,
+    /// Looking for newer printCAD releases.
+    #[serde(default)]
+    pub updates: UpdateSettings,
+}
+
+/// Looking for newer printCAD releases; nothing is ever downloaded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Look once when the app starts.
+    pub check_at_start: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            check_at_start: true,
+        }
+    }
 }
 
 /// The toolbar rows, top to bottom, each the ids of its groups left to
@@ -234,6 +253,7 @@ impl Default for UserSettings {
             ai: AiSettings::default(),
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
+            updates: UpdateSettings::default(),
         }
     }
 }

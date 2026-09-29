@@ -29,6 +29,11 @@ pub(crate) enum PackageNews {
     Ready(Box<Ready>),
     Failed(String),
     Checked(Vec<(String, Result<Option<String>, String>)>),
+    /// What the app's own releases hold; `quiet` for the look at start.
+    AppRelease {
+        found: crate::app::updates::ReleaseCheck,
+        quiet: bool,
+    },
 }
 
 /// The package threads' line back, and how many are out.
@@ -115,7 +120,7 @@ fn root() -> Option<std::path::PathBuf> {
 impl PrintCadApp {
     /// Run `work` on a thread of its own, its news read by
     /// [`Self::drain_package_news`].
-    fn package_thread(&mut self, work: impl FnOnce() -> PackageNews + Send + 'static) {
+    pub(crate) fn package_thread(&mut self, work: impl FnOnce() -> PackageNews + Send + 'static) {
         let tx = self.package_work.tx.clone();
         self.package_work.pending += 1;
         let started = std::thread::Builder::new()
@@ -201,6 +206,7 @@ impl PrintCadApp {
                 PackageNews::Ready(ready) => self.take_ready(*ready),
                 PackageNews::Failed(e) => app_log::error(e),
                 PackageNews::Checked(found) => self.take_checked(found),
+                PackageNews::AppRelease { found, quiet } => self.take_app_release(found, quiet),
             }
         }
     }

@@ -315,6 +315,7 @@ impl UiLayer {
             mut export_pending,
             scripts,
             packages,
+            release,
             console_attention,
             command_ids,
             script_running,
@@ -496,6 +497,11 @@ impl UiLayer {
                 self.assistant.toggle();
             }
 
+            if menu.check_updates {
+                self.preferences
+                    .open_at(settings, unit, preferences::PrefGroup::Updates, 0);
+                commands.push(UiCommand::CheckForUpdates);
+            }
             if menu.show_about {
                 self.preferences
                     .open_at(settings, unit, preferences::PrefGroup::General, 1);
@@ -545,6 +551,7 @@ impl UiLayer {
                         nav_buttons,
                         scripts,
                         packages,
+                        release,
                     },
                 );
                 if let Some(request) = self.preferences.package_request.take() {
@@ -819,6 +826,7 @@ impl UiLayer {
                     nav_buttons,
                     scripts,
                     packages,
+                    release,
                 },
             );
             if let Some(request) = self.preferences.package_request.take() {

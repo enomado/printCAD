@@ -256,6 +256,37 @@ pub fn check(fetch: &dyn Fetch, package: &Package) -> Result<Option<Release>, St
     Ok(newer(&latest.tag, &source.tag, &package.manifest.version).then_some(latest))
 }
 
+/// A repository's latest release, whatever it carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Latest {
+    pub tag: String,
+    /// Its page on GitHub.
+    pub page: String,
+}
+
+/// The latest published release of `repo` (`owner/repo`).
+pub fn latest(fetch: &dyn Fetch, repo: &str) -> Result<Latest, String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let json = fetch.json(&url).map_err(|e| {
+        if e.ends_with("was not found") {
+            format!("{repo} has no published release")
+        } else {
+            e
+        }
+    })?;
+    let tag = json
+        .get("tag_name")
+        .and_then(Value::as_str)
+        .ok_or("the release has no tag")?
+        .to_string();
+    let page = json
+        .get("html_url")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("https://github.com/{repo}/releases/tag/{tag}"));
+    Ok(Latest { tag, page })
+}
+
 /// Whether release `latest` is newer than the one installed (`tag`, with
 /// the manifest's `version`): never when it is the installed tag, else by
 /// version number where both read as one (the tag's, or the manifest's
@@ -364,5 +395,42 @@ mod tests {
             !newer("v0.4.0", "v0.4.0", "0.1.0"),
             "the tag installed, whatever the manifest says"
         );
+    }
+
+    /// Answers every request with one JSON value.
+    struct Canned(Value);
+
+    impl Fetch for Canned {
+        fn json(&self, _url: &str) -> Result<Value, String> {
+            Ok(self.0.clone())
+        }
+        fn bytes(&self, url: &str, _limit: u64) -> Result<Vec<u8>, String> {
+            Err(format!("{url} was not found"))
+        }
+    }
+
+    #[test]
+    fn the_latest_release_reads_its_tag_and_page() {
+        let found = latest(
+            &Canned(serde_json::json!({
+                "tag_name": "v0.3.0",
+                "html_url": "https://github.com/acme/cam/releases/tag/v0.3.0",
+            })),
+            "acme/cam",
+        )
+        .unwrap();
+        assert_eq!(found.tag, "v0.3.0");
+        assert_eq!(
+            found.page,
+            "https://github.com/acme/cam/releases/tag/v0.3.0"
+        );
+        assert!(newer(&found.tag, "", "0.2.0"));
+        assert!(!newer(&found.tag, "", "0.3.0"));
+        assert!(
+            !newer(&found.tag, "", "0.4.0"),
+            "a build ahead of the release"
+        );
+        let bare = latest(&Canned(serde_json::json!({"tag_name": "v1.0"})), "acme/cam").unwrap();
+        assert_eq!(bare.page, "https://github.com/acme/cam/releases/tag/v1.0");
     }
 }

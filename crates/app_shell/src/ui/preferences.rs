@@ -186,6 +186,8 @@ pub struct PreferencesInputs<'a> {
     pub scripts: &'a [crate::script_library::ScriptEntry],
     /// The workbench packages found at start and since.
     pub packages: &'a [workbenches::PackageStatus],
+    /// What the last look for a newer printCAD found.
+    pub release: &'a crate::app::updates::ReleaseCheck,
 }
 
 /// The six ways the puck moves, in the order the device reports them: what
@@ -563,7 +565,7 @@ fn draw_content(
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
                         PrefGroup::Printing => printing_page(ui, state, &filter),
                         PrefGroup::Ai => ai_page(ui, state, &filter),
-                        PrefGroup::Updates => updates_page(ui),
+                        PrefGroup::Updates => updates_page(ui, state, inputs.release, &filter),
                     }
                 });
         });
@@ -672,7 +674,8 @@ fn reset_group(state: &mut PreferencesState) {
             state.draft.ai.rules = defaults.ai.rules;
         }
         PrefGroup::Packages => state.draft.packages = defaults.packages,
-        PrefGroup::Workbench(_) | PrefGroup::Updates => {}
+        PrefGroup::Updates => state.draft.updates = defaults.updates,
+        PrefGroup::Workbench(_) => {}
     }
 }
 
@@ -1261,7 +1264,7 @@ fn search_results(
                 PrefGroup::ImportExport => import_page(ui, state, filter),
                 PrefGroup::Printing => printing_page(ui, state, filter),
                 PrefGroup::Ai => ai_page(ui, state, filter),
-                PrefGroup::Updates => {}
+                PrefGroup::Updates => updates_page(ui, state, inputs.release, filter),
             }
         }
     }
@@ -1691,24 +1694,85 @@ fn packages_page(
     );
 }
 
-fn updates_page(ui: &mut Ui) {
+fn updates_page(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    release: &crate::app::updates::ReleaseCheck,
+    filter: &str,
+) {
+    use crate::app::updates::{RELEASES_PAGE, ReleaseCheck};
+    let checking = *release == ReleaseCheck::Checking;
+    let (status, color) = match release {
+        ReleaseCheck::NotChecked => ("Not looked yet".to_string(), TEXT3),
+        ReleaseCheck::Checking => ("Looking…".to_string(), TEXT3),
+        ReleaseCheck::Found {
+            tag, newer: true, ..
+        } => (format!("{tag} is out"), SUCCESS),
+        ReleaseCheck::Found { tag, .. } => (format!("Up to date ({tag})"), TEXT2),
+        ReleaseCheck::Failed(_) => ("Could not look".to_string(), WARNING),
+    };
+    let failure = match release {
+        ReleaseCheck::Failed(e) => Some(e.clone()),
+        _ => None,
+    };
+    let newer_page = match release {
+        ReleaseCheck::Found {
+            page, newer: true, ..
+        } => Some(page.clone()),
+        _ => None,
+    };
+    let check = std::cell::Cell::new(false);
     pref_group(
         ui,
         "Version",
         vec![
-            PrefRow::text("printCAD", env!("CARGO_PKG_VERSION").to_string()),
+            PrefRow::text("This build", env!("CARGO_PKG_VERSION").to_string()),
+            PrefRow::new("Latest release", |ui| {
+                if ui
+                    .add_enabled_ui(!checking, |ui| {
+                        ui_kit::widgets::small_secondary_button(ui, "Check now")
+                    })
+                    .inner
+                    .on_hover_text("Look at the releases on GitHub; nothing is downloaded")
+                    .clicked()
+                {
+                    check.set(true);
+                }
+                if let Some(page) = &newer_page {
+                    ui.hyperlink_to(RichText::new("Get it").font(sans(FONT_SM)), page);
+                }
+                let label = ui.label(RichText::new(&status).font(sans(FONT_SM)).color(color));
+                if let Some(e) = &failure {
+                    label.on_hover_text(e);
+                }
+                false
+            })
+            .hint("Updates are never installed by themselves"),
             PrefRow::new("Releases", |ui| {
                 ui.hyperlink_to(
                     RichText::new("github.com/gilbertorconde/printCAD/releases")
                         .font(sans(FONT_SM)),
-                    "https://github.com/gilbertorconde/printCAD/releases",
+                    RELEASES_PAGE,
                 );
                 false
             })
-            .hint("New builds are published there"),
+            .hint("Every build is published there"),
         ],
-        "",
+        filter,
     );
+    pref_group(
+        ui,
+        "Looking for updates",
+        vec![
+            PrefRow::toggle("Look at start", &mut state.draft.updates.check_at_start)
+                .hint("Once when printCAD opens; a newer release shows in the log"),
+        ],
+        filter,
+    );
+    // The page on screen with nothing looked at yet looks by itself.
+    if check.get() || (*release == ReleaseCheck::NotChecked && filter.is_empty()) {
+        state.package_request = Some(super::UiCommand::CheckForUpdates);
+    }
 }
 
 fn units_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {

@@ -46,6 +46,8 @@ pub struct MenuBarInputs<'a> {
 pub struct MenuBarResult {
     pub show_preferences: bool,
     pub show_about: bool,
+    /// Help › Check for updates: the Updates page, looking now.
+    pub check_updates: bool,
     pub open_palette: bool,
     pub toggle_console: bool,
     pub toggle_assistant: bool,
@@ -508,6 +510,9 @@ pub fn draw_menu_bar(
                     });
                     ui.menu_button(menu_title("Help"), |ui| {
                         fitted_menu(ui, |ui| {
+                            if item(ui, "Check for updates…", None) {
+                                result.check_updates = true;
+                            }
                             if item(ui, "About printCAD", None) {
                                 result.show_about = true;
                             }
