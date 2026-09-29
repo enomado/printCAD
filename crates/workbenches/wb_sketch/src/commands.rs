@@ -795,7 +795,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         // A view setting: nothing built from the sketch changes.
         "sketch.section_view" => {
-            feature.section_view = a.opt_bool("on")?.unwrap_or(true);
+            feature.set_section(a.opt_bool("on")?.unwrap_or(true));
             ctx.document
                 .update_feature_data(sketch_id, feature.to_json())
                 .map_err(|e| CommandError::failed(e.to_string()))?;

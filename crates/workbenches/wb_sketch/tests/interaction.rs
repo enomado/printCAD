@@ -4003,23 +4003,27 @@ fn section_view_cuts_the_scene_at_the_sketch_plane_and_stays_with_the_sketch() {
         ctx.active_document_object = h.active_object;
         h.wb.clip_plane(&ctx)
     };
-    assert_eq!(clip(&mut h), None);
-    assert!(!h.wb.tool_toggled("sketch.section_view"));
-    h.doc.clear_feature_dirty(id);
-    h.key(KeyCode::A, Some("sketch.section_view"));
+    // Editing cuts the scene at the sketch plane from the start.
     assert!(h.wb.tool_toggled("sketch.section_view"));
     // The camera looks down from +Z: what is above the XY plane goes.
     let [a, b, c, d] = clip(&mut h).expect("the sketch cuts the scene");
     let keeps = |z: f32| a * 2.0 + b * 3.0 + c * z + d >= 0.0;
     assert!(keeps(-4.0) && keeps(0.0) && !keeps(4.0));
+    h.doc.clear_feature_dirty(id);
+    h.key(KeyCode::A, Some("sketch.section_view"));
+    assert!(!h.wb.tool_toggled("sketch.section_view"));
+    assert_eq!(clip(&mut h), None);
     let stored = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    assert!(stored.section_view, "kept with the sketch");
+    assert!(
+        !stored.shows_section(true),
+        "switched off, kept with the sketch"
+    );
     assert!(
         !h.doc.dirty_features().contains(&id),
         "nothing built from it changes"
     );
     h.key(KeyCode::A, Some("sketch.section_view"));
-    assert_eq!(clip(&mut h), None);
+    assert!(clip(&mut h).is_some());
 }
 
 /// Cancel puts the sketch back as the editing session found it, and says

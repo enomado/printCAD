@@ -313,6 +313,9 @@ pub struct SketchOptions {
     pub spline_comb: bool,
     /// Splines mark their knots.
     pub spline_knots: bool,
+    /// Editing a sketch cuts the view at its plane unless the sketch was
+    /// set otherwise.
+    pub section_on_open: bool,
 }
 
 impl Default for SketchOptions {
@@ -333,6 +336,7 @@ impl Default for SketchOptions {
             dimension_labels: glyphs::DimensionLabels::Value,
             spline_comb: false,
             spline_knots: false,
+            section_on_open: true,
         }
     }
 }
@@ -1726,17 +1730,18 @@ impl SketchWorkbench {
         else {
             return InputResult::ignored();
         };
-        feature.section_view = !feature.section_view;
-        self.section_view = feature.section_view;
+        let on = !feature.shows_section(self.options.section_on_open);
+        feature.set_section(on);
+        self.section_view = on;
         ctx.record(
             "sketch.section_view",
             commands::args(serde_json::json!({
                 "sketch": sketch_id.0.to_string(),
-                "on": feature.section_view,
+                "on": on,
             })),
             serde_json::Value::Null,
         );
-        ctx.log_info(if feature.section_view {
+        ctx.log_info(if on {
             "Section view: the scene is cut at the sketch plane"
         } else {
             "Section view off"
@@ -3355,6 +3360,8 @@ impl Workbench for SketchWorkbench {
                 .hint("A new dimension opens its value editor, by its label"),
                 PrefRow::toggle("Snap to objects", &mut snap)
                     .hint("Endpoints, midpoints and intersections attract the cursor"),
+                PrefRow::toggle("Section view on open", &mut self.options.section_on_open)
+                    .hint("Editing a sketch cuts the view at its plane; Section view turns it off for one sketch"),
             ],
             filter,
         );
@@ -3465,7 +3472,7 @@ impl Workbench for SketchWorkbench {
                     self.last_solve = None;
                     self.last_diagnosis = None;
                 }
-                self.section_view = feature.section_view;
+                self.section_view = feature.shows_section(self.options.section_on_open);
                 let selected: Vec<Uuid> = self.selected.iter().copied().collect();
                 self.internal_target = !internal::curves_of(&feature.sketch, &selected).is_empty();
                 constrain::SelectionShape::picked_in(
@@ -3688,7 +3695,7 @@ impl Workbench for SketchWorkbench {
     /// the sketch lies on stays.
     fn clip_plane(&self, ctx: &WorkbenchRuntimeContext) -> Option<[f32; 4]> {
         let feature = self.get_active_sketch(ctx)?;
-        if !feature.section_view {
+        if !feature.shows_section(self.options.section_on_open) {
             return None;
         }
         Some(section_equation(&feature.plane, ctx.camera_position))
@@ -6198,6 +6205,24 @@ mod section_view {
         let slanted = SketchPlane::from_frame([0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [1.0, 0.0, -1.0]);
         let eq = section_equation(&slanted, [30.0, 0.0, 30.0]);
         assert!(keeps(eq, [-1.0, 7.0, -1.0]) && !keeps(eq, [1.0, -7.0, 1.0]));
+    }
+
+    #[test]
+    fn a_sketch_is_cut_on_open_unless_it_was_switched_off() {
+        let mut feature = SketchFeature::new(sketch::Sketch::new("Sketch"), SketchPlane::default());
+        assert!(feature.shows_section(true), "the setting cuts a new sketch");
+        assert!(!feature.shows_section(false));
+        feature.set_section(false);
+        assert!(!feature.shows_section(true), "switched off, it stays off");
+        feature.set_section(true);
+        assert!(
+            feature.shows_section(false),
+            "switched on, it holds without the setting"
+        );
+        // Its choice survives a save.
+        feature.set_section(false);
+        let back = SketchFeature::from_json(&feature.to_json()).unwrap();
+        assert!(!back.shows_section(true));
     }
 }
 

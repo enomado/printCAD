@@ -34,6 +34,10 @@ pub struct SketchFeature {
     /// plane is cut away.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub section_view: bool,
+    /// The section view was switched off for this sketch, which keeps it
+    /// off when editing would cut the view by itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub section_off: bool,
 }
 
 /// A sketch attached by a mode, as a datum plane would be.
@@ -244,6 +248,19 @@ impl DatumSupport {
 }
 
 impl SketchFeature {
+    /// Whether editing the sketch cuts the view at its plane: its own
+    /// choice when it made one, else `on_open`, the Sketcher's setting.
+    pub fn shows_section(&self, on_open: bool) -> bool {
+        self.section_view || (on_open && !self.section_off)
+    }
+
+    /// The sketch's own choice of section view, which holds whatever the
+    /// setting says.
+    pub fn set_section(&mut self, on: bool) {
+        self.section_view = on;
+        self.section_off = !on;
+    }
+
     pub fn new(sketch: Sketch, plane: SketchPlane) -> Self {
         Self {
             sketch,
@@ -253,6 +270,7 @@ impl SketchFeature {
             attached: None,
             generator: None,
             section_view: false,
+            section_off: false,
         }
     }
 
@@ -265,6 +283,7 @@ impl SketchFeature {
             attached: None,
             generator: None,
             section_view: false,
+            section_off: false,
         }
     }
 }
