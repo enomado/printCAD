@@ -1,7 +1,7 @@
 //! Lua scripts run against the application's commands.
 //!
-//! A script reaches every command through the `pc` table: `pc.part.pad{
-//! sketch = s, length = 20 }` calls the command `part.pad` with those named
+//! A script reaches every command through the `pc` table: `pc.design.pad{
+//! sketch = s, length = 20 }` calls the command `design.pad` with those named
 //! arguments and answers what it answers. Lua tables and the commands' JSON
 //! values convert both ways; ids are strings. A command that fails raises a
 //! Lua error, which `pcall` catches.
@@ -328,7 +328,7 @@ mod tests {
     impl Host for Recorder {
         fn commands(&self) -> Vec<CommandSpec> {
             vec![
-                CommandSpec::new("part.pad", "Pad a sketch")
+                CommandSpec::new("design.pad", "Pad a sketch")
                     .param("sketch", ParamKind::String, "")
                     .optional("length", ParamKind::Number, "")
                     .optional("items", ParamKind::List, ""),
@@ -339,7 +339,7 @@ mod tests {
         fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
             self.calls.push((id.to_string(), args.clone()));
             match id {
-                "part.pad" => match args.get("length").and_then(|v| v.as_f64()) {
+                "design.pad" => match args.get("length").and_then(|v| v.as_f64()) {
                     Some(l) if l <= 0.0 => Err(CommandError::bad("length", "must be positive")),
                     _ => Ok(json!("pad-1")),
                 },
@@ -354,14 +354,14 @@ mod tests {
         let mut engine = ScriptEngine::new();
         let mut host = Recorder::default();
         let out = engine.run_script(
-            r#"local id = pc.part.pad{sketch = "s-1", length = 20}
+            r#"local id = pc.design.pad{sketch = "s-1", length = 20}
                print("made", id)"#,
             "test",
             &mut host,
         );
         assert_eq!(out.error, None);
         assert_eq!(out.printed, ["made\tpad-1"]);
-        assert_eq!(host.calls[0].0, "part.pad");
+        assert_eq!(host.calls[0].0, "design.pad");
         assert_eq!(host.calls[0].1["length"], json!(20));
         assert_eq!(host.calls[0].1["sketch"], json!("s-1"));
     }
@@ -372,7 +372,7 @@ mod tests {
         let mut engine = ScriptEngine::new();
         let mut host = Recorder::default();
         let out = engine.run_script(
-            r#"pc.part.pad{sketch = "s-1", items = {}}"#,
+            r#"pc.design.pad{sketch = "s-1", items = {}}"#,
             "test",
             &mut host,
         );
@@ -401,18 +401,18 @@ mod tests {
         let mut engine = ScriptEngine::new();
         let mut host = Recorder::default();
         let out = engine.run_script(
-            r#"pc.part.pad{sketch = "s", length = -1}
+            r#"pc.design.pad{sketch = "s", length = -1}
                print("not reached")"#,
             "test",
             &mut host,
         );
         assert_eq!(
             out.error.as_deref(),
-            Some("part.pad: argument `length` must be positive")
+            Some("design.pad: argument `length` must be positive")
         );
         assert!(out.printed.is_empty());
         let caught = engine.eval_line(
-            r#"select(2, pcall(pc.part.pad, {sketch = "s", length = 0}))"#,
+            r#"select(2, pcall(pc.design.pad, {sketch = "s", length = 0}))"#,
             &mut host,
         );
         assert!(
@@ -442,7 +442,7 @@ mod tests {
         let mut engine = ScriptEngine::new();
         let mut host = Recorder::default();
         engine.eval_line(
-            "pc.part.pad{sketch = \"s\", items = array(), more = array(1, 2)}",
+            "pc.design.pad{sketch = \"s\", items = array(), more = array(1, 2)}",
             &mut host,
         );
         assert_eq!(host.calls[0].1["items"], json!([]));
@@ -453,10 +453,10 @@ mod tests {
     fn help_lists_the_commands() {
         let mut engine = ScriptEngine::new();
         let mut host = Recorder::default();
-        let out = engine.eval_line("help('part')", &mut host);
+        let out = engine.eval_line("help('design')", &mut host);
         assert_eq!(
             out.printed,
-            ["pc.part.pad{sketch, length?, items?}  Pad a sketch"]
+            ["pc.design.pad{sketch, length?, items?}  Pad a sketch"]
         );
     }
 

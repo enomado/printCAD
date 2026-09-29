@@ -534,6 +534,7 @@ impl PrintCadApp {
                 }
                 BENCH_TOOL_FRAME => {
                     if let Ok(tool) = std::env::var("PRINTCAD_BENCH_TOOL") {
+                        let tool = core_document::renamed::command(&tool).into_owned();
                         tracing::info!(target: "printcad.frame", "bench tool {tool}");
                         self.session.active_tool.active_ids.insert(tool);
                     }

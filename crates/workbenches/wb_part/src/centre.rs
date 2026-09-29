@@ -86,7 +86,7 @@ fn probe_args(probe: &FaceProbe) -> (Value, Value) {
     (json!(probe.point), json!(probe.normal))
 }
 
-/// `part.centre_line`.
+/// `design.centre_line`.
 pub(crate) fn command(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let body = BodyId(a.id("body")?);
     if !ctx.document.bodies().iter().any(|b| b.id == body) {
@@ -170,7 +170,7 @@ impl PartDesignWorkbench {
                 let (from_point, from_normal) = probe_args(&first.probe);
                 let (to_point, to_normal) = probe_args(&picked.probe);
                 ctx.record(
-                    "part.centre_line",
+                    "design.centre_line",
                     crate::commands::object(json!({
                         "body": body.0.to_string(),
                         "from_point": from_point,

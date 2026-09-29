@@ -312,7 +312,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
     let base = doc
         .add_feature_in_body(cylinder(2.0, 10.0), "Cylinder".into(), Some(body))
         .unwrap();
-    // The rim as a pick brings it: its circle known, as `part.datum` and
+    // The rim as a pick brings it: its circle known, as `design.datum` and
     // the task fill it in from the body's solid.
     let axis = doc
         .add_feature_in_body(

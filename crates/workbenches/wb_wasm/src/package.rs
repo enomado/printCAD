@@ -312,7 +312,7 @@ helper = true
     #[test]
     fn a_manifest_that_would_clash_or_cannot_run_is_refused() {
         let refused = |from: &str, to: &str| parse_manifest(&GOOD.replace(from, to)).unwrap_err();
-        assert!(refused("acme.cam.pocket", "part.pocket").contains("must start with"));
+        assert!(refused("acme.cam.pocket", "design.pocket").contains("must start with"));
         assert!(refused("@0.1", "@0.2").contains("speaks"));
         assert!(refused("id = \"acme.cam\"", "id = \"Acme CAM\"").contains("not a package id"));
         assert!(

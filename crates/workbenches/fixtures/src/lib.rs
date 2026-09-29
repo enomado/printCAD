@@ -179,7 +179,7 @@ mod tests {
             let kind = opened.workbench_id.as_str();
             match scene {
                 Scene::Sketch => assert_eq!(kind, "wb.sketch"),
-                _ => assert_eq!(kind, "wb.part"),
+                _ => assert_eq!(kind, "wb.design"),
             }
         }
         assert_eq!(Scene::named("pad"), Scene::Pad);

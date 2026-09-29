@@ -105,7 +105,7 @@ fn padded_tube(host: &mut Benches) -> core_document::BodyId {
         local s = pc.sketch.new{plane = "XY"}
         pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 3}
         pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 2}
-        pc.part.pad{sketch = s, length = 20}
+        pc.design.pad{sketch = s, length = 20}
         "#,
         &[],
     );
@@ -127,7 +127,7 @@ fn a_script_measures_a_padded_tubes_centre_line() {
         &mut host,
         &format!(
             r#"
-            local c = pc.part.centre_line{{body = "{}",
+            local c = pc.design.centre_line{{body = "{}",
                 from_point = {{2.5, 0, 0}}, from_normal = {{0, 0, -1}},
                 to_point = {{0, 2.5, 20}}, to_normal = {{0, 0, 1}}}}
             length, straight, first_z = c.length, c.straight and 1 or 0, c.points[1][3]
@@ -168,7 +168,7 @@ fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
     });
     bench.on_input(
         &WorkbenchInputEvent::ToolActivated,
-        Some("part.centre_line"),
+        Some("design.centre_line"),
         &mut ctx,
     );
     assert_eq!(
@@ -188,7 +188,7 @@ fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
     bench.on_frame(0.016, &mut ctx);
     let recorded = HookOutcome::take(&mut ctx).recorded;
     assert_eq!(recorded.len(), 1, "{:?}", ctx.drain_logs());
-    assert_eq!(recorded[0].id, "part.centre_line");
+    assert_eq!(recorded[0].id, "design.centre_line");
     let length = recorded[0].result["length"].as_f64().unwrap();
     assert!((length - 20.0).abs() < 1e-3, "{length}");
 

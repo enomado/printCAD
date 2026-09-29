@@ -219,7 +219,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Answer the thread's calls until the job finishes: `part.pad` gives
+    /// Answer the thread's calls until the job finishes: `design.pad` gives
     /// an id, anything else is unknown. What was printed, and the output.
     fn serve(thread: &mut ScriptThread) -> (Vec<String>, RunOutput) {
         let mut printed = Vec::new();
@@ -229,7 +229,7 @@ mod tests {
                 Event::Printed(line) => printed.push(line),
                 Event::Call { id, reply, .. } => {
                     let _ = reply.send(match id.as_str() {
-                        "part.pad" => Ok(json!("pad-1")),
+                        "design.pad" => Ok(json!("pad-1")),
                         _ => Err(CommandError::Unknown(id)),
                     });
                 }
@@ -243,7 +243,7 @@ mod tests {
         let mut thread = ScriptThread::spawn(|| {});
         thread.submit(
             Job::Script {
-                source: "print(pc.part.pad{length = 2})".into(),
+                source: "print(pc.design.pad{length = 2})".into(),
                 name: "t.lua".into(),
             },
             Vec::new(),
@@ -266,7 +266,7 @@ mod tests {
         let args = json!({"length": 2}).as_object().unwrap().clone();
         thread.submit(
             Job::Command {
-                id: "part.pad".into(),
+                id: "design.pad".into(),
                 args,
             },
             Vec::new(),

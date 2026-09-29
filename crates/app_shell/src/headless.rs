@@ -225,6 +225,8 @@ impl Headless {
     }
 
     fn call_one(&mut self, id: &str, args: CommandArgs) -> CommandResult {
+        // A script may use a command's former name.
+        let id = &*core_document::renamed::command(id);
         let spec = scripting::Host::commands(self)
             .into_iter()
             .find(|c| c.id == id)
@@ -471,7 +473,7 @@ mod tests {
             r#"
             local s = pc.sketch.new{plane = "XY"}
             pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            pc.part.pad{sketch = s, length = tonumber(arg[1])}
+            pc.design.pad{sketch = s, length = tonumber(arg[1])}
             assert(#pc.doc.rebuild() == 0, "the pad builds")
             local body = pc.doc.bodies()[1].id
             local m = pc.doc.measure{body = body}
@@ -517,7 +519,7 @@ mod tests {
             assert(math.abs(wall.value - 1.2) < 1e-9, wall.text)
             local s = pc.sketch.new{plane = "XY"}
             pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            local pad = pc.part.pad{sketch = s, length = 5}
+            local pad = pc.design.pad{sketch = s, length = 5}
             local body = pc.doc.feature{id = pad}.body
             pc.doc.set_formula{id = pad, parameter = "length", formula = "Printer.wall * 10"}
             local height = function()
@@ -574,7 +576,7 @@ mod tests {
             pc.var.set{set = "Size", name = "height", formula = "5 mm"}
             local s = pc.sketch.new{plane = "XY"}
             pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            local pad = pc.part.pad{sketch = s, length = 1}
+            local pad = pc.design.pad{sketch = s, length = 1}
             local body = pc.doc.feature{id = pad}.body
             pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.height"}
             pc.config.new{name = "Small"}
@@ -625,7 +627,7 @@ mod tests {
             pc.var.set{set = "Size", name = "height", formula = "5 mm"}
             local s = pc.sketch.new{plane = "XY"}
             pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            local pad = pc.part.pad{sketch = s, length = 1}
+            local pad = pc.design.pad{sketch = s, length = 1}
             pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.height"}
             pc.config.new{name = "Small"}
             pc.config.new{name = "Large two"}

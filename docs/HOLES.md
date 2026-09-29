@@ -2,7 +2,7 @@
 
 Design's Hole drills at every circle centre and lone point of a
 sketch. The task panel sets the rows below; a script sets the same fields
-by name (`pc.part.hole`, `pc.part.set`).
+by name (`pc.design.hole`, `pc.design.set`).
 
 ## Size
 
@@ -85,7 +85,7 @@ hole.
 ## Scripts
 
 ```lua
-pc.part.hole{
+pc.design.hole{
   sketch = s,
   depth = 8,
   thread = {standard = "Unc", size = "1/4-20", class = "3B", left_handed = false},

@@ -1812,7 +1812,7 @@ impl PartFeature {
 
 impl WorkbenchFeature for PartFeature {
     fn workbench_id() -> WorkbenchId {
-        WorkbenchId::from("wb.part")
+        WorkbenchId::from("wb.design")
     }
 
     fn to_json(&self) -> serde_json::Value {

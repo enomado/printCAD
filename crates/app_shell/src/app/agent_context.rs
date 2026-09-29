@@ -425,41 +425,41 @@ mod tests {
 
     #[test]
     fn a_call_of_printcad_s_tools_says_what_it_does() {
-        let about = |id: &str| (id == "part.pad").then(|| "Pad a sketch".to_string());
+        let about = |id: &str| (id == "design.pad").then(|| "Pad a sketch".to_string());
         let label = |title: &str, input: Value| tool_label(title, Some(&input), &about);
         // The agent's own words come first.
         assert_eq!(
             label(
                 "mcp__printcad__lua",
-                json!({"source": "pc.part.pad{}", "description": "Pad the base"})
+                json!({"source": "pc.design.pad{}", "description": "Pad the base"})
             )
             .as_deref(),
             Some("Pad the base")
         );
         // Else what it runs.
         assert_eq!(
-            label("mcp__printcad__call", json!({"command": "part.pad"})).as_deref(),
-            Some("Pad a sketch (part.pad)")
+            label("mcp__printcad__call", json!({"command": "design.pad"})).as_deref(),
+            Some("Pad a sketch (design.pad)")
         );
         assert_eq!(
             label(
                 "lua (printcad MCP Server)",
-                json!({"source": "-- Cut the bolt holes\npc.part.pocket{}"})
+                json!({"source": "-- Cut the bolt holes\npc.design.pocket{}"})
             )
             .as_deref(),
             Some("Cut the bolt holes")
         );
         assert_eq!(
-            label("lua", json!({"source": "local p = pc.part.pad{}"})).as_deref(),
-            Some("Pad a sketch (part.pad)")
+            label("lua", json!({"source": "local p = pc.design.pad{}"})).as_deref(),
+            Some("Pad a sketch (design.pad)")
         );
         assert_eq!(
             label(
                 "mcp__printcad__lua",
-                json!({"source": "pc.sketch.new{} pc.sketch.draw{} pc.part.pad{} pc.part.fillet{}"})
+                json!({"source": "pc.sketch.new{} pc.sketch.draw{} pc.design.pad{} pc.design.fillet{}"})
             )
             .as_deref(),
-            Some("Script: sketch.new, sketch.draw, part.pad, …")
+            Some("Script: sketch.new, sketch.draw, design.pad, …")
         );
         assert_eq!(
             label("mcp__printcad__view", json!({})).as_deref(),

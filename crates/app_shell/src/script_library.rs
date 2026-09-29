@@ -25,7 +25,7 @@ pub const TEMPLATE: &str = "\
 
 local s = pc.sketch.new{plane = \"XY\"}
 pc.sketch.rect{sketch = s, x = -10, y = -10, width = 20, height = 20}
-pc.part.pad{sketch = s, length = 10}
+pc.design.pad{sketch = s, length = 10}
 pc.doc.rebuild()
 ";
 

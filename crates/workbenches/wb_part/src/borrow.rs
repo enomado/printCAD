@@ -59,7 +59,7 @@ fn then_rows(then: &BodyPlacement, rows: [[f64; 4]; 4]) -> [[f64; 4]; 4] {
 /// The borrow `id` is, when it is one.
 pub(crate) fn borrow_of(document: &Document, id: FeatureId) -> Option<Borrow> {
     let node = document.get_feature_meta(id)?;
-    if node.workbench_id.as_str() != "wb.part" {
+    if node.workbench_id.as_str() != "wb.design" {
         return None;
     }
     match PartFeature::from_json(document.feature_values(id)?).ok()? {
@@ -1323,7 +1323,7 @@ mod tests {
         let borrowed = id_of(
             &call(
                 &mut doc,
-                "part.borrow",
+                "design.borrow",
                 json!({"body": b.0.to_string(), "sketch": sketch.0.to_string()}),
             )
             .unwrap(),
@@ -1335,7 +1335,7 @@ mod tests {
 
         call(
             &mut doc,
-            "part.freeze",
+            "design.freeze",
             json!({"feature": borrowed.0.to_string()}),
         )
         .unwrap();
@@ -1358,7 +1358,7 @@ mod tests {
 
         call(
             &mut doc,
-            "part.freeze",
+            "design.freeze",
             json!({"feature": borrowed.0.to_string(), "frozen": false}),
         )
         .unwrap();
@@ -1375,26 +1375,26 @@ mod tests {
         let (a, sketch, b) = two_bodies(&mut doc);
         let own = call(
             &mut doc,
-            "part.borrow",
+            "design.borrow",
             json!({"body": a.0.to_string(), "sketch": sketch.0.to_string()}),
         );
         assert!(own.is_err(), "its own sketch needs no borrowing");
         let itself = call(
             &mut doc,
-            "part.borrow",
+            "design.borrow",
             json!({"body": b.0.to_string(), "from": b.0.to_string(), "faces": []}),
         );
         assert!(itself.is_err());
         let both = call(
             &mut doc,
-            "part.borrow",
+            "design.borrow",
             json!({"body": b.0.to_string(), "sketch": sketch.0.to_string(), "from": a.0.to_string()}),
         );
         assert!(both.is_err());
         // Faces are taken out of a solid by the kernel; A has none yet.
         let frozen_faces = call(
             &mut doc,
-            "part.borrow",
+            "design.borrow",
             json!({"body": b.0.to_string(), "from": a.0.to_string(), "frozen": true,
                 "faces": [{"point": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0]}]}),
         );
@@ -1406,7 +1406,7 @@ mod tests {
         );
         let made = call(
             &mut doc,
-            "part.borrow",
+            "design.borrow",
             json!({"body": b.0.to_string(), "from": a.0.to_string(),
                 "faces": [{"point": [1.0, 2.0, 3.0], "normal": [0.0, 0.0, 1.0]}],
                 "edges": [{"point": {"x": 1.0, "y": 2.0, "z": 0.0}, "direction": [1.0, 0.0, 0.0]}]}),
@@ -1471,7 +1471,7 @@ mod tests {
                 &core_document::WorkbenchInputEvent::KeyPress {
                     key: core_document::KeyCode::A,
                 },
-                Some("part.borrow"),
+                Some("design.borrow"),
                 &mut ctx,
             );
             ctx.active_document_object.unwrap()
@@ -1502,11 +1502,11 @@ mod tests {
             output.textures_delta.clear();
         }
         assert_eq!(recorded.len(), 1, "{recorded:?}");
-        assert_eq!(recorded[0].id, "part.borrow");
+        assert_eq!(recorded[0].id, "design.borrow");
         let mut replay = before;
         let again = call(
             &mut replay,
-            "part.borrow",
+            "design.borrow",
             Value::Object(recorded[0].args.clone()),
         )
         .unwrap();

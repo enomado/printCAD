@@ -167,6 +167,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `execute_solid_chain_probing`); the answers are derived state
   (`Document::store_probe_answers`) that `datum::derive` folds into the
   datum's values, so it and what is built on it follow the solid).
+- `core_document::renamed`: ids that were renamed (`wb.part` is
+  `wb.design`, `part.*` commands and tools are `design.*`). `WorkbenchId`
+  deserializes old ids as new, so documents and op logs read either;
+  `DocumentService::command` finds a command by its old name, and the
+  app's call intakes (script calls, agent checks, headless) turn old names
+  into new before looking further; `UserSettings::rename_ids` moves bench
+  settings, key bindings and toolbar groups at load.
 - `doc_server`: the document server: `printcad-serverd` binary +
   `DaemonClient`/`DirectFiles` implementations of the `DocumentServer` trait;
   length-prefixed JSON frames with the container bytes beside them, never

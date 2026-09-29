@@ -54,7 +54,7 @@ fn name_field_id(feature: FeatureId) -> egui::Id {
 pub(crate) fn task_kind(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<TaskKind> {
     let node = ctx.document.get_feature_meta(id)?;
     match node.workbench_id.as_str() {
-        "wb.part" => Some(TaskKind::Part),
+        "wb.design" => Some(TaskKind::Part),
         "core.datum" => Some(TaskKind::Datum),
         _ => None,
     }

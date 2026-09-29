@@ -5,7 +5,7 @@
 //! The tool puts the sketch in the selected body, on the picked face
 //! centred where it was picked, else on a base plane (the shaft stands on
 //! XZ, so it turns about Z), and opens it, where its panel sets the
-//! numbers. `part.gear`, `part.sprocket` and `part.shaft` make one from a
+//! numbers. `design.gear`, `design.sprocket` and `design.shaft` make one from a
 //! script.
 
 use core_document::{
@@ -21,14 +21,14 @@ use crate::PartDesignWorkbench;
 
 /// The generators, by variant: (variant, label, icon, command).
 const GENERATORS: &[(&str, &str, &str, &str)] = &[
-    ("gear", "Involute gear", "involute-gear", "part.gear"),
-    ("sprocket", "Sprocket", "sprocket", "part.sprocket"),
-    ("shaft", "Shaft", "revolution", "part.shaft"),
+    ("gear", "Involute gear", "involute-gear", "design.gear"),
+    ("sprocket", "Sprocket", "sprocket", "design.sprocket"),
+    ("shaft", "Shaft", "revolution", "design.shaft"),
 ];
 
 /// The toolbar's Generators dropdown.
 pub(crate) fn tool() -> ToolDescriptor {
-    ToolDescriptor::new_action("part.generator", "Generators", Some("generators"))
+    ToolDescriptor::new_action("design.generator", "Generators", Some("generators"))
         .icon("involute-gear")
         .variants(
             GENERATORS
@@ -38,23 +38,23 @@ pub(crate) fn tool() -> ToolDescriptor {
         )
 }
 
-/// Register `part.gear`, `part.sprocket` and `part.shaft`.
+/// Register `design.gear`, `design.sprocket` and `design.shaft`.
 pub(crate) fn register(context: &mut WorkbenchContext) {
     let fields = [
         (
-            "part.gear",
+            "design.gear",
             "Make an involute spur gear's profile, outer or internal (ring): a sketch to pad",
             "module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in \
              modules), backlash, root_fillet (in modules), bore, internal (true for a ring), \
              rim (a ring's outside diameter)",
         ),
         (
-            "part.sprocket",
+            "design.sprocket",
             "Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad",
             "pitch, roller (the roller's diameter), teeth, bore",
         ),
         (
-            "part.shaft",
+            "design.shaft",
             "Make a stepped shaft's half section: a sketch to revolve about its vertical axis",
             "sections = {{length, diameter, chamfer, fillet}, ...}, start_chamfer, and \
              loads = {bearings = {a, b}, forces = {{at, force, angle_deg}, ...}, torque (N·m), \
@@ -175,7 +175,7 @@ pub(crate) fn insert(ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResu
     InputResult::consumed()
 }
 
-/// Run `part.gear`, `part.sprocket` or `part.shaft`.
+/// Run `design.gear`, `design.sprocket` or `design.shaft`.
 pub(crate) fn command(
     id: &str,
     args: &CommandArgs,
@@ -265,7 +265,7 @@ mod tests {
         let body = doc.create_body(None);
         let id = run(
             &mut doc,
-            "part.gear",
+            "design.gear",
             json!({"body": body.0.to_string(), "teeth": 31, "module": 1.5}),
         )
         .unwrap();
@@ -278,7 +278,12 @@ mod tests {
         assert!(!feature.sketch.geometry.is_empty());
         assert_eq!(doc.get_feature_meta(id).unwrap().name, "Gear");
 
-        let shaft = run(&mut doc, "part.shaft", json!({"body": body.0.to_string()})).unwrap();
+        let shaft = run(
+            &mut doc,
+            "design.shaft",
+            json!({"body": body.0.to_string()}),
+        )
+        .unwrap();
         let shaft = FeatureId(uuid::Uuid::parse_str(shaft.as_str().unwrap()).unwrap());
         let feature = SketchFeature::from_json(doc.get_feature_data(shaft).unwrap()).unwrap();
         assert_eq!(feature.plane.normal, SketchPlane::xz().normal);
@@ -287,7 +292,7 @@ mod tests {
     #[test]
     fn a_field_the_generator_lacks_is_refused() {
         let mut doc = Document::new("g");
-        let err = run(&mut doc, "part.sprocket", json!({"module": 2})).unwrap_err();
+        let err = run(&mut doc, "design.sprocket", json!({"module": 2})).unwrap_err();
         assert!(err.to_string().contains("module"), "{err}");
     }
 }

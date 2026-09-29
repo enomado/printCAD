@@ -627,7 +627,7 @@ fn placing(spec: CommandSpec) -> CommandSpec {
          on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, \
          {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces \
          and edges on the body's own solid; the sketch follows what it stands on. \
-         part.datum makes the same from plainer arguments, and `on` takes that datum",
+         design.datum makes the same from plainer arguments, and `on` takes that datum",
     )
     .optional(
         "attachment_offset",

@@ -36,7 +36,7 @@ fn circle(cx: f32, cy: f32, r: f32) -> SketchFeature {
 }
 
 /// A pad or a pocket of `sketch` with every other field at its default,
-/// then `fields` set the way `part.set` sets them.
+/// then `fields` set the way `design.set` sets them.
 fn extrude(kind: &str, sketch: FeatureId, fields: serde_json::Value) -> PartFeature {
     let length = if kind == "Pad" { "length" } else { "depth" };
     let mut value = serde_json::json!({ kind: {
@@ -132,7 +132,7 @@ fn borrow(doc: &mut Document, body: BodyId, source: BorrowSource) -> FeatureId {
     .unwrap()
 }
 
-/// Freeze the borrow `id` as it is now, the way `part.freeze` does.
+/// Freeze the borrow `id` as it is now, the way `design.freeze` does.
 fn freeze(doc: &mut Document, id: FeatureId) {
     let body = doc.get_feature_meta(id).unwrap().body.unwrap();
     let Ok(PartFeature::Borrow { source, .. }) =

@@ -881,6 +881,8 @@ impl PrintCadApp {
                 }
             }
             Event::Call { id, args, reply } => {
+                // A script or recording may use a command's former name.
+                let id = core_document::renamed::command(&id).into_owned();
                 if let Some(RunKind::Agent { single, .. }) = &kind
                     && let Err(refused) = self.agent_may_run(&id, *single)
                 {

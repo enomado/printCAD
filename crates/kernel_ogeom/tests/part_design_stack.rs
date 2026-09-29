@@ -2147,7 +2147,7 @@ fn block() -> (Document, BodyId) {
     (doc, body)
 }
 
-/// Set fields of a pad or pocket the way `part.set` does.
+/// Set fields of a pad or pocket the way `design.set` does.
 fn with(mut feature: PartFeature, fields: serde_json::Value) -> PartFeature {
     use core_document::WorkbenchFeature;
     let mut value = feature.to_json();

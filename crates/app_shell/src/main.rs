@@ -98,13 +98,19 @@ fn main() -> Result<()> {
     ));
 
     let settings_store = SettingsStore::new().context("settings store init failed")?;
-    let user_settings = match settings_store.load() {
+    let mut user_settings = match settings_store.load() {
         Ok(settings) => settings,
         Err(err) => {
             app_log::warn(format!("Using default settings (failed to load): {err}"));
             UserSettings::default()
         }
     };
+    // Settings written under ids that were renamed since.
+    user_settings.rename_ids(&settings::Renames {
+        workbench: &|id| core_document::renamed::workbench(id).to_owned(),
+        command: &|id| core_document::renamed::command(id).into_owned(),
+        group: &|id| core_document::renamed::workbench_prefixed(id).into_owned(),
+    });
 
     // A script run from the command line needs no window.
     let words: Vec<String> = std::env::args().skip(1).collect();

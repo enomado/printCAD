@@ -126,7 +126,7 @@ fn stem(call: &Recorded) -> String {
         "sketch.new" | "sketch.import_dxf" => "sketch",
         "doc.new_body" => "body",
         "sketch.draw" => from_arg("tool").unwrap_or("shape"),
-        "part.datum" => from_arg("kind").unwrap_or("datum"),
+        "design.datum" => from_arg("kind").unwrap_or("datum"),
         "sketch.constrain" => from_arg("kind").unwrap_or("constraint"),
         id => id.rsplit('.').next().unwrap_or("result"),
     };
@@ -236,12 +236,12 @@ mod tests {
             json!([]),
         ));
         rec.push(&call(
-            "part.pad",
+            "design.pad",
             json!({"sketch": S, "length": 12.5}),
             json!(PAD),
         ));
         rec.push(&call(
-            "part.set",
+            "design.set",
             json!({"feature": PAD, "reversed": true}),
             json!(null),
         ));
@@ -251,8 +251,8 @@ mod tests {
              sketch1 = pc.sketch.new{{plane = \"XY\"}}\n\
              line1 = pc.sketch.draw{{points = {{{{0, 0}}, {{1.99997, 0.1}}}}, sketch = sketch1, tool = \"sketch.line\"}}\n\
              pc.sketch.constrain{{items = {{line1.elements[2], \"{OLD}\"}}, kind = \"horizontal\", sketch = sketch1}}\n\
-             pad1 = pc.part.pad{{length = 12.5, sketch = sketch1}}\n\
-             pc.part.set{{feature = pad1, reversed = true}}\n"
+             pad1 = pc.design.pad{{length = 12.5, sketch = sketch1}}\n\
+             pc.design.set{{feature = pad1, reversed = true}}\n"
         );
         assert_eq!(script, expected);
     }

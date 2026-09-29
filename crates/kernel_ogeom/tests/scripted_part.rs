@@ -30,11 +30,63 @@ impl scripting::Host for Benches {
             .command(id)
             .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
         spec.check(&args)?;
+        // The command by the name it has now, whatever the script called it.
+        let id = spec.id.clone();
         let wb = self.registry.workbench_mut(&bench).unwrap();
         let mut ctx =
             WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        wb.run_command(id, &args, &mut ctx)
+        wb.run_command(&id, &args, &mut ctx)
     }
+}
+
+/// A script written before the Design workbench was renamed, and the
+/// document it made, still work: the old command names run the new
+/// commands, and the old feature kind reads as the new one.
+#[test]
+fn old_command_names_and_feature_kinds_still_work() {
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .unwrap();
+    let mut host = Benches {
+        registry,
+        document: Document::new("old"),
+    };
+    let out = ScriptEngine::new().run_script(
+        r#"
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+        local pad = pc.part.pad{sketch = s, length = 4}
+        pc.part.set{feature = pad, length = 6}
+        "#,
+        "old.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+
+    // The document as a file written before the rename would carry it.
+    let json = serde_json::to_string(&host.document)
+        .unwrap()
+        .replace("\"wb.design\"", "\"wb.part\"");
+    assert!(json.contains("\"wb.part\""));
+    let old: Document = serde_json::from_str(&json).unwrap();
+    let kinds: Vec<&str> = old
+        .feature_tree()
+        .all_nodes()
+        .map(|(_, n)| n.workbench_id.as_str())
+        .collect();
+    assert!(kinds.contains(&"wb.design"), "{kinds:?}");
+    assert!(!kinds.contains(&"wb.part"));
+    let body = old.bodies()[0].id;
+    let ops = wb_part::body_build_ops(&old, body).unwrap().ops;
+    let result = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let top = result.mesh.bounds().expect("a solid").1[2];
+    assert!((top - 6.0).abs() < 1e-3, "{top}");
 }
 
 #[test]
@@ -55,7 +107,7 @@ fn a_script_draws_and_pads_a_block() {
         r#"
         local s = pc.sketch.new{plane = "XY"}
         pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 20}
-        pad = pc.part.pad{sketch = s, length = 12}
+        pad = pc.design.pad{sketch = s, length = 12}
         "#,
         "block.lua",
         &mut host,
@@ -75,7 +127,7 @@ fn a_script_draws_and_pads_a_block() {
 
     // A field changed from the script changes the solid.
     let out = engine.run_script(
-        "pc.part.set{feature = pad, length = 5}",
+        "pc.design.set{feature = pad, length = 5}",
         "edit.lua",
         &mut host,
     );
@@ -106,11 +158,11 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
     let out = engine.run_script(
         &format!(
             r#"
-            local d = pc.part.datum{{kind = "plane", body = "{}", offset = {{0, 0, 10}}}}
+            local d = pc.design.datum{{kind = "plane", body = "{}", offset = {{0, 0, 10}}}}
             local s = pc.sketch.new{{on = d}}
             local c = pc.sketch.circle{{sketch = s, x = 0, y = 0, radius = 5}}
             pc.sketch.constrain{{sketch = s, kind = "radius", items = {{c}}, value = 4}}
-            pc.part.pad{{sketch = s, length = 3}}
+            pc.design.pad{{sketch = s, length = 3}}
             datum = d
             "#,
             body.0
@@ -139,7 +191,7 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
     );
 
     let out = engine.run_script(
-        "pc.part.set{feature = datum, offset = {translation = {0, 0, 20}, rotation_deg = 0, flip = false}}",
+        "pc.design.set{feature = datum, offset = {translation = {0, 0, 20}, rotation_deg = 0, flip = false}}",
         "move.lua",
         &mut host,
     );
@@ -175,7 +227,7 @@ fn a_script_drills_a_standard_hole() {
         r#"
         local s = pc.sketch.new{plane = "XY"}
         pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 30}
-        pc.part.pad{sketch = s, length = 12}
+        pc.design.pad{sketch = s, length = 12}
         "#,
         "plate.lua",
         &mut host,
@@ -187,7 +239,7 @@ fn a_script_drills_a_standard_hole() {
             r#"
             local at = pc.sketch.new{{body = "{}", plane = "XY", offset = 12}}
             pc.sketch.circle{{sketch = at, x = 15, y = 15, radius = 2}}
-            pc.part.hole{{
+            pc.design.hole{{
               sketch = at,
               depth = 8,
               thread = {{standard = "Unc", size = "1/4-20", class = "3B"}},

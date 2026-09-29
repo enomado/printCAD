@@ -261,7 +261,7 @@ ctx.request(HostRequest::ActivateTool("mine.select".into()));
 ctx.request(HostRequest::SelectBody(body));
 ctx.request(HostRequest::JournalLabel("Create thing".into()));
 ctx.request(HostRequest::StartOn { workbench: WorkbenchId::from("wb.sketch"), attach });
-ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.part")));
+ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.design")));
 ctx.request(HostRequest::OrientCamera(CameraOrientRequest { .. }));
 ctx.request(HostRequest::FinishEditing);
 ```

@@ -274,7 +274,7 @@ pub(crate) fn tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "The command's id, such as \"part.pad\""},
+                    "command": {"type": "string", "description": "The command's id, such as \"design.pad\""},
                     "args": {"type": "object", "description": "Its named arguments"},
                     "description": {"type": "string", "description": DESCRIBE}
                 },
@@ -434,6 +434,7 @@ impl PrintCadApp {
 
     /// What an agent may do with command `id`.
     pub(crate) fn agent_access(&self, id: &str) -> core_document::AgentAccess {
+        let id = core_document::renamed::command(id);
         command_specs(&self.registry)
             .into_iter()
             .find(|c| c.id == id)
@@ -493,6 +494,7 @@ impl PrintCadApp {
                 .get("command")
                 .and_then(Value::as_str)
                 .is_some_and(|id| {
+                    let id = core_document::renamed::command(id);
                     command_specs(&self.registry)
                         .iter()
                         .any(|c| c.id == id && c.read_only)

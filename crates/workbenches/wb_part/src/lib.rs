@@ -48,8 +48,8 @@ use core_document::{
 };
 use wb_sketch::SketchFeature;
 
-const MOVE_TO_BODY: &str = "part.move_to_body";
-const DUPLICATE: &str = "part.duplicate";
+const MOVE_TO_BODY: &str = "design.move_to_body";
+const DUPLICATE: &str = "design.duplicate";
 
 /// Duplicate `feature` into `body` (its own when `None`), record it as the
 /// command and select the copy.
@@ -120,7 +120,7 @@ pub(crate) struct ToolMade {
     pub feature: FeatureId,
     /// The sketches it hid, shown again when it is cancelled.
     pub hidden: Vec<FeatureId>,
-    /// The tool, with its variant (`part.primitive:box`).
+    /// The tool, with its variant (`design.primitive:box`).
     pub tool: String,
     /// The body it was made for.
     pub body: BodyId,
@@ -175,7 +175,7 @@ impl PartDesignWorkbench {
     fn selected_part_feature(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
         let id = ctx.active_document_object?;
         let node = ctx.document.get_feature_meta(id)?;
-        (node.workbench_id.as_str() == "wb.part").then_some(id)
+        (node.workbench_id.as_str() == "wb.design").then_some(id)
     }
 
     /// Whether the body's history builds anything: borrowed geometry
@@ -315,7 +315,7 @@ impl PartDesignWorkbench {
         };
 
         let feature = match tool {
-            "part.pad" => {
+            "design.pad" => {
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
                     PartFeature::Pad {
@@ -342,7 +342,7 @@ impl PartDesignWorkbench {
                     "Pad",
                 )
             }
-            "part.pocket" => {
+            "design.pocket" => {
                 need_material(has_solid)?;
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
@@ -371,7 +371,7 @@ impl PartDesignWorkbench {
                     "Pocket",
                 )
             }
-            "part.revolve" => (
+            "design.revolve" => (
                 PartFeature::Revolution {
                     refine: false,
                     sketch: need_sketch(sketch)?,
@@ -385,7 +385,7 @@ impl PartDesignWorkbench {
                 },
                 "Revolution",
             ),
-            "part.groove" => {
+            "design.groove" => {
                 need_material(has_solid)?;
                 (
                     PartFeature::Groove {
@@ -402,8 +402,8 @@ impl PartDesignWorkbench {
                     "Groove",
                 )
             }
-            "part.loft" | "part.subtractive_loft" => {
-                let subtractive = tool == "part.subtractive_loft";
+            "design.loft" | "design.subtractive_loft" => {
+                let subtractive = tool == "design.subtractive_loft";
                 if subtractive {
                     need_material(has_solid)?;
                 }
@@ -418,8 +418,8 @@ impl PartDesignWorkbench {
                     "Loft",
                 )
             }
-            "part.pipe" | "part.subtractive_pipe" => {
-                let subtractive = tool == "part.subtractive_pipe";
+            "design.pipe" | "design.subtractive_pipe" => {
+                let subtractive = tool == "design.subtractive_pipe";
                 if subtractive {
                     need_material(has_solid)?;
                 }
@@ -454,8 +454,8 @@ impl PartDesignWorkbench {
                     "Pipe",
                 )
             }
-            "part.helix" | "part.subtractive_helix" => {
-                let subtractive = tool == "part.subtractive_helix";
+            "design.helix" | "design.subtractive_helix" => {
+                let subtractive = tool == "design.subtractive_helix";
                 if subtractive {
                     need_material(has_solid)?;
                 }
@@ -478,12 +478,12 @@ impl PartDesignWorkbench {
                     "Helix",
                 )
             }
-            "part.primitive" => (primitive(false), "Primitive"),
-            "part.subtractive_primitive" => {
+            "design.primitive" => (primitive(false), "Primitive"),
+            "design.subtractive_primitive" => {
                 need_material(has_solid)?;
                 (primitive(true), "Primitive")
             }
-            "part.hole" => {
+            "design.hole" => {
                 need_material(has_solid)?;
                 (
                     PartFeature::Hole {
@@ -508,7 +508,7 @@ impl PartDesignWorkbench {
                     "Hole",
                 )
             }
-            "part.fillet" => {
+            "design.fillet" => {
                 need_material(has_solid)?;
                 let edges = Self::selected_edges(ctx, body);
                 (
@@ -520,7 +520,7 @@ impl PartDesignWorkbench {
                     "Fillet",
                 )
             }
-            "part.chamfer" => {
+            "design.chamfer" => {
                 need_material(has_solid)?;
                 let edges = Self::selected_edges(ctx, body);
                 (
@@ -536,7 +536,7 @@ impl PartDesignWorkbench {
                     "Chamfer",
                 )
             }
-            "part.draft" => {
+            "design.draft" => {
                 need_material(has_solid)?;
                 let pick = Self::selected_face_pick(ctx, body)
                     .ok_or("Click a face in the viewport first (the neutral plane)")?;
@@ -552,7 +552,7 @@ impl PartDesignWorkbench {
                     "Draft",
                 )
             }
-            "part.thickness" => {
+            "design.thickness" => {
                 need_material(has_solid)?;
                 let pick = Self::selected_face_pick(ctx, body)
                     .ok_or("Click the face to open in the viewport first")?;
@@ -567,7 +567,7 @@ impl PartDesignWorkbench {
                     "Thickness",
                 )
             }
-            "part.mirror" => {
+            "design.mirror" => {
                 need_material(has_solid)?;
                 let original = Self::selected_part_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
@@ -580,7 +580,7 @@ impl PartDesignWorkbench {
                     "Mirrored",
                 )
             }
-            "part.linear_pattern" => {
+            "design.linear_pattern" => {
                 need_material(has_solid)?;
                 let original = Self::selected_part_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
@@ -598,7 +598,7 @@ impl PartDesignWorkbench {
                     "LinearPattern",
                 )
             }
-            "part.polar_pattern" => {
+            "design.polar_pattern" => {
                 need_material(has_solid)?;
                 let original = Self::selected_part_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
@@ -616,7 +616,7 @@ impl PartDesignWorkbench {
                     "PolarPattern",
                 )
             }
-            "part.multi_transform" => {
+            "design.multi_transform" => {
                 need_material(has_solid)?;
                 let original = Self::selected_part_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
@@ -634,7 +634,7 @@ impl PartDesignWorkbench {
                     "MultiTransform",
                 )
             }
-            "part.clone" => {
+            "design.clone" => {
                 if has_solid {
                     return Err("A clone can only start an empty body".into());
                 }
@@ -647,7 +647,7 @@ impl PartDesignWorkbench {
                     .ok_or("Build another body first; the clone copies its solid")?;
                 (PartFeature::Clone { source: other }, "Clone")
             }
-            "part.scaled" => {
+            "design.scaled" => {
                 need_material(has_solid)?;
                 let original = Self::selected_part_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
@@ -664,8 +664,8 @@ impl PartDesignWorkbench {
                     "Scaled",
                 )
             }
-            "part.borrow" => (Self::borrow_from_selection(ctx, body)?, "Borrowed"),
-            "part.boolean" => {
+            "design.borrow" => (Self::borrow_from_selection(ctx, body)?, "Borrowed"),
+            "design.boolean" => {
                 need_material(has_solid)?;
                 let other = ctx
                     .document
@@ -757,9 +757,9 @@ impl PartDesignWorkbench {
             return InputResult::consumed();
         };
         let shape = match tool {
-            "part.datum_plane" => DatumShape::Plane { size: 30.0 },
-            "part.datum_line" => DatumShape::Line { length: 40.0 },
-            "part.coordinate_system" => DatumShape::CoordinateSystem { size: 20.0 },
+            "design.datum_plane" => DatumShape::Plane { size: 30.0 },
+            "design.datum_line" => DatumShape::Line { length: 40.0 },
+            "design.coordinate_system" => DatumShape::CoordinateSystem { size: 20.0 },
             _ => DatumShape::Point,
         };
         let on_body = ctx.selected_body_id == Some(body.0);
@@ -894,20 +894,20 @@ pub(crate) struct CreatedFeature {
 /// Default keys of the tools; the user can rebind them in Preferences.
 /// Shift and a letter makes the subtractive form of what the letter adds.
 const TOOL_KEYS: &[(&str, &str)] = &[
-    ("part.new_body", "B"),
-    ("part.new_sketch", "S"),
-    ("part.pad", "E"),
-    ("part.pocket", "Shift+E"),
-    ("part.revolve", "R"),
-    ("part.groove", "Shift+R"),
-    ("part.loft", "L"),
-    ("part.subtractive_loft", "Shift+L"),
-    ("part.pipe", "W"),
-    ("part.subtractive_pipe", "Shift+W"),
-    ("part.hole", "Shift+H"),
-    ("part.fillet", "U"),
-    ("part.chamfer", "C"),
-    ("part.mirror", "M"),
+    ("design.new_body", "B"),
+    ("design.new_sketch", "S"),
+    ("design.pad", "E"),
+    ("design.pocket", "Shift+E"),
+    ("design.revolve", "R"),
+    ("design.groove", "Shift+R"),
+    ("design.loft", "L"),
+    ("design.subtractive_loft", "Shift+L"),
+    ("design.pipe", "W"),
+    ("design.subtractive_pipe", "Shift+W"),
+    ("design.hole", "Shift+H"),
+    ("design.fillet", "U"),
+    ("design.chamfer", "C"),
+    ("design.mirror", "M"),
 ];
 
 /// Register `tool` with its default key, if it has one.
@@ -1044,12 +1044,12 @@ impl PartDesignWorkbench {
 impl Workbench for PartDesignWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
-            "wb.part",
+            "wb.design",
             "Design",
             "Feature-based solid modeling workbench.",
         )
         .icon("workbench-part-design")
-        .feature_kinds(["wb.part", "core.datum"])
+        .feature_kinds(["wb.design", "core.datum"])
     }
 
     fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {
@@ -1149,12 +1149,12 @@ impl Workbench for PartDesignWorkbench {
         // Structure and sketches.
         register(
             context,
-            action("part.new_body", "Create body", "body", "structure"),
+            action("design.new_body", "Create body", "body", "structure"),
         );
         register(
             context,
             action(
-                "part.new_sketch",
+                "design.new_sketch",
                 "Create sketch",
                 "sketch-new",
                 "structure",
@@ -1163,7 +1163,7 @@ impl Workbench for PartDesignWorkbench {
         register(
             context,
             action(
-                "part.edit_sketch",
+                "design.edit_sketch",
                 "Edit sketch",
                 "sketch-edit",
                 "structure",
@@ -1172,7 +1172,7 @@ impl Workbench for PartDesignWorkbench {
         register(
             context,
             action(
-                "part.map_sketch",
+                "design.map_sketch",
                 "Map sketch to face",
                 "sketch-map",
                 "structure",
@@ -1181,55 +1181,65 @@ impl Workbench for PartDesignWorkbench {
         // Datums.
         register(
             context,
-            action("part.datum_point", "Datum point", "datum-point", "datum"),
+            action("design.datum_point", "Datum point", "datum-point", "datum"),
         );
         register(
             context,
-            action("part.datum_line", "Datum line", "datum-line", "datum"),
+            action("design.datum_line", "Datum line", "datum-line", "datum"),
         );
         register(
             context,
-            action("part.datum_plane", "Datum plane", "datum-plane", "datum"),
+            action("design.datum_plane", "Datum plane", "datum-plane", "datum"),
         );
         register(
             context,
             action(
-                "part.coordinate_system",
+                "design.coordinate_system",
                 "Local coordinate system",
                 "coordinate-system",
                 "datum",
             ),
         );
-        register(context, action("part.clone", "Clone", "clone", "datum"));
+        register(context, action("design.clone", "Clone", "clone", "datum"));
         register(
             context,
-            action("part.borrow", "Borrow geometry", "clone-geometry", "datum"),
+            action(
+                "design.borrow",
+                "Borrow geometry",
+                "clone-geometry",
+                "datum",
+            ),
         );
         // Profiles made from numbers.
         register(context, generators::tool());
         generators::register(context);
         // Additive.
-        register(context, action("part.pad", "Pad", "pad", "additive"));
+        register(context, action("design.pad", "Pad", "pad", "additive"));
         register(
             context,
-            action("part.revolve", "Revolution", "revolution", "additive"),
+            action("design.revolve", "Revolution", "revolution", "additive"),
         );
         register(
             context,
-            action("part.loft", "Additive loft", "additive-loft", "additive"),
+            action("design.loft", "Additive loft", "additive-loft", "additive"),
         );
         register(
             context,
-            action("part.pipe", "Additive pipe", "additive-pipe", "additive"),
-        );
-        register(
-            context,
-            action("part.helix", "Additive helix", "additive-helix", "additive"),
+            action("design.pipe", "Additive pipe", "additive-pipe", "additive"),
         );
         register(
             context,
             action(
-                "part.primitive",
+                "design.helix",
+                "Additive helix",
+                "additive-helix",
+                "additive",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.primitive",
                 "Additive primitive",
                 "additive-box",
                 "additive",
@@ -1239,17 +1249,20 @@ impl Workbench for PartDesignWorkbench {
         // Subtractive.
         register(
             context,
-            action("part.pocket", "Pocket", "pocket", "subtractive"),
+            action("design.pocket", "Pocket", "pocket", "subtractive"),
         );
-        register(context, action("part.hole", "Hole", "hole", "subtractive"));
         register(
             context,
-            action("part.groove", "Groove", "groove", "subtractive"),
+            action("design.hole", "Hole", "hole", "subtractive"),
+        );
+        register(
+            context,
+            action("design.groove", "Groove", "groove", "subtractive"),
         );
         register(
             context,
             action(
-                "part.subtractive_loft",
+                "design.subtractive_loft",
                 "Subtractive loft",
                 "subtractive-loft",
                 "subtractive",
@@ -1258,7 +1271,7 @@ impl Workbench for PartDesignWorkbench {
         register(
             context,
             action(
-                "part.subtractive_pipe",
+                "design.subtractive_pipe",
                 "Subtractive pipe",
                 "subtractive-pipe",
                 "subtractive",
@@ -1267,7 +1280,7 @@ impl Workbench for PartDesignWorkbench {
         register(
             context,
             action(
-                "part.subtractive_helix",
+                "design.subtractive_helix",
                 "Subtractive helix",
                 "subtractive-helix",
                 "subtractive",
@@ -1276,7 +1289,7 @@ impl Workbench for PartDesignWorkbench {
         register(
             context,
             action(
-                "part.subtractive_primitive",
+                "design.subtractive_primitive",
                 "Subtractive primitive",
                 "subtractive-box",
                 "subtractive",
@@ -1286,12 +1299,12 @@ impl Workbench for PartDesignWorkbench {
         // Transformations.
         register(
             context,
-            action("part.mirror", "Mirrored", "mirrored", "transform"),
+            action("design.mirror", "Mirrored", "mirrored", "transform"),
         );
         register(
             context,
             action(
-                "part.linear_pattern",
+                "design.linear_pattern",
                 "Linear pattern",
                 "linear-pattern",
                 "transform",
@@ -1300,7 +1313,7 @@ impl Workbench for PartDesignWorkbench {
         register(
             context,
             action(
-                "part.polar_pattern",
+                "design.polar_pattern",
                 "Polar pattern",
                 "polar-pattern",
                 "transform",
@@ -1309,7 +1322,7 @@ impl Workbench for PartDesignWorkbench {
         register(
             context,
             action(
-                "part.multi_transform",
+                "design.multi_transform",
                 "Multi-transform",
                 "multi-transform",
                 "transform",
@@ -1317,31 +1330,31 @@ impl Workbench for PartDesignWorkbench {
         );
         register(
             context,
-            action("part.scaled", "Scaled", "scaled", "transform"),
+            action("design.scaled", "Scaled", "scaled", "transform"),
         );
         // Dress-up.
         register(
             context,
-            action("part.fillet", "Fillet", "fillet", "dressup"),
+            action("design.fillet", "Fillet", "fillet", "dressup"),
         );
         register(
             context,
-            action("part.chamfer", "Chamfer", "chamfer", "dressup"),
+            action("design.chamfer", "Chamfer", "chamfer", "dressup"),
         );
-        register(context, action("part.draft", "Draft", "draft", "dressup"));
+        register(context, action("design.draft", "Draft", "draft", "dressup"));
         register(
             context,
-            action("part.thickness", "Thickness", "thickness", "dressup"),
+            action("design.thickness", "Thickness", "thickness", "dressup"),
         );
         // Boolean.
         register(
             context,
-            action("part.boolean", "Boolean", "boolean", "boolean"),
+            action("design.boolean", "Boolean", "boolean", "boolean"),
         );
         // Measure.
         register(
             context,
-            action("part.centre_line", "Centre line", centre::ICON, "measure"),
+            action("design.centre_line", "Centre line", centre::ICON, "measure"),
         );
     }
 
@@ -1357,7 +1370,7 @@ impl Workbench for PartDesignWorkbench {
         let Some(from) = node.body else {
             return Vec::new();
         };
-        if !matches!(node.workbench_id.as_str(), "wb.part" | "core.datum") {
+        if !matches!(node.workbench_id.as_str(), "wb.design" | "core.datum") {
             return Vec::new();
         }
         let duplicate = MenuItem::new(DUPLICATE, "Duplicate")
@@ -1459,7 +1472,7 @@ impl Workbench for PartDesignWorkbench {
         // are activated and clears them once handled.
         let base = active_tool.map(base_tool_id);
         match base {
-            Some("part.new_body") => {
+            Some("design.new_body") => {
                 let body = ctx.document.create_body(None);
                 let name = ctx
                     .document
@@ -1479,12 +1492,12 @@ impl Workbench for PartDesignWorkbench {
                 InputResult::consumed()
             }
             Some(
-                tool @ ("part.datum_plane"
-                | "part.datum_line"
-                | "part.datum_point"
-                | "part.coordinate_system"),
+                tool @ ("design.datum_plane"
+                | "design.datum_line"
+                | "design.datum_point"
+                | "design.coordinate_system"),
             ) => self.insert_datum(ctx, tool),
-            Some("part.map_sketch") => {
+            Some("design.map_sketch") => {
                 // The selected sketch moves onto the face the last body
                 // click landed on.
                 let (Some(sketch_id), Some(face)) = (Self::selected_sketch(ctx), ctx.selected_face)
@@ -1538,11 +1551,11 @@ impl Workbench for PartDesignWorkbench {
                 }
                 InputResult::consumed()
             }
-            Some("part.centre_line") => {
+            Some("design.centre_line") => {
                 self.start_centre_line(ctx);
                 InputResult::consumed()
             }
-            Some("part.edit_sketch") => {
+            Some("design.edit_sketch") => {
                 if Self::selected_sketch(ctx).is_some() {
                     // The sketcher picks the active object up as its edit
                     // session on activation.
@@ -1552,8 +1565,8 @@ impl Workbench for PartDesignWorkbench {
                 }
                 InputResult::consumed()
             }
-            Some("part.generator") => generators::insert(ctx, active_tool.unwrap_or_default()),
-            Some("part.new_sketch") => {
+            Some("design.generator") => generators::insert(ctx, active_tool.unwrap_or_default()),
+            Some("design.new_sketch") => {
                 let Some(body) = Self::target_body(ctx) else {
                     ctx.log_warn("Select a body (or one of its features) first");
                     return InputResult::consumed();
@@ -1592,7 +1605,7 @@ impl Workbench for PartDesignWorkbench {
                 });
                 InputResult::consumed()
             }
-            Some(tool) if tool.starts_with("part.") => {
+            Some(tool) if tool.starts_with("design.") => {
                 let full = active_tool.unwrap_or(tool);
                 self.insert_feature(ctx, full)
             }
@@ -1697,37 +1710,39 @@ impl Workbench for PartDesignWorkbench {
         let has_sketch = Self::selected_sketch(ctx).is_some();
         let has_solid = body.map(|b| Self::body_has_solid(ctx, b)).unwrap_or(false);
         match base_tool_id(tool_id) {
-            "part.new_body" => true,
-            "part.edit_sketch" => has_sketch,
-            "part.map_sketch" => has_sketch && ctx.selected_face.is_some(),
-            "part.new_sketch"
-            | "part.primitive"
-            | "part.datum_plane"
-            | "part.datum_line"
-            | "part.datum_point"
-            | "part.coordinate_system"
-            | "part.generator" => has_body,
-            "part.clone" => has_body && !has_solid,
-            "part.borrow" => has_body && ctx.document.bodies().len() > 1,
-            "part.scaled" => has_solid,
-            "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,
-            "part.pocket"
-            | "part.groove"
-            | "part.hole"
-            | "part.subtractive_loft"
-            | "part.subtractive_pipe"
-            | "part.subtractive_helix" => has_sketch && has_solid,
-            "part.subtractive_primitive" => has_solid,
-            "part.fillet"
-            | "part.chamfer"
-            | "part.draft"
-            | "part.thickness"
-            | "part.mirror"
-            | "part.linear_pattern"
-            | "part.polar_pattern"
-            | "part.multi_transform"
-            | "part.boolean"
-            | "part.centre_line" => has_solid,
+            "design.new_body" => true,
+            "design.edit_sketch" => has_sketch,
+            "design.map_sketch" => has_sketch && ctx.selected_face.is_some(),
+            "design.new_sketch"
+            | "design.primitive"
+            | "design.datum_plane"
+            | "design.datum_line"
+            | "design.datum_point"
+            | "design.coordinate_system"
+            | "design.generator" => has_body,
+            "design.clone" => has_body && !has_solid,
+            "design.borrow" => has_body && ctx.document.bodies().len() > 1,
+            "design.scaled" => has_solid,
+            "design.pad" | "design.revolve" | "design.loft" | "design.pipe" | "design.helix" => {
+                has_sketch
+            }
+            "design.pocket"
+            | "design.groove"
+            | "design.hole"
+            | "design.subtractive_loft"
+            | "design.subtractive_pipe"
+            | "design.subtractive_helix" => has_sketch && has_solid,
+            "design.subtractive_primitive" => has_solid,
+            "design.fillet"
+            | "design.chamfer"
+            | "design.draft"
+            | "design.thickness"
+            | "design.mirror"
+            | "design.linear_pattern"
+            | "design.polar_pattern"
+            | "design.multi_transform"
+            | "design.boolean"
+            | "design.centre_line" => has_solid,
             _ => false,
         }
     }
@@ -1832,7 +1847,7 @@ impl Workbench for PartDesignWorkbench {
         probed: &core_document::rebuild::ProbedReferences,
     ) -> bool {
         use core_document::WorkbenchFeature;
-        if node.workbench_id.as_str() != "wb.part" {
+        if node.workbench_id.as_str() != "wb.design" {
             return false;
         }
         let Ok(mut feature) = PartFeature::from_json(values) else {
@@ -1869,7 +1884,7 @@ impl Workbench for PartDesignWorkbench {
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
     ) -> bool {
         use core_document::{LineAnchor, PointAnchor, WorkbenchFeature};
-        if node.workbench_id.as_str() == "wb.part" {
+        if node.workbench_id.as_str() == "wb.design" {
             let Ok(mut feature) = PartFeature::from_json(values) else {
                 return false;
             };
@@ -2160,7 +2175,7 @@ mod body_tool {
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         let result = wb.on_input(
             &WorkbenchInputEvent::ToolActivated,
-            Some("part.new_body"),
+            Some("design.new_body"),
             &mut ctx,
         );
         assert!(result.consumed);
@@ -2207,7 +2222,7 @@ mod body_tool {
             });
             wb.on_input(
                 &WorkbenchInputEvent::ToolActivated,
-                Some("part.mirror"),
+                Some("design.mirror"),
                 &mut ctx,
             );
             let mirrored = doc
@@ -2254,10 +2269,10 @@ mod body_tool {
         let body = doc.create_body(None);
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         ctx.selected_body_id = Some(body.0);
-        assert!(wb.is_tool_enabled("part.coordinate_system", &ctx));
+        assert!(wb.is_tool_enabled("design.coordinate_system", &ctx));
         wb.on_input(
             &WorkbenchInputEvent::ToolActivated,
-            Some("part.coordinate_system"),
+            Some("design.coordinate_system"),
             &mut ctx,
         );
         let datums = core_document::datums_of_body(&doc, body);

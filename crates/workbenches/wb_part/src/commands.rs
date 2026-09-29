@@ -19,40 +19,46 @@ use crate::feature::PartFeature;
 
 /// The features a command makes, by tool id, and what each is.
 const FEATURES: &[(&str, &str)] = &[
-    ("part.pad", "Pad a sketch"),
-    ("part.pocket", "Cut a sketch into the body"),
-    ("part.revolve", "Turn a sketch about an axis"),
-    ("part.groove", "Cut a sketch turned about an axis"),
-    ("part.loft", "Loft through sketches"),
-    ("part.subtractive_loft", "Cut a loft through sketches"),
-    ("part.pipe", "Sweep a sketch along a path"),
-    ("part.subtractive_pipe", "Cut a sketch swept along a path"),
-    ("part.helix", "Sweep a sketch along a helix"),
-    ("part.subtractive_helix", "Cut a sketch swept along a helix"),
+    ("design.pad", "Pad a sketch"),
+    ("design.pocket", "Cut a sketch into the body"),
+    ("design.revolve", "Turn a sketch about an axis"),
+    ("design.groove", "Cut a sketch turned about an axis"),
+    ("design.loft", "Loft through sketches"),
+    ("design.subtractive_loft", "Cut a loft through sketches"),
+    ("design.pipe", "Sweep a sketch along a path"),
+    ("design.subtractive_pipe", "Cut a sketch swept along a path"),
+    ("design.helix", "Sweep a sketch along a helix"),
     (
-        "part.primitive",
+        "design.subtractive_helix",
+        "Cut a sketch swept along a helix",
+    ),
+    (
+        "design.primitive",
         "Add a box, cylinder, sphere, cone, torus or wedge",
     ),
     (
-        "part.subtractive_primitive",
+        "design.subtractive_primitive",
         "Cut a box, cylinder, sphere, cone, torus or wedge",
     ),
-    ("part.hole", "Drill holes at a sketch's circles and points"),
-    ("part.fillet", "Round edges"),
-    ("part.chamfer", "Bevel edges"),
-    ("part.draft", "Tilt faces"),
-    ("part.thickness", "Hollow the solid"),
-    ("part.mirror", "Mirror the last feature"),
     (
-        "part.linear_pattern",
+        "design.hole",
+        "Drill holes at a sketch's circles and points",
+    ),
+    ("design.fillet", "Round edges"),
+    ("design.chamfer", "Bevel edges"),
+    ("design.draft", "Tilt faces"),
+    ("design.thickness", "Hollow the solid"),
+    ("design.mirror", "Mirror the last feature"),
+    (
+        "design.linear_pattern",
         "Repeat the last feature along a line",
     ),
     (
-        "part.polar_pattern",
+        "design.polar_pattern",
         "Repeat the last feature about an axis",
     ),
-    ("part.scaled", "Scale the last feature"),
-    ("part.boolean", "Combine with another body"),
+    ("design.scaled", "Scale the last feature"),
+    ("design.boolean", "Combine with another body"),
 ];
 
 /// Arguments every feature command reads itself rather than as a field.
@@ -101,17 +107,17 @@ pub fn register(context: &mut WorkbenchContext) {
         );
     }
     context.register_command(
-        CommandSpec::new("part.set", "Change fields of a Design feature or a datum")
+        CommandSpec::new("design.set", "Change fields of a Design feature or a datum")
             .param("feature", ParamKind::Id, "The feature to change")
             .extra_args(
                 "The fields to change, such as length = 25; a datum takes offset {x, y, z}, \
-             rotation and flip as part.datum does",
+             rotation and flip as design.datum does",
             )
             .returns("nothing"),
     );
     context.register_command(
         CommandSpec::new(
-            "part.datum",
+            "design.datum",
             "Add a datum plane, line, point or coordinate system",
         )
         .param(
@@ -191,7 +197,7 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
-            "part.borrow",
+            "design.borrow",
             "Borrow another body's sketch, or faces and edges of its solid",
         )
         .param("body", ParamKind::Id, "The body that borrows")
@@ -233,7 +239,7 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
-            "part.freeze",
+            "design.freeze",
             "Freeze borrowed geometry as it is now, or let it follow its source again",
         )
         .param("feature", ParamKind::Id, "The borrow")
@@ -246,7 +252,7 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
-            "part.move_to_body",
+            "design.move_to_body",
             "Move a feature into another body's history, with the sketch and datums only it uses",
         )
         .param("feature", ParamKind::Id, "The feature")
@@ -255,7 +261,7 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
-            "part.duplicate",
+            "design.duplicate",
             "Make a copy of a feature, with its own copies of the sketches and datums it reads",
         )
         .param("feature", ParamKind::Id, "The feature")
@@ -268,7 +274,7 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
-            "part.centre_line",
+            "design.centre_line",
             "Measure the centre line of a tube-like solid between two of its faces",
         )
         .param(
@@ -318,25 +324,25 @@ pub fn run(
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
     let a = Args(args);
-    if id == "part.set" {
+    if id == "design.set" {
         return set(&a, args, ctx);
     }
-    if id == "part.datum" {
+    if id == "design.datum" {
         return datum(&a, ctx);
     }
-    if id == "part.centre_line" {
+    if id == "design.centre_line" {
         return crate::centre::command(&a, ctx);
     }
-    if id == "part.borrow" {
+    if id == "design.borrow" {
         return borrow(&a, ctx);
     }
-    if id == "part.freeze" {
+    if id == "design.freeze" {
         return freeze(&a, ctx);
     }
-    if id == "part.move_to_body" {
+    if id == "design.move_to_body" {
         return move_to_body(&a, ctx);
     }
-    if id == "part.duplicate" {
+    if id == "design.duplicate" {
         let feature = FeatureId(a.id("feature")?);
         let body = a.opt_id("body")?.map(BodyId);
         return duplicate(ctx, feature, body)
@@ -349,7 +355,7 @@ pub fn run(
     let mut sketch = a.opt_id("sketch")?.map(FeatureId);
     // A loft's sketch is its first section: given only sections, the first
     // is that sketch.
-    let lofting = matches!(id, "part.loft" | "part.subtractive_loft");
+    let lofting = matches!(id, "design.loft" | "design.subtractive_loft");
     let listed: Vec<FeatureId> = match args.get("sections") {
         Some(Value::Array(list)) if lofting => list
             .iter()
@@ -412,7 +418,7 @@ pub fn run(
     }
     // A thickness opens a face and a draft turns about one: in a script
     // that face is an argument.
-    if matches!(id, "part.thickness" | "part.draft") && ctx.selected_face.is_none() {
+    if matches!(id, "design.thickness" | "design.draft") && ctx.selected_face.is_none() {
         return Err(CommandError::bad(
             "face_point",
             "is required with face_normal: a point on the face (the one to open, or the \
@@ -486,7 +492,7 @@ fn tilt_of(value: Option<&Value>) -> Result<Option<[f32; 2]>, CommandError> {
     }
 }
 
-/// A datum's fields as `part.set` takes them: `offset` as `part.datum`
+/// A datum's fields as `design.set` takes them: `offset` as `design.datum`
 /// gives it, {x, y, z}, with `rotation` and `flip` beside it, or whole as
 /// the datum keeps it, {translation, rotation_deg, flip}.
 fn datum_fields(
@@ -575,7 +581,7 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     Ok(json!(id.0.to_string()))
 }
 
-/// `part.borrow`: a borrow of a sketch, or of faces and edges, added to a
+/// `design.borrow`: a borrow of a sketch, or of faces and edges, added to a
 /// body as a feature of its history.
 fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     use crate::feature::{BorrowSource, EdgePick, FacePick};
@@ -677,7 +683,7 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     Ok(json!(id.0.to_string()))
 }
 
-/// `part.freeze`: a borrow takes its source as it is now, or follows it
+/// `design.freeze`: a borrow takes its source as it is now, or follows it
 /// again.
 fn freeze(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let id = FeatureId(a.id("feature")?);
@@ -779,8 +785,8 @@ pub(crate) fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], Com
 
 /// What a task accepted, as a recording says it: a feature a tool made as
 /// the command that makes it, with the fields that differ from what that
-/// command would make alone; a datum a tool made as `part.datum`; an edit
-/// of an existing one as `part.set` with the fields it changed.
+/// command would make alone; a datum a tool made as `design.datum`; an edit
+/// of an existing one as `design.set` with the fields it changed.
 #[cfg(feature = "egui")]
 pub(crate) fn record_task(
     bench: &PartDesignWorkbench,
@@ -873,7 +879,7 @@ pub(crate) fn record_task(
             for (name, value) in crate::datum_refs::attachment_args(&datum.attachment) {
                 args[name] = value;
             }
-            ctx.record("part.datum", crate::commands::object(args), id);
+            ctx.record("design.datum", crate::commands::object(args), id);
         }
         (None, kind) => {
             let (before, after) = match kind {
@@ -891,14 +897,14 @@ pub(crate) fn record_task(
                 }
             }
             if args.len() > 1 {
-                ctx.record("part.set", args, Value::Null);
+                ctx.record("design.set", args, Value::Null);
             }
         }
     }
 }
 
-/// A borrow's task as a recording says it: made, as `part.borrow` with
-/// what it borrows; edited, as `part.set` of its source and `part.freeze`
+/// A borrow's task as a recording says it: made, as `design.borrow` with
+/// what it borrows; edited, as `design.set` of its source and `design.freeze`
 /// when it was frozen, taken again or let go.
 #[cfg(feature = "egui")]
 fn record_borrow(
@@ -931,7 +937,7 @@ fn record_borrow(
         if !options.is_plain() {
             args.insert("options".into(), json!(options));
         }
-        ctx.record("part.borrow", args, id);
+        ctx.record("design.borrow", args, id);
         return;
     }
     let Ok(PartFeature::Borrow {
@@ -951,7 +957,7 @@ fn record_borrow(
         if options_before != options {
             args.insert("options".into(), json!(options));
         }
-        ctx.record("part.set", args, Value::Null);
+        ctx.record("design.set", args, Value::Null);
     }
     let now =
         ctx.document.get_feature_data(task.feature).and_then(|d| {
@@ -964,7 +970,7 @@ fn record_borrow(
         let mut args = Map::new();
         args.insert("feature".into(), id);
         args.insert("frozen".into(), json!(frozen));
-        ctx.record("part.freeze", args, Value::Null);
+        ctx.record("design.freeze", args, Value::Null);
     }
 }
 
@@ -1202,7 +1208,7 @@ mod tests {
             json!({"sections": [id(a), id(b)]}),
             json!({"sketch": id(a), "sections": [id(a), id(b)]}),
         ] {
-            let made = call(&mut bench, &mut doc, "part.loft", args.clone()).unwrap();
+            let made = call(&mut bench, &mut doc, "design.loft", args.clone()).unwrap();
             let sections = fields(&doc, &made)["Loft"]["sections"].clone();
             assert_eq!(sections, json!([id(a), id(b)]), "{args}");
         }
@@ -1279,7 +1285,7 @@ mod tests {
         let pad = call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string(), "length": 25.0, "name": "Base"}),
         )
         .unwrap();
@@ -1294,7 +1300,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.set",
+            "design.set",
             json!({"feature": pad, "length": 40.0, "reversed": true}),
         )
         .unwrap();
@@ -1313,7 +1319,7 @@ mod tests {
         let pad = call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string()}),
         )
         .unwrap();
@@ -1326,7 +1332,7 @@ mod tests {
         let moved = call(
             &mut bench,
             &mut doc,
-            "part.move_to_body",
+            "design.move_to_body",
             json!({"feature": pad, "body": to.0.to_string()}),
         )
         .unwrap();
@@ -1346,14 +1352,14 @@ mod tests {
         let pad = call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string(), "length": 7.0, "name": "Pad"}),
         )
         .unwrap();
         let made = call(
             &mut bench,
             &mut doc,
-            "part.duplicate",
+            "design.duplicate",
             json!({"feature": pad}),
         )
         .unwrap();
@@ -1407,7 +1413,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string()}),
         )
         .unwrap();
@@ -1416,7 +1422,7 @@ mod tests {
         let boolean = call(
             &mut bench,
             &mut doc,
-            "part.boolean",
+            "design.boolean",
             json!({"body": body.0.to_string()}),
         )
         .unwrap();
@@ -1436,14 +1442,14 @@ mod tests {
         let datum = call(
             &mut bench,
             &mut doc,
-            "part.datum",
+            "design.datum",
             json!({"body": body.0.to_string(), "kind": "plane", "offset": [0, 0, 5]}),
         )
         .unwrap();
         call(
             &mut bench,
             &mut doc,
-            "part.set",
+            "design.set",
             json!({"feature": datum, "offset": {"x": 1, "y": 2, "z": 8}, "rotation": 30}),
         )
         .unwrap();
@@ -1454,7 +1460,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.set",
+            "design.set",
             json!({"feature": datum, "offset":
                 {"translation": [0, 0, 3], "rotation_deg": 0, "flip": true}}),
         )
@@ -1474,14 +1480,14 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string()}),
         )
         .unwrap();
         let mirror = call(
             &mut bench,
             &mut doc,
-            "part.mirror",
+            "design.mirror",
             json!({"body": body.0.to_string(), "originals": {}}),
         )
         .unwrap();
@@ -1498,14 +1504,14 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string()}),
         )
         .unwrap();
         let pocket = call(
             &mut bench,
             &mut doc,
-            "part.pocket",
+            "design.pocket",
             json!({"sketch": sketch.0.to_string(), "through_all": true}),
         )
         .unwrap();
@@ -1516,7 +1522,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.set",
+            "design.set",
             json!({"feature": pocket, "through_all": false}),
         )
         .unwrap();
@@ -1526,7 +1532,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.set",
+            "design.set",
             json!({"feature": pocket, "mode": "ThroughAll"}),
         )
         .unwrap();
@@ -1535,7 +1541,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.set",
+            "design.set",
             json!({"feature": pocket, "mode": "Dimension", "symmetric": true}),
         )
         .unwrap();
@@ -1562,7 +1568,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string(), "length": 10.0}),
         )
         .unwrap();
@@ -1570,7 +1576,7 @@ mod tests {
         let without = call(
             &mut bench,
             &mut doc,
-            "part.thickness",
+            "design.thickness",
             json!({"body": body.0.to_string()}),
         );
         assert!(without.is_err(), "no face, no thickness");
@@ -1585,14 +1591,14 @@ mod tests {
         };
         let mut args = face.clone();
         args["body"] = json!(body.0.to_string());
-        let made = call(&mut bench, &mut doc, "part.thickness", args.clone()).unwrap();
+        let made = call(&mut bench, &mut doc, "design.thickness", args.clone()).unwrap();
         let thickness = fields(&doc, &made);
         let opened = thickness["Thickness"]["faces"].as_array().expect("faces");
         assert_eq!(opened.len(), 1);
         assert!(near(&opened[0], [5.0, 2.5, 10.0]), "{opened:?}");
         // A draft's face is its neutral plane; the faces to tilt are a field.
         args["faces"] = json!([{"point": [10.0, 2.5, 5.0], "normal": [1.0, 0.0, 0.0]}]);
-        let made = call(&mut bench, &mut doc, "part.draft", args).unwrap();
+        let made = call(&mut bench, &mut doc, "design.draft", args).unwrap();
         let draft = fields(&doc, &made);
         assert!(
             near(&draft["Draft"]["neutral"], [5.0, 2.5, 10.0]),
@@ -1640,7 +1646,7 @@ mod tests {
                 &core_document::WorkbenchInputEvent::KeyPress {
                     key: core_document::KeyCode::A,
                 },
-                Some("part.pad"),
+                Some("design.pad"),
                 &mut ctx,
             );
             ctx.active_document_object.unwrap()
@@ -1661,7 +1667,7 @@ mod tests {
         );
         assert_eq!(recorded.len(), 1, "{recorded:?}");
         let call = &recorded[0];
-        assert_eq!(call.id, "part.pad");
+        assert_eq!(call.id, "design.pad");
         assert_eq!(call.args["length"], json!(25.0));
         assert!(
             !call.args.contains_key("reversed"),
@@ -1703,7 +1709,7 @@ mod tests {
             },
         );
         assert_eq!(edit.len(), 1);
-        assert_eq!(edit[0].id, "part.set");
+        assert_eq!(edit[0].id, "design.set");
         assert_eq!(
             edit[0].args.len(),
             2,
@@ -1728,7 +1734,7 @@ mod tests {
         call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string(), "length": 10.0}),
         )
         .unwrap();
@@ -1736,7 +1742,7 @@ mod tests {
         let made = call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"body": body.0.to_string(), "face_point": [5.0, 2.5, 10.0],
                 "face_normal": [0.0, 0.0, 1.0], "length": 4.0}),
         )
@@ -1762,7 +1768,7 @@ mod tests {
                 &core_document::WorkbenchInputEvent::KeyPress {
                     key: core_document::KeyCode::A,
                 },
-                Some("part.pad"),
+                Some("design.pad"),
                 &mut ctx,
             );
             ctx.active_document_object.unwrap()
@@ -1795,7 +1801,7 @@ mod tests {
         let err = call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string(), "colour": "red"}),
         )
         .unwrap_err()
@@ -1807,7 +1813,7 @@ mod tests {
         let err = call(
             &mut bench,
             &mut doc,
-            "part.pad",
+            "design.pad",
             json!({"sketch": sketch.0.to_string(), "length": "long"}),
         );
         assert!(err.is_err());

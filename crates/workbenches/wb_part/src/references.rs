@@ -117,7 +117,7 @@ pub(crate) fn references(
 }
 
 /// Point feature `id`'s input `key` at `to`: its data, the dependencies it
-/// reads, the sketches it hides, recorded as the `part.set` that does it.
+/// reads, the sketches it hides, recorded as the `design.set` that does it.
 pub(crate) fn set_reference(
     ctx: &mut WorkbenchRuntimeContext,
     id: FeatureId,
@@ -181,7 +181,7 @@ pub(crate) fn set_reference(
         .unwrap_or_default();
     let mut args = changed;
     args.insert("feature".into(), json!(id.0.to_string()));
-    ctx.record("part.set", args, Value::Null);
+    ctx.record("design.set", args, Value::Null);
     Ok(())
 }
 
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(data.sketch(), Some(b));
         assert!(doc.feature_tree().dependencies(pad_id).contains(&b));
         assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0].id, "part.set");
+        assert_eq!(recorded[0].id, "design.set");
 
         // No face selected: refused, nothing changed.
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));

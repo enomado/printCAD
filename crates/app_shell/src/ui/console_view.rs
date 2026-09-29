@@ -382,17 +382,17 @@ mod tests {
 
     #[test]
     fn tab_completes_a_command_name_as_far_as_the_matches_agree() {
-        let ids: Vec<String> = ["part.pad", "part.pocket", "part.set", "sketch.new"]
+        let ids: Vec<String> = ["design.pad", "design.pocket", "design.set", "sketch.new"]
             .map(String::from)
             .to_vec();
         assert_eq!(
             complete("x = pc.ske", &ids),
             ("x = pc.sketch.new{".into(), vec![])
         );
-        let (text, choices) = complete("pc.part.p", &ids);
-        assert_eq!(text, "pc.part.p");
-        assert_eq!(choices, ["part.pad", "part.pocket"]);
-        assert_eq!(complete("pc.part.po", &ids).0, "pc.part.pocket{");
+        let (text, choices) = complete("pc.design.p", &ids);
+        assert_eq!(text, "pc.design.p");
+        assert_eq!(choices, ["design.pad", "design.pocket"]);
+        assert_eq!(complete("pc.design.po", &ids).0, "pc.design.pocket{");
         assert_eq!(complete("print(1)", &ids).0, "print(1)", "only after pc.");
         assert_eq!(complete("pc.nothing", &ids).0, "pc.nothing");
     }
@@ -421,7 +421,7 @@ mod tests {
     fn type_into(state: &mut ConsoleState, frames: Vec<Vec<egui::Event>>) -> Vec<UiCommand> {
         let ctx = egui::Context::default();
         ui_kit::apply_theme(&ctx);
-        let ids = vec!["part.pad".to_string(), "sketch.new".to_string()];
+        let ids = vec!["design.pad".to_string(), "sketch.new".to_string()];
         let mut out = Vec::new();
         for events in frames {
             let raw = egui::RawInput {

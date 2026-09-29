@@ -236,6 +236,50 @@ impl Default for PrintingSettings {
     }
 }
 
+/// How ids that were renamed are called now; see [`UserSettings::rename_ids`].
+pub struct Renames<'a> {
+    /// A workbench id.
+    pub workbench: &'a dyn Fn(&str) -> String,
+    /// A command, tool or action id.
+    pub command: &'a dyn Fn(&str) -> String,
+    /// A toolbar group's id.
+    pub group: &'a dyn Fn(&str) -> String,
+}
+
+impl UserSettings {
+    /// Settings kept under ids that were renamed move to the new ones:
+    /// a workbench's own settings, keys bound to commands, toolbar groups.
+    /// Where both an old and a new entry exist, the new one stays.
+    pub fn rename_ids(&mut self, renames: &Renames<'_>) {
+        let workbenches = std::mem::take(&mut self.workbenches);
+        let (renamed, kept): (Vec<_>, Vec<_>) = workbenches
+            .into_iter()
+            .partition(|(id, _)| (renames.workbench)(id) != *id);
+        self.workbenches.extend(kept);
+        for (id, value) in renamed {
+            self.workbenches
+                .entry((renames.workbench)(&id))
+                .or_insert(value);
+        }
+        let bindings = std::mem::take(&mut self.keyboard.bindings);
+        let (renamed, kept): (Vec<_>, Vec<_>) = bindings
+            .into_iter()
+            .partition(|(id, _)| (renames.command)(id) != *id);
+        self.keyboard.bindings.extend(kept);
+        for (id, keys) in renamed {
+            self.keyboard
+                .bindings
+                .entry((renames.command)(&id))
+                .or_insert(keys);
+        }
+        for row in &mut self.toolbars.rows {
+            for group in row.iter_mut() {
+                *group = (renames.group)(group);
+            }
+        }
+    }
+}
+
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
@@ -959,5 +1003,48 @@ mod tests {
         let loaded: UserSettings =
             serde_json::from_value(serde_json::Value::Object(older)).unwrap();
         assert!(!loaded.diagnostics.import_report);
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    #[test]
+    fn settings_under_old_ids_move_to_the_new_ones() {
+        let mut s = UserSettings::default();
+        s.workbenches
+            .insert("wb.old".into(), serde_json::json!({"a": 1}));
+        s.keyboard
+            .bindings
+            .insert("old.pad".into(), vec!["P".into()]);
+        s.keyboard
+            .bindings
+            .insert("new.pocket".into(), vec!["Q".into()]);
+        s.keyboard
+            .bindings
+            .insert("old.pocket".into(), vec!["W".into()]);
+        s.toolbars.rows = vec![vec!["wb.old/Make".into(), "std.file".into()]];
+        s.rename_ids(&Renames {
+            workbench: &|id| id.replace("wb.old", "wb.new"),
+            command: &|id| id.replace("old.", "new."),
+            group: &|id| id.replace("wb.old/", "wb.new/"),
+        });
+        assert_eq!(
+            s.workbenches.get("wb.new"),
+            Some(&serde_json::json!({"a": 1}))
+        );
+        assert!(!s.workbenches.contains_key("wb.old"));
+        assert_eq!(
+            s.keyboard.bindings.get("new.pad"),
+            Some(&vec!["P".to_string()])
+        );
+        assert_eq!(
+            s.keyboard.bindings.get("new.pocket"),
+            Some(&vec!["Q".to_string()]),
+            "a key set under the new id wins"
+        );
+        assert!(!s.keyboard.bindings.contains_key("old.pad"));
+        assert_eq!(s.toolbars.rows, [vec!["wb.new/Make", "std.file"]]);
     }
 }

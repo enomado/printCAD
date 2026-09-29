@@ -15,6 +15,7 @@ pub mod panel;
 pub mod placement;
 pub mod rebuild;
 pub mod registration;
+pub mod renamed;
 pub mod runtime;
 pub mod server;
 pub mod service;

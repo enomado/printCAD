@@ -13,7 +13,7 @@ use crate::commands::vector3;
 
 pub use core_document::attach::{edge_anchor, face_anchor, settle};
 
-/// The modes a datum attaches by, as `part.datum` names them, with what
+/// The modes a datum attaches by, as `design.datum` names them, with what
 /// each is.
 pub const MODES: &[(&str, &str)] = &[
     ("base_plane", "on a base plane (plane)"),
@@ -325,7 +325,7 @@ fn anchors<const N: usize, T>(
         .map_err(|_| CommandError::bad(name, format!("must list {N}")))
 }
 
-/// The attachment `part.datum`'s arguments describe, in `body`'s own
+/// The attachment `design.datum`'s arguments describe, in `body`'s own
 /// frame.
 pub fn attachment_from_args(
     a: &Args,
@@ -501,7 +501,7 @@ fn plane_args(plane: &PlaneAnchor) -> Value {
     }
 }
 
-/// The arguments of `part.datum` that make `attachment` again, as the
+/// The arguments of `design.datum` that make `attachment` again, as the
 /// references were picked.
 pub fn attachment_args(attachment: &DatumAttachment) -> Map<String, Value> {
     let mut args = match attachment {
@@ -697,7 +697,7 @@ mod tests {
             if kernel {
                 ctx.kernel = Some(&CYLINDER);
             }
-            bench.run_command("part.datum", &args, &mut ctx)?
+            bench.run_command("design.datum", &args, &mut ctx)?
         };
         let id = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
         let datum = DatumFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
@@ -1000,7 +1000,7 @@ mod tests {
             let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
             let args = json!({"body": body.0.to_string(), "variant": "cylinder"});
             bench
-                .run_command("part.primitive", args.as_object().unwrap(), &mut ctx)
+                .run_command("design.primitive", args.as_object().unwrap(), &mut ctx)
                 .unwrap();
         }
         let late = datum(

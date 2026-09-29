@@ -71,7 +71,7 @@ pub struct ParamSpec {
 /// A command: its id, what it does, what it takes and what it answers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandSpec {
-    /// Unique across the application, dotted like `part.pad`.
+    /// Unique across the application, dotted like `design.pad`.
     pub id: String,
     /// One line on what it does.
     pub summary: String,

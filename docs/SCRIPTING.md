@@ -7,9 +7,13 @@ arguments in braces:
 ```lua
 local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 20}
-local pad = pc.part.pad{sketch = s, length = 12}
-pc.part.set{feature = pad, length = 20}
+local pad = pc.design.pad{sketch = s, length = 12}
+pc.design.set{feature = pad, length = 20}
 ```
+
+The Design workbench's commands were once under `part` (`pc.part.pad`,
+`part.set`); those names still run the same commands, so older scripts,
+recordings and key settings keep working.
 
 ## Where scripts run
 
@@ -46,7 +50,7 @@ pc.part.set{feature = pad, length = 20}
 - An empty `{}` in a command's arguments is the empty list. `array()`
   says the same anywhere else, and `array(1, 2)` is the same as `{1, 2}`.
 - A feature's fields are what `pc.doc.feature{id = f}.fields` shows, set
-  by name (`pc.part.set{feature = f, length = 25}`). A field holding no
+  by name (`pc.design.set{feature = f, length = 25}`). A field holding no
   value is nil in Lua, so `fields` leaves it out and `unset` names it. A
   choice is its name as a string (`axis = "SketchY"`); a choice that
   carries values is a table under its name:
@@ -57,7 +61,7 @@ pc.part.set{feature = pad, length = 20}
   empty `{}` stands for a table of settings where one is wanted
   (`params = {}`).
 - A command that fails raises a Lua error with the reason, which stops the
-  script. `pcall(pc.part.pad, {sketch = s})` catches it instead.
+  script. `pcall(pc.design.pad, {sketch = s})` catches it instead.
 - Every change is an ordinary edit, so Undo takes it back. A console line
   or a script run is one undo step, and so is anything you edit by hand
   while it runs.
@@ -91,7 +95,7 @@ stands for, and the recording is the list of those commands.
   and `sketch.construction`.
 - A Design feature records when its task closes with OK, as the
   command that makes it with the fields that differ from what that command
-  makes on its own. An edit records as `part.set` with the fields changed.
+  makes on its own. An edit records as `design.set` with the fields changed.
 - A joint records with its faces where the bodies were before it moved
   them; a move records the placement it ended at.
 - The sketcher's other actions record too: arrays, cut and paste (the
@@ -117,7 +121,7 @@ objects' dimensions, and follows when they change:
 pc.var.new{name = "Printer"}
 pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm"}
 pc.var.set{set = "Printer", name = "wall", formula = "3 * Printer.nozzle"}
-local pad = pc.part.pad{sketch = s, length = 5}
+local pad = pc.design.pad{sketch = s, length = 5}
 pc.doc.set_formula{id = pad, parameter = "length", formula = "Printer.wall * 10"}
 print(pc.var.eval{formula = "Pad.length"}.text)  -- 12 mm
 ```
@@ -135,11 +139,11 @@ A plate with a centred hole, sized from the command line, written as 3MF:
 local w, h = tonumber(arg[1]) or 40, tonumber(arg[2]) or 30
 local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = w, height = h}
-local pad = pc.part.pad{sketch = s, length = 4}
+local pad = pc.design.pad{sketch = s, length = 4}
 local body = pc.doc.feature{id = pad}.body
 local hole = pc.sketch.new{body = body, plane = "XY", offset = 4}
 pc.sketch.circle{sketch = hole, x = w / 2, y = h / 2, radius = 3}
-pc.part.pocket{sketch = hole, through_all = true}
+pc.design.pocket{sketch = hole, through_all = true}
 pc.doc.rebuild()
 print(pc.doc.measure{body = body}.volume)
 pc.file.export{path = "plate.3mf"}
@@ -530,7 +534,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `plane` (string, optional): XY (the default), XZ or YZ
 - `offset` (number, optional): How far along the plane's normal it sits
 - `name` (string, optional): Its name in the tree
-- `attachment` (any, optional): Attached as a datum plane is, the attachment as a datum keeps it (doc.feature on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces and edges on the body's own solid; the sketch follows what it stands on. part.datum makes the same from plainer arguments, and `on` takes that datum
+- `attachment` (any, optional): Attached as a datum plane is, the attachment as a datum keeps it (doc.feature on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces and edges on the body's own solid; the sketch follows what it stands on. design.datum makes the same from plainer arguments, and `on` takes that datum
 - `attachment_offset` (any, optional): The attachment's offset, as a datum's
 - `on` (id, optional): A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
@@ -544,7 +548,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `plane` (string, optional): XY (the default), XZ or YZ
 - `offset` (number, optional): How far along the plane's normal it sits
 - `name` (string, optional): Its name in the tree
-- `attachment` (any, optional): Attached as a datum plane is, the attachment as a datum keeps it (doc.feature on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces and edges on the body's own solid; the sketch follows what it stands on. part.datum makes the same from plainer arguments, and `on` takes that datum
+- `attachment` (any, optional): Attached as a datum plane is, the attachment as a datum keeps it (doc.feature on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces and edges on the body's own solid; the sketch follows what it stands on. design.datum makes the same from plainer arguments, and `on` takes that datum
 - `attachment_offset` (any, optional): The attachment's offset, as a datum's
 - `on` (id, optional): A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
@@ -859,19 +863,9 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: The numbers to change, such as teeth = 24 or module = 1.5; a shaft takes sections = {{length = 20, diameter = 10, chamfer = 0.5, fillet = 0}, ...}
 - Returns what the numbers come to: its diameters, or its length
 
-### part
+### design
 
-`pc.part.pad`: Pad a sketch.
-
-- `sketch` (id, optional): The sketch it uses
-- `body` (id, optional): The body it goes in; the sketch's body when left out
-- `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
-- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
-- Other arguments: Any field of the feature, such as length = 20 or reversed = true
-- Returns the feature's id
-
-`pc.part.pocket`: Cut a sketch into the body.
+`pc.design.pad`: Pad a sketch.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -881,7 +875,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.revolve`: Turn a sketch about an axis.
+`pc.design.pocket`: Cut a sketch into the body.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -891,7 +885,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.groove`: Cut a sketch turned about an axis.
+`pc.design.revolve`: Turn a sketch about an axis.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -901,7 +895,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.loft`: Loft through sketches.
+`pc.design.groove`: Cut a sketch turned about an axis.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -911,7 +905,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.subtractive_loft`: Cut a loft through sketches.
+`pc.design.loft`: Loft through sketches.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -921,7 +915,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.pipe`: Sweep a sketch along a path.
+`pc.design.subtractive_loft`: Cut a loft through sketches.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -931,7 +925,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.subtractive_pipe`: Cut a sketch swept along a path.
+`pc.design.pipe`: Sweep a sketch along a path.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -941,7 +935,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.helix`: Sweep a sketch along a helix.
+`pc.design.subtractive_pipe`: Cut a sketch swept along a path.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -951,7 +945,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.subtractive_helix`: Cut a sketch swept along a helix.
+`pc.design.helix`: Sweep a sketch along a helix.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -961,18 +955,17 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.primitive`: Add a box, cylinder, sphere, cone, torus or wedge.
+`pc.design.subtractive_helix`: Cut a sketch swept along a helix.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
 - `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
-- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus or wedge
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.subtractive_primitive`: Cut a box, cylinder, sphere, cone, torus or wedge.
+`pc.design.primitive`: Add a box, cylinder, sphere, cone, torus or wedge.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -983,7 +976,18 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.hole`: Drill holes at a sketch's circles and points.
+`pc.design.subtractive_primitive`: Cut a box, cylinder, sphere, cone, torus or wedge.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus or wedge
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+`pc.design.hole`: Drill holes at a sketch's circles and points.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -993,7 +997,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.fillet`: Round edges.
+`pc.design.fillet`: Round edges.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1003,7 +1007,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.chamfer`: Bevel edges.
+`pc.design.chamfer`: Bevel edges.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1013,7 +1017,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.draft`: Tilt faces.
+`pc.design.draft`: Tilt faces.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1023,7 +1027,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.thickness`: Hollow the solid.
+`pc.design.thickness`: Hollow the solid.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1033,7 +1037,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.mirror`: Mirror the last feature.
+`pc.design.mirror`: Mirror the last feature.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1043,7 +1047,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.linear_pattern`: Repeat the last feature along a line.
+`pc.design.linear_pattern`: Repeat the last feature along a line.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1053,7 +1057,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.polar_pattern`: Repeat the last feature about an axis.
+`pc.design.polar_pattern`: Repeat the last feature about an axis.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1063,7 +1067,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.scaled`: Scale the last feature.
+`pc.design.scaled`: Scale the last feature.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1073,7 +1077,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.boolean`: Combine with another body.
+`pc.design.boolean`: Combine with another body.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -1083,12 +1087,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
-`pc.part.set`: Change fields of a Design feature or a datum.
+`pc.design.set`: Change fields of a Design feature or a datum.
 
 - `feature` (id): The feature to change
-- Other arguments: The fields to change, such as length = 25; a datum takes offset {x, y, z}, rotation and flip as part.datum does
+- Other arguments: The fields to change, such as length = 25; a datum takes offset {x, y, z}, rotation and flip as design.datum does
 
-`pc.part.datum`: Add a datum plane, line, point or coordinate system.
+`pc.design.datum`: Add a datum plane, line, point or coordinate system.
 
 - `kind` (string): plane, line, point or coordinate_system
 - `body` (id): The body it belongs to
@@ -1109,7 +1113,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the datum's id
 
-`pc.part.borrow`: Borrow another body's sketch, or faces and edges of its solid.
+`pc.design.borrow`: Borrow another body's sketch, or faces and edges of its solid.
 
 - `body` (id): The body that borrows
 - `sketch` (id, optional): A sketch of another body: its profile, for this body's features
@@ -1121,24 +1125,24 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the borrow's id
 
-`pc.part.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
+`pc.design.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
 
 - `feature` (id): The borrow
 - `frozen` (boolean, optional): true (the default) takes the source as it is now; false follows it again
 
-`pc.part.move_to_body`: Move a feature into another body's history, with the sketch and datums only it uses.
+`pc.design.move_to_body`: Move a feature into another body's history, with the sketch and datums only it uses.
 
 - `feature` (id): The feature
 - `body` (id): The body it goes to, in at its tip
 - Returns the ids of the features moved, the given one last
 
-`pc.part.duplicate`: Make a copy of a feature, with its own copies of the sketches and datums it reads.
+`pc.design.duplicate`: Make a copy of a feature, with its own copies of the sketches and datums it reads.
 
 - `feature` (id): The feature
 - `body` (id, optional): The body the copy goes in, at its tip (the feature's own when left out)
 - Returns the ids of the features made, the copy of the given one last
 
-`pc.part.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
+`pc.design.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
 
 - `body` (id): The body whose solid it runs through
 - `from_point` (list): A point of the face it starts at, {x, y, z}, in the body's own frame
@@ -1148,7 +1152,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `tolerance` (number, optional): How closely it follows the sections' centres, mm (0.02 when left out)
 - Returns {length, points, deviation, straight}: its length in mm, points along it in the body's frame, the largest distance measured from a section's centre to it, and whether it is one straight segment
 
-`pc.part.gear`: Make an involute spur gear's profile, outer or internal (ring): a sketch to pad.
+`pc.design.gear`: Make an involute spur gear's profile, outer or internal (ring): a sketch to pad.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
 - `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
@@ -1158,7 +1162,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in modules), backlash, root_fillet (in modules), bore, internal (true for a ring), rim (a ring's outside diameter)
 - Returns the sketch's id
 
-`pc.part.sprocket`: Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad.
+`pc.design.sprocket`: Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
 - `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
@@ -1168,7 +1172,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: pitch, roller (the roller's diameter), teeth, bore
 - Returns the sketch's id
 
-`pc.part.shaft`: Make a stepped shaft's half section: a sketch to revolve about its vertical axis.
+`pc.design.shaft`: Make a stepped shaft's half section: a sketch to revolve about its vertical axis.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
 - `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)

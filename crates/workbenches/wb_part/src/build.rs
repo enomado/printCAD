@@ -26,7 +26,7 @@ pub fn part_features_of_body(document: &Document, body: BodyId) -> Vec<(FeatureI
     let mut features: Vec<(u64, FeatureId, PartFeature)> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, node)| node.workbench_id.as_str() == "wb.part" && node.body == Some(body))
+        .filter(|(_, node)| node.workbench_id.as_str() == "wb.design" && node.body == Some(body))
         .filter_map(|(id, node)| {
             // As it builds: with every formula's current value in.
             PartFeature::from_json(document.feature_values(*id)?)
@@ -47,7 +47,7 @@ pub fn pending_body_rebuilds(document: &Document) -> Vec<BodyId> {
     let mut bodies: Vec<BodyId> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, node)| node.workbench_id.as_str() == "wb.part" && node.dirty)
+        .filter(|(_, node)| node.workbench_id.as_str() == "wb.design" && node.dirty)
         .filter_map(|(_, node)| node.body)
         .collect();
     bodies.sort_by_key(|b| b.0);
@@ -212,7 +212,7 @@ fn datums_asking(
                 // `answer_lent_faces` finds it, not this body's build.
                 // A primitive attached by a mode asks what the attachment
                 // asks.
-                "wb.part" => match PartFeature::from_json(&n.data).ok()? {
+                "wb.design" => match PartFeature::from_json(&n.data).ok()? {
                     PartFeature::Primitive {
                         attached: Some(attached),
                         ..
@@ -2893,7 +2893,7 @@ pub fn swap_consumed_sketch(
     let still_consumed = document
         .feature_tree()
         .all_nodes()
-        .filter(|(id, n)| n.workbench_id.as_str() == "wb.part" && **id != feature_id)
+        .filter(|(id, n)| n.workbench_id.as_str() == "wb.design" && **id != feature_id)
         .filter_map(|(_, n)| PartFeature::from_json(&n.data).ok())
         .any(|f| f.sketches().contains(&old_sketch));
     if !still_consumed {
@@ -2948,7 +2948,7 @@ pub fn mark_all_part_features_dirty(document: &mut Document) {
     let ids: Vec<FeatureId> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, node)| node.workbench_id.as_str() == "wb.part")
+        .filter(|(_, node)| node.workbench_id.as_str() == "wb.design")
         .map(|(id, _)| *id)
         .collect();
     for id in ids {

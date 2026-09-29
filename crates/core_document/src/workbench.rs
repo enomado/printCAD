@@ -11,8 +11,17 @@ use crate::rebuild::RebuildJob;
 use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 use crate::{Document, FeatureId};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct WorkbenchId(String);
+
+/// An id read back from a file, a log or a message is called what it is
+/// now (`renamed::workbench`).
+impl<'de> Deserialize<'de> for WorkbenchId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = String::deserialize(deserializer)?;
+        Ok(Self(crate::renamed::workbench(&id).to_owned()))
+    }
+}
 
 impl WorkbenchId {
     pub fn new(id: impl Into<String>) -> Self {

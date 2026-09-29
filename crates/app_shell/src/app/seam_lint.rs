@@ -10,7 +10,7 @@ use std::path::Path;
 const BYPASSES: &[&str] = &[
     "wb_part",
     "wb_sketch",
-    "\"wb.part\"",
+    "\"wb.design\"",
     "\"wb.sketch\"",
     "PartFeature",
     "SketchFeature",

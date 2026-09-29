@@ -203,8 +203,8 @@ a function under `pc`, called with named arguments:
 ```lua
 local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 20}
-local pad = pc.part.pad{sketch = s, length = 12}
-pc.part.set{feature = pad, length = 20}
+local pad = pc.design.pad{sketch = s, length = 12}
+pc.design.set{feature = pad, length = 20}
 ```
 
 Run them in the console (Windows › Console), from the Scripts menu and
