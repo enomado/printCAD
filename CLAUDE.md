@@ -342,7 +342,10 @@ active. The UI surface: `configure` registers
 registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
 `delete_feature`/`property_hints` answer for the feature kinds a bench
 claims; `linked_features` names features of other bodies the tree lists
-under a body too (a joint under the body it holds to); `faded_bodies`
+under a body too (a joint under the body it holds to); `derive_on_geometry`
+brings a feature's working data up to the bodies' geometry during
+evaluation (an assembly joint re-finds its named faces on a rebuilt body,
+and `values_moved` re-solves); `faded_bodies`
 draws bodies translucent, still pickable, while a tool wants them seen
 past (the Assembly's picking); `not_printed` names bodies an export of
 everything and the slicer leave out (bought parts); `edit_feature` is

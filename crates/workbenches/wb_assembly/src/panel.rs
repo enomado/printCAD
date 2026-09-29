@@ -77,7 +77,7 @@ impl AssemblyWorkbench {
                 .font(sans(FONT_XS))
                 .color(TEXT3),
             );
-            if let Some((_, first, _)) = picking.first {
+            if let Some((_, first, ..)) = picking.first {
                 let offered: Vec<_> = crate::ORIGIN
                     .iter()
                     .filter(|(_, anchor)| picking.kind.takes_anchor(anchor, Some(first)))
@@ -88,7 +88,7 @@ impl AssemblyWorkbench {
                     ui.horizontal_wrapped(|ui| {
                         for (name, anchor) in offered {
                             if ui_kit::widgets::small_secondary_button(ui, name).clicked() {
-                                self.picked(ctx, crate::WORLD, *anchor, None);
+                                self.picked(ctx, crate::WORLD, *anchor, None, 0);
                             }
                         }
                     });

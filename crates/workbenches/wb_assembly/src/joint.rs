@@ -405,6 +405,15 @@ pub struct JointFeature {
     /// The body it is held against, which it follows.
     pub other_body: BodyId,
     pub fixed: Anchor,
+    /// The names of the faces the two ends were picked on (`moving`,
+    /// `fixed`), which a rebuilt body is searched for; 0 for an end with
+    /// none.
+    #[serde(default, skip_serializing_if = "unnamed")]
+    pub names: [kernel_api::TopoName; 2],
+}
+
+fn unnamed(names: &[kernel_api::TopoName; 2]) -> bool {
+    names == &[0, 0]
 }
 
 /// Scales a direction mismatch against a distance: a turn this many

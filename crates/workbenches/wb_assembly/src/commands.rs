@@ -104,6 +104,7 @@ pub(crate) fn rejoined(
     }
     let at = |b: BodyId| -> Rigid { ctx.document.body_placement(b).into() };
     Ok(JointFeature {
+        names: [0; 2],
         kind: tool.joint(&moving, &at(moving_body), &fixed, &at(other), radius),
         moving,
         other_body: other,
@@ -646,7 +647,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         _ => None,
                     })
                     .unwrap_or(0.0);
+                let kept = feature.names;
+                let name_of = |key: &str, keep: u64| match a.0.get(key) {
+                    Some(face) => face.get("name").and_then(Value::as_u64).unwrap_or(0),
+                    None => keep,
+                };
                 feature = rejoined(ctx, tool, (moving_body, moving), (other, fixed), radius)?;
+                feature.names = [name_of("face", kept[0]), name_of("other_face", kept[1])];
             }
             match &mut feature.kind {
                 JointKind::Mate { flip, offset } => {
@@ -1166,7 +1173,14 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
             format!("{label} {number}")
         }
     };
+    let name_of = |key: &str| {
+        a.0.get(key)
+            .and_then(|f| f.get("name"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    };
     let joint = JointFeature {
+        names: [name_of("face"), name_of("other_face")],
         kind,
         moving,
         other_body: other,
@@ -1236,11 +1250,17 @@ pub(crate) fn record_joint(
                     .map(|(_, placement)| *placement)
                     .unwrap_or_default()
             };
-            let face = |anchor: &Anchor, b: BodyId| match anchor.moved(&at(b)) {
-                Anchor::Plane { point, normal } => json!({"point": point, "normal": normal}),
-                Anchor::Axis { point, direction } => {
-                    json!({"axis": {"point": point, "direction": direction}})
+            let face = |anchor: &Anchor, b: BodyId, name: u64| {
+                let mut face = match anchor.moved(&at(b)) {
+                    Anchor::Plane { point, normal } => json!({"point": point, "normal": normal}),
+                    Anchor::Axis { point, direction } => {
+                        json!({"axis": {"point": point, "direction": direction}})
+                    }
+                };
+                if name != 0 {
+                    face["name"] = json!(name);
                 }
+                face
             };
             let command = match JointTool::of_kind(&joint.kind) {
                 Some(tool) => tool.command(),
@@ -1255,9 +1275,9 @@ pub(crate) fn record_joint(
             };
             let mut args = object(json!({
                 "body": body.0.to_string(),
-                "face": face(&joint.moving, body),
+                "face": face(&joint.moving, body, joint.names[0]),
                 "other": joint.other_body.0.to_string(),
-                "other_face": face(&joint.fixed, joint.other_body),
+                "other_face": face(&joint.fixed, joint.other_body, joint.names[1]),
                 "name": node.name,
             }));
             args.extend(object(settings(&joint.kind)));
@@ -1614,6 +1634,7 @@ pub(crate) fn set_grounded(
     ctx.document
         .add_feature_in_body(
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Ground,
                 moving: anchor,
                 other_body: body,

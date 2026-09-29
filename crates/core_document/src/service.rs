@@ -277,6 +277,7 @@ impl DocumentService {
                     .or_else(|| document.get_feature_data(id).cloned())
             };
             let mut moved = owner.derive(node, &mut values, &values_of);
+            moved |= owner.derive_on_geometry(node, &mut values, document);
             if node.workbench_id.as_str() != crate::datum::DATUM_KIND
                 && let Some(probed) = document.probed_references(node.id)
             {

@@ -127,6 +127,7 @@ pub fn holds(document: &Document) -> Vec<Joint> {
                     name: name.clone(),
                     body: m.body,
                     feature: JointFeature {
+                        names: [0; 2],
                         kind: JointKind::Fixed {
                             turn: m.turn,
                             shift: m.shift,

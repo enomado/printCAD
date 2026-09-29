@@ -185,6 +185,10 @@ fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -
 /// for the property panel.
 fn property_hints(&self) -> PropertyHints;
 
+/// Bring a feature's working data up to date with the bodies' geometry
+/// as it stands (a joint finding its faces again by name). Derived.
+fn derive_on_geometry(&self, node: &FeatureNode, values: &mut Value, doc: &Document) -> bool;
+
 /// Bodies that are not made (bought parts): an export of every visible
 /// body and the slicer leave them out.
 fn not_printed(&self, doc: &Document) -> Vec<BodyId>;

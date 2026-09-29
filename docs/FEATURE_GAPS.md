@@ -250,7 +250,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Joints
 
-- [ ] **Joints that follow part edits** (missing, M). Anchors keep face
+- [x] **Joints that follow part edits** (missing, M). Anchors keep face
   and edge names (`FaceRef::name`, `EdgeRef::faces`) and are found again
   on rebuild.
 - [ ] **Point anchors and a ball joint** (missing, M). A vertex, a face

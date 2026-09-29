@@ -1012,6 +1012,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
                     offset: 0.0,
@@ -1047,6 +1048,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Mate {
                     flip: true,
                     offset: 2.5,
@@ -1081,6 +1083,7 @@ mod tests {
             &mut doc,
             pin,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::align(),
                 moving: Anchor::Axis {
                     point: [0.0, 0.0, 0.0],
@@ -1108,6 +1111,7 @@ mod tests {
         let b = doc.create_body(None);
         let c = doc.create_body(None);
         let mate = |other| JointFeature {
+            names: [0; 2],
             kind: JointKind::Mate {
                 flip: true,
                 offset: 5.0,
@@ -1131,6 +1135,7 @@ mod tests {
         // Grounding a lets it take a joint of its own: a ring that can
         // close does, one that cannot is named.
         let ground = JointFeature {
+            names: [0; 2],
             kind: JointKind::Ground,
             moving: Anchor::Plane {
                 point: [0.0; 3],
@@ -1172,6 +1177,7 @@ mod tests {
             normal: [0.0, 0.0, 1.0],
         };
         let joint = JointFeature {
+            names: [0; 2],
             kind: JointKind::Angle { degrees: 90.0 },
             moving: up,
             other_body: base,
@@ -1200,6 +1206,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
                     offset: 0.0,
@@ -1224,6 +1231,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Angle { degrees: 30.0 },
                 moving: side,
                 other_body: base,
@@ -1248,6 +1256,7 @@ mod tests {
         let base = doc.create_body(None);
         let part = doc.create_body(None);
         let on = |z: f32| JointFeature {
+            names: [0; 2],
             kind: JointKind::Mate {
                 flip: true,
                 offset: 0.0,
@@ -1279,6 +1288,7 @@ mod tests {
 
     fn mate(moving: Anchor, other: BodyId, fixed: Anchor, flip: bool, offset: f32) -> JointFeature {
         JointFeature {
+            names: [0; 2],
             kind: JointKind::Mate { flip, offset },
             moving,
             other_body: other,
@@ -1391,6 +1401,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::align(),
                 moving: Anchor::Axis {
                     point: [5.0, 0.0, 0.0],
@@ -1465,6 +1476,7 @@ mod tests {
         fixed: Anchor,
     ) -> JointFeature {
         JointFeature {
+            names: [0; 2],
             kind: tool.joint(&moving, &rigid(doc, body), &fixed, &rigid(doc, other), 0.0),
             moving,
             other_body: other,
@@ -1492,6 +1504,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Hinge {
                     offset: 5.0,
                     zero: DQuat::IDENTITY.to_array(),
@@ -1598,6 +1611,7 @@ mod tests {
                 &mut doc,
                 part,
                 JointFeature {
+                    names: [0; 2],
                     kind,
                     moving: plane([0.0; 3], [0.0, 0.0, -1.0]),
                     other_body: base,
@@ -1620,6 +1634,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Tangent { radius: 4.0 },
                 moving: axis([0.0; 3], [1.0, 0.0, 0.0]),
                 other_body: base,
@@ -1642,6 +1657,7 @@ mod tests {
             &mut doc,
             door,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Hinge {
                     offset: 0.0,
                     zero: DQuat::IDENTITY.to_array(),

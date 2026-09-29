@@ -47,8 +47,9 @@ pub use sweep_check::MotionClash;
 #[derive(Debug, Clone)]
 struct Picking {
     kind: JointTool,
-    /// The first body, its anchor, and the radius of a round face.
-    first: Option<(BodyId, Anchor, Option<f32>)>,
+    /// The first body, its anchor, the radius of a round face, and the
+    /// face's name.
+    first: Option<(BodyId, Anchor, Option<f32>, kernel_api::TopoName)>,
     /// The joint whose faces are picked again, when it is not a new one.
     repick: Option<FeatureId>,
 }
@@ -1163,7 +1164,7 @@ impl AssemblyWorkbench {
                 ctx.log_warn(picking.kind.refusal());
                 return;
             }
-            self.picked(ctx, body, anchor, None);
+            self.picked(ctx, body, anchor, None, 0);
             return;
         }
         // A face, or else the last edge picked, where the joint takes one.
@@ -1190,7 +1191,8 @@ impl AssemblyWorkbench {
         };
         let first_flat = picking
             .first
-            .map(|(_, anchor, _)| matches!(anchor, Anchor::Plane { .. }));
+            .map(|(_, anchor, ..)| matches!(anchor, Anchor::Plane { .. }));
+        let name = face.as_ref().map_or(0, |f| f.name);
         let picked = match (picking.kind.takes(), first_flat) {
             (Takes::Flat, _) => flat().map(|a| (a, None)),
             (Takes::Round, _) => round(),
@@ -1203,7 +1205,7 @@ impl AssemblyWorkbench {
             ctx.log_warn(picking.kind.refusal());
             return;
         };
-        self.picked(ctx, body, anchor, radius);
+        self.picked(ctx, body, anchor, radius, name);
     }
 
     /// A datum plane or line selected in the tree, as an anchor on its
@@ -1242,6 +1244,7 @@ impl AssemblyWorkbench {
         body: BodyId,
         anchor: Anchor,
         radius: Option<f32>,
+        name: kernel_api::TopoName,
     ) {
         let Some(picking) = self.picking.clone() else {
             return;
@@ -1252,14 +1255,14 @@ impl AssemblyWorkbench {
             }
             None => {
                 self.picking = Some(Picking {
-                    first: Some((body, anchor, radius)),
+                    first: Some((body, anchor, radius, name)),
                     ..picking
                 });
             }
             Some((first_body, ..)) if first_body == body => {
                 ctx.log_warn("Pick the second face on another body");
             }
-            Some((first_body, first_anchor, first_radius)) => {
+            Some((first_body, first_anchor, first_radius, first_name)) => {
                 self.picking = None;
                 let radius = first_radius.or(radius);
                 if picking.kind == JointTool::Tangent && radius.is_none() {
@@ -1273,7 +1276,7 @@ impl AssemblyWorkbench {
                         picking.kind,
                         (first_body, first_anchor),
                         (body, anchor),
-                        radius,
+                        (radius, [first_name, name]),
                     );
                     return;
                 }
@@ -1288,6 +1291,7 @@ impl AssemblyWorkbench {
                     ctx,
                     first_body,
                     JointFeature {
+                        names: [first_name, name],
                         kind,
                         moving: first_anchor,
                         other_body: body,
@@ -1307,7 +1311,7 @@ impl AssemblyWorkbench {
         tool: JointTool,
         moving: (BodyId, Anchor),
         fixed: (BodyId, Anchor),
-        radius: Option<f32>,
+        (radius, names): (Option<f32>, [kernel_api::TopoName; 2]),
     ) {
         let kept_radius = ctx
             .document
@@ -1319,23 +1323,29 @@ impl AssemblyWorkbench {
             });
         let radius = radius.or(kept_radius).unwrap_or(0.0);
         match commands::rejoined(ctx, tool, moving, fixed, radius) {
-            Ok(feature) => {
-                let face = |anchor: Anchor, body: BodyId| match anchor
-                    .moved(&ctx.document.body_placement(body))
-                {
-                    Anchor::Plane { point, normal } => {
-                        serde_json::json!({"point": point, "normal": normal})
+            Ok(mut feature) => {
+                feature.names = names;
+                let face = |anchor: Anchor, body: BodyId, name: kernel_api::TopoName| {
+                    let mut face = match anchor.moved(&ctx.document.body_placement(body)) {
+                        Anchor::Plane { point, normal } => {
+                            serde_json::json!({"point": point, "normal": normal})
+                        }
+                        Anchor::Axis { point, direction } => serde_json::json!({
+                            "axis": {"point": point, "direction": direction},
+                            "radius": radius,
+                        }),
+                    };
+                    if name != 0 {
+                        face["name"] = serde_json::json!(name);
                     }
-                    Anchor::Axis { point, direction } => {
-                        serde_json::json!({"axis": {"point": point, "direction": direction}, "radius": radius})
-                    }
+                    face
                 };
                 let args = commands::object(serde_json::json!({
                     "joint": joint.0.to_string(),
                     "kind": tool.word(),
-                    "face": face(moving.1, moving.0),
+                    "face": face(moving.1, moving.0, names[0]),
                     "other": fixed.0.0.to_string(),
-                    "other_face": face(fixed.1, fixed.0),
+                    "other_face": face(fixed.1, fixed.0, names[1]),
                 }));
                 if ctx
                     .document
@@ -1576,6 +1586,67 @@ impl Workbench for AssemblyWorkbench {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// A joint's ends picked on named faces follow those faces: a body
+    /// rebuilt with a face moved is searched for the face by name, and the
+    /// end moves onto it, so the joint holds to the face wherever the rebuild put it.
+    fn derive_on_geometry(
+        &self,
+        node: &FeatureNode,
+        values: &mut serde_json::Value,
+        document: &core_document::Document,
+    ) -> bool {
+        if node.workbench_id.as_str() != JOINT_KIND {
+            return false;
+        }
+        let Ok(mut joint) = serde_json::from_value::<JointFeature>(values.clone()) else {
+            return false;
+        };
+        let mut changed = false;
+        for (end, body) in [(0, node.body), (1, Some(joint.other_body))] {
+            let name = joint.names[end];
+            let Some(body) = body.filter(|_| name != 0) else {
+                continue;
+            };
+            let Some((mesh, _)) = document.local_geometry(body) else {
+                continue;
+            };
+            let Some(surface) = mesh
+                .face_names
+                .iter()
+                .position(|n| *n == name)
+                .and_then(|i| mesh.face_surfaces.get(i))
+            else {
+                continue;
+            };
+            let candidate = match *surface {
+                kernel_api::FaceSurface::Plane { origin, normal } => Anchor::Plane {
+                    point: origin,
+                    normal,
+                },
+                other => match other.axis() {
+                    Some((point, direction)) => Anchor::Axis { point, direction },
+                    None => continue,
+                },
+            };
+            let anchor = if end == 0 {
+                &mut joint.moving
+            } else {
+                &mut joint.fixed
+            };
+            if let Some(found) = replace::nearest_like(anchor, &[candidate]) {
+                let ((p, d), (q, e)) = (anchor.parts(), found.parts());
+                if p.distance(q) > 1e-5 || d.distance(e) > 1e-6 {
+                    *anchor = found;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            *values = joint.to_json();
+        }
+        changed
     }
 
     /// A joint whose offset or angle a formula moved: the bodies follow.
@@ -2397,7 +2468,7 @@ mod tests {
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         let (_, xy) = ORIGIN[0];
-        wb.picked(&mut ctx, WORLD, xy, None);
+        wb.picked(&mut ctx, WORLD, xy, None, 0);
         drop(ctx);
         let mate = joints(&doc).into_iter().next().unwrap();
         assert_eq!(mate.feature.other_body, WORLD);
@@ -2461,6 +2532,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
                     offset: 0.0,
@@ -2498,6 +2570,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
                     offset: 0.0,
@@ -2549,6 +2622,7 @@ mod tests {
                     normal: [0.0, 0.0, 1.0],
                 },
                 None,
+                0,
             )),
             repick: None,
         });
@@ -2771,6 +2845,7 @@ mod tests {
         };
         doc.add_feature_in_body(
             JointFeature {
+                names: [0; 2],
                 kind: JointTool::Hinge.joint(
                     &pin,
                     &Rigid::from(BodyPlacement::default()),
@@ -3172,6 +3247,7 @@ mod tests {
         let slider = doc
             .add_feature_in_body(
                 JointFeature {
+                    names: [0; 2],
                     kind,
                     moving: rail,
                     other_body: base,
@@ -3252,6 +3328,7 @@ mod tests {
         let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
         doc.add_feature_in_body(
             JointFeature {
+                names: [0; 2],
                 kind,
                 moving: rail,
                 other_body: base,
@@ -3350,6 +3427,7 @@ mod tests {
         let hinge = doc
             .add_feature_in_body(
                 JointFeature {
+                    names: [0; 2],
                     kind: JointTool::Hinge.joint(&pin, &at, &pin, &at, 0.0),
                     moving: pin,
                     other_body: frame,

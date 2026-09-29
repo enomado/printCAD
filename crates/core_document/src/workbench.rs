@@ -709,6 +709,19 @@ pub trait Workbench: Send {
         false
     }
 
+    /// Bring an owned feature's working data up to date with the bodies'
+    /// geometry as it stands (a joint finds its faces again, by name, on a
+    /// body rebuilt). Answers whether it changed anything. Derived, never
+    /// recorded.
+    fn derive_on_geometry(
+        &self,
+        _node: &FeatureNode,
+        _values: &mut serde_json::Value,
+        _document: &Document,
+    ) -> bool {
+        false
+    }
+
     /// What the generic property panel should know about this bench's
     /// feature payloads.
     fn property_hints(&self) -> PropertyHints {

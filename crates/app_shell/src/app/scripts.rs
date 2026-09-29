@@ -1848,6 +1848,10 @@ fn faces_of(mesh: &kernel_api::TriMesh) -> Value {
             if let Some((p, d)) = surface.axis() {
                 out["axis"] = json!({"point": p, "direction": d});
             }
+            // What a rebuild finds the face by, where it has a name.
+            if let Some(name) = mesh.face_names.get(f).filter(|n| **n != 0) {
+                out["name"] = json!(name);
+            }
             Some(out)
         })
         .collect();
