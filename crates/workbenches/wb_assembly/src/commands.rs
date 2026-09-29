@@ -419,6 +419,38 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.exploded_view",
+            "Keep an exploded view: steps, each moving some bodies by a shift, played in order",
+        )
+        .param(
+            "steps",
+            ParamKind::List,
+            "{{bodies = {ids}, shift = {x, y, z}}, ...}, in the order they play",
+        )
+        .optional(
+            "view",
+            ParamKind::Id,
+            "A view to change, rather than a new one",
+        )
+        .optional("name", ParamKind::String, "A new view's name in the tree")
+        .returns("the view's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.explode_at",
+            "Where an exploded view puts every body, part way through its steps",
+        )
+        .param("view", ParamKind::Id, "The exploded view")
+        .param(
+            "at",
+            ParamKind::Number,
+            "How many steps in: 1.5 is half way through the second",
+        )
+        .returns("a list of {body, translation, rotation}; nothing is moved")
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.save_state",
             "Save where every body sits, which are hidden and where drives hold, under a name",
         )
@@ -1083,6 +1115,56 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             };
             ctx.document.clear_feature_dirty(id);
             solved(ctx, json!(id.0.to_string()))
+        }
+        "asm.exploded_view" => {
+            let steps: Vec<crate::ExplodeStep> =
+                serde_json::from_value(a.0.get("steps").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| CommandError::bad("steps", e.to_string()))?;
+            let view = crate::ExplodedView { steps };
+            let data = core_document::WorkbenchFeature::to_json(&view);
+            let id = match a.opt_id("view")? {
+                Some(id) => {
+                    let id = FeatureId(id);
+                    ctx.document
+                        .update_feature_data(id, data)
+                        .map_err(|e| CommandError::failed(e.to_string()))?;
+                    id
+                }
+                None => {
+                    let name = match a.opt_string("name")? {
+                        Some(n) => n.to_string(),
+                        None => next_name(ctx.document, "Exploded view"),
+                    };
+                    ctx.document
+                        .add_feature_in_body(view, name, None)
+                        .map_err(|e| CommandError::failed(e.to_string()))?
+                }
+            };
+            ctx.document.clear_feature_dirty(id);
+            Ok(json!(id.0.to_string()))
+        }
+        "asm.explode_at" => {
+            let id = FeatureId(a.id("view")?);
+            let view = crate::exploded::view_of(ctx.document, id)
+                .ok_or_else(|| CommandError::bad("view", "is not an exploded view"))?;
+            let start: Vec<(BodyId, BodyPlacement)> = ctx
+                .document
+                .bodies()
+                .iter()
+                .map(|b| (b.id, b.placement))
+                .collect();
+            Ok(Value::Array(
+                view.placed_at(&start, a.number("at")? as f32)
+                    .into_iter()
+                    .map(|(body, p)| {
+                        json!({
+                            "body": body.0.to_string(),
+                            "translation": p.translation,
+                            "rotation": p.rotation,
+                        })
+                    })
+                    .collect(),
+            ))
         }
         "asm.save_state" => {
             if let Some(state) = a.opt_id("state")? {
@@ -2064,6 +2146,34 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// An exploded view kept by a script plays its steps in order.
+    #[test]
+    fn an_exploded_view_is_kept_and_played() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let view = call(
+            &mut doc,
+            "asm.exploded_view",
+            json!({"steps": [
+                {"bodies": [a.0.to_string()], "shift": [0, 0, 10]},
+                {"bodies": [a.0.to_string(), b.0.to_string()], "shift": [4, 0, 0]},
+            ]}),
+        )
+        .unwrap();
+        let at = call(&mut doc, "asm.explode_at", json!({"view": view, "at": 1.5})).unwrap();
+        let of = |body: BodyId| {
+            at.as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["body"] == json!(body.0.to_string()))
+                .unwrap()["translation"]
+                .clone()
+        };
+        assert_eq!(of(a), json!([2.0, 0.0, 10.0]));
+        assert_eq!(of(b), json!([2.0, 0.0, 0.0]));
+        assert_eq!(doc.body_placement(a).translation, [0.0; 3], "nothing moved");
     }
 
     /// A saved state brings back a driven hinge's angle, where the bodies

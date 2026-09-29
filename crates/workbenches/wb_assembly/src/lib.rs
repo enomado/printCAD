@@ -13,6 +13,7 @@
 mod collide;
 mod commands;
 mod coupling;
+mod exploded;
 mod group;
 mod interference;
 mod joint;
@@ -33,6 +34,7 @@ use core_document::{
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
+pub use exploded::{EXPLODED_KIND, ExplodeStep, ExplodedView};
 pub use group::{GROUP_KIND, RigidGroup};
 pub use interference::{Clash, Interference, interference};
 pub use joint::{
@@ -87,6 +89,18 @@ impl Picking {
     }
 }
 
+/// An exploded view's steps being shown or made: the view (once it has a
+/// step), how far through them it stands, the bodies picked for the next
+/// step and its shift, and whether it plays.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Stepping {
+    view: Option<FeatureId>,
+    at: f32,
+    picked: Vec<BodyId>,
+    shift: [f32; 3],
+    playing: bool,
+}
+
 /// An axis copies are turned about: a point on it, its direction, and
 /// the angle, degrees, they spread over.
 type Around = ([f32; 3], [f32; 3], f32);
@@ -127,6 +141,7 @@ enum Task {
     Explode {
         placements: Vec<(BodyId, BodyPlacement)>,
         spread: f32,
+        steps: Box<Stepping>,
     },
     /// Every part and how many of it.
     Parts,
@@ -625,6 +640,21 @@ impl AssemblyWorkbench {
     /// A body clicked while a group's bodies are picked goes in, or out
     /// when it is in.
     fn take_group_pick(&mut self, ctx: &WorkbenchRuntimeContext) {
+        if let Some(Task::Explode { steps, .. }) = &mut self.task {
+            let clicked = ctx.selected_body_id;
+            if clicked != self.group_seen {
+                self.group_seen = clicked;
+                if let Some(body) = clicked.map(BodyId) {
+                    match steps.picked.iter().position(|b| *b == body) {
+                        Some(i) => {
+                            steps.picked.remove(i);
+                        }
+                        None => steps.picked.push(body),
+                    }
+                }
+            }
+            return;
+        }
         if let Some(Task::Replace { old, new }) = &mut self.task {
             let clicked = ctx.selected_body_id;
             if clicked != self.group_seen {
@@ -867,6 +897,54 @@ impl AssemblyWorkbench {
         let c = report.centre()?;
         let (x, y) = ctx.world_to_viewport(c.map(|v| v as f32))?;
         Some([x, y])
+    }
+
+    /// The open exploded view's bodies where its steps have them at the
+    /// progress set.
+    pub(crate) fn show_steps(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(Task::Explode {
+            placements, steps, ..
+        }) = &self.task
+        else {
+            return;
+        };
+        let Some(view) = steps
+            .view
+            .and_then(|id| exploded::view_of(ctx.document, id))
+        else {
+            return;
+        };
+        for (body, placement) in view.placed_at(placements, steps.at) {
+            ctx.document.set_body_placement(body, placement);
+        }
+    }
+
+    /// The explode lines of the open view: each moved body's middle from
+    /// where it sits to where the view has it.
+    fn explode_lines(&self, ctx: &WorkbenchRuntimeContext) -> Vec<([f32; 3], [f32; 3])> {
+        let Some(Task::Explode {
+            placements, steps, ..
+        }) = &self.task
+        else {
+            return Vec::new();
+        };
+        let Some(view) = steps
+            .view
+            .and_then(|id| exploded::view_of(ctx.document, id))
+        else {
+            return Vec::new();
+        };
+        view.placed_at(placements, steps.at)
+            .into_iter()
+            .zip(placements)
+            .filter(|((_, now), (_, was))| !now.after(&was.inverse()).is_identity())
+            .filter_map(|((body, now), (_, was))| {
+                Some((
+                    exploded::centre(ctx.document, body, was)?,
+                    exploded::centre(ctx.document, body, &now)?,
+                ))
+            })
+            .collect()
     }
 
     /// An exploded view open: the bodies back where they were.
@@ -1173,7 +1251,10 @@ fn all_placements(ctx: &WorkbenchRuntimeContext) -> Vec<(BodyId, BodyPlacement)>
         .collect()
 }
 
-fn restore_placements(ctx: &mut WorkbenchRuntimeContext, placements: &[(BodyId, BodyPlacement)]) {
+pub(crate) fn restore_placements(
+    ctx: &mut WorkbenchRuntimeContext,
+    placements: &[(BodyId, BodyPlacement)],
+) {
     for (body, placement) in placements {
         ctx.document.set_body_placement(*body, *placement);
     }
@@ -1978,6 +2059,7 @@ impl Workbench for AssemblyWorkbench {
             parts::PARTS_KIND,
             GROUP_KIND,
             STATE_KIND,
+            EXPLODED_KIND,
         ])
     }
 
@@ -2022,6 +2104,14 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == EXPLODED_KIND {
+            return FeatureInfo {
+                icon: "scale-geometry",
+                kind_label: "Exploded view".to_string(),
+                family_label: "Assembly exploded view".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == STATE_KIND {
             return FeatureInfo {
                 icon: "save",
@@ -2117,7 +2207,10 @@ impl Workbench for AssemblyWorkbench {
     /// A check or a measuring running away from the window: its answer
     /// shows once it comes.
     fn busy(&self) -> bool {
-        self.checking.is_some() || self.measuring.is_some() || self.sweeping.is_some()
+        self.checking.is_some()
+            || self.measuring.is_some()
+            || self.sweeping.is_some()
+            || matches!(&self.task, Some(Task::Explode { steps, .. }) if steps.playing)
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
@@ -2195,6 +2288,10 @@ impl Workbench for AssemblyWorkbench {
                 self.task = Some(Task::Explode {
                     placements,
                     spread: 1.0,
+                    steps: Box::new(Stepping {
+                        shift: [0.0, 0.0, 20.0],
+                        ..Stepping::default()
+                    }),
                 });
             }
             Some("asm.collisions") => {
@@ -2319,6 +2416,21 @@ impl Workbench for AssemblyWorkbench {
         self.collect_interference(ctx);
         self.collect_mass(ctx);
         self.collect_sweep(ctx);
+        if let Some(Task::Explode { steps, .. }) = &mut self.task
+            && steps.playing
+            && let Some(count) = steps
+                .view
+                .and_then(|id| exploded::view_of(ctx.document, id))
+                .map(|v| v.steps.len() as f32)
+                .filter(|n| *n > 0.0)
+        {
+            // A step a second, round again once through.
+            steps.at += _dt.min(0.1);
+            if steps.at > count {
+                steps.at = 0.0;
+            }
+            self.show_steps(ctx);
+        }
         if self.picking.is_some() {
             self.take_pick(ctx);
             return;
@@ -2353,6 +2465,23 @@ impl Workbench for AssemblyWorkbench {
         }
         if kind.as_deref() == Some(STATE_KIND) {
             self.restore_state(ctx, id);
+            return;
+        }
+        if kind.as_deref() == Some(EXPLODED_KIND) {
+            self.put_back_explosion(ctx);
+            let placements = all_placements(ctx);
+            let at = exploded::view_of(ctx.document, id).map_or(0.0, |v| v.steps.len() as f32);
+            self.task = Some(Task::Explode {
+                placements,
+                spread: 0.0,
+                steps: Box::new(Stepping {
+                    view: Some(id),
+                    at,
+                    shift: [0.0, 0.0, 20.0],
+                    ..Stepping::default()
+                }),
+            });
+            self.show_steps(ctx);
             return;
         }
         if kind.as_deref() == Some(GROUP_KIND) {
@@ -2515,6 +2644,19 @@ impl Workbench for AssemblyWorkbench {
             .collect();
         if let Some((joint, _, _)) = self.joint_drawing(ctx) {
             lines.extend(joint);
+        }
+        for (from, to) in self.explode_lines(ctx) {
+            if let (Some(a), Some(b)) = (ctx.world_to_viewport(from), ctx.world_to_viewport(to)) {
+                lines.push(
+                    core_document::ScreenSpaceOverlay::new(
+                        [a.0, a.1],
+                        [b.0, b.1],
+                        ctx.sketch_palette.preview,
+                        1.0,
+                    )
+                    .dashed(5.0, 4.0),
+                );
+            }
         }
         lines
     }

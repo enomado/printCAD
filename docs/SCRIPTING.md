@@ -1354,6 +1354,19 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): A new group's name in the tree
 - Returns the group's id
 
+`pc.asm.exploded_view`: Keep an exploded view: steps, each moving some bodies by a shift, played in order.
+
+- `steps` (list): {{bodies = {ids}, shift = {x, y, z}}, ...}, in the order they play
+- `view` (id, optional): A view to change, rather than a new one
+- `name` (string, optional): A new view's name in the tree
+- Returns the view's id
+
+`pc.asm.explode_at`: Where an exploded view puts every body, part way through its steps.
+
+- `view` (id): The exploded view
+- `at` (number): How many steps in: 1.5 is half way through the second
+- Returns a list of {body, translation, rotation}; nothing is moved
+
 `pc.asm.save_state`: Save where every body sits, which are hidden and where drives hold, under a name.
 
 - `name` (string, optional): A new state's name in the tree

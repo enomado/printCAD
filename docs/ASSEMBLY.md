@@ -196,7 +196,12 @@ the assembly as it stands under that name. `asm.save_state` and
 
 Exploded view (E) moves every body straight out from the middle of the
 assembly by the spread you set. Nothing is kept: the bodies go back when
-it closes.
+it closes. Click bodies while it is open to make a step of a view kept in
+the document: the bodies picked and a shift, Add step, and on to the next.
+The steps play in order (Progress, or Play for a step a second), each
+moved body drawn with a dashed line from where it sits; the view is a row
+of the tree, and a double-click shows it again. `asm.exploded_view` makes
+one from a script and `asm.explode_at` says where it puts every body.
 
 Parts list (B) lists every part with how many there are, bodies of the
 same shape counted together, and the size of each along its own axes.

@@ -299,7 +299,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Exploded views and states
 
-- [ ] **Saved, stepped exploded views** (partial, M). Per-body moves and
+- [x] **Saved, stepped exploded views** (partial, M). Per-body moves and
   turns as ordered steps, several named views kept in the document,
   explode lines, animation. Today one radial spread, dropped on close.
 - [x] **Saved assembly states** (missing, M). Placements and visibility to
