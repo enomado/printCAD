@@ -216,6 +216,15 @@ pub enum UiCommand {
     },
     /// Ask a chat's agent to stop its turn.
     CancelChat(String),
+    /// Take a queued message of `chat` back, its attachments going with
+    /// the next prompt again when `keep` (it is being edited).
+    UnqueueChat {
+        chat: String,
+        queued: u64,
+        keep: bool,
+    },
+    /// Let the messages Stop held go on.
+    ResumeChatQueue(String),
     /// Start a chat from an earlier visit, its conversation coming back.
     WakeChat(String),
     CloseChat(String),

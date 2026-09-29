@@ -82,6 +82,11 @@ pub(crate) struct Chat {
     pub options: Vec<SessionOption>,
     /// What goes with the next prompt.
     pub attachments: Vec<Attachment>,
+    /// Messages written while the agent was on a turn, in the order they
+    /// go: each goes when the turn before it ends.
+    pub queued: Vec<Queued>,
+    /// Stop holds what is queued until the user sends again or lets it go.
+    pub held: bool,
     /// The agent's remembered choices have been read.
     chose: bool,
     /// Remembered choices not yet put to the agent, in the order it lists
@@ -104,11 +109,98 @@ pub(crate) struct Chat {
     session: Option<AgentChat>,
 }
 
+/// A message waiting for the agent's turn to end.
+#[derive(Debug, Clone)]
+pub(crate) struct Queued {
+    /// Names it for the panel's edit and remove, whatever goes before it.
+    pub id: u64,
+    pub text: String,
+    pub attachments: Vec<Attachment>,
+}
+
 impl Chat {
     fn send(&self, command: ChatCommand) {
         if let Some(session) = &self.session {
             session.send(command);
         }
+    }
+
+    /// Queue `text` with what is attached; sending again lets anything
+    /// Stop held go too. A stopped chat takes nothing.
+    fn enqueue(&mut self, text: String) {
+        if (text.trim().is_empty() && self.attachments.is_empty())
+            || matches!(self.status, ChatStatus::Failed(_))
+        {
+            return;
+        }
+        let attachments = std::mem::take(&mut self.attachments);
+        let id = self.queued.iter().map(|q| q.id + 1).max().unwrap_or(0);
+        self.queued.push(Queued {
+            id,
+            text,
+            attachments,
+        });
+        self.held = false;
+    }
+
+    /// Take queued message `id` out, its attachments back with the next
+    /// prompt when `keep`.
+    fn unqueue(&mut self, id: u64, keep: bool) {
+        let Some(at) = self.queued.iter().position(|q| q.id == id) else {
+            return;
+        };
+        let taken = self.queued.remove(at);
+        if keep {
+            for attachment in taken.attachments {
+                if !self.attachments.contains(&attachment) {
+                    self.attachments.push(attachment);
+                }
+            }
+        }
+        if self.queued.is_empty() {
+            self.held = false;
+        }
+    }
+
+    /// Stop the agent's turn, holding what is queued.
+    fn stop(&mut self) {
+        self.send(ChatCommand::Cancel);
+        self.held = !self.queued.is_empty();
+    }
+
+    /// Send the first queued message when the agent waits for one, with
+    /// the word on where it is on the first and `rules` when they changed.
+    fn send_next(&mut self, rules: String) {
+        if self.status != ChatStatus::Ready || self.held || self.queued.is_empty() {
+            return;
+        }
+        let Queued {
+            text, attachments, ..
+        } = self.queued.remove(0);
+        self.choices_left.clear();
+        self.entries.push(ChatEntry::User {
+            text: text.clone(),
+            attachments: attachments.iter().map(Attachment::name).collect(),
+        });
+        let prompt = if self.prompts == 0 {
+            match rules.is_empty() {
+                true => format!("{PREAMBLE}\n\n{text}"),
+                false => format!("{PREAMBLE}\n\nThe user's rules; keep to them:\n{rules}\n{text}"),
+            }
+        } else if rules != self.rules_sent {
+            format!(
+                "(The user's rules for printCAD changed; keep to these from now on:\n{rules})\n\n{text}"
+            )
+        } else {
+            text
+        };
+        self.rules_sent = rules;
+        self.prompts += 1;
+        self.send(ChatCommand::Prompt {
+            text: prompt,
+            attachments,
+        });
+        self.status = ChatStatus::Busy;
     }
 }
 
@@ -146,6 +238,8 @@ impl PrintCadApp {
             entries: Vec::new(),
             options: Vec::new(),
             attachments: Vec::new(),
+            queued: Vec::new(),
+            held: false,
             chose: false,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -222,6 +316,8 @@ impl PrintCadApp {
                 entries: Vec::new(),
                 options: Vec::new(),
                 attachments: Vec::new(),
+                queued: Vec::new(),
+                held: false,
                 chose: false,
                 choices_left: Vec::new(),
                 stderr: Vec::new(),
@@ -314,43 +410,38 @@ impl PrintCadApp {
         self.chats.iter_mut().find(|c| c.id == id)
     }
 
+    /// Queue a message, with what is attached, and send it at once when
+    /// the agent is waiting for one.
     pub(crate) fn send_to_chat(&mut self, id: &str, text: String) {
         self.wake_chat(id);
-        let rules = self.agent_rules(Some(id));
-        let Some(chat) = self.chat_mut(id) else {
-            return;
-        };
-        if (text.trim().is_empty() && chat.attachments.is_empty())
-            || matches!(chat.status, ChatStatus::Failed(_))
-        {
-            return;
+        if let Some(chat) = self.chat_mut(id) {
+            chat.enqueue(text);
         }
-        chat.choices_left.clear();
-        let attachments = std::mem::take(&mut chat.attachments);
-        chat.entries.push(ChatEntry::User {
-            text: text.clone(),
-            attachments: attachments.iter().map(Attachment::name).collect(),
-        });
-        let prompt = if chat.prompts == 0 {
-            match rules.is_empty() {
-                true => format!("{PREAMBLE}\n\n{text}"),
-                false => format!("{PREAMBLE}\n\nThe user's rules; keep to them:\n{rules}\n{text}"),
-            }
-        } else if rules != chat.rules_sent {
-            format!(
-                "(The user's rules for printCAD changed; keep to these from now on:\n{rules})\n\n{text}"
-            )
-        } else {
-            text
-        };
-        chat.rules_sent = rules;
-        chat.prompts += 1;
-        chat.send(ChatCommand::Prompt {
-            text: prompt,
-            attachments,
-        });
-        if chat.status == ChatStatus::Ready {
-            chat.status = ChatStatus::Busy;
+        self.send_queued(id);
+    }
+
+    /// Take a queued message back; its attachments go with the next prompt
+    /// again when it is being edited (`keep`).
+    pub(crate) fn unqueue_chat(&mut self, id: &str, queued: u64, keep: bool) {
+        if let Some(chat) = self.chat_mut(id) {
+            chat.unqueue(queued, keep);
+        }
+    }
+
+    /// Let what Stop held go on.
+    pub(crate) fn resume_chat_queue(&mut self, id: &str) {
+        if let Some(chat) = self.chat_mut(id) {
+            chat.held = false;
+        }
+        self.send_queued(id);
+    }
+
+    /// Send the chat's next queued message, when its agent waits for one:
+    /// the user's rules go with it as they stand when it goes.
+    fn send_queued(&mut self, id: &str) {
+        let rules = self.agent_rules(Some(id));
+        if let Some(chat) = self.chat_mut(id) {
+            chat.send_next(rules);
         }
     }
 
@@ -404,7 +495,7 @@ impl PrintCadApp {
     /// Ask the chat's agent to stop its turn; its held changes are refused.
     pub(crate) fn cancel_chat(&mut self, id: &str) {
         if let Some(chat) = self.chat_mut(id) {
-            chat.send(ChatCommand::Cancel);
+            chat.stop();
         }
         let held: Vec<usize> = (0..self.approvals.len())
             .rev()
@@ -538,6 +629,16 @@ impl PrintCadApp {
             }
             put_choices(chat);
         }
+        // A turn that ended lets the next queued message go.
+        let waiting: Vec<String> = self
+            .chats
+            .iter()
+            .filter(|c| c.status == ChatStatus::Ready && !c.held && !c.queued.is_empty())
+            .map(|c| c.id.clone())
+            .collect();
+        for id in waiting {
+            self.send_queued(&id);
+        }
         // A chat that learned its session is kept with its document.
         if learned {
             self.persist_chats();
@@ -562,6 +663,8 @@ impl Chat {
             entries,
             options: Vec::new(),
             attachments: Vec::new(),
+            queued: Vec::new(),
+            held: false,
             chose: true,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -757,6 +860,8 @@ mod tests {
             entries: Vec::new(),
             options: Vec::new(),
             attachments: Vec::new(),
+            queued: Vec::new(),
+            held: false,
             chose: false,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -794,6 +899,100 @@ mod tests {
             },
             via: agents::acp::OptionVia::Config,
         }
+    }
+
+    fn sent(c: &Chat) -> Vec<String> {
+        c.entries
+            .iter()
+            .filter_map(|e| match e {
+                ChatEntry::User { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Written while the agent works, a message waits, not shown as sent,
+    /// and goes when the turn ends, one per turn, in order.
+    #[test]
+    fn messages_written_during_a_turn_wait_for_it_to_end() {
+        let mut c = chat();
+        c.enqueue("taller".into());
+        c.enqueue("and red".into());
+        c.send_next(String::new());
+        assert!(sent(&c).is_empty(), "the agent is still on its turn");
+        assert_eq!(c.queued.len(), 2);
+
+        apply(
+            &mut c,
+            ChatEvent::TurnEnded {
+                stop_reason: "end_turn".into(),
+            },
+        );
+        c.send_next(String::new());
+        assert_eq!(sent(&c), ["taller"]);
+        assert_eq!(c.status, ChatStatus::Busy);
+        c.send_next(String::new());
+        assert_eq!(sent(&c), ["taller"], "one per turn");
+
+        apply(
+            &mut c,
+            ChatEvent::TurnEnded {
+                stop_reason: "end_turn".into(),
+            },
+        );
+        c.send_next(String::new());
+        assert_eq!(sent(&c), ["taller", "and red"]);
+        assert!(c.queued.is_empty());
+    }
+
+    /// A queued message comes back to be edited with what was attached to
+    /// it, or is dropped; the rest keep their order.
+    #[test]
+    fn a_queued_message_can_be_taken_back_or_dropped() {
+        let mut c = chat();
+        c.attachments.push(Attachment::File("/tmp/a.png".into()));
+        c.enqueue("first".into());
+        c.enqueue("second".into());
+        c.enqueue("third".into());
+        let (first, second) = (c.queued[0].id, c.queued[1].id);
+
+        c.unqueue(first, true);
+        assert_eq!(c.attachments, [Attachment::File("/tmp/a.png".into())]);
+        c.unqueue(second, false);
+        assert!(c.attachments.len() == 1, "a dropped one's files go with it");
+        let left: Vec<&str> = c.queued.iter().map(|q| q.text.as_str()).collect();
+        assert_eq!(left, ["third"]);
+        // Taken back and queued again, it goes after what was waiting.
+        c.enqueue("first, edited".into());
+        let order: Vec<&str> = c.queued.iter().map(|q| q.text.as_str()).collect();
+        assert_eq!(order, ["third", "first, edited"]);
+        assert!(c.queued[1].attachments.len() == 1);
+    }
+
+    /// Stop holds what is queued: the end of the stopped turn sends
+    /// nothing until the user sends again.
+    #[test]
+    fn stop_holds_the_queue_until_the_user_sends() {
+        let mut c = chat();
+        c.enqueue("taller".into());
+        c.stop();
+        assert!(c.held);
+        apply(
+            &mut c,
+            ChatEvent::TurnEnded {
+                stop_reason: "cancelled".into(),
+            },
+        );
+        c.send_next(String::new());
+        assert!(sent(&c).is_empty(), "held");
+
+        c.enqueue("wider".into());
+        c.send_next(String::new());
+        assert_eq!(
+            sent(&c),
+            ["taller"],
+            "sending again lets the queue go, in order"
+        );
     }
 
     #[test]

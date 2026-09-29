@@ -276,6 +276,10 @@ impl PrintCadApp {
                 UiCommand::NewChat(agent) => self.new_chat(agent),
                 UiCommand::SendChat { chat, text } => self.send_to_chat(&chat, text),
                 UiCommand::CancelChat(chat) => self.cancel_chat(&chat),
+                UiCommand::UnqueueChat { chat, queued, keep } => {
+                    self.unqueue_chat(&chat, queued, keep);
+                }
+                UiCommand::ResumeChatQueue(chat) => self.resume_chat_queue(&chat),
                 UiCommand::WakeChat(chat) => self.wake_chat(&chat),
                 UiCommand::CloseChat(chat) => self.close_chat(&chat),
                 UiCommand::AnswerPermission {

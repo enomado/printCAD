@@ -138,7 +138,10 @@ pub fn draw_assistant(
                     top: 6,
                     ..Default::default()
                 }))
-                .show(ui, |ui| input(ui, chat, draft, commands));
+                .show(ui, |ui| {
+                    queued_list(ui, chat, draft, commands);
+                    input(ui, chat, draft, commands);
+                });
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
@@ -660,6 +663,114 @@ fn draw_entry(
     }
 }
 
+/// The messages waiting for the agent's turn to end, above the box to
+/// write in: each can be taken back into the box to edit, or dropped.
+/// After Stop they wait for the user to let them go.
+fn queued_list(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<UiCommand>) {
+    if chat.queued.is_empty() {
+        return;
+    }
+    if chat.held {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Held after Stop")
+                    .font(sans(FONT_XS))
+                    .color(TEXT3),
+            );
+            if small_secondary_button(ui, "Send them")
+                .on_hover_text("Send the queued messages, one per turn")
+                .clicked()
+            {
+                commands.push(UiCommand::ResumeChatQueue(chat.id.clone()));
+            }
+        });
+    }
+    for queued in &chat.queued {
+        egui::Frame::new()
+            .fill(BG2)
+            .stroke(egui::Stroke::new(1.0, BORDER))
+            .corner_radius(RADIUS_MD as u8)
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Queued")
+                            .font(sans_medium(FONT_XS))
+                            .color(TEXT3),
+                    );
+                    if !queued.attachments.is_empty() {
+                        let n = queued.attachments.len();
+                        ui.label(
+                            RichText::new(match n {
+                                1 => "1 attachment".to_string(),
+                                n => format!("{n} attachments"),
+                            })
+                            .font(sans(FONT_XS))
+                            .color(TEXT3),
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let close = match ui_kit::icon::image(ui.ctx(), "close", 12.0, TEXT2) {
+                            Some(image) => egui::Button::image(image),
+                            None => egui::Button::new(RichText::new("×").font(sans(FONT_XS))),
+                        };
+                        if ui
+                            .add(close.frame(false))
+                            .on_hover_text("Remove it from the queue")
+                            .clicked()
+                        {
+                            commands.push(UiCommand::UnqueueChat {
+                                chat: chat.id.clone(),
+                                queued: queued.id,
+                                keep: false,
+                            });
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("Edit").font(sans(FONT_XS)))
+                                    .frame(false),
+                            )
+                            .on_hover_text("Take it back into the box; Enter queues it again")
+                            .clicked()
+                        {
+                            *draft = match draft.trim().is_empty() {
+                                true => queued.text.clone(),
+                                false => format!("{}\n\n{draft}", queued.text),
+                            };
+                            ui.memory_mut(|m| {
+                                m.request_focus(egui::Id::new(("assistant_input", &chat.id)))
+                            });
+                            commands.push(UiCommand::UnqueueChat {
+                                chat: chat.id.clone(),
+                                queued: queued.id,
+                                keep: true,
+                            });
+                        }
+                    });
+                });
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(queued_preview(&queued.text))
+                            .font(sans(FONT_SM))
+                            .color(TEXT2),
+                    )
+                    .wrap(),
+                );
+            });
+        ui.add_space(SPACE_1);
+    }
+}
+
+/// A queued message as its card shows it: the first few lines.
+fn queued_preview(text: &str) -> String {
+    const LINES: usize = 3;
+    let lines: Vec<&str> = text.trim().lines().collect();
+    match lines.len() > LINES {
+        true => format!("{}…", lines[..LINES].join("\n")),
+        false => lines.join("\n"),
+    }
+}
+
 /// The box to write in, and under it the bar with the agent's session
 /// options (permission mode, model, effort ...), its working spinner and
 /// Send, or Stop while it works.
@@ -729,6 +840,9 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                     ChatStatus::Starting => "The agent is starting…",
                     ChatStatus::Resting => "Continue this chat (Enter sends)",
                     ChatStatus::Failed(_) => "The chat has stopped",
+                    ChatStatus::Busy => {
+                        "Write the next message (Enter queues it for when the agent is done)"
+                    }
                     _ => "Ask the agent (Enter sends, Shift+Enter for a new line)",
                 };
                 ui.add_enabled(

@@ -613,7 +613,11 @@ the next one after they change. `app/chats.rs` keeps
 (every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
 client that defers tools behind a search has them in its first turn;
 `read_only` becomes `readOnlyHint`);
-`ui/assistant.rs` draws them and answers with `UiCommand`s; a call of
+`ui/assistant.rs` draws them and answers with `UiCommand`s; a message
+sent while the agent is on a turn waits in `Chat::queued` (edited or
+dropped from the panel) and goes when the chat is ready again, one per
+turn, the rules added as it goes; Stop sets `Chat::held` until the user
+sends again or resumes; a call of
 printCAD's own tools draws as `agent_context::tool_label` (the call's
 `description` argument, which the instructions ask for, else the command
 or the script it runs), from the arguments ACP sends as `rawInput`. A chat belongs

@@ -33,6 +33,10 @@ own agent and history, and several can run at once.
 - Enter sends, Shift+Enter starts a new line. While the agent works, the
   red square under the box stops its turn; Close ends the chat and its
   agent.
+- A message sent while the agent works waits above the box, marked
+  Queued, and goes when the turn ends, one per turn. Edit takes it back
+  into the box with its attachments, and the cross drops it. Stop holds
+  what is queued: sending again, or Send them, lets it go.
 - The bar under the box has the settings the agent offers, as it names
   them: for Claude, the permission mode (Manual, Accept edits, Plan, Auto,
   Bypass permissions), the model and the effort. A change applies to the
