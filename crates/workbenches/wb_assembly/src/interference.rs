@@ -20,10 +20,26 @@ pub struct Clash {
     pub mesh: Arc<TriMesh>,
 }
 
+/// Two bodies nearer than the clearance asked for: how near, and the
+/// nearest point on each (world space).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Near {
+    pub a: BodyId,
+    pub b: BodyId,
+    pub distance_mm: f64,
+    pub on_a: [f32; 3],
+    pub on_b: [f32; 3],
+}
+
 /// What a check found.
 #[derive(Debug, Clone, Default)]
 pub struct Interference {
     pub clashes: Vec<Clash>,
+    /// With a clearance asked for, the pairs nearer than it.
+    pub near: Vec<Near>,
+    /// The clearance checked for, mm; `None` for a check of shared
+    /// material.
+    pub clearance: Option<f64>,
     /// Solid bodies checked.
     pub checked: usize,
     /// Visible bodies with no solid (meshes, bodies not built yet), left out.
@@ -44,11 +60,29 @@ pub struct Check {
     solids: Vec<Solid>,
     pairs: Vec<(usize, usize)>,
     skipped: usize,
+    clearance: Option<f64>,
+}
+
+/// What one pair came to.
+enum Found {
+    Clash(Clash),
+    Near(Near),
 }
 
 /// The visible solid bodies, or only `among` when given, and the pairs of
 /// them whose bounds meet.
 pub fn plan(document: &Document, among: Option<&[BodyId]>) -> Check {
+    plan_with(document, among, None)
+}
+
+/// The same for a clearance check: the pairs whose bounds come within
+/// `clearance` millimetres, to be asked how near they come.
+pub fn plan_clearance(document: &Document, among: Option<&[BodyId]>, clearance: f64) -> Check {
+    plan_with(document, among, Some(clearance))
+}
+
+fn plan_with(document: &Document, among: Option<&[BodyId]>, clearance: Option<f64>) -> Check {
+    let reach = clearance.unwrap_or(0.0) as f32;
     let mut solids = Vec::new();
     let mut bounds = Vec::new();
     let mut skipped = 0;
@@ -77,7 +111,7 @@ pub fn plan(document: &Document, among: Option<&[BodyId]>) -> Check {
     for i in 0..bounds.len() {
         for j in i + 1..bounds.len() {
             let ((lo_a, hi_a), (lo_b, hi_b)) = (bounds[i], bounds[j]);
-            if (0..3).all(|k| hi_a[k] >= lo_b[k] && hi_b[k] >= lo_a[k]) {
+            if (0..3).all(|k| hi_a[k] + reach >= lo_b[k] && hi_b[k] + reach >= lo_a[k]) {
                 pairs.push((i, j));
             }
         }
@@ -86,6 +120,7 @@ pub fn plan(document: &Document, among: Option<&[BodyId]>) -> Check {
         solids,
         pairs,
         skipped,
+        clearance,
     }
 }
 
@@ -113,7 +148,7 @@ impl Check {
         stop: &AtomicBool,
     ) -> Result<Interference, String> {
         let next = AtomicUsize::new(0);
-        let found: Mutex<Vec<(usize, Clash)>> = Mutex::default();
+        let found: Mutex<Vec<(usize, Found)>> = Mutex::default();
         let failed: Mutex<Option<String>> = Mutex::default();
         let workers = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
@@ -131,7 +166,7 @@ impl Check {
                             return;
                         };
                         match self.pair(kernel, i, j) {
-                            Ok(Some(clash)) => found.lock().unwrap().push((k, clash)),
+                            Ok(Some(what)) => found.lock().unwrap().push((k, what)),
                             Ok(None) => {}
                             Err(why) => {
                                 *failed.lock().unwrap() = Some(why);
@@ -146,34 +181,62 @@ impl Check {
         if let Some(why) = failed.into_inner().unwrap() {
             return Err(why);
         }
-        let mut clashes = found.into_inner().unwrap();
-        clashes.sort_by_key(|(k, _)| *k);
+        let mut all = found.into_inner().unwrap();
+        all.sort_by_key(|(k, _)| *k);
+        let (mut clashes, mut near) = (Vec::new(), Vec::new());
+        for (_, what) in all {
+            match what {
+                Found::Clash(c) => clashes.push(c),
+                Found::Near(n) => near.push(n),
+            }
+        }
+        near.sort_by(|x, y| x.distance_mm.total_cmp(&y.distance_mm));
         Ok(Interference {
-            clashes: clashes.into_iter().map(|(_, c)| c).collect(),
+            clashes,
+            near,
+            clearance: self.clearance,
             checked: self.solids.len(),
             skipped: self.skipped,
             stopped: done.load(Ordering::Relaxed) < self.pairs.len(),
         })
     }
 
-    /// What solids `i` and `j` share, if anything.
+    /// What solids `i` and `j` share, if anything; with a clearance, how
+    /// near they come when that is nearer than it.
     fn pair(
         &self,
         kernel: &dyn KernelQueries,
         i: usize,
         j: usize,
-    ) -> Result<Option<Clash>, String> {
+    ) -> Result<Option<Found>, String> {
         let (a, b) = (&self.solids[i], &self.solids[j]);
         let b_in_a = a.placement.inverse().after(&b.placement).rows();
+        if let Some(clearance) = self.clearance {
+            let gap = kernel
+                .gap(&a.blob, &b.blob, &b_in_a)
+                .map_err(|e| e.to_string())?;
+            let world = |p: [f64; 3]| a.placement.point(p.map(|v| v as f32));
+            return Ok((gap.distance_mm < clearance).then(|| {
+                Found::Near(Near {
+                    a: a.body,
+                    b: b.body,
+                    distance_mm: gap.distance_mm,
+                    on_a: world(gap.on_a),
+                    on_b: world(gap.on_b),
+                })
+            }));
+        }
         let shared = kernel
             .overlap(&a.blob, &b.blob, &b_in_a)
             .map_err(|e| e.to_string())?;
-        Ok(shared.map(|shared| Clash {
-            a: a.body,
-            b: b.body,
-            volume_mm3: shared.volume_mm3,
-            centre: a.placement.point(shared.centre_mm.map(|c| c as f32)),
-            mesh: Arc::new(a.placement.mesh(&shared.mesh)),
+        Ok(shared.map(|shared| {
+            Found::Clash(Clash {
+                a: a.body,
+                b: b.body,
+                volume_mm3: shared.volume_mm3,
+                centre: a.placement.point(shared.centre_mm.map(|c| c as f32)),
+                mesh: Arc::new(a.placement.mesh(&shared.mesh)),
+            })
         }))
     }
 }
@@ -230,6 +293,49 @@ mod tests {
                 },
             }))
         }
+    }
+
+    /// Every pair 1.5 mm apart along X between the second's nearest
+    /// point and the first's.
+    struct Apart;
+
+    impl KernelQueries for Apart {
+        fn project_edge(
+            &self,
+            _: &[u8],
+            _: [f64; 3],
+            _: &ProfilePlane,
+        ) -> KernelResult<ProjectedEdge> {
+            Err(KernelError::Unsupported("projection".into()))
+        }
+
+        fn gap(&self, _: &[u8], _: &[u8], _: &[[f64; 4]; 4]) -> KernelResult<kernel_api::Gap> {
+            Ok(kernel_api::Gap {
+                distance_mm: 1.5,
+                on_a: [10.0, 5.0, 5.0],
+                on_b: [11.5, 5.0, 5.0],
+            })
+        }
+    }
+
+    #[test]
+    fn a_clearance_check_finds_pairs_nearer_than_asked() {
+        let mut document = Document::new("t");
+        let a = cube(&mut document, [0.0, 0.0, 0.0], true);
+        let b = cube(&mut document, [11.5, 0.0, 0.0], true);
+        cube(&mut document, [40.0, 0.0, 0.0], true);
+        assert_eq!(plan(&document, None).pairs(), 0, "no bounds meet");
+        let run = |gap: f64| {
+            plan_clearance(&document, None, gap)
+                .run(&Apart, &AtomicUsize::new(0), &AtomicBool::new(false))
+                .unwrap()
+        };
+        let found = run(2.0);
+        assert_eq!(found.near.len(), 1, "the far body is out of reach");
+        let near = &found.near[0];
+        assert_eq!((near.a, near.b), (a, b));
+        assert_eq!(near.on_b, [11.5, 5.0, 5.0]);
+        assert!(run(1.0).near.is_empty(), "not nearer than 1 mm");
     }
 
     fn cube(document: &mut Document, at: [f32; 3], solid: bool) -> BodyId {

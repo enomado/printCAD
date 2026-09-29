@@ -36,6 +36,31 @@ fn other(message: impl std::fmt::Display) -> KernelError {
 const TOUCHING_MM3: f64 = 1e-6;
 
 impl KernelQueries for OgeomQueries {
+    fn gap(&self, a: &[u8], b: &[u8], b_in_a: &[[f64; 4]; 4]) -> KernelResult<kernel_api::Gap> {
+        let tol = tess::tolerances();
+        let (mut model, first) = tess::read_blob(a)?;
+        let second = crate::chain::absorb_shape(&mut model, b).map_err(other)?;
+        let second = crate::ops::pattern::moved(&mut model, &second, b_in_a).map_err(other)?;
+        let found = distance_between_shapes(
+            &model,
+            &first,
+            &second,
+            ogeom::intersect::ExtremaOptions::default(),
+            tol,
+        )
+        .map_err(other)?;
+        let pair = found
+            .pairs
+            .first()
+            .ok_or_else(|| other("the shapes have nothing to measure between"))?;
+        let at = |p: Point| [p.x, p.y, p.z];
+        Ok(kernel_api::Gap {
+            distance_mm: found.distance,
+            on_a: at(pair.point_a),
+            on_b: at(pair.point_b),
+        })
+    }
+
     fn measure(&self, brep: &[u8]) -> KernelResult<kernel_api::PhysicalProperties> {
         crate::health::measure_blob(brep)
     }

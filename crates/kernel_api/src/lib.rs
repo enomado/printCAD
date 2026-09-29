@@ -1454,6 +1454,16 @@ pub struct Overlap {
     pub mesh: TriMesh,
 }
 
+/// How near two shapes come: the distance between their boundaries and a
+/// nearest point on each, in the first shape's frame. Zero where the
+/// boundaries touch or cross.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Gap {
+    pub distance_mm: f64,
+    pub on_a: [f64; 3],
+    pub on_b: [f64; 3],
+}
+
 /// A stretch of a region's medial axis, in the profile plane's own 2D
 /// coordinates: points along one branch with the clearance at each, the
 /// radius of the largest disc centred there that stays inside the region.
@@ -1607,6 +1617,12 @@ pub trait KernelQueries: Send + Sync {
         _b_in_a: &[[f64; 4]; 4],
     ) -> KernelResult<Option<Overlap>> {
         Err(KernelError::Unsupported("overlap".into()))
+    }
+
+    /// How near `a` and `b` come when `b` sits where `b_in_a` puts it in
+    /// `a`'s frame.
+    fn gap(&self, _a: &[u8], _b: &[u8], _b_in_a: &[[f64; 4]; 4]) -> KernelResult<Gap> {
+        Err(KernelError::Unsupported("gap".into()))
     }
 
     /// The volume, area and centre of mass of `brep`, in its own frame.

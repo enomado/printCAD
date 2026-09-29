@@ -184,9 +184,15 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::List,
             "Only these bodies; every visible one when left out",
         )
+        .optional(
+            "clearance",
+            ParamKind::Number,
+            "Look instead for pairs nearer than this many mm",
+        )
         .returns(
             "{checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; \
-             skipped counts visible bodies with no solid",
+             skipped counts visible bodies with no solid. With a clearance, {checked, \
+             skipped, near}, each {a, b, distance (mm), on_a, on_b}, nearest first",
         )
         .read_only(),
     );
@@ -393,6 +399,34 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .kernel
                 .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
             let among = body_list(&a)?;
+            if let Some(gap) = a.opt_number("clearance")? {
+                let found =
+                    crate::interference::plan_clearance(ctx.document, among.as_deref(), gap)
+                        .run(
+                            kernel,
+                            &std::sync::atomic::AtomicUsize::new(0),
+                            &std::sync::atomic::AtomicBool::new(false),
+                        )
+                        .map_err(CommandError::failed)?;
+                let near: Vec<Value> = found
+                    .near
+                    .iter()
+                    .map(|n| {
+                        json!({
+                            "a": n.a.0.to_string(),
+                            "b": n.b.0.to_string(),
+                            "distance": n.distance_mm,
+                            "on_a": n.on_a,
+                            "on_b": n.on_b,
+                        })
+                    })
+                    .collect();
+                return Ok(json!({
+                    "checked": found.checked,
+                    "skipped": found.skipped,
+                    "near": near,
+                }));
+            }
             let found = crate::interference(ctx.document, kernel, among.as_deref())
                 .map_err(CommandError::failed)?;
             let clashes: Vec<Value> = found

@@ -313,9 +313,9 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Checks and display
 
-- [ ] **Clearance check** (missing, M). Pairs closer than a given gap,
-  and where. Needs a minimum distance query in `KernelQueries`, then a mode
-  of `interference.rs`.
+- [x] **Clearance check** (missing, M). Pairs closer than a given gap,
+  and where: `KernelQueries::gap` and the interference check's clearance
+  mode.
 - [x] **Interference among the selected bodies from the toolbar** (partial,
   medium, S). The command takes a list; the tool takes the selected body
   against every other, or every pair with nothing selected.

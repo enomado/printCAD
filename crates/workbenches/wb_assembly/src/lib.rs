@@ -67,11 +67,13 @@ enum Task {
     },
     /// Where bodies clash, as found at edit `seq` of the document; `None`
     /// while the check runs. `around` is the one body checked against the
-    /// others, when the check is not of every pair.
+    /// others, when the check is not of every pair; `clearance` the gap,
+    /// mm, when it looks for pairs nearer than that rather than clashes.
     Interference {
         found: Option<Interference>,
         seq: u64,
         around: Option<BodyId>,
+        clearance: Option<f32>,
     },
     /// The bodies spread apart to show how they go together; they go back
     /// to `placements` when it closes.
@@ -108,6 +110,8 @@ pub struct AssemblyWorkbench {
     checking: Option<Checking>,
     /// The bodies being measured for their mass, on their own thread.
     measuring: Option<Measuring>,
+    /// The clearance the interference panel checks for, mm, as last typed.
+    clearance_mm: Option<f32>,
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
@@ -231,11 +235,34 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         around: Option<BodyId>,
     ) {
+        self.check_bodies(ctx, around, None);
+    }
+
+    /// Look for pairs nearer than `clearance` mm, as a check of shared
+    /// material does for clashes.
+    pub(crate) fn check_clearance(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        around: Option<BodyId>,
+        clearance: f32,
+    ) {
+        self.check_bodies(ctx, around, Some(clearance));
+    }
+
+    fn check_bodies(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        around: Option<BodyId>,
+        clearance: Option<f32>,
+    ) {
         let Some(kernel) = ctx.kernel else {
             ctx.log_warn("No kernel to check interference with");
             return;
         };
-        let mut check = interference::plan(ctx.document, None);
+        let mut check = match clearance {
+            Some(gap) => interference::plan_clearance(ctx.document, None, f64::from(gap)),
+            None => interference::plan(ctx.document, None),
+        };
         if let Some(body) = around {
             check = check.around(body);
         }
@@ -265,6 +292,7 @@ impl AssemblyWorkbench {
             found: None,
             seq: ctx.document.mutation_seq(),
             around,
+            clearance,
         });
     }
 
@@ -294,9 +322,15 @@ impl AssemblyWorkbench {
                 } else {
                     ""
                 };
-                ctx.log_info(match found.clashes.len() {
-                    0 => format!("No interference among {} bodies{stopped}", found.checked),
-                    n => format!(
+                ctx.log_info(match (found.clearance, found.clashes.len()) {
+                    (Some(gap), _) => format!(
+                        "{} pair{} nearer than {gap} mm among {} bodies{stopped}",
+                        found.near.len(),
+                        if found.near.len() == 1 { "" } else { "s" },
+                        found.checked
+                    ),
+                    (None, 0) => format!("No interference among {} bodies{stopped}", found.checked),
+                    (None, n) => format!(
                         "{n} clash{} among {} bodies{stopped}",
                         if n == 1 { "" } else { "es" },
                         found.checked
@@ -331,6 +365,24 @@ impl AssemblyWorkbench {
                 .stop
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
+    }
+
+    /// The pairs nearer than the clearance shown: the line between their
+    /// nearest points on screen, and how near.
+    fn near_on_screen(&self, ctx: &WorkbenchRuntimeContext) -> Vec<([f32; 2], [f32; 2], f64)> {
+        let near = match &self.task {
+            Some(Task::Interference {
+                found: Some(found), ..
+            }) => found.near.as_slice(),
+            _ => &[],
+        };
+        near.iter()
+            .filter_map(|n| {
+                let (ax, ay) = ctx.world_to_viewport(n.on_a)?;
+                let (bx, by) = ctx.world_to_viewport(n.on_b)?;
+                Some(([ax, ay], [bx, by], n.distance_mm))
+            })
+            .collect()
     }
 
     /// The clashes shown, each where it sits on screen.
@@ -1430,6 +1482,21 @@ impl Workbench for AssemblyWorkbench {
             .collect()
     }
 
+    /// Each pair nearer than the clearance, joined between its nearest
+    /// points.
+    fn get_screen_space_overlays(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceOverlay> {
+        self.near_on_screen(ctx)
+            .into_iter()
+            .map(|(a, b, _)| {
+                core_document::ScreenSpaceOverlay::new(a, b, ctx.sketch_palette.conflict, 2.0)
+            })
+            .collect()
+    }
+
     /// Each clash found, marked where it is.
     fn get_screen_space_marks(
         &self,
@@ -1477,6 +1544,20 @@ impl Workbench for AssemblyWorkbench {
             )
             .pill()
         });
+        let near: Vec<core_document::ScreenSpaceLabel> = self
+            .near_on_screen(ctx)
+            .into_iter()
+            .map(|(a, b, d)| {
+                core_document::ScreenSpaceLabel::new(
+                    [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 - 14.0],
+                    format!("{d:.2} mm"),
+                    ctx.sketch_palette.conflict,
+                    12.0,
+                )
+                .pill()
+                .mono()
+            })
+            .collect();
         self.clashes_on_screen(ctx)
             .map(|([x, y], clash)| {
                 core_document::ScreenSpaceLabel::new(
@@ -1489,6 +1570,7 @@ impl Workbench for AssemblyWorkbench {
                 .mono()
             })
             .chain(com)
+            .chain(near)
             .collect()
     }
 

@@ -92,8 +92,13 @@ impl AssemblyWorkbench {
             Some(Task::Move { body, placements }) => {
                 self.move_panel(ui, ctx, request, body, &placements)
             }
-            Some(Task::Interference { found, seq, around }) => {
-                self.interference_panel(ui, ctx, request, found.as_ref(), seq, around)
+            Some(Task::Interference {
+                found,
+                seq,
+                around,
+                clearance,
+            }) => {
+                self.interference_panel(ui, ctx, request, found.as_ref(), (seq, around, clearance))
             }
             Some(Task::Explode { placements, spread }) => {
                 self.explode_panel(ui, ctx, request, placements, spread)
@@ -126,8 +131,7 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         found: Option<&crate::Interference>,
-        seq: u64,
-        around: Option<core_document::BodyId>,
+        (seq, around, clearance): (u64, Option<core_document::BodyId>, Option<f32>),
     ) -> TaskOutcome {
         if request.accept || request.cancel {
             self.checking = None;
@@ -167,20 +171,57 @@ impl AssemblyWorkbench {
             found.checked,
             if found.checked == 1 { "y" } else { "ies" }
         );
-        match found.clashes.len() {
-            0 => note_card(
-                ui,
-                Note::Success,
-                None,
-                &format!("No interference among {bodies}"),
-            ),
-            n => note_card(
-                ui,
-                Note::Error,
-                Some(&format!("{n} clash{}", if n == 1 { "" } else { "es" })),
-                &format!("Among {bodies}; click one to select its first body"),
-            ),
-        };
+        if let Some(gap) = clearance {
+            match found.near.len() {
+                0 => note_card(
+                    ui,
+                    Note::Success,
+                    None,
+                    &format!("No pair nearer than {gap} mm among {bodies}"),
+                ),
+                n => note_card(
+                    ui,
+                    Note::Warning,
+                    Some(&format!(
+                        "{n} pair{} nearer than {gap} mm",
+                        if n == 1 { "" } else { "s" }
+                    )),
+                    &format!("Among {bodies}; click one to select its first body"),
+                ),
+            };
+            ui.add_space(SPACE_2);
+            for near in &found.near {
+                let text = format!(
+                    "{} and {}: {:.2} mm",
+                    body_name(ctx, near.a),
+                    body_name(ctx, near.b),
+                    near.distance_mm
+                );
+                let row = ui.add(
+                    egui::Button::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
+                        .frame(false),
+                );
+                if row.clicked() {
+                    ctx.request(core_document::HostRequest::SelectBody(near.a));
+                }
+            }
+        }
+        if clearance.is_none() {
+            match found.clashes.len() {
+                0 => note_card(
+                    ui,
+                    Note::Success,
+                    None,
+                    &format!("No interference among {bodies}"),
+                ),
+                n => note_card(
+                    ui,
+                    Note::Error,
+                    Some(&format!("{n} clash{}", if n == 1 { "" } else { "es" })),
+                    &format!("Among {bodies}; click one to select its first body"),
+                ),
+            };
+        }
         ui.add_space(SPACE_2);
         for clash in &found.clashes {
             let text = format!(
@@ -237,11 +278,33 @@ impl AssemblyWorkbench {
             );
         }
         ui.add_space(SPACE_2);
-        if ui_kit::widgets::secondary_button(ui, "Check again").clicked() {
-            self.check_interference(ctx, around);
-        }
+        let mut gap = self.clearance_mm.or(clearance).unwrap_or(0.5);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Clearance").font(sans(FONT_SM)).color(TEXT2));
+            if QtyField::mm(&mut gap).range(0.0..=1000.0).show(ui) {
+                self.clearance_mm = Some(gap);
+            }
+        });
+        ui.add_space(SPACE_1);
+        ui.horizontal(|ui| {
+            if ui_kit::widgets::secondary_button(ui, "Check clashes")
+                .on_hover_text("Pairs that share material")
+                .clicked()
+            {
+                self.check_interference(ctx, around);
+            }
+            if ui_kit::widgets::secondary_button(ui, "Check clearance")
+                .on_hover_text("Pairs nearer to each other than the clearance")
+                .clicked()
+            {
+                self.check_clearance(ctx, around, gap);
+            }
+        });
         if around.is_some() && ui_kit::widgets::secondary_button(ui, "Check every pair").clicked() {
-            self.check_interference(ctx, None);
+            match clearance {
+                Some(gap) => self.check_clearance(ctx, None, gap),
+                None => self.check_interference(ctx, None),
+            }
         }
         TaskOutcome::Open
     }

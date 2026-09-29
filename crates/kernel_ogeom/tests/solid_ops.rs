@@ -2943,3 +2943,41 @@ fn a_bench_measures_a_box() {
         "{c:?}"
     );
 }
+
+/// Two boxes 7 mm apart come 7 mm near, between their facing walls; two
+/// that overlap come to nothing.
+#[test]
+fn two_solids_are_as_near_as_their_facing_walls() {
+    use kernel_api::KernelQueries;
+    let mut kernel = new_kernel();
+    let cube = [SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 10.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }];
+    let solid = kernel
+        .execute_solid_chain(&cube, &TessellationSettings::default())
+        .expect("a box builds");
+    let shifted = |x: f64| {
+        [
+            [1.0, 0.0, 0.0, x],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+    let blob = &solid.brep_blob;
+    let gap = kernel_ogeom::QUERIES
+        .gap(blob, blob, &shifted(17.0))
+        .unwrap();
+    assert!((gap.distance_mm - 7.0).abs() < 1e-6, "{gap:?}");
+    assert!((gap.on_a[0] - 10.0).abs() < 1e-6 && (gap.on_b[0] - 17.0).abs() < 1e-6);
+    let crossing = kernel_ogeom::QUERIES
+        .gap(blob, blob, &shifted(5.0))
+        .unwrap();
+    assert!(crossing.distance_mm.abs() < 1e-6, "{crossing:?}");
+}

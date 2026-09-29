@@ -1264,7 +1264,8 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.asm.interference`: Where solid bodies share material: each pair that clashes, how much and where.
 
 - `bodies` (list, optional): Only these bodies; every visible one when left out
-- Returns {checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; skipped counts visible bodies with no solid
+- `clearance` (number, optional): Look instead for pairs nearer than this many mm
+- Returns {checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; skipped counts visible bodies with no solid. With a clearance, {checked, skipped, near}, each {a, b, distance (mm), on_a, on_b}, nearest first
 
 `pc.asm.mass`: The mass and centre of mass of the solid bodies at one density.
 
