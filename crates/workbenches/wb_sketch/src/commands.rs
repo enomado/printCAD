@@ -1927,6 +1927,10 @@ pub(crate) fn set_external_defining(sketch: &mut Sketch, items: &[Uuid], on: boo
     for id in items {
         if let Some(source) = sketch.external.get_mut(id) {
             source.defining = on;
+            // Counting in the profile is what makes it normal geometry.
+            if on {
+                sketch.construction.remove(id);
+            }
         }
     }
 }

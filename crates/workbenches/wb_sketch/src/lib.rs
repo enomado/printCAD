@@ -1641,41 +1641,63 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let mut toggled = 0usize;
-        let (mut on, mut off) = (Vec::new(), Vec::new());
-        for id in &self.selected {
-            if feature.sketch.get_geometry(*id).is_some() {
-                let flag = !feature.sketch.is_construction(*id);
-                feature.sketch.set_construction(*id, flag);
-                if flag {
-                    on.push(*id)
-                } else {
-                    off.push(*id)
-                }
-                toggled += 1;
-            }
+        // Drawn curves are construction by their flag; projected ones are
+        // guides until they count in the profile, so for them construction
+        // is not counting.
+        let sketch = &feature.sketch;
+        let (projected, drawn): (Vec<Uuid>, Vec<Uuid>) = self
+            .selected
+            .iter()
+            .copied()
+            .filter(|id| sketch.get_geometry(*id).is_some())
+            .partition(|id| sketch.external.contains_key(id));
+        let is_construction = |id: &Uuid| match sketch.external.get(id) {
+            Some(source) => !source.defining,
+            None => sketch.is_construction(*id),
+        };
+        if drawn.is_empty() && projected.is_empty() {
+            return InputResult::consumed();
         }
+        // One way for the whole selection: construction unless all of it
+        // is already, in which case back to normal.
+        let on = !drawn.iter().chain(&projected).all(is_construction);
+        for id in &drawn {
+            feature.sketch.set_construction(*id, on);
+        }
+        commands::set_external_defining(&mut feature.sketch, &projected, !on);
         if let Some(sketch_id) = self.active_sketch_id {
-            for (mut items, flag) in [(on, true), (off, false)] {
-                if items.is_empty() {
-                    continue;
-                }
-                items.sort();
+            let mut drawn = drawn.clone();
+            drawn.sort();
+            if !drawn.is_empty() {
                 ctx.record(
                     "sketch.construction",
                     commands::args(serde_json::json!({
                         "sketch": sketch_id.0.to_string(),
-                        "items": ids_json(&items),
-                        "on": flag,
+                        "items": ids_json(&drawn),
+                        "on": on,
+                    })),
+                    serde_json::Value::Null,
+                );
+            }
+            if !projected.is_empty() {
+                ctx.record(
+                    "sketch.external_defining",
+                    commands::args(serde_json::json!({
+                        "sketch": sketch_id.0.to_string(),
+                        "items": ids_json(&projected),
+                        "on": !on,
                     })),
                     serde_json::Value::Null,
                 );
             }
         }
-        if toggled > 0 {
-            ctx.log_info(format!("Toggled construction on {toggled} element(s)"));
-            self.store_sketch(ctx, feature);
-        }
+        let count = drawn.len() + projected.len();
+        ctx.log_info(if on {
+            format!("{count} element(s) made construction")
+        } else {
+            format!("{count} element(s) made normal geometry")
+        });
+        self.store_sketch(ctx, feature);
         InputResult::consumed()
     }
 
@@ -2707,7 +2729,7 @@ impl Workbench for SketchWorkbench {
                 context.register_tool(keyed(
                     ToolDescriptor::new_action(
                         "sketch.construction",
-                        "Toggle construction",
+                        "Construction",
                         Some("geometry.construction"),
                     )
                     .icon("construction-mode")

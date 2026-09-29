@@ -739,6 +739,116 @@ fn construction_action_toggles_selected_line() {
     assert!(!h.sketch().is_construction(line_id));
 }
 
+/// The toolbar's button, pressed with a line and its end point picked in
+/// the view as a user picks them (press and release, no tool in hand),
+/// converts what is picked rather than switching the drawing mode.
+#[test]
+fn the_construction_button_converts_what_is_picked() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mid = h.px_of(5.0, 3.5);
+    h.event(
+        WorkbenchInputEvent::MousePress {
+            button: MouseButton::Left,
+            viewport_pos: mid,
+        },
+        None,
+    );
+    h.event(
+        WorkbenchInputEvent::MouseRelease {
+            button: MouseButton::Left,
+            viewport_pos: mid,
+        },
+        None,
+    );
+    h.event(
+        WorkbenchInputEvent::ToolActivated,
+        Some("sketch.construction"),
+    );
+    let sketch = h.sketch();
+    let line = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.id),
+            _ => None,
+        })
+        .unwrap();
+    assert!(sketch.is_construction(line), "the picked line is converted");
+    assert!(
+        !h.wb.tool_toggled("sketch.construction"),
+        "the drawing mode is left alone"
+    );
+}
+
+/// A drawn line and a projected one picked together convert together:
+/// construction while any of them is normal, then all back to normal, the
+/// projected one by counting in the profile.
+#[test]
+fn the_construction_button_converts_projected_geometry_with_the_rest() {
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(0.0, 8.0, "sketch.line");
+    h.click(10.0, 8.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let lines: Vec<uuid::Uuid> = h
+        .sketch()
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.id),
+            _ => None,
+        })
+        .collect();
+    let (drawn, projected) = (lines[0], lines[1]);
+    // The second line stands in for one projected from a datum.
+    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    feature.sketch.external.insert(
+        projected,
+        wb_sketch::sketch::ExternalSource::of_reference(
+            wb_sketch::sketch::ExternalReference::Datum {
+                datum: uuid::Uuid::new_v4(),
+            },
+        ),
+    );
+    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.key(KeyCode::A, None);
+
+    h.click(5.0, 0.0, "sketch.select");
+    h.click_ctrl(5.0, 8.0, "sketch.select");
+    h.event(
+        WorkbenchInputEvent::ToolActivated,
+        Some("sketch.construction"),
+    );
+    let sketch = h.sketch();
+    assert!(
+        sketch.is_construction(drawn),
+        "the drawn line is construction"
+    );
+    assert!(
+        !sketch.external[&projected].defining,
+        "the projected one still guides"
+    );
+
+    h.event(
+        WorkbenchInputEvent::ToolActivated,
+        Some("sketch.construction"),
+    );
+    let sketch = h.sketch();
+    assert!(!sketch.is_construction(drawn), "back to normal");
+    assert!(
+        sketch.external[&projected].defining && !sketch.is_construction(projected),
+        "the projected line counts in the profile"
+    );
+    assert!(!h.wb.tool_toggled("sketch.construction"));
+}
+
 #[test]
 fn construction_toggle_with_empty_selection_flips_mode() {
     let mut h = Harness::new();
@@ -852,7 +962,7 @@ fn construction_toggle_with_selection_leaves_mode_untouched() {
 }
 
 #[test]
-fn construction_toggle_on_mixed_selection_flips_each_individually() {
+fn construction_on_a_mixed_selection_converts_all_of_it() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
@@ -873,8 +983,8 @@ fn construction_toggle_on_mixed_selection_flips_each_individually() {
         .collect();
     assert_eq!(lines.len(), 2);
 
-    // Pre-flag the first line only, then toggle a selection of both: each
-    // flips individually (mixed → mixed-inverted).
+    // Pre-flag the first line only, then convert a selection of both: all
+    // become construction, and a second press makes all normal.
     h.click(5.0, 3.5, "sketch.select");
     h.key(KeyCode::A, Some("sketch.construction"));
     assert!(h.sketch().is_construction(lines[0]));
@@ -883,12 +993,14 @@ fn construction_toggle_on_mixed_selection_flips_each_individually() {
     h.key(KeyCode::A, Some("sketch.construction"));
     let sketch = h.sketch();
     assert!(
-        !sketch.is_construction(lines[0]),
-        "construction line flipped back to normal"
+        sketch.is_construction(lines[0]) && sketch.is_construction(lines[1]),
+        "both construction"
     );
+    h.key(KeyCode::A, Some("sketch.construction"));
+    let sketch = h.sketch();
     assert!(
-        sketch.is_construction(lines[1]),
-        "normal line flipped to construction"
+        !sketch.is_construction(lines[0]) && !sketch.is_construction(lines[1]),
+        "both normal again"
     );
 }
 
