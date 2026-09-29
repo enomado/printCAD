@@ -113,13 +113,28 @@ pub(crate) fn click(
     );
     // An auto constraint the solver calls redundant, typed values
     // included, adds nothing the sketch does not already enforce: it goes
-    // before it lands. Typed values are what was asked for and always stay.
+    // before it lands. Autos are what a line or polyline infers and what a
+    // point snapped onto a curve holds it by; what a shape tool builds its
+    // shape with (a slot's tangents, a fillet's) is the shape and stays, as
+    // typed values do.
+    let inferring = matches!(tool, "sketch.line" | "sketch.polyline");
     let mut skipped = 0;
     let autos: Vec<Uuid> = sketch
         .constraints
         .iter()
+        .filter(|c| !constraints_before.contains(&c.id) && before_typed.contains(&c.id))
+        .filter(|c| {
+            inferring
+                || matches!(
+                    c.kind,
+                    ConstraintKind::Coincident { .. }
+                        | ConstraintKind::PointOnLine { .. }
+                        | ConstraintKind::PointOnCircle { .. }
+                        | ConstraintKind::PointOnEllipse { .. }
+                        | ConstraintKind::PointOnCurve { .. }
+                )
+        })
         .map(|c| c.id)
-        .filter(|id| !constraints_before.contains(id) && before_typed.contains(id))
         .collect();
     if settings.avoid_redundant && !autos.is_empty() {
         let diagnosis = crate::solver::diagnose(sketch);
@@ -259,10 +274,6 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         json!(params.auto_constraints),
         json!(d.auto_constraints),
     );
-    put("array_rows", json!(params.array_rows), json!(d.array_rows));
-    put("array_cols", json!(params.array_cols), json!(d.array_cols));
-    put("array_dx", json!(params.array_dx), json!(d.array_dx));
-    put("array_dy", json!(params.array_dy), json!(d.array_dy));
     put(
         "mirror_keep",
         json!(params.mirror_keep),
@@ -315,10 +326,13 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             }
             "bspline_interpolate" => p.bspline_interpolate = flag()?,
             "auto_constraints" => p.auto_constraints = flag()?,
-            "array_rows" => p.array_rows = number()? as u32,
-            "array_cols" => p.array_cols = number()? as u32,
-            "array_dx" => p.array_dx = number()? as f32,
-            "array_dy" => p.array_dy = number()? as f32,
+            // The panel's array, not a tool's: its own command makes it.
+            "array_rows" | "array_cols" | "array_dx" | "array_dy" => {
+                return Err(format!(
+                    "params.{name} is no drawing tool's setting: sketch.array repeats \
+                     elements in rows and columns"
+                ));
+            }
             "mirror_keep" => p.mirror_keep = flag()?,
             "mirror_linked" => p.mirror_linked = flag()?,
             "mirror_center" => p.mirror_center = flag()?,

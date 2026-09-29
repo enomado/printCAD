@@ -378,6 +378,20 @@ pub fn kinds_for(
                 },
             ]
         }
+        // A line: across it, from its start to its end.
+        "distance_x" | "distance_y" if shape.only(0, 1, 0, 0) => {
+            let Some(GeometryElement::Line(line)) = sketch.get_geometry(l[0]) else {
+                return None;
+            };
+            let horizontal = tool == "distance_x";
+            let kind = axis_distance(horizontal, line.start, Some(line.end), 0.0);
+            vec![axis_distance(
+                horizontal,
+                line.start,
+                Some(line.end),
+                measured(&kind),
+            )]
+        }
         "distance_x" | "distance_y" if shape.only(1, 0, 0, 0) || shape.only(2, 0, 0, 0) => {
             let horizontal = tool == "distance_x";
             let b = p.get(1).copied();

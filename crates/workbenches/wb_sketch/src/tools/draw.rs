@@ -378,6 +378,12 @@ pub(super) fn rect_rounded(
     };
     let c = cursor;
     let mut rounded = 0;
+    let arcs_before: std::collections::HashSet<uuid::Uuid> = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Arc(_)))
+        .map(GeometryElement::id)
+        .collect();
     for corner in [a, Vec2D::new(c.x, a.y), c, Vec2D::new(a.x, c.y)] {
         let round = super::modify::CornerCut::Round(radius);
         let mut scratch = ToolState::Idle;
@@ -393,6 +399,20 @@ pub(super) fn rect_rounded(
         {
             rounded += 1;
         }
+    }
+    // One radius at every corner.
+    let corners: Vec<uuid::Uuid> = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Arc(_)))
+        .map(GeometryElement::id)
+        .filter(|id| !arcs_before.contains(id))
+        .collect();
+    for pair in corners.windows(2) {
+        sketch.add_constraint(ConstraintKind::EqualRadius {
+            circle1: pair[0],
+            circle2: pair[1],
+        });
     }
     ToolEffect::changed(format!(
         "Rounded rectangle {:.2} × {:.2}, r={radius:.2} ({rounded} corners)",
@@ -1543,30 +1563,44 @@ pub(super) fn arc_slot(
 
             // Rails run CCW start → end; the caps are CCW semicircles that
             // bulge past the ends (see the straight slot for the same idea).
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(
+            let outer = sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 center_id,
                 outer_a,
                 outer_b,
                 shape.outer_r,
             )));
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(
+            let inner = sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 center_id,
                 inner_a,
                 inner_b,
                 shape.inner_r,
             )));
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(
+            let cap_b = sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 cap_b_id,
                 outer_b,
                 inner_b,
                 shape.cap_r,
             )));
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(
+            let cap_a = sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 cap_a_id,
                 inner_a,
                 outer_a,
                 shape.cap_r,
             )));
+            // Each cap runs on smoothly into both rails, and the two caps
+            // are one size: it stays a slot when dragged.
+            for cap in [cap_a, cap_b] {
+                for rail in [outer, inner] {
+                    sketch.add_constraint(ConstraintKind::Tangent {
+                        line_or_circle1: rail,
+                        item2: cap,
+                    });
+                }
+            }
+            sketch.add_constraint(ConstraintKind::EqualRadius {
+                circle1: cap_a,
+                circle2: cap_b,
+            });
 
             *state = ToolState::Idle;
             ToolEffect::changed(format!(

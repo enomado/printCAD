@@ -177,16 +177,56 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     outcome
 }
 
+/// The end point a line or arc `a` shares with arc `b` (or with line `b`
+/// when `a` is the arc), when they meet end to end.
+fn shared_end(sketch: &Sketch, a: Uuid, b: Uuid) -> Option<Uuid> {
+    let ends = |id: Uuid| match sketch.get_geometry(id) {
+        Some(GeometryElement::Line(l)) => Some([l.start, l.end]),
+        Some(GeometryElement::Arc(a)) => Some([a.start, a.end]),
+        _ => None,
+    };
+    let (ea, eb) = (ends(a)?, ends(b)?);
+    ea.into_iter().find(|p| eb.contains(p))
+}
+
 /// Rough remaining-degrees-of-freedom estimate: free variables minus the
 /// rank of the constraint Jacobian at the current configuration.
 pub fn dof_estimate(sketch: &Sketch) -> i32 {
-    let sys = build_system(sketch);
+    // An arc's ends lie on its circle whether or not anything else is
+    // constrained: those rows count here even where the solve leaves them
+    // out.
+    let sys = build_system_with(sketch, None, &[], true);
+    // An ellipse's or conic's size and turn are free until a constraint
+    // brings them into the system: three more each (two for a parabola),
+    // unless the curve is external and held.
+    let external = sketch.external_ids();
+    let unsolved_shape: i32 = sketch
+        .geometry
+        .iter()
+        .map(|g| match g {
+            GeometryElement::Ellipse(e)
+                if !sys.shape_vars.contains_key(&e.id) && !external.contains(&e.id) =>
+            {
+                3
+            }
+            GeometryElement::Conic(c)
+                if !sys.shape_vars.contains_key(&c.id) && !external.contains(&c.id) =>
+            {
+                if c.kind == crate::sketch::ConicKind::Parabola {
+                    2
+                } else {
+                    3
+                }
+            }
+            _ => 0,
+        })
+        .sum();
     let n = sys.free.len() as i32;
     if sys.specs.is_empty() || sys.free.is_empty() {
-        return n;
+        return n + unsolved_shape;
     }
     let jac = jacobian(&sys, &sys.vars);
-    n - jacobian_rank(jac) as i32
+    n - jacobian_rank(jac) as i32 + unsolved_shape
 }
 
 /// Above this many solver-relevant constraints `diagnose` skips the
@@ -507,8 +547,9 @@ enum ResidualSpec {
     Radius { r: usize, radius: f64 },
     /// 2r - diameter.
     Diameter { r: usize, diameter: f64 },
-    /// |coord(b) - coord(a)| - value, on one axis. `a`/`b` index the exact
-    /// variable (x or y already applied); `b = None` measures from origin.
+    /// |coord(b) - coord(a)| - value on one axis, or the signed
+    /// difference less a negative value. `a`/`b` index the exact variable
+    /// (x or y already applied); `b = None` measures from origin.
     CoordDistance {
         a: usize,
         b: Option<usize>,
@@ -562,6 +603,17 @@ enum ResidualSpec {
     },
     /// Implicit arc consistency: |endpoint - center| - r.
     ArcEndpoint { p: usize, c: usize, r: usize },
+    /// A line and an arc joined smoothly at their shared end `p`: the
+    /// radius there square to the line, dot(unit(p - c), unit(e - s)).
+    TangentAtEnd {
+        p: usize,
+        c: usize,
+        s: usize,
+        e: usize,
+    },
+    /// Two arcs joined smoothly at their shared end `p`: both centres on
+    /// one line through it, cross(unit(p - c1), unit(p - c2)).
+    TangentArcsAtEnd { p: usize, c1: usize, c2: usize },
     /// |perpendicular distance(center, infinite line)| - r.
     TangentLineCircle {
         s: usize,
@@ -889,7 +941,14 @@ impl ResidualSpec {
                     Some(b) => v[b] - v[a],
                     None => v[a],
                 };
-                out.push(d.abs() - value);
+                // A positive value is how far apart, either way round; a
+                // negative one is the way too: `b` that far on the
+                // negative side of `a`.
+                out.push(if value < 0.0 {
+                    d - value
+                } else {
+                    d.abs() - value
+                });
             }
             ResidualSpec::EqualRadius { r1, r2 } => out.push(v[r1] - v[r2]),
             ResidualSpec::EqualLength { s1, e1, s2, e2 } => {
@@ -949,6 +1008,16 @@ impl ResidualSpec {
             }
             ResidualSpec::TangentLineCircle { s, e, c, r } => {
                 out.push(point_line_distance(v, c, s, e).abs() - v[r]);
+            }
+            ResidualSpec::TangentAtEnd { p, c, s, e } => {
+                let radial = unit_direction(v, c, p);
+                let along = unit_direction(v, s, e);
+                out.push(radial.0 * along.0 + radial.1 * along.1);
+            }
+            ResidualSpec::TangentArcsAtEnd { p, c1, c2 } => {
+                let a = unit_direction(v, c1, p);
+                let b = unit_direction(v, c2, p);
+                out.push(a.0 * b.1 - a.1 * b.0);
             }
             ResidualSpec::TangentCircles {
                 c1,
@@ -1178,6 +1247,18 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
 
 /// `build_system_excluding` with the points `held` pinned where they are.
 fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -> System {
+    build_system_with(sketch, exclude, held, false)
+}
+
+/// `build_system_holding`, with every arc's ends held to its circle even
+/// when nothing else is constrained (`arcs_always`), as counting degrees of
+/// freedom needs.
+fn build_system_with(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    held: &[Uuid],
+    arcs_always: bool,
+) -> System {
     let mut vars = Vec::new();
     let mut point_vars = HashMap::new();
     let mut radius_vars = HashMap::new();
@@ -1643,12 +1724,28 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
                 line_or_circle1,
                 item2,
             } => {
+                // Joined end to end, the tangency is at the shared end:
+                // written there it stays independent of the ends lying on
+                // both curves, where the distance form would not be.
+                let at_end = shared_end(sketch, line_or_circle1, item2);
                 let resolved = match (
                     line_vars(line_or_circle1),
                     circle_vars(line_or_circle1),
                     line_vars(item2),
                     circle_vars(item2),
                 ) {
+                    (Some((s, e)), _, _, Some((c, _))) | (_, Some((c, _)), Some((s, e)), _)
+                        if at_end.and_then(&point_var).is_some() =>
+                    {
+                        let p = at_end.and_then(&point_var).expect("checked");
+                        Some(ResidualSpec::TangentAtEnd { p, c, s, e })
+                    }
+                    (_, Some((c1, _)), _, Some((c2, _)))
+                        if at_end.and_then(&point_var).is_some() =>
+                    {
+                        let p = at_end.and_then(&point_var).expect("checked");
+                        Some(ResidualSpec::TangentArcsAtEnd { p, c1, c2 })
+                    }
                     // Line ↔ circle/arc, in either selection order.
                     (Some((s, e)), _, _, Some((c, r))) | (_, Some((c, r)), Some((s, e)), _) => {
                         Some(ResidualSpec::TangentLineCircle { s, e, c, r })
@@ -1958,7 +2055,7 @@ fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -
     // these residuals such an arc would silently become geometrically invalid.
     // When there are no user constraints the solver reports NothingToSolve and
     // never runs, so gating on "at least one constraint exists" costs nothing.
-    if !specs.is_empty() {
+    if arcs_always || !specs.is_empty() {
         for element in &sketch.geometry {
             if let GeometryElement::Arc(arc) = element
                 && let (Some(c), Some(s), Some(e), Some(r)) = (

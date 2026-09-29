@@ -192,7 +192,7 @@ pub fn register(context: &mut WorkbenchContext) {
              offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, \
              copies_linked, \
              bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, \
-             array_rows, array_cols, array_dx, array_dy, mirror_keep, mirror_linked, \
+             mirror_keep, mirror_linked, \
              mirror_center",
         )
         .optional(
@@ -2393,6 +2393,141 @@ mod tests {
             1
         );
         assert!(doc.get_feature_meta(id).unwrap().body.is_some());
+    }
+
+    /// A negative horizontal or vertical distance puts the end that far
+    /// the other way; the line keeps its length and nothing conflicts.
+    #[test]
+    fn a_negative_axis_distance_runs_the_other_way() {
+        for (kind, axis) in [("distance_x", 0), ("distance_y", 1)] {
+            let mut doc = Document::new("t");
+            let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
+            let line = call(
+                &mut doc,
+                "sketch.line",
+                json!({"sketch": sketch, "x1": 0, "y1": 0, "x2": 5, "y2": 3}),
+            )
+            .unwrap();
+            call(
+                &mut doc,
+                "sketch.constrain",
+                json!({"sketch": sketch, "kind": kind, "items": [line], "value": -7}),
+            )
+            .unwrap();
+            let status = call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap();
+            assert_eq!(status["conflicting"], json!([]), "{kind}");
+            let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+            let points = geometry
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|g| g["kind"] == "line")
+                .unwrap()["points"]
+                .clone();
+            let d = points[1][axis].as_f64().unwrap() - points[0][axis].as_f64().unwrap();
+            assert!((d + 7.0).abs() < 1e-3, "{kind}: {points}");
+        }
+    }
+
+    /// What is left free: 5 for an arc, however drawn, and for an ellipse.
+    #[test]
+    fn arcs_and_ellipses_count_five_degrees_of_freedom() {
+        let dof = |tool: &str, points: Value| {
+            let mut doc = Document::new("t");
+            let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
+            call(
+                &mut doc,
+                "sketch.draw",
+                json!({"sketch": sketch, "tool": tool, "points": points}),
+            )
+            .unwrap();
+            call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap()["dof"].clone()
+        };
+        assert_eq!(dof("arc3", json!([[0, 0], [10, 0], [5, 3]])), json!(5));
+        assert_eq!(dof("ellipse", json!([[0, 0], [10, 0], [0, 4]])), json!(5));
+    }
+
+    /// A rounded rectangle, a slot and an arc slot keep their shape when
+    /// dragged: their tangents and equal radii are part of them.
+    #[test]
+    fn shapes_with_rounded_ends_hold_together_when_dragged() {
+        for (tool, points, params, dof) in [
+            (
+                "rect_rounded",
+                json!([[0, 0], [20, 10]]),
+                json!({"fillet_radius": 2}),
+                5,
+            ),
+            (
+                "slot",
+                json!([[1, 1], [21, 1]]),
+                json!({"slot_width": 6}),
+                5,
+            ),
+            (
+                "arc_slot",
+                json!([[0, 0], [20, 0], [0, 20]]),
+                json!({"slot_width": 4}),
+                6,
+            ),
+        ] {
+            let mut doc = Document::new("t");
+            let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
+            call(
+                &mut doc,
+                "sketch.draw",
+                json!({"sketch": sketch, "tool": tool, "points": points, "params": params}),
+            )
+            .unwrap();
+            let status = call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap();
+            assert_eq!(status["dof"], json!(dof), "{tool}");
+            let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+            let first = geometry
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|g| g["kind"] == "line" || g["kind"] == "arc")
+                .unwrap()["id"]
+                .clone();
+            call(
+                &mut doc,
+                "sketch.drag",
+                json!({"sketch": sketch, "items": [first], "by": [1.5, 2.5]}),
+            )
+            .unwrap();
+            let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+            let radii: Vec<f64> = geometry
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|g| g["radius"].as_f64())
+                .collect();
+            // The ends (all four corners, both caps) stay one size.
+            let ends: Vec<f64> = match tool {
+                "arc_slot" => radii[2..].to_vec(),
+                _ => radii.clone(),
+            };
+            assert!(
+                ends.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-3),
+                "{tool}: {radii:?}"
+            );
+        }
+    }
+
+    /// Rows and columns are the array's, not a drawing tool's: sketch.draw
+    /// says so rather than ignoring them.
+    #[test]
+    fn array_settings_given_to_a_drawing_tool_are_refused() {
+        let mut doc = Document::new("t");
+        let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let error = call(
+            &mut doc,
+            "sketch.draw",
+            json!({"sketch": sketch, "tool": "translate", "points": [[0, 0], [5, 0]],
+                   "params": {"array_rows": 3}}),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("sketch.array"), "{error}");
     }
 
     #[test]

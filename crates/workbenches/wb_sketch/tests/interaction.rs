@@ -700,9 +700,15 @@ fn fillet_tool_rounds_rectangle_corner_end_to_end() {
     let sketch = h.sketch();
     assert_eq!(
         sketch.constraints.len(),
-        4,
-        "rectangle H/V constraints survive the fillet"
+        6,
+        "rectangle H/V constraints survive the fillet, and the arc is tangent to both sides"
     );
+    let tangents = sketch
+        .constraints
+        .iter()
+        .filter(|c| matches!(c.kind, wb_sketch::sketch::ConstraintKind::Tangent { .. }))
+        .count();
+    assert_eq!(tangents, 2);
     let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 5, "4 lines + 1 corner arc");

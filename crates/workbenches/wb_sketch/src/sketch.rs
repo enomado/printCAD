@@ -1377,14 +1377,16 @@ pub enum ConstraintKind {
         distance: f32,
     },
     /// Horizontal distance between two points (`b = None` measures `a`
-    /// from the sketch origin).
+    /// from the sketch origin): either way round when positive, `b` to the
+    /// left of `a` when negative.
     DistanceX {
         a: Uuid,
         b: Option<Uuid>,
         value: f32,
     },
     /// Vertical distance between two points (`b = None` measures `a`
-    /// from the sketch origin).
+    /// from the sketch origin): either way round when positive, `b` below
+    /// `a` when negative.
     DistanceY {
         a: Uuid,
         b: Option<Uuid>,
