@@ -311,7 +311,7 @@ and noted on its item, and the rest of the item is built around it.
   left out of export.
 - [x] **Kept in the document, numbered** (missing, S).
 - [x] **Custom columns** (missing, M). Part number, supplier, any property.
-- [ ] **Sub-assembly levels** (missing, low, S, after sub-assemblies).
+- [x] **Sub-assembly levels** (missing, low, S, after sub-assemblies).
 
 ### Checks and display
 

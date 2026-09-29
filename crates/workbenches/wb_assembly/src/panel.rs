@@ -1343,6 +1343,11 @@ impl AssemblyWorkbench {
         );
         ui.add_space(SPACE_1);
         let columns = table.columns.clone();
+        if !ctx.document.components().is_empty() {
+            ui.checkbox(&mut table.by_component, "By component")
+                .on_hover_text("Each component's parts under it, nested as the components are");
+        }
+        let by_component = table.by_component && !ctx.document.components().is_empty();
         egui::ScrollArea::horizontal().show(ui, |ui| {
             egui::Grid::new("assembly_parts")
                 .num_columns(5 + columns.len())
@@ -1356,7 +1361,40 @@ impl AssemblyWorkbench {
                         ui.label(RichText::new(column).font(sans(FONT_XS)).color(TEXT3));
                     }
                     ui.end_row();
-                    for part in &parts {
+                    let rows = if by_component {
+                        crate::parts::parts_by_component(ctx.document, &parts)
+                    } else {
+                        parts
+                            .iter()
+                            .enumerate()
+                            .map(|(i, p)| crate::parts::LevelRow::Part {
+                                depth: 0,
+                                part: i,
+                                bodies: p.bodies.clone(),
+                            })
+                            .collect()
+                    };
+                    for row in &rows {
+                        let (depth, part, here) = match row {
+                            crate::parts::LevelRow::Component { depth, name, .. } => {
+                                ui.label("");
+                                ui.label(
+                                    RichText::new(format!("{}{name}", "    ".repeat(*depth)))
+                                        .font(ui_kit::sans_semibold(FONT_SM))
+                                        .color(TEXT1),
+                                );
+                                ui.label(
+                                    RichText::new("1").font(ui_kit::mono(FONT_SM)).color(TEXT1),
+                                );
+                                ui.end_row();
+                                continue;
+                            }
+                            crate::parts::LevelRow::Part {
+                                depth,
+                                part,
+                                bodies,
+                            } => (*depth, &parts[*part], bodies),
+                        };
                         let number = part.number.map_or("-".to_string(), |n| n.to_string());
                         ui.label(
                             RichText::new(number)
@@ -1365,15 +1403,17 @@ impl AssemblyWorkbench {
                         );
                         let name = ui.add(
                             egui::Button::new(
-                                RichText::new(&part.name).font(sans(FONT_SM)).color(TEXT1),
+                                RichText::new(format!("{}{}", "    ".repeat(depth), part.name))
+                                    .font(sans(FONT_SM))
+                                    .color(TEXT1),
                             )
                             .frame(false),
                         );
                         if name.clicked() {
-                            ctx.request(core_document::HostRequest::SelectBody(part.bodies[0]));
+                            ctx.request(core_document::HostRequest::SelectBody(here[0]));
                         }
                         ui.label(
-                            RichText::new(part.bodies.len().to_string())
+                            RichText::new(here.len().to_string())
                                 .font(ui_kit::mono(FONT_SM))
                                 .color(TEXT1),
                         );
@@ -1470,7 +1510,13 @@ impl AssemblyWorkbench {
             }
         }
         ui.add_space(SPACE_2);
-        let csv = crate::parts_csv(&crate::parts_list(ctx.document), &table.columns);
+        let parts = crate::parts_list(ctx.document);
+        let csv = if by_component {
+            let rows = crate::parts::parts_by_component(ctx.document, &parts);
+            crate::parts::levels_csv(&parts, &rows, &table.columns)
+        } else {
+            crate::parts_csv(&parts, &table.columns)
+        };
         ui.horizontal(|ui| {
             if ui_kit::widgets::secondary_button(ui, "Copy as CSV")
                 .on_hover_text("For a spreadsheet: every column of the list")

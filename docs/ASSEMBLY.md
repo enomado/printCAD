@@ -232,6 +232,11 @@ slicer; Add column adds a column of your own (a part number, a supplier)
 with a value per part. All of it is kept in the document as the Parts list
 row of the tree, and `asm.part` sets it from a script.
 
+With components in the model, By component lists each component with its
+parts under it, nested as the components are (a bolt in two components
+shows in each with its own count); the CSV then starts every row with its
+level, 0 at the top. `asm.parts` with `by_component` answers the same.
+
 Mass and centre of mass (W) measures every visible solid body at the
 density you set (g/cm³), with each body's share, and marks the centre of
 mass in the view: what a tip-over check needs. `asm.mass` answers the

@@ -11,7 +11,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use core_document::{
-    BodyId, Document, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
+    BodyId, ComponentId, Document, DocumentResult, FeatureError, FeatureId, WorkbenchFeature,
+    WorkbenchId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +27,10 @@ pub struct PartsTable {
     pub columns: Vec<String>,
     /// Each part's entry, by the id of one of its bodies.
     pub entries: BTreeMap<String, PartEntry>,
+    /// Listed by component: each component's parts under it, nested as
+    /// the components are.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub by_component: bool,
 }
 
 /// What the list keeps for one part.
@@ -207,6 +212,68 @@ pub fn parts_list(document: &Document) -> Vec<Part> {
     out
 }
 
+/// A row of the list by component.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LevelRow {
+    /// A component, `depth` components down.
+    Component {
+        depth: usize,
+        id: ComponentId,
+        name: String,
+    },
+    /// Bodies of `parts[part]` sitting directly in the component above.
+    Part {
+        depth: usize,
+        part: usize,
+        bodies: Vec<BodyId>,
+    },
+}
+
+/// `parts` (the whole list) by component: the top's components, each
+/// followed by what it holds, then the top's own parts; in a component,
+/// its components before its parts, parts in list order.
+pub fn parts_by_component(document: &Document, parts: &[Part]) -> Vec<LevelRow> {
+    fn level(
+        document: &Document,
+        parts: &[Part],
+        at: Option<ComponentId>,
+        depth: usize,
+        out: &mut Vec<LevelRow>,
+    ) {
+        for component in document.components() {
+            let parent = component
+                .parent
+                .filter(|p| document.component(*p).is_some());
+            if parent == at && depth < 64 {
+                out.push(LevelRow::Component {
+                    depth,
+                    id: component.id,
+                    name: component.name.clone(),
+                });
+                level(document, parts, Some(component.id), depth + 1, out);
+            }
+        }
+        for (i, part) in parts.iter().enumerate() {
+            let bodies: Vec<BodyId> = part
+                .bodies
+                .iter()
+                .copied()
+                .filter(|b| document.component_of(*b) == at)
+                .collect();
+            if !bodies.is_empty() {
+                out.push(LevelRow::Part {
+                    depth,
+                    part: i,
+                    bodies,
+                });
+            }
+        }
+    }
+    let mut out = Vec::new();
+    level(document, parts, None, 0, &mut out);
+    out
+}
+
 /// A value as a CSV field: quoted when it holds a comma or a quote.
 fn field(text: &str) -> String {
     if text.contains([',', '"', '\n']) {
@@ -249,9 +316,85 @@ pub fn parts_csv(parts: &[Part], columns: &[String]) -> String {
     out
 }
 
+/// The list by component as comma-separated values: a level column (0
+/// at the top) before `parts_csv`'s, a component a row of its own.
+pub fn levels_csv(parts: &[Part], rows: &[LevelRow], columns: &[String]) -> String {
+    let flat = parts_csv(&[], columns);
+    let mut out = format!("Level,{flat}");
+    for row in rows {
+        match row {
+            LevelRow::Component { depth, name, .. } => {
+                out.push_str(&format!("{depth},,{},1,,,,component,", field(name)));
+                out.push_str(&",".repeat(columns.len()));
+                out.push('\n');
+            }
+            LevelRow::Part {
+                depth,
+                part,
+                bodies,
+            } => {
+                let one = Part {
+                    bodies: bodies.clone(),
+                    ..parts[*part].clone()
+                };
+                let line = parts_csv(&[one], columns);
+                let line = line.lines().nth(1).unwrap_or_default();
+                out.push_str(&format!("{depth},{line}\n"));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_by_component_nests_its_parts() {
+        let mut document = Document::new("t");
+        let [bolt, bolt2, lid, base] =
+            ["Bolt", "Bolt 2", "Lid", "Base"].map(|n| document.create_body(Some(n.into())));
+        for (body, shape) in [
+            (bolt, "bolt"),
+            (bolt2, "bolt"),
+            (lid, "lid"),
+            (base, "base"),
+        ] {
+            document.set_imported_brep_data(body, shape.as_bytes().to_vec(), Vec::new());
+        }
+        let top = document.create_component("Top".into(), None).unwrap();
+        document.set_body_component(bolt, Some(top)).unwrap();
+        document.set_body_component(lid, Some(top)).unwrap();
+        let parts = parts_list(&document);
+        let rows = parts_by_component(&document, &parts);
+        let names: Vec<(usize, String, usize)> = rows
+            .iter()
+            .map(|r| match r {
+                LevelRow::Component { depth, name, .. } => (*depth, name.clone(), 1),
+                LevelRow::Part {
+                    depth,
+                    part,
+                    bodies,
+                } => (*depth, parts[*part].name.clone(), bodies.len()),
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (0, "Top".to_string(), 1),
+                (1, "Bolt".to_string(), 1),
+                (1, "Lid".to_string(), 1),
+                (0, "Base".to_string(), 1),
+                (0, "Bolt".to_string(), 1),
+            ]
+        );
+        let csv = levels_csv(&parts, &rows, &[]);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert!(lines[0].starts_with("Level,Item,Part"));
+        assert_eq!(lines[1], "0,,Top,1,,,,component,");
+        assert_eq!(lines[2], "1,,Bolt,1,,,,solid,");
+    }
 
     #[test]
     fn bodies_of_one_shape_are_one_part_counted() {

@@ -1463,6 +1463,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 `pc.asm.parts`: Every part: bodies of the same shape counted together.
 
+- `by_component` (boolean, optional): Each component's parts under it: every entry gains a depth, and components come as {component, name, depth}
 - Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number or nil, bought, values = {column = text}}, numbered parts first by number, then by name
 
 `pc.asm.part`: Set what the parts list keeps for a part: its number, whether it is bought, its values in the added columns.

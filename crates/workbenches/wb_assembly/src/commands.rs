@@ -675,6 +675,12 @@ pub fn register(context: &mut WorkbenchContext) {
             "asm.parts",
             "Every part: bodies of the same shape counted together",
         )
+        .optional(
+            "by_component",
+            ParamKind::Bool,
+            "Each component's parts under it: every entry gains a depth, and components \
+             come as {component, name, depth}",
+        )
         .returns(
             "a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number \
              or nil, bought, values = {column = text}}, numbered parts first by number, \
@@ -1013,23 +1019,45 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 "clashes": clashes,
             }))
         }
-        "asm.parts" => Ok(Value::Array(
-            crate::parts_list(ctx.document)
-                .into_iter()
-                .map(|part| {
-                    json!({
-                        "name": part.name,
-                        "quantity": part.bodies.len(),
-                        "bodies": part.bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
-                        "size": part.size_mm,
-                        "mesh": part.mesh,
-                        "number": part.number,
-                        "bought": part.bought,
-                        "values": part.values,
-                    })
+        "asm.parts" => {
+            let parts = crate::parts_list(ctx.document);
+            let entry = |part: &crate::Part, bodies: &[BodyId]| {
+                json!({
+                    "name": part.name,
+                    "quantity": bodies.len(),
+                    "bodies": bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
+                    "size": part.size_mm,
+                    "mesh": part.mesh,
+                    "number": part.number,
+                    "bought": part.bought,
+                    "values": part.values,
                 })
-                .collect(),
-        )),
+            };
+            if a.opt_bool("by_component")? != Some(true) {
+                return Ok(Value::Array(
+                    parts.iter().map(|p| entry(p, &p.bodies)).collect(),
+                ));
+            }
+            Ok(Value::Array(
+                crate::parts::parts_by_component(ctx.document, &parts)
+                    .into_iter()
+                    .map(|row| match row {
+                        crate::parts::LevelRow::Component { depth, id, name } => {
+                            json!({"component": id.0.to_string(), "name": name, "depth": depth})
+                        }
+                        crate::parts::LevelRow::Part {
+                            depth,
+                            part,
+                            bodies,
+                        } => {
+                            let mut value = entry(&parts[part], &bodies);
+                            value["depth"] = json!(depth);
+                            value
+                        }
+                    })
+                    .collect(),
+            ))
+        }
         "asm.parts_table" => {
             let table: crate::parts::PartsTable =
                 serde_json::from_value(a.0.get("table").cloned().unwrap_or(Value::Null))
