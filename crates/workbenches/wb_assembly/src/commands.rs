@@ -104,6 +104,7 @@ pub(crate) fn rejoined(
     }
     let at = |b: BodyId| -> Rigid { ctx.document.body_placement(b).into() };
     Ok(JointFeature {
+        ends: [0.0; 2],
         names: [0; 2],
         kind: tool.joint(&moving, &at(moving_body), &fixed, &at(other), radius),
         moving,
@@ -665,6 +666,11 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 feature = rejoined(ctx, tool, (moving_body, moving), (other, fixed), radius)?;
                 feature.names = [name_of("face", kept[0]), name_of("other_face", kept[1])];
             }
+            for (end, key) in ["moving_end", "fixed_end"].into_iter().enumerate() {
+                if let Some(v) = a.opt_number(key)? {
+                    feature.ends[end] = v as f32;
+                }
+            }
             match &mut feature.kind {
                 JointKind::Mate { flip, offset } => {
                     if let Some(v) = a.opt_number("offset")? {
@@ -1191,6 +1197,7 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
             .unwrap_or(0)
     };
     let joint = JointFeature {
+        ends: [0.0; 2],
         names: [name_of("face"), name_of("other_face")],
         kind,
         moving,
@@ -1295,12 +1302,29 @@ pub(crate) fn record_joint(
             }));
             args.extend(object(settings(&joint.kind)));
             ctx.record(command, args, json!(id.0.to_string()));
+            if joint.ends != [0.0, 0.0] {
+                ctx.record(
+                    "asm.set",
+                    object(json!({
+                        "joint": id.0.to_string(),
+                        "moving_end": joint.ends[0],
+                        "fixed_end": joint.ends[1],
+                    })),
+                    Value::Null,
+                );
+            }
         }
         Some(before) => {
             let Ok(old) = serde_json::from_value::<JointFeature>(before.clone()) else {
                 return;
             };
-            let (was, now) = (object(settings(&old.kind)), object(settings(&joint.kind)));
+            let with_ends = |j: &JointFeature| {
+                let mut all = object(settings(&j.kind));
+                all.insert("moving_end".into(), json!(j.ends[0]));
+                all.insert("fixed_end".into(), json!(j.ends[1]));
+                all
+            };
+            let (was, now) = (with_ends(&old), with_ends(&joint));
             let mut args = object(json!({"joint": id.0.to_string()}));
             for (name, value) in now {
                 if was.get(&name) != Some(&value) {
@@ -1660,6 +1684,7 @@ pub(crate) fn set_grounded(
     ctx.document
         .add_feature_in_body(
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Ground,
                 moving: anchor,
@@ -1915,6 +1940,27 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// An end moved along its normal moves the body with it: a mate with
+    /// the other end raised 3 sits 3 higher.
+    #[test]
+    fn an_end_offset_moves_the_body() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        let mate = call(
+            &mut doc,
+            "asm.mate",
+            json!({"body": a.0.to_string(), "face": {"point": [0, 0, 0], "normal": [0, 0, -1]},
+                   "other": b.0.to_string(), "other_face": top}),
+        )
+        .unwrap();
+        call(&mut doc, "asm.set", json!({"joint": mate, "fixed_end": 3})).unwrap();
+        assert!((doc.body_placement(a).translation[2] - 3.0).abs() < 1e-3);
+        call(&mut doc, "asm.set", json!({"joint": mate, "moving_end": 1})).unwrap();
+        // The moving end, its underside, pushed 1 down its own normal.
+        assert!((doc.body_placement(a).translation[2] - 4.0).abs() < 1e-3);
     }
 
     /// A ball joint puts two points together and leaves three turns free;

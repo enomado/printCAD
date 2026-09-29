@@ -49,6 +49,11 @@ bodies stand; a kind that takes other sorts of faces, or Pick faces again,
 picks the two faces afresh while the joint keeps its name. `asm.set` takes
 `kind`, `face`, `other` and `other_face` for the same.
 
+Each end of a joint can be moved along its own normal or axis (Moving
+end, Fixed end in its settings, formulas welcome): a mate with its fixed
+end raised 3 mm holds the body 3 mm up, whatever gap the kind has.
+`asm.set` takes `moving_end` and `fixed_end`.
+
 Every joint's settings can turn its body about the joint's axis or
 normal by an angle (Turn), or half a turn across it (Turn over, the body
 the other way round); the joint takes the new place as its own, a driven

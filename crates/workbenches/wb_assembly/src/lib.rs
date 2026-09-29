@@ -1306,6 +1306,7 @@ impl AssemblyWorkbench {
                     ctx,
                     first_body,
                     JointFeature {
+                        ends: [0.0; 2],
                         names: [first_name, name],
                         kind,
                         moving: first_anchor,
@@ -1519,20 +1520,11 @@ impl AssemblyWorkbench {
     }
 }
 
-impl Workbench for AssemblyWorkbench {
-    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+impl AssemblyWorkbench {
+    /// The numbers a joint's kind has, for formulas.
+    fn kind_parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
         use core_document::Parameter;
         use core_document::expr::Dim;
-        if node.workbench_id.as_str() == COUPLING_KIND {
-            return match Coupling::from_json(&node.data) {
-                Ok(c) => {
-                    let (label, length) = c.gearing.ratio_label();
-                    let dim = if length { Dim::LENGTH } else { Dim::NUMBER };
-                    vec![Parameter::new("ratio", label, dim, "/ratio")]
-                }
-                Err(_) => Vec::new(),
-            };
-        }
         match JointFeature::from_json(&node.data).map(|j| j.kind) {
             Ok(JointKind::Mate { .. }) => {
                 vec![Parameter::new(
@@ -1602,6 +1594,33 @@ impl Workbench for AssemblyWorkbench {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+impl Workbench for AssemblyWorkbench {
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        use core_document::Parameter;
+        use core_document::expr::Dim;
+        if node.workbench_id.as_str() == COUPLING_KIND {
+            return match Coupling::from_json(&node.data) {
+                Ok(c) => {
+                    let (label, length) = c.gearing.ratio_label();
+                    let dim = if length { Dim::LENGTH } else { Dim::NUMBER };
+                    vec![Parameter::new("ratio", label, dim, "/ratio")]
+                }
+                Err(_) => Vec::new(),
+            };
+        }
+        let ends = [
+            ("moving_end", "Moving end offset", "/ends/0"),
+            ("fixed_end", "Fixed end offset", "/ends/1"),
+        ]
+        .map(|(name, label, pointer)| Parameter::new(name, label, Dim::LENGTH, pointer));
+        let mut out = self.kind_parameters(node);
+        if JointFeature::from_json(&node.data).is_ok_and(|j| j.kind != JointKind::Ground) {
+            out.extend(ends);
+        }
+        out
     }
 
     /// A joint's ends picked on named faces follow those faces: a body
@@ -2549,6 +2568,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
@@ -2587,6 +2607,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
@@ -2862,6 +2883,7 @@ mod tests {
         };
         doc.add_feature_in_body(
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointTool::Hinge.joint(
                     &pin,
@@ -3264,6 +3286,7 @@ mod tests {
         let slider = doc
             .add_feature_in_body(
                 JointFeature {
+                    ends: [0.0; 2],
                     names: [0; 2],
                     kind,
                     moving: rail,
@@ -3345,6 +3368,7 @@ mod tests {
         let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
         doc.add_feature_in_body(
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind,
                 moving: rail,
@@ -3444,6 +3468,7 @@ mod tests {
         let hinge = doc
             .add_feature_in_body(
                 JointFeature {
+                    ends: [0.0; 2],
                     names: [0; 2],
                     kind: JointTool::Hinge.joint(&pin, &at, &pin, &at, 0.0),
                     moving: pin,

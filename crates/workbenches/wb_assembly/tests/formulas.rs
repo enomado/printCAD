@@ -49,6 +49,7 @@ fn a_variable_offset_moves_the_body_and_settling_again_records_nothing() {
     let joint = doc
         .add_feature_in_body(
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,

@@ -76,6 +76,10 @@ fn usable(document: &Document) -> Vec<Joint> {
     joints(document)
         .into_iter()
         .chain(crate::group::holds(document))
+        .map(|j| Joint {
+            feature: j.feature.with_ends_moved(),
+            ..j
+        })
         .filter(|j| {
             exists(j.body)
                 && (j.feature.kind == JointKind::Ground
@@ -1013,6 +1017,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
@@ -1049,6 +1054,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
                     flip: true,
@@ -1084,6 +1090,7 @@ mod tests {
             &mut doc,
             pin,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::align(),
                 moving: Anchor::Axis {
@@ -1112,6 +1119,7 @@ mod tests {
         let b = doc.create_body(None);
         let c = doc.create_body(None);
         let mate = |other| JointFeature {
+            ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Mate {
                 flip: true,
@@ -1136,6 +1144,7 @@ mod tests {
         // Grounding a lets it take a joint of its own: a ring that can
         // close does, one that cannot is named.
         let ground = JointFeature {
+            ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Ground,
             moving: Anchor::Plane {
@@ -1178,6 +1187,7 @@ mod tests {
             normal: [0.0, 0.0, 1.0],
         };
         let joint = JointFeature {
+            ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Angle { degrees: 90.0 },
             moving: up,
@@ -1207,6 +1217,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
                     flip: false,
@@ -1232,6 +1243,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Angle { degrees: 30.0 },
                 moving: side,
@@ -1257,6 +1269,7 @@ mod tests {
         let base = doc.create_body(None);
         let part = doc.create_body(None);
         let on = |z: f32| JointFeature {
+            ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Mate {
                 flip: true,
@@ -1289,6 +1302,7 @@ mod tests {
 
     fn mate(moving: Anchor, other: BodyId, fixed: Anchor, flip: bool, offset: f32) -> JointFeature {
         JointFeature {
+            ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Mate { flip, offset },
             moving,
@@ -1402,6 +1416,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::align(),
                 moving: Anchor::Axis {
@@ -1477,6 +1492,7 @@ mod tests {
         fixed: Anchor,
     ) -> JointFeature {
         JointFeature {
+            ends: [0.0; 2],
             names: [0; 2],
             kind: tool.joint(&moving, &rigid(doc, body), &fixed, &rigid(doc, other), 0.0),
             moving,
@@ -1505,6 +1521,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Hinge {
                     offset: 5.0,
@@ -1612,6 +1629,7 @@ mod tests {
                 &mut doc,
                 part,
                 JointFeature {
+                    ends: [0.0; 2],
                     names: [0; 2],
                     kind,
                     moving: plane([0.0; 3], [0.0, 0.0, -1.0]),
@@ -1635,6 +1653,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Tangent { radius: 4.0 },
                 moving: axis([0.0; 3], [1.0, 0.0, 0.0]),
@@ -1658,6 +1677,7 @@ mod tests {
             &mut doc,
             door,
             JointFeature {
+                ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Hinge {
                     offset: 0.0,

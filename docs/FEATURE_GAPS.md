@@ -272,7 +272,7 @@ and noted on its item, and the rest of the item is built around it.
   the link between them, for the selected joint.
 - [x] **Other bodies faded while picking** (missing, S). Every body but
   the hovered one and the first picked (`Workbench::faded_bodies`).
-- [ ] **A separate offset per end** (missing, M).
+- [x] **A separate offset per end** (missing, M).
 - [ ] **More kinds** (missing, M). Cam and follower, slot, path, width,
   universal joint.
 - [x] **Every joint touching a body listed** (partial, S). Joints where

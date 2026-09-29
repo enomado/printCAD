@@ -1428,6 +1428,23 @@ impl AssemblyWorkbench {
                      about them.",
                 ),
             }
+            if joint.kind != JointKind::Ground {
+                ui.add_space(SPACE_1);
+                for (end, label) in [(0, "Moving end"), (1, "Fixed end")] {
+                    changed |= number_row(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        (
+                            label,
+                            "How far this end moves along its own normal or axis before the \
+                             joint holds it",
+                        ),
+                        &format!("/ends/{end}"),
+                        core_document::expr::Dim::LENGTH,
+                        &mut joint.ends[end],
+                    );
+                }
+            }
         });
         for (key, formula) in formula_edits {
             let _ = ctx.document.set_feature_formula(id, &key, formula);

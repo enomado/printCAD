@@ -381,6 +381,12 @@ impl Anchor {
     }
 }
 
+/// `p` moved `by` along the unit of `direction`.
+fn shifted(p: [f32; 3], direction: [f32; 3], by: f32) -> [f32; 3] {
+    let d = glam::Vec3::from_array(direction).normalize_or_zero();
+    (glam::Vec3::from_array(p) + d * by).to_array()
+}
+
 /// The point of the plane through `origin` nearest to `p`.
 fn nearest_on_plane(p: [f32; 3], origin: [f32; 3], normal: [f32; 3]) -> [f32; 3] {
     let (p, o, n) = (
@@ -439,6 +445,11 @@ pub struct JointFeature {
     /// none.
     #[serde(default, skip_serializing_if = "unnamed")]
     pub names: [kernel_api::TopoName; 2],
+    /// How far each end (`moving`, `fixed`) is moved along its own
+    /// direction, a flat face's normal or an axis, before the joint holds
+    /// it, in millimetres.
+    #[serde(default)]
+    pub ends: [f32; 2],
 }
 
 fn unnamed(names: &[kernel_api::TopoName; 2]) -> bool {
@@ -450,6 +461,27 @@ fn unnamed(names: &[kernel_api::TopoName; 2]) -> bool {
 const ARM_MM: f64 = 50.0;
 
 impl JointFeature {
+    /// The joint as the solver holds it: each end moved by its offset.
+    pub fn with_ends_moved(&self) -> JointFeature {
+        let moved = |anchor: Anchor, by: f32| match anchor {
+            Anchor::Plane { point, normal } => Anchor::Plane {
+                point: shifted(point, normal, by),
+                normal,
+            },
+            Anchor::Axis { point, direction } => Anchor::Axis {
+                point: shifted(point, direction, by),
+                direction,
+            },
+            Anchor::Point { .. } => anchor,
+        };
+        JointFeature {
+            moving: moved(self.moving, self.ends[0]),
+            fixed: moved(self.fixed, self.ends[1]),
+            ends: [0.0; 2],
+            ..self.clone()
+        }
+    }
+
     /// How far the joint is from holding with the two bodies placed so: a
     /// list of mismatches, each zero when it holds, in millimetres.
     /// Where a hinge or a slider has got to: the hinge's angle in degrees
@@ -948,6 +980,7 @@ impl JointTool {
             JointTool::Perpendicular => JointKind::Perpendicular,
             JointTool::Distance => {
                 let probe = JointFeature {
+                    ends: [0.0; 2],
                     kind: JointKind::Distance { offset: 0.0 },
                     moving: *moving,
                     other_body: BodyId(uuid::Uuid::nil()),
