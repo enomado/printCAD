@@ -385,6 +385,82 @@ impl AssemblyWorkbench {
             .collect()
     }
 
+    /// The joint selected or open in its task, drawn: at each end a dot
+    /// where it takes hold, its direction (a flat face's normal, an axis
+    /// both ways), a square in a flat face's plane, and a dashed link
+    /// between the ends.
+    fn joint_drawing(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<(
+        Vec<core_document::ScreenSpaceOverlay>,
+        Vec<[f32; 2]>,
+        String,
+    )> {
+        let id = match &self.task {
+            Some(Task::Joint { id, .. }) => *id,
+            _ => Self::selected_joint(ctx)?,
+        };
+        let joint = joints(ctx.document).into_iter().find(|j| j.id == id)?;
+        if joint.feature.kind == JointKind::Ground {
+            return None;
+        }
+        let color = ctx.sketch_palette.selected;
+        let mut lines = Vec::new();
+        let mut dots = Vec::new();
+        let ends = [
+            (joint.feature.moving, joint.body),
+            (joint.feature.fixed, joint.feature.other_body),
+        ];
+        let screen = |p: glam::DVec3| ctx.world_to_viewport(p.as_vec3().to_array());
+        for (anchor, body) in ends {
+            let at: Rigid = ctx.document.body_placement(body).into();
+            let (p, d) = anchor.placed(&at);
+            let Some(centre) = screen(p) else {
+                continue;
+            };
+            dots.push([centre.0, centre.1]);
+            // About 40 pixels long wherever the camera stands.
+            let Some(unit) = screen(p + d) else {
+                continue;
+            };
+            let px = (unit.0 - centre.0).hypot(unit.1 - centre.1).max(1e-3);
+            let reach = f64::from(40.0 / px);
+            let line = |a: glam::DVec3, b: glam::DVec3| {
+                Some(core_document::ScreenSpaceOverlay::new(
+                    screen(a).map(|(x, y)| [x, y])?,
+                    screen(b).map(|(x, y)| [x, y])?,
+                    color,
+                    1.5,
+                ))
+            };
+            match anchor {
+                Anchor::Plane { .. } => {
+                    lines.extend(line(p, p + d * reach));
+                    let side = d.any_orthonormal_pair();
+                    let (u, v) = (side.0 * reach * 0.5, side.1 * reach * 0.5);
+                    let corners = [p + u + v, p - u + v, p - u - v, p + u - v];
+                    for k in 0..4 {
+                        lines.extend(line(corners[k], corners[(k + 1) % 4]));
+                    }
+                }
+                Anchor::Axis { .. } => {
+                    lines.extend(
+                        line(p - d * reach * 1.5, p + d * reach * 1.5).map(|l| l.dashed(6.0, 4.0)),
+                    );
+                }
+            }
+        }
+        if let [a, b] = dots.as_slice() {
+            lines.push(
+                core_document::ScreenSpaceOverlay::new(*a, *b, color, 1.0)
+                    .dashed(3.0, 3.0)
+                    .with_alpha(0.8),
+            );
+        }
+        Some((lines, dots, joint.name))
+    }
+
     /// The clashes shown, each where it sits on screen.
     fn clashes_on_screen<'a>(
         &'a self,
@@ -1489,12 +1565,17 @@ impl Workbench for AssemblyWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
-        self.near_on_screen(ctx)
+        let mut lines: Vec<core_document::ScreenSpaceOverlay> = self
+            .near_on_screen(ctx)
             .into_iter()
             .map(|(a, b, _)| {
                 core_document::ScreenSpaceOverlay::new(a, b, ctx.sketch_palette.conflict, 2.0)
             })
-            .collect()
+            .collect();
+        if let Some((joint, _, _)) = self.joint_drawing(ctx) {
+            lines.extend(joint);
+        }
+        lines
     }
 
     /// Each clash found, marked where it is.
@@ -1514,6 +1595,13 @@ impl Workbench for AssemblyWorkbench {
                 )
             })
             .collect();
+        if let Some((_, dots, _)) = self.joint_drawing(ctx) {
+            marks.extend(
+                dots.into_iter().map(|p| {
+                    core_document::ScreenSpaceMark::dot(p, 4.0, ctx.sketch_palette.selected)
+                }),
+            );
+        }
         if let Some(pos) = self.centre_of_mass_on_screen(ctx) {
             marks.push(core_document::ScreenSpaceMark::crosshair(
                 pos,
@@ -1571,6 +1659,19 @@ impl Workbench for AssemblyWorkbench {
             })
             .chain(com)
             .chain(near)
+            .chain(self.joint_drawing(ctx).and_then(|(_, dots, name)| {
+                let [a, b] = dots.as_slice().try_into().ok()?;
+                let [a, b]: [[f32; 2]; 2] = [a, b];
+                Some(
+                    core_document::ScreenSpaceLabel::new(
+                        [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 - 14.0],
+                        name,
+                        ctx.sketch_palette.selected,
+                        11.0,
+                    )
+                    .pill(),
+                )
+            }))
             .collect()
     }
 
@@ -1703,6 +1804,47 @@ mod tests {
             .unwrap();
         assert_eq!(wb.linked_features(&doc, base), [mate.id]);
         assert!(wb.linked_features(&doc, part).is_empty());
+    }
+
+    /// A selected joint draws its two ends, their directions and the link,
+    /// and names itself between them; nothing is drawn with none selected.
+    #[test]
+    fn a_selected_joint_is_drawn_in_the_view() {
+        let (mut doc, base, part) = scene();
+        let mut wb = AssemblyWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let eye = glam::Vec3::new(60.0, -80.0, 90.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
+        ctx.view_proj = Some((proj * view).to_cols_array_2d());
+        let anchor = Anchor::Plane {
+            point: [2.0, 2.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        wb.make_joint(
+            &mut ctx,
+            part,
+            JointFeature {
+                kind: JointKind::Mate {
+                    flip: false,
+                    offset: 0.0,
+                },
+                moving: anchor,
+                other_body: base,
+                fixed: anchor,
+            },
+        );
+        let (lines, dots, name) = wb.joint_drawing(&ctx).expect("the new joint is drawn");
+        assert_eq!(dots.len(), 2);
+        assert_eq!(
+            lines.len(),
+            11,
+            "a normal and a square at each end, and the link"
+        );
+        assert_eq!(name, "Mate 1");
+        wb.task = None;
+        ctx.active_document_object = None;
+        assert!(wb.joint_drawing(&ctx).is_none());
     }
 
     #[test]

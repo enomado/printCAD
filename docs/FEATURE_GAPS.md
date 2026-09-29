@@ -267,8 +267,8 @@ and noted on its item, and the rest of the item is built around it.
   editable shift for a fixed joint.
 - [ ] **Re-pick faces and change the kind** (missing, S). From the
   joint's settings, without deleting it.
-- [ ] **Joints drawn in the view** (missing, S). Anchor frames, axes and
-  the link between them.
+- [x] **Joints drawn in the view** (missing, S). Anchor frames, axes and
+  the link between them, for the selected joint.
 - [ ] **Other bodies faded while picking** (missing, S).
 - [ ] **A separate offset per end** (missing, M).
 - [ ] **More kinds** (missing, M). Cam and follower, slot, path, width,

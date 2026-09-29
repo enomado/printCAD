@@ -29,6 +29,10 @@ gives its own line. Settings a tool does not ask for start at what the
 bodies make now (an angle, a distance), so making the joint moves nothing
 it need not.
 
+A selected joint is drawn in the view: a dot where each end takes hold,
+a flat face's normal and a square in its plane, an axis as a dashed line,
+and a dashed link between the ends with the joint's name.
+
 Ground (F) keeps a body where it is; the bodies joined to it are placed
 against it. The first joint of an assembly grounds the body it holds to
 when nothing is grounded yet. The status bar says how many motions the joints leave open,
