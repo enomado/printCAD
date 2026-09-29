@@ -69,6 +69,14 @@ the parts list counts it with the original. A body with no joints is
 dragged straight across the view to put it where it goes. `asm.copy` does
 the same from a script.
 
+Replace body (Shift+Y) puts another body in the selected one's place:
+select the old body, start the tool, click the new one and press OK. The
+new body goes where the old one sits and takes its joints (and its place
+in any rigid group), each joint end moved to the new body's nearest face
+of the same kind (a flat face facing the same way, a round face on a
+parallel axis); the log names any joint no face matched. The old body is
+hidden. `asm.replace` does the same.
+
 Rigid group (U) locks several bodies together as they sit, in one
 feature: click each body (a second click takes one out) and press OK. The
 group moves as one, the first body the one the rest hold to; its settings

@@ -356,6 +356,18 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.replace",
+            "Put another body in a body's place, with its joints found again on the new body's faces",
+        )
+        .param("body", ParamKind::Id, "The body to replace; it is hidden")
+        .param("with", ParamKind::Id, "The body that takes its place")
+        .returns(
+            "{kept, unmatched}: the joints whose ends were found on the new body, and those \
+             that were not",
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.group",
             "Lock bodies together where they sit, in one rigid group",
         )
@@ -924,6 +936,16 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Ok(Value::from(
                 made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
             ))
+        }
+        "asm.replace" => {
+            let old = body(&a, ctx)?;
+            let new = BodyId(a.id("with")?);
+            let report =
+                crate::replace::replace(ctx.document, old, new).map_err(CommandError::failed)?;
+            solved(
+                ctx,
+                json!({"kept": report.kept, "unmatched": report.unmatched}),
+            )
         }
         "asm.mirror" => {
             let source = body(&a, ctx)?;
@@ -1784,6 +1806,68 @@ mod tests {
                 "{at:?}"
             );
         }
+    }
+
+    /// A body replaced by another: the mate on the old body's underside
+    /// goes to the new body's, which sits on the base; the old is hidden.
+    #[test]
+    fn a_replacement_takes_the_joints_on_its_own_faces() {
+        use std::sync::Arc;
+        let mut doc = Document::new("t");
+        let [base, old, new] = [
+            doc.create_body(Some("Base".into())),
+            doc.create_body(Some("Old".into())),
+            doc.create_body(Some("New".into())),
+        ];
+        let with_bottom = |z: f32| core_document::ImportedGeometry {
+            mesh: Arc::new(kernel_api::TriMesh {
+                positions: vec![[0.0, 0.0, z], [10.0, 0.0, z], [0.0, 10.0, z]],
+                normals: vec![[0.0, 0.0, -1.0]; 3],
+                indices: vec![0, 2, 1],
+                faces: vec![0],
+                face_surfaces: vec![kernel_api::FaceSurface::Plane {
+                    origin: [0.0, 0.0, z],
+                    normal: [0.0, 0.0, -1.0],
+                }],
+                ..kernel_api::TriMesh::default()
+            }),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: None,
+        };
+        doc.set_imported_geometry(old, with_bottom(0.0));
+        doc.set_imported_geometry(new, with_bottom(2.0));
+        doc.set_body_placement(
+            old,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 30.0)),
+        );
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": old.0.to_string(), "face": {"point": [0, 0, 30], "normal": [0, 0, -1]},
+                   "other": base.0.to_string(), "other_face": {"point": [0, 0, 10], "normal": [0, 0, 1]},
+                   "offset": 0}),
+        )
+        .unwrap();
+        assert!((doc.body_placement(old).translation[2] - 10.0).abs() < 1e-3);
+        let report = call(
+            &mut doc,
+            "asm.replace",
+            json!({"body": old.0.to_string(), "with": new.0.to_string()}),
+        )
+        .unwrap();
+        assert_eq!(report["unmatched"], json!([]), "{report}");
+        let joint = crate::joints(&doc)
+            .into_iter()
+            .find(|j| j.feature.kind != JointKind::Ground)
+            .unwrap();
+        assert_eq!(joint.body, new);
+        // Its underside, 2 up in its own frame, on the base's top at 10.
+        assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
+        assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
     }
 
     /// A group moves as one: the body held to its first member follows it

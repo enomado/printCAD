@@ -129,6 +129,7 @@ impl AssemblyWorkbench {
                 around,
                 mirror,
             }) => self.copies_panel(ui, ctx, request, body, (count, step, around), mirror),
+            Some(Task::Replace { old, new }) => self.replace_panel(ui, ctx, request, old, new),
             Some(Task::Group { editing, members }) => {
                 self.group_panel(ui, ctx, request, editing, &members)
             }
@@ -601,6 +602,77 @@ impl AssemblyWorkbench {
             ui,
             "Each copy takes the body's shape and follows every change to it. They go in a \
              row, each a step from the one before; drag one to put it where it goes.",
+        );
+        TaskOutcome::Open
+    }
+
+    /// A body and the one picked to take its place and joints.
+    fn replace_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        old: BodyId,
+        new: Option<BodyId>,
+    ) -> TaskOutcome {
+        if request.cancel {
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        }
+        if request.accept {
+            let Some(new) = new else {
+                ctx.log_warn("Click the body that takes its place");
+                return TaskOutcome::Open;
+            };
+            match crate::replace::replace(ctx.document, old, new) {
+                Ok(report) => {
+                    self.solve_and_apply(ctx);
+                    ctx.record(
+                        "asm.replace",
+                        crate::commands::object(serde_json::json!({
+                            "body": old.0.to_string(),
+                            "with": new.0.to_string(),
+                        })),
+                        serde_json::json!({"kept": report.kept, "unmatched": report.unmatched}),
+                    );
+                    if report.unmatched.is_empty() {
+                        ctx.log_info(format!(
+                            "{} took the place of {}; every joint found its faces",
+                            body_name(ctx, new),
+                            body_name(ctx, old)
+                        ));
+                    } else {
+                        ctx.log_warn(format!(
+                            "{} took the place of {}; no face matched for {}",
+                            body_name(ctx, new),
+                            body_name(ctx, old),
+                            report.unmatched.join(", ")
+                        ));
+                    }
+                    self.task = None;
+                    return TaskOutcome::Accepted {
+                        label: "Replace body".to_string(),
+                    };
+                }
+                Err(why) => {
+                    ctx.log_warn(format!("Could not replace the body: {why}"));
+                    return TaskOutcome::Open;
+                }
+            }
+        }
+        header(ui, "carbon-copy", "Replace body");
+        ui.add_space(SPACE_2);
+        row(ui, "Replace", &body_name(ctx, old));
+        row(
+            ui,
+            "With",
+            &new.map_or("click a body".to_string(), |b| body_name(ctx, b)),
+        );
+        ui.add_space(SPACE_1);
+        note(
+            ui,
+            "The new body goes where the old one sits and takes its joints, each end on \
+             the new body's nearest face of the same kind; the old body is hidden.",
         );
         TaskOutcome::Open
     }

@@ -20,6 +20,7 @@ mod mass;
 #[cfg(feature = "egui")]
 mod panel;
 mod parts;
+mod replace;
 mod solve;
 mod sweep_check;
 
@@ -107,6 +108,8 @@ enum Task {
         /// normal, in the world.
         mirror: Option<([f32; 3], [f32; 3])>,
     },
+    /// A body to replace, and the one picked to take its place.
+    Replace { old: BodyId, new: Option<BodyId> },
     /// Bodies picked for a rigid group, one click each (a second click
     /// takes one out); `editing` the group changed, `None` for a new one.
     Group {
@@ -566,6 +569,16 @@ impl AssemblyWorkbench {
     /// A body clicked while a group's bodies are picked goes in, or out
     /// when it is in.
     fn take_group_pick(&mut self, ctx: &WorkbenchRuntimeContext) {
+        if let Some(Task::Replace { old, new }) = &mut self.task {
+            let clicked = ctx.selected_body_id;
+            if clicked != self.group_seen {
+                self.group_seen = clicked;
+                if let Some(body) = clicked.map(BodyId).filter(|b| b != old) {
+                    *new = Some(body);
+                }
+            }
+            return;
+        }
         let Some(Task::Group { members, .. }) = &mut self.task else {
             return;
         };
@@ -1649,6 +1662,8 @@ impl Workbench for AssemblyWorkbench {
         context.register_tool(tool("asm.mass", "Mass and centre of mass", "measure").shortcut("W"));
         context.register_tool(tool("asm.group", "Rigid group", "tree-group").shortcut("U"));
         context.register_tool(tool("asm.copy", "Insert linked copies", "clone").shortcut("Y"));
+        context
+            .register_tool(tool("asm.replace", "Replace body", "carbon-copy").shortcut("Shift+Y"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
@@ -1755,6 +1770,7 @@ impl Workbench for AssemblyWorkbench {
             "asm.parts" | "asm.mass" => !ctx.document.bodies().is_empty(),
             "asm.group" => ctx.document.bodies().len() >= 2,
             "asm.copy" => Self::body_to_move(ctx).is_some(),
+            "asm.replace" => Self::body_to_move(ctx).is_some() && ctx.document.bodies().len() >= 2,
             "asm.collisions" => true,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
@@ -1847,6 +1863,14 @@ impl Workbench for AssemblyWorkbench {
                     });
                 }
                 None => ctx.log_warn("Select a body to copy"),
+            },
+            Some("asm.replace") => match Self::body_to_move(ctx) {
+                Some(old) => {
+                    self.picking = None;
+                    self.group_seen = ctx.selected_body_id;
+                    self.task = Some(Task::Replace { old, new: None });
+                }
+                None => ctx.log_warn("Select the body to replace"),
             },
             Some("asm.group") => {
                 self.picking = None;
@@ -2042,6 +2066,12 @@ impl Workbench for AssemblyWorkbench {
                 title: "Parts list".to_string(),
                 icon: "file-document",
                 confirmable: false,
+                stepwise: false,
+            }),
+            Task::Replace { .. } => Some(core_document::TaskInfo {
+                title: "Replace body".to_string(),
+                icon: "carbon-copy",
+                confirmable: true,
                 stepwise: false,
             }),
             Task::Copies { .. } => Some(core_document::TaskInfo {

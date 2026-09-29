@@ -1284,6 +1284,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `normal` (list): The plane's normal, {x, y, z}
 - Returns the mirrored copy's id
 
+`pc.asm.replace`: Put another body in a body's place, with its joints found again on the new body's faces.
+
+- `body` (id): The body to replace; it is hidden
+- `with` (id): The body that takes its place
+- Returns {kept, unmatched}: the joints whose ends were found on the new body, and those that were not
+
 `pc.asm.group`: Lock bodies together where they sit, in one rigid group.
 
 - `bodies` (list): Two bodies or more; the first the one the rest hold to

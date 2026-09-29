@@ -242,7 +242,7 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Patterns and mirrors of components** (missing, M). Arrays and
   mirrored copies of bodies in the assembly, built on linked copies.
 - [x] **Insert several copies, place by dragging** (missing, S).
-- [ ] **Replace a component** (missing, M), keeping its joints where the
+- [x] **Replace a component** (missing, M), keeping its joints where the
   new faces allow.
 - [x] **Ground the first component** (partial, S), so the free motions
   read true from the start. The first joint grounds the body it holds to
