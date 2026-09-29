@@ -1,6 +1,6 @@
 //! Loft through section profiles and sweep along a sketch spine.
 
-use kernel_api::{LoftSection, PipeCorner, PipeFrame, Profile};
+use kernel_api::{LoftSection, PipeCorner, PipeFrame, PipePath, Profile};
 use ogeom::algo::transformed;
 use ogeom::geom::Curve3d;
 use ogeom::math::{Axis, Direction, Point, Transform, Vector};
@@ -202,15 +202,136 @@ pub fn pipe_tool(
     sections: &[Profile],
 ) -> Result<Shape, String> {
     let built = profile::build_profile(model, prof)?;
+    let normal = profile::plane_normal(&prof.plane).map_err(|e| format!("pipe profile: {e}"))?;
+    let spine_wire = spine_of(model, spine)?;
+    let mut faces = Vec::with_capacity(sections.len());
+    for section in sections {
+        faces.push(section_face(model, section)?);
+    }
+    pipe_from(model, built, normal, spine_wire, frame, corner, faces)
+}
 
+/// The wire of a sketch's path.
+fn spine_of(model: &mut Model, spine: &Profile) -> Result<Shape, String> {
     let spine_wire_desc = spine
         .wires
         .first()
         .ok_or_else(|| "pipe spine has no wire".to_string())?;
     let spine_built = profile::build_wire_edges(model, &spine.plane, spine_wire_desc, false)
         .map_err(|e| format!("pipe spine: {e}"))?;
-    let spine_wire = spine_built.wire.clone();
+    Ok(spine_built.wire.clone())
+}
 
+/// The single region a section profile encloses, as a face.
+fn section_face(model: &mut Model, section: &Profile) -> Result<Shape, String> {
+    let section = profile::build_profile(model, section)?;
+    let [face] = section.faces.as_slice() else {
+        return Err("each of the pipe's sections must enclose a single region".into());
+    };
+    Ok(face.clone())
+}
+
+/// A pipe whose profile may be a face of `base`, whose path may be edges
+/// of a solid, and whose sections may end at a point.
+#[allow(clippy::too_many_arguments)]
+pub fn pipe_through_tool(
+    model: &mut Model,
+    base: Option<&Shape>,
+    profile: &LoftSection,
+    path: &PipePath,
+    frame: &PipeFrame,
+    corner: PipeCorner,
+    sections: &[LoftSection],
+) -> Result<Shape, String> {
+    let (built, normal) = match profile {
+        LoftSection::Profile(prof) => (
+            profile::build_profile(model, prof)?,
+            profile::plane_normal(&prof.plane).map_err(|e| format!("pipe profile: {e}"))?,
+        ),
+        LoftSection::Face(probe) => {
+            let base = base.ok_or("a face as the profile needs a solid to take it from")?;
+            let found = super::sweep::face_by_name(
+                model,
+                base,
+                probe.name,
+                Point::new(probe.point[0], probe.point[1], probe.point[2]),
+            )?
+            .ok_or("no face of the solid lies where the profile's face was picked")?;
+            let (_, normal) =
+                super::sweep::face_plane(model, &found).ok_or("the profile's face is not flat")?;
+            let copy = ogeom::algo::copied(model, &found)
+                .map_err(|e| format!("copying the profile's face failed: {e}"))?
+                .shape;
+            (
+                profile::BuiltProfile {
+                    faces: vec![copy],
+                    groups: Vec::new(),
+                },
+                normal,
+            )
+        }
+        LoftSection::Point(_) => return Err("a pipe's profile is a region, not a point".into()),
+    };
+    let spine_wire = match path {
+        PipePath::Profile(spine) => spine_of(model, spine)?,
+        PipePath::Edges(picks) => {
+            let base = base.ok_or("a path along edges needs a solid to take them from")?;
+            let edges = super::dressup::picked_edges(model, base, picks)?;
+            edge_wire(model, &edges)?
+        }
+        PipePath::EdgesOf {
+            shape,
+            transform,
+            edges,
+        } => {
+            let mut other = crate::chain::absorb_shape(model, shape)?;
+            if let Some(matrix) = transform {
+                other = super::pattern::moved(model, &other, matrix)?;
+            }
+            let found = super::dressup::picked_edges(model, &other, edges)?;
+            edge_wire(model, &found)?
+        }
+    };
+    let last = sections.len().saturating_sub(1);
+    let mut faces = Vec::with_capacity(sections.len());
+    for (i, section) in sections.iter().enumerate() {
+        faces.push(match section {
+            LoftSection::Profile(p) => section_face(model, p)?,
+            LoftSection::Point(p) if i == last => {
+                model.add_vertex(ogeom::topo::VertexData::new(Point::new(p[0], p[1], p[2])))
+            }
+            LoftSection::Point(_) => {
+                return Err("only the last of a pipe's sections may be a point".into());
+            }
+            LoftSection::Face(_) => {
+                return Err("a pipe's further sections are sketches or a last point".into());
+            }
+        });
+    }
+    pipe_from(model, built, normal, spine_wire, frame, corner, faces)
+}
+
+/// Edges joined end to end into one wire, in whatever order they come.
+fn edge_wire(model: &mut Model, edges: &[Shape]) -> Result<Shape, String> {
+    if edges.is_empty() {
+        return Err("the pipe's path names no edges".into());
+    }
+    ogeom::algo::make_wire_unordered(model, edges, tol())
+        .map(|b| b.shape)
+        .map_err(|e| format!("the path's edges do not join end to end: {e}"))
+}
+
+/// Sweep the built profile (whose plane's normal is `normal`) down
+/// `spine_wire`, as [`pipe_tool`] says.
+fn pipe_from(
+    model: &mut Model,
+    built: profile::BuiltProfile,
+    normal: Direction,
+    spine_wire: Shape,
+    frame: &PipeFrame,
+    corner: PipeCorner,
+    section_faces: Vec<Shape>,
+) -> Result<Shape, String> {
     let guide = match frame {
         PipeFrame::Auxiliary { path } => {
             let wire = path
@@ -256,12 +377,11 @@ pub fn pipe_tool(
     // tangent. Sketches rarely oblige exactly: rotate the profile's normal
     // onto the tangent and move its centroid onto the start.
     let centroid = profile::profile_centroid(model, &built)?;
-    let normal = profile::plane_normal(&prof.plane).map_err(|e| format!("pipe profile: {e}"))?;
     let rotate = rotation_aligning(normal, tangent, centroid);
     let translate = Transform::translation(start - centroid);
     let place = translate * rotate;
 
-    if !sections.is_empty() {
+    if !section_faces.is_empty() {
         let [face] = built.faces.as_slice() else {
             return Err("a pipe through several sections sweeps a single region".into());
         };
@@ -270,13 +390,7 @@ pub fn pipe_tool(
                 .map_err(|e| format!("placing the pipe profile failed: {e}"))?
                 .shape,
         ];
-        for section in sections {
-            let section = profile::build_profile(model, section)?;
-            let [face] = section.faces.as_slice() else {
-                return Err("each of the pipe's sections must enclose a single region".into());
-            };
-            faces.push(face.clone());
-        }
+        faces.extend(section_faces);
         let frenet = matches!(frame, PipeFrame::Frenet);
         return make_pipe_sections(model, &faces, &spine_wire, frenet, SKIN_TOLERANCE, tol())
             .map(|b| b.shape)
@@ -328,14 +442,19 @@ fn spine_start(model: &Model, wire: &Shape) -> Result<(Point, Vector), String> {
                 continue;
             };
             // The exact tangent: the sweep reads the profile's lean
-            // against it, and a chord's direction is off on a curve.
-            let t0 = range.0;
+            // against it, and a chord's direction is off on a curve. A
+            // reversed edge starts at its range's end and runs back.
+            let reversed = first.orientation() == ogeom::topo::Orientation::Reversed;
+            let t0 = if reversed { range.1 } else { range.0 };
             let p0 = geometry
                 .point_at(t0, tol())
                 .map_err(|e| format!("pipe spine start: {e}"))?;
-            let d1 = geometry
+            let mut d1 = geometry
                 .d1_at(t0, tol())
                 .map_err(|e| format!("pipe spine tangent: {e}"))?;
+            if reversed {
+                d1 = -d1;
+            }
             let placement = location
                 .composed(model.datums())
                 .map_err(|e| format!("pipe spine placement: {e}"))?;

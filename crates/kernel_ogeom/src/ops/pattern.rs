@@ -122,6 +122,16 @@ fn build_tool_op(model: &mut Model, base: Option<&Shape>, op: &SolidOp) -> Resul
             sections,
             ..
         } => super::loft_pipe::pipe_tool(model, profile, spine, frame, *corner, sections),
+        SolidOp::PipeThrough {
+            profile,
+            path,
+            frame,
+            corner,
+            sections,
+            ..
+        } => super::loft_pipe::pipe_through_tool(
+            model, base, profile, path, frame, *corner, sections,
+        ),
         _ => Err("pattern references an op that produces no tool solid".into()),
     }
 }
@@ -372,24 +382,7 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
             closed,
             op,
         } => SolidOp::LoftThrough {
-            sections: sections
-                .iter()
-                .map(|s| match s {
-                    kernel_api::LoftSection::Profile(p) => {
-                        kernel_api::LoftSection::Profile(map_profile(m, p))
-                    }
-                    kernel_api::LoftSection::Face(probe) => {
-                        kernel_api::LoftSection::Face(kernel_api::FaceProbe {
-                            name: probe.name,
-                            point: map_point(m, probe.point),
-                            normal: map_vector(m, probe.normal),
-                        })
-                    }
-                    kernel_api::LoftSection::Point(p) => {
-                        kernel_api::LoftSection::Point(map_point(m, *p))
-                    }
-                })
-                .collect(),
+            sections: sections.iter().map(|s| map_section(m, s)).collect(),
             ruled: *ruled,
             closed: *closed,
             op: *op,
@@ -417,7 +410,70 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
             sections: sections.iter().map(|s| map_profile(m, s)).collect(),
             op: *op,
         },
+        // What lies on the solid is looked for where the transform puts
+        // it, as the other ops' picks are.
+        SolidOp::PipeThrough {
+            profile,
+            path,
+            frame,
+            corner,
+            sections,
+            op,
+        } => SolidOp::PipeThrough {
+            profile: map_section(m, profile),
+            path: match path {
+                kernel_api::PipePath::Profile(p) => {
+                    kernel_api::PipePath::Profile(map_profile(m, p))
+                }
+                kernel_api::PipePath::Edges(edges) => {
+                    kernel_api::PipePath::Edges(edges.iter().map(|e| map_edge(m, e)).collect())
+                }
+                kernel_api::PipePath::EdgesOf {
+                    shape,
+                    transform,
+                    edges,
+                } => kernel_api::PipePath::EdgesOf {
+                    shape: shape.clone(),
+                    transform: transform.clone(),
+                    edges: edges.iter().map(|e| map_edge(m, e)).collect(),
+                },
+            },
+            frame: match frame {
+                PipeFrame::Auxiliary { path } => PipeFrame::Auxiliary {
+                    path: map_profile(m, path),
+                },
+                PipeFrame::Binormal { direction } => PipeFrame::Binormal {
+                    direction: map_vector(m, *direction),
+                },
+                other => other.clone(),
+            },
+            corner: *corner,
+            sections: sections.iter().map(|s| map_section(m, s)).collect(),
+            op: *op,
+        },
         other => other.clone(),
+    }
+}
+
+fn map_section(m: &[[f64; 4]; 4], section: &kernel_api::LoftSection) -> kernel_api::LoftSection {
+    match section {
+        kernel_api::LoftSection::Profile(p) => kernel_api::LoftSection::Profile(map_profile(m, p)),
+        kernel_api::LoftSection::Face(probe) => {
+            kernel_api::LoftSection::Face(kernel_api::FaceProbe {
+                name: probe.name,
+                point: map_point(m, probe.point),
+                normal: map_vector(m, probe.normal),
+            })
+        }
+        kernel_api::LoftSection::Point(p) => kernel_api::LoftSection::Point(map_point(m, *p)),
+    }
+}
+
+fn map_edge(m: &[[f64; 4]; 4], edge: &kernel_api::EdgeProbe) -> kernel_api::EdgeProbe {
+    kernel_api::EdgeProbe {
+        point: map_point(m, edge.point),
+        direction: map_vector(m, edge.direction),
+        faces: edge.faces,
     }
 }
 

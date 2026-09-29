@@ -1125,13 +1125,23 @@ pub enum PartFeature {
         #[serde(default)]
         corner: PipeCorner,
         /// Further section sketches the pipe passes through down its path,
-        /// in order, after the profile.
+        /// in order, after the profile; the last may be a datum point or a
+        /// sketch of a single point, where the pipe closes to it.
         #[serde(default)]
         sections: Vec<FeatureId>,
         subtractive: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// A flat face of the solid as the profile, in place of `profile`.
+        #[serde(default)]
+        profile_face: Option<FacePick>,
+        /// Edges of the solid, picked, as the path in place of `spine`.
+        #[serde(default)]
+        path_edges: Vec<EdgePick>,
+        /// Edges another body lends, as the path in place of `spine`.
+        #[serde(default)]
+        path_borrowed: Vec<BorrowedRef>,
     },
     /// Sweep the sketch profile along a helix about an in-plane axis.
     Helix {
@@ -1973,6 +1983,9 @@ mod tests {
     #[test]
     fn a_pipe_orientation_round_trips() {
         let feature = PartFeature::Pipe {
+            path_borrowed: Vec::new(),
+            path_edges: Vec::new(),
+            profile_face: None,
             refine: false,
             profile: FeatureId::new(),
             spine: FeatureId::new(),
@@ -2013,6 +2026,9 @@ mod tests {
         let a = FeatureId::new();
         let b = FeatureId::new();
         let pipe = PartFeature::Pipe {
+            path_borrowed: Vec::new(),
+            path_edges: Vec::new(),
+            profile_face: None,
             refine: false,
             profile: a,
             spine: b,
@@ -2025,6 +2041,9 @@ mod tests {
 
         let (c, d) = (FeatureId::new(), FeatureId::new());
         let guided = PartFeature::Pipe {
+            path_borrowed: Vec::new(),
+            path_edges: Vec::new(),
+            profile_face: None,
             refine: false,
             profile: a,
             spine: b,

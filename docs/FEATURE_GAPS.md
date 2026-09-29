@@ -160,8 +160,9 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Loft to a point, faces as sections** (partial, M). Through more
   than two sections to a point waits on the kernel's skinned loft
   (ogeom-rs#91).
-- [ ] **Pipe along solid or borrowed edges, a face as the profile, a point at
-  the end** (partial, M).
+- [x] **Pipe along solid or borrowed edges, a face as the profile, a point at
+  the end** (partial, M). The point at the end waits on the kernel's
+  multisection pipe (ogeom-rs#92).
 - [x] **Fixed pipe orientation** (partial, S). The section keeps its
   orientation in space. Wired; waits on a fixed pipe law in the kernel
   (ogeom-rs#90).

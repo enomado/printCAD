@@ -213,6 +213,17 @@ fn runs_along(model: &mut Model, edge: &Shape, point: Point, along: Vector, dist
     })
 }
 
+/// The edges of `solid` picked one by one, each found as a fillet's
+/// picks are.
+pub(crate) fn picked_edges(
+    model: &mut Model,
+    solid: &Shape,
+    picks: &[kernel_api::EdgeProbe],
+) -> Result<Vec<Shape>, String> {
+    let probes = selection_probes(model, solid, &EdgeSelection::Picked(picks.to_vec()))?;
+    chain_of(model, solid, probes)
+}
+
 pub fn fillet(
     model: &mut Model,
     solid: &Shape,

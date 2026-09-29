@@ -425,6 +425,46 @@ pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<Kernel
     })
 }
 
+/// Borrowed edges as a pipe's path: the solid they are on, moved into the
+/// borrowing body's frame, and where each is in that frame. They must all
+/// come from one live borrow of a solid.
+pub(crate) fn kernel_edges(
+    document: &Document,
+    refs: &[BorrowedRef],
+) -> Result<kernel_api::PipePath, String> {
+    let first = refs.first().ok_or("the path names no borrowed edges")?;
+    if refs.iter().any(|r| r.borrow != first.borrow) {
+        return Err("a path's borrowed edges must all come from one borrow".into());
+    }
+    let borrow = referenced(document, first)?;
+    if borrow.frozen.is_some() {
+        return Err("a frozen borrow keeps no solid for a path to run along; let it follow".into());
+    }
+    let source = live_solid_source(document, &borrow)?;
+    let shape = document
+        .imported_brep_blob(source)
+        .ok_or("the body it borrows from has no solid yet")?
+        .to_vec();
+    let placement = borrow
+        .offset()
+        .after(&relative(document, borrow.body, Some(source)));
+    let edges = refs
+        .iter()
+        .map(|r| {
+            edge(document, r).map(|pick| kernel_api::EdgeProbe {
+                point: pick.point.map(f64::from),
+                direction: pick.direction.map(f64::from),
+                faces: [0, 0],
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(kernel_api::PipePath::EdgesOf {
+        shape,
+        transform: (!placement.is_identity()).then(|| Box::new(placement.rows())),
+        edges,
+    })
+}
+
 /// The borrowed edge `r` names, as a point of it and its direction there,
 /// in the borrowing body's frame.
 pub(crate) fn edge(document: &Document, r: &BorrowedRef) -> Result<EdgePick, String> {

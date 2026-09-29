@@ -315,6 +315,30 @@ pub fn execute_named(
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
+            SolidOp::PipeThrough {
+                profile,
+                path,
+                frame,
+                corner,
+                sections,
+                op,
+            } => {
+                let tool = ops::loft_pipe::pipe_through_tool(
+                    &mut model,
+                    base.as_ref(),
+                    profile,
+                    path,
+                    frame,
+                    *corner,
+                    sections,
+                )
+                .map_err(&err)?;
+                tool_names = Some(tool_names_fresh(&model, &tool, tag));
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
+                keep(&tool, *op);
+
+                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+            }
             SolidOp::Fillet {
                 radius,
                 edges,

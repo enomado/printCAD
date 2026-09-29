@@ -1068,6 +1068,108 @@ fn revolve_axis_editor(
     changed
 }
 
+/// What a pipe sweeps and along what: its profile a sketch or a picked
+/// face, its path a sketch, picked edges of the solid or edges another body
+/// lends.
+fn pipe_inputs_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    (body, feature_id): (BodyId, FeatureId),
+    spine: &mut FeatureId,
+    profile_face: &mut Option<FacePick>,
+    path_edges: &mut Vec<EdgePick>,
+    path_borrowed: &mut Vec<crate::feature::BorrowedRef>,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        label_cell(ui, "Profile");
+        let shown = match profile_face {
+            Some(p) => format!(
+                "face at ({:.1}, {:.1}, {:.1})",
+                p.point[0], p.point[1], p.point[2]
+            ),
+            None => "its sketch".to_string(),
+        };
+        mono_label(ui, shown, FONT_XS, TEXT1);
+        let picked = ctx.selected_face_in(body).map(FacePick::of);
+        if ui
+            .add_enabled_ui(picked.is_some(), |ui| {
+                accent_outline_button(ui, "Use selected face")
+            })
+            .inner
+            .on_hover_text("Click a flat face of the solid first, then press this")
+            .clicked()
+            && let Some(pick) = picked
+        {
+            *profile_face = Some(pick);
+            changed = true;
+        }
+        if profile_face.is_some() && small_secondary_button(ui, "Use the sketch").clicked() {
+            *profile_face = None;
+            changed = true;
+        }
+    });
+    let along_edges = !path_edges.is_empty() || !path_borrowed.is_empty();
+    if !along_edges
+        && let Some(new) = sketch_combo(
+            ui,
+            ctx,
+            body,
+            ("pipe_spine", feature_id),
+            Some(*spine),
+            "Path:",
+        )
+    {
+        *spine = new;
+        changed = true;
+    }
+    ui.horizontal_wrapped(|ui| {
+        label_cell(ui, "Path edges");
+        let shown = if !path_edges.is_empty() {
+            format!("{} of the solid", path_edges.len())
+        } else if !path_borrowed.is_empty() {
+            format!("{} borrowed", path_borrowed.len())
+        } else {
+            "none: the path sketch".to_string()
+        };
+        mono_label(ui, shown, FONT_XS, TEXT1);
+        let picked: Vec<EdgePick> = picked_edges(ctx).iter().map(EdgePick::of).collect();
+        if ui
+            .add_enabled_ui(!picked.is_empty(), |ui| {
+                accent_outline_button(ui, "Use selected edges")
+            })
+            .inner
+            .on_hover_text("Click the edges of the solid in turn (Ctrl adds), then press this")
+            .clicked()
+        {
+            *path_edges = picked;
+            path_borrowed.clear();
+            changed = true;
+        }
+        if along_edges && small_secondary_button(ui, "Use the sketch").clicked() {
+            path_edges.clear();
+            path_borrowed.clear();
+            changed = true;
+        }
+    });
+    let lent = crate::borrow::edges_of_body(ctx.document, body);
+    if !lent.is_empty() {
+        for (r, name) in &lent {
+            let mut on = path_borrowed.contains(r);
+            if check_row(ui, &mut on, &format!("Along {name}")).changed() {
+                if on {
+                    path_borrowed.push(*r);
+                    path_edges.clear();
+                } else {
+                    path_borrowed.retain(|b| b != r);
+                }
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// A pipe's orientation: which kind, and the path or direction it takes.
 fn pipe_orientation_editor(
     ui: &mut Ui,
@@ -2056,18 +2158,19 @@ pub fn feature_editor(
             corner,
             sections,
             subtractive,
+            profile_face,
+            path_edges,
+            path_borrowed,
         } => {
-            if let Some(new) = sketch_combo(
+            changed |= pipe_inputs_editor(
                 ui,
                 ctx,
-                body,
-                ("pipe_spine", feature_id),
-                Some(*spine),
-                "Path:",
-            ) {
-                *spine = new;
-                changed = true;
-            }
+                (body, feature_id),
+                spine,
+                profile_face,
+                path_edges,
+                path_borrowed,
+            );
             changed |= pipe_orientation_editor(ui, ctx, fx, body, feature_id, *spine, orientation);
             ui.horizontal(|ui| {
                 label_cell(ui, "Corners");
@@ -2118,6 +2221,30 @@ pub fn feature_editor(
             {
                 sections.push(new);
                 changed = true;
+            }
+            // A datum point last closes the pipe to it.
+            let points: Vec<(FeatureId, String)> =
+                core_document::datums_of_body(ctx.document, body)
+                    .into_iter()
+                    .filter(|(_, _, d)| matches!(d.shape, core_document::DatumShape::Point))
+                    .map(|(id, name, _)| (id, name))
+                    .collect();
+            if !points.is_empty() {
+                ui.horizontal(|ui| {
+                    label_cell(ui, "End at point:");
+                    egui::ComboBox::from_id_salt(("pipe_point", feature_id))
+                        .selected_text("A datum point…")
+                        .show_ui(ui, |ui| {
+                            for (id, name) in &points {
+                                if ui.selectable_label(false, name).clicked()
+                                    && !sections.contains(id)
+                                {
+                                    sections.push(*id);
+                                    changed = true;
+                                }
+                            }
+                        });
+                });
             }
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }

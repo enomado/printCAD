@@ -2882,6 +2882,9 @@ fn pipe_of(
     sections: Vec<FeatureId>,
 ) -> PartFeature {
     PartFeature::Pipe {
+        path_borrowed: Vec::new(),
+        path_edges: Vec::new(),
+        profile_face: None,
         refine: false,
         profile,
         spine,
@@ -4092,4 +4095,158 @@ fn a_loft_through_sections_closes_to_a_point() {
     .unwrap();
     let (_, _, max) = built_body(&doc, body).unwrap();
     assert!((max[2] - 10.0).abs() < 1e-3);
+}
+
+/// A tube swept along the block's front bottom edge: three quarters of it
+/// stand outside the block.
+#[test]
+fn a_pipe_runs_along_an_edge_of_the_solid() {
+    let (mut doc, body, sketch) = setup(10.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(sketch, 5.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ring = doc
+        .add_feature_in_body(
+            circle_sketch_on(wb_sketch::sketch::SketchPlane::yz(), 0.0, 0.0, 1.0),
+            "ring".into(),
+            Some(body),
+        )
+        .unwrap();
+    let spare = doc
+        .add_feature_in_body(rect_sketch(1.0, 1.0), "spare".into(), Some(body))
+        .unwrap();
+    let pipe = edited(
+        pipe_of(
+            ring,
+            spare,
+            wb_part::PipeOrientation::Standard,
+            wb_part::PipeCorner::Transformed,
+            Vec::new(),
+        ),
+        |f| {
+            if let PartFeature::Pipe { path_edges, .. } = f {
+                *path_edges = vec![wb_part::EdgePick {
+                    faces: [0, 0],
+                    point: [5.0, 0.0, 0.0],
+                    direction: [1.0, 0.0, 0.0],
+                }];
+            }
+        },
+    );
+    doc.add_feature_in_body(pipe, "Pipe".into(), Some(body))
+        .unwrap();
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    let expected = 1000.0 + 0.75 * std::f64::consts::PI * 10.0;
+    assert!(
+        (volume - expected).abs() < 1e-2 * expected,
+        "{volume} vs {expected}"
+    );
+}
+
+/// The block's top face swept straight up 10 is a prism on it.
+#[test]
+fn a_pipe_sweeps_a_face_of_the_solid() {
+    let (mut doc, body, sketch) = setup(10.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(sketch, 5.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let rise = doc
+        .add_feature_in_body(
+            polyline_sketch(
+                wb_sketch::sketch::SketchPlane::from_frame(
+                    [0.0, 10.0, 0.0],
+                    [0.0, -1.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                ),
+                &[[5.0, 5.0], [5.0, 15.0]],
+            ),
+            "rise".into(),
+            Some(body),
+        )
+        .unwrap();
+    let pipe = edited(
+        pipe_of(
+            rise,
+            rise,
+            wb_part::PipeOrientation::Standard,
+            wb_part::PipeCorner::Transformed,
+            Vec::new(),
+        ),
+        |f| {
+            if let PartFeature::Pipe { profile_face, .. } = f {
+                *profile_face = Some(wb_part::FacePick {
+                    point: [5.0, 10.0, 5.0],
+                    normal: [0.0, 0.0, 1.0],
+                    name: 0,
+                });
+            }
+        },
+    );
+    doc.add_feature_in_body(pipe, "Pipe".into(), Some(body))
+        .unwrap();
+    let (volume, _, max) = built_body(&doc, body).unwrap();
+    assert!((volume - 3000.0).abs() < 1.0, "{volume}");
+    assert!((max[2] - 15.0).abs() < 1e-3, "{max:?}");
+}
+
+/// A square piped straight up to a datum point above its centre is the
+/// pyramid over it.
+#[test]
+#[ignore = "kernel: make_pipe_sections refuses a point as its last section (ogeom-rs#92)"]
+fn a_pipe_closes_to_a_point() {
+    use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let square = doc
+        .add_feature_in_body(
+            rect_sketch_on(wb_sketch::sketch::SketchPlane::xy(), 2.0, 2.0),
+            "square".into(),
+            Some(body),
+        )
+        .unwrap();
+    let path = doc
+        .add_feature_in_body(
+            polyline_sketch(
+                wb_sketch::sketch::SketchPlane::xz(),
+                &[[1.0, 0.0], [1.0, 10.0]],
+            ),
+            "path".into(),
+            Some(body),
+        )
+        .unwrap();
+    let apex = doc
+        .add_feature_in_body(
+            DatumFeature {
+                shape: DatumShape::Point,
+                attachment: DatumAttachment::BasePlane(BasePlane::XY),
+                offset: AttachmentOffset {
+                    translation: [1.0, 1.0, 10.0],
+                    ..Default::default()
+                },
+            },
+            "apex".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pipe_of(
+            square,
+            path,
+            wb_part::PipeOrientation::Standard,
+            wb_part::PipeCorner::Transformed,
+            vec![apex],
+        ),
+        "Pipe".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, ..) = built_body(&doc, body).unwrap();
+    let pyramid = 4.0 * 10.0 / 3.0;
+    assert!((volume - pyramid).abs() < 1e-3 * pyramid, "{volume}");
 }

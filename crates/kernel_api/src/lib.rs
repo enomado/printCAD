@@ -675,6 +675,23 @@ pub enum ProfileSegment {
     },
 }
 
+/// What a [`SolidOp::PipeThrough`] runs along.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PipePath {
+    /// A sketch's wire.
+    Profile(Profile),
+    /// Edges of the running solid, joined end to end.
+    Edges(Vec<EdgeProbe>),
+    /// Edges of another solid (a native-format snapshot, moved by
+    /// `transform` into the body's frame), joined end to end; the probes
+    /// are in the body's frame.
+    EdgesOf {
+        shape: Vec<u8>,
+        transform: Option<Box<[[f64; 4]; 4]>>,
+        edges: Vec<EdgeProbe>,
+    },
+}
+
 /// One section of a [`SolidOp::LoftThrough`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LoftSection {
@@ -1138,6 +1155,20 @@ pub enum SolidOp {
         sections: Vec<Profile>,
         op: BooleanOp,
     },
+    /// A pipe whose profile may be a flat face of the running solid, whose
+    /// path may be edges of a solid, and whose last section may be a point
+    /// it closes to; the rest reads as for `Pipe`.
+    PipeThrough {
+        profile: LoftSection,
+        path: PipePath,
+        #[serde(default)]
+        frame: PipeFrame,
+        #[serde(default)]
+        corner: PipeCorner,
+        #[serde(default)]
+        sections: Vec<LoftSection>,
+        op: BooleanOp,
+    },
     Primitive {
         kind: PrimitiveKind,
         placement: Placement,
@@ -1217,6 +1248,7 @@ impl SolidOp {
             | SolidOp::SweepFace { op, .. }
             | SolidOp::Loft { op, .. }
             | SolidOp::LoftThrough { op, .. }
+            | SolidOp::PipeThrough { op, .. }
             | SolidOp::Pipe { op, .. }
             | SolidOp::Primitive { op, .. } => Some(*op),
             // A snapshot is a solid in itself: it begins a chain.

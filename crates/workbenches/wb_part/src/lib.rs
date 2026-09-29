@@ -384,6 +384,9 @@ impl PartDesignWorkbench {
                     .ok_or("A pipe needs a second sketch for its path; draw one first")?;
                 (
                     PartFeature::Pipe {
+                        path_borrowed: Vec::new(),
+                        path_edges: Vec::new(),
+                        profile_face: None,
                         refine: false,
                         profile,
                         spine,

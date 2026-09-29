@@ -641,27 +641,76 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 corner,
                 sections,
                 subtractive,
+                profile_face,
+                path_edges,
+                path_borrowed,
             } => {
-                let profile = sketch_profile(document, *profile).map_err(&fail)?;
-                let spine =
-                    sketch_spine(document, *spine, profile_anchor(&profile)).map_err(&fail)?;
                 let frame = pipe_frame(document, orientation).map_err(&fail)?;
-                let mut section_profiles = Vec::with_capacity(sections.len());
+                let corner = match corner {
+                    PipeCorner::Transformed => kernel_api::PipeCorner::Transformed,
+                    PipeCorner::Right => kernel_api::PipeCorner::Right,
+                    PipeCorner::Round => kernel_api::PipeCorner::Round,
+                };
+                let mut through = Vec::with_capacity(sections.len());
                 for section in sections {
-                    section_profiles.push(sketch_profile(document, *section).map_err(&fail)?);
+                    through.push(
+                        loft_section(document, &crate::feature::LoftSection::Feature(*section))
+                            .map_err(&fail)?,
+                    );
                 }
-                plan.ops.push(SolidOp::Pipe {
-                    profile,
-                    spine,
-                    frame,
-                    corner: match corner {
-                        PipeCorner::Transformed => kernel_api::PipeCorner::Transformed,
-                        PipeCorner::Right => kernel_api::PipeCorner::Right,
-                        PipeCorner::Round => kernel_api::PipeCorner::Round,
-                    },
-                    sections: section_profiles,
-                    op: shape_boolean(*subtractive),
-                });
+                let plain = profile_face.is_none()
+                    && path_edges.is_empty()
+                    && path_borrowed.is_empty()
+                    && through
+                        .iter()
+                        .all(|s| matches!(s, kernel_api::LoftSection::Profile(_)));
+                if plain {
+                    let profile = sketch_profile(document, *profile).map_err(&fail)?;
+                    let spine =
+                        sketch_spine(document, *spine, profile_anchor(&profile)).map_err(&fail)?;
+                    plan.ops.push(SolidOp::Pipe {
+                        profile,
+                        spine,
+                        frame,
+                        corner,
+                        sections: through
+                            .into_iter()
+                            .filter_map(|s| match s {
+                                kernel_api::LoftSection::Profile(p) => Some(p),
+                                _ => None,
+                            })
+                            .collect(),
+                        op: shape_boolean(*subtractive),
+                    });
+                } else {
+                    let section = match profile_face {
+                        Some(pick) => kernel_api::LoftSection::Face(face_probe(pick)),
+                        None => kernel_api::LoftSection::Profile(
+                            sketch_profile(document, *profile).map_err(&fail)?,
+                        ),
+                    };
+                    let path = if !path_edges.is_empty() {
+                        kernel_api::PipePath::Edges(path_edges.iter().map(edge_probe_of).collect())
+                    } else if !path_borrowed.is_empty() {
+                        crate::borrow::kernel_edges(document, path_borrowed).map_err(&fail)?
+                    } else {
+                        let anchor = match &section {
+                            kernel_api::LoftSection::Profile(p) => profile_anchor(p),
+                            _ => None,
+                        };
+                        kernel_api::PipePath::Profile(
+                            sketch_spine(document, *spine, anchor).map_err(&fail)?,
+                        )
+                    };
+                    plan.ops.push(SolidOp::PipeThrough {
+                        profile: section,
+                        path,
+                        frame,
+                        corner,
+                        sections: through,
+                        op: shape_boolean(*subtractive),
+                    });
+                }
             }
             PartFeature::Helix {
                 refine: _,
@@ -1105,6 +1154,15 @@ pub(crate) fn target_plane(
         }
     };
     Ok((frame.origin.map(f64::from), frame.normal.map(f64::from)))
+}
+
+/// A picked edge as the kernel finds it again.
+fn edge_probe_of(pick: &crate::feature::EdgePick) -> kernel_api::EdgeProbe {
+    kernel_api::EdgeProbe {
+        point: pick.point.map(f64::from),
+        direction: pick.direction.map(f64::from),
+        faces: pick.faces,
+    }
 }
 
 fn face_probe(pick: &FacePick) -> FaceProbe {
@@ -4778,6 +4836,9 @@ mod tests {
             .add_feature_in_body(rect_sketch(), "section".into(), Some(body))
             .unwrap();
         let pipe = |orientation: PipeOrientation| PartFeature::Pipe {
+            path_borrowed: Vec::new(),
+            path_edges: Vec::new(),
+            profile_face: None,
             refine: false,
             profile,
             spine,
