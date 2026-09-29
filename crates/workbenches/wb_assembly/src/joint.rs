@@ -602,6 +602,26 @@ impl JointTool {
         Self::ALL.into_iter().find(|t| t.command() == id)
     }
 
+    /// Its command without the `asm.` in front: `mate`, `hinge`, `fix`.
+    pub fn word(self) -> &'static str {
+        self.command().trim_start_matches("asm.")
+    }
+
+    pub fn of_word(word: &str) -> Option<JointTool> {
+        Self::ALL.into_iter().find(|t| t.word() == word)
+    }
+
+    /// Whether it takes these two anchors, in this order or the other.
+    pub fn fits(self, a: &Anchor, b: &Anchor) -> bool {
+        let flat = |x: &Anchor| matches!(x, Anchor::Plane { .. });
+        match self.takes() {
+            Takes::Flat => flat(a) && flat(b),
+            Takes::Round => !flat(a) && !flat(b),
+            Takes::Any => true,
+            Takes::FlatAndRound => flat(a) != flat(b),
+        }
+    }
+
     /// The tool that makes a joint of this kind; `None` for a ground.
     pub fn of_kind(kind: &JointKind) -> Option<JointTool> {
         Some(match kind {

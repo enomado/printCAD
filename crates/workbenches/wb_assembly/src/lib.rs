@@ -42,6 +42,8 @@ struct Picking {
     kind: JointTool,
     /// The first body, its anchor, and the radius of a round face.
     first: Option<(BodyId, Anchor, Option<f32>)>,
+    /// The joint whose faces are picked again, when it is not a new one.
+    repick: Option<FeatureId>,
 }
 
 /// What the task panel holds open.
@@ -947,6 +949,17 @@ impl AssemblyWorkbench {
                     ctx.log_warn("A tangent takes a round face with a radius: a cylinder");
                     return;
                 }
+                if let Some(joint) = picking.repick {
+                    self.rejoin(
+                        ctx,
+                        joint,
+                        picking.kind,
+                        (first_body, first_anchor),
+                        (body, anchor),
+                        radius,
+                    );
+                    return;
+                }
                 let kind = picking.kind.joint(
                     &first_anchor,
                     &ctx.document.body_placement(first_body).into(),
@@ -966,6 +979,77 @@ impl AssemblyWorkbench {
                 );
             }
         }
+    }
+
+    /// Give `joint` the faces just picked, as `asm.set` would, and open its
+    /// settings again.
+    fn rejoin(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        joint: FeatureId,
+        tool: JointTool,
+        moving: (BodyId, Anchor),
+        fixed: (BodyId, Anchor),
+        radius: Option<f32>,
+    ) {
+        let kept_radius = ctx
+            .document
+            .get_feature_data(joint)
+            .and_then(|d| JointFeature::from_json(d).ok())
+            .and_then(|j| match j.kind {
+                JointKind::Tangent { radius } => Some(radius),
+                _ => None,
+            });
+        let radius = radius.or(kept_radius).unwrap_or(0.0);
+        match commands::rejoined(ctx, tool, moving, fixed, radius) {
+            Ok(feature) => {
+                let face = |anchor: Anchor, body: BodyId| match anchor
+                    .moved(&ctx.document.body_placement(body))
+                {
+                    Anchor::Plane { point, normal } => {
+                        serde_json::json!({"point": point, "normal": normal})
+                    }
+                    Anchor::Axis { point, direction } => {
+                        serde_json::json!({"axis": {"point": point, "direction": direction}, "radius": radius})
+                    }
+                };
+                let args = commands::object(serde_json::json!({
+                    "joint": joint.0.to_string(),
+                    "kind": tool.word(),
+                    "face": face(moving.1, moving.0),
+                    "other": fixed.0.0.to_string(),
+                    "other_face": face(fixed.1, fixed.0),
+                }));
+                if ctx
+                    .document
+                    .update_feature_data(joint, feature.to_json())
+                    .is_ok()
+                {
+                    ctx.document.clear_feature_dirty(joint);
+                    self.solve_and_apply(ctx);
+                    ctx.record("asm.set", args, serde_json::Value::Null);
+                    ctx.log_info("Picked the joint's faces again");
+                }
+            }
+            Err(why) => ctx.log_warn(why.to_string()),
+        }
+        ctx.active_document_object = Some(joint);
+        self.task = Some(Task::Joint {
+            id: joint,
+            before: ctx.document.get_feature_data(joint).cloned(),
+            placements: all_placements(ctx),
+        });
+    }
+
+    /// Start picking `joint`'s faces again, for the kind `tool`.
+    pub(crate) fn start_repick(&mut self, joint: FeatureId, tool: JointTool) {
+        self.task = None;
+        self.seen = None;
+        self.picking = Some(Picking {
+            kind: tool,
+            first: None,
+            repick: Some(joint),
+        });
     }
 
     /// Add a joint, solve, and open its settings.
@@ -1390,7 +1474,11 @@ impl Workbench for AssemblyWorkbench {
                 let kind = JointTool::of_command(id).unwrap_or(JointTool::Mate);
                 self.task = None;
                 self.seen = None;
-                self.picking = Some(Picking { kind, first: None });
+                self.picking = Some(Picking {
+                    kind,
+                    first: None,
+                    repick: None,
+                });
                 // A face already selected is the first pick.
                 self.take_pick(ctx);
             }
@@ -1839,6 +1927,48 @@ mod tests {
         wb.on_frame(0.016, &mut ctx);
     }
 
+    /// A joint's faces picked again keep the joint: its name, and it is
+    /// still the only mate; the part moves to the new face.
+    #[test]
+    fn a_joint_s_faces_are_picked_again_in_place() {
+        let (mut doc, base, part) = scene();
+        let mut wb = AssemblyWorkbench::default();
+        {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some("asm.mate"),
+                &mut ctx,
+            );
+        }
+        frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
+        frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
+        let mate = joints(&doc)
+            .into_iter()
+            .find(|j| j.feature.kind != JointKind::Ground)
+            .unwrap();
+        wb.start_repick(mate.id, JointTool::Mate);
+        let placed = doc.body_placement(part);
+        // The part's face where the mate put it, onto a face 5 up.
+        let top = placed.point([2.0, 2.0, 0.0]);
+        frame(&mut wb, &mut doc, Some((part, face_up(top[2]))));
+        frame(&mut wb, &mut doc, Some((base, face_up(5.0))));
+        assert!(wb.picking.is_none());
+        let all: Vec<_> = joints(&doc)
+            .into_iter()
+            .filter(|j| j.feature.kind != JointKind::Ground)
+            .collect();
+        assert_eq!(all.len(), 1, "the same joint");
+        assert_eq!(all[0].id, mate.id);
+        assert_eq!(all[0].name, "Mate 1");
+        let Anchor::Plane { point, .. } = all[0].feature.fixed else {
+            panic!()
+        };
+        assert!((point[2] - 5.0).abs() < 1e-4, "{point:?}");
+        assert!(matches!(wb.task, Some(Task::Joint { id, .. }) if id == mate.id));
+    }
+
     /// A joint shows under the body it holds to as well as its own; the
     /// ground it made does not.
     #[test]
@@ -1925,6 +2055,7 @@ mod tests {
         wb.picking = Some(Picking {
             kind: JointTool::Mate,
             first: None,
+            repick: None,
         });
         ctx.hovered_body_id = Some(base.0);
         let mut faded = wb.faded_bodies(&ctx);
@@ -1942,6 +2073,7 @@ mod tests {
                 },
                 None,
             )),
+            repick: None,
         });
         assert_eq!(wb.faded_bodies(&ctx), vec![third]);
     }

@@ -33,6 +33,11 @@ While a joint's faces are picked, every body but the one under the
 cursor and the one picked first fades, so faces behind it can be seen and
 clicked.
 
+A joint's settings change its kind in place (Kind), from where the
+bodies stand; a kind that takes other sorts of faces, or Pick faces again,
+picks the two faces afresh while the joint keeps its name. `asm.set` takes
+`kind`, `face`, `other` and `other_face` for the same.
+
 Every joint's settings can turn its body about the joint's axis or
 normal by an angle (Turn), or half a turn across it (Turn over, the body
 the other way round); the joint takes the new place as its own, a driven

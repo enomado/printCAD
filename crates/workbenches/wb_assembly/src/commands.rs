@@ -27,6 +27,33 @@ const RATIO: &str = "Turns of the driven hinge per turn of the driver for gears 
 const LIMITS: &str = "{low, high}: the range a hinge's angle or a slider's position stays \
     in while not driven; false takes the limits away";
 
+/// The joint `tool` makes between these two anchors (each in its own
+/// body's frame) where the bodies stand.
+pub(crate) fn rejoined(
+    ctx: &WorkbenchRuntimeContext,
+    tool: JointTool,
+    (moving_body, moving): (BodyId, Anchor),
+    (other, fixed): (BodyId, Anchor),
+    radius: f32,
+) -> Result<JointFeature, CommandError> {
+    if !tool.fits(&moving, &fixed) {
+        return Err(CommandError::bad("kind", tool.refusal()));
+    }
+    if tool == JointTool::Tangent && radius <= 0.0 {
+        return Err(CommandError::bad(
+            "radius",
+            "must be given where the round face has none",
+        ));
+    }
+    let at = |b: BodyId| -> Rigid { ctx.document.body_placement(b).into() };
+    Ok(JointFeature {
+        kind: tool.joint(&moving, &at(moving_body), &fixed, &at(other), radius),
+        moving,
+        other_body: other,
+        fixed,
+    })
+}
+
 /// Turn a joint's moving body by `degrees` about the joint's direction,
 /// or half a turn over with `over`, and carry the joint's settings with
 /// it so it holds the body there.
@@ -386,6 +413,58 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .ok_or_else(not_a_joint)?;
             let mut feature: JointFeature =
                 serde_json::from_value(node.data.clone()).map_err(|_| not_a_joint())?;
+            // Other faces, another body or another kind first: the settings
+            // below apply to the joint they make.
+            let tool = match a.opt_string("kind")? {
+                Some(word) => Some(JointTool::of_word(word).ok_or_else(|| {
+                    CommandError::bad("kind", "must be a joint's word: mate, align, hinge, ...")
+                })?),
+                None => None,
+            };
+            if tool.is_some()
+                || ["face", "other", "other_face"]
+                    .iter()
+                    .any(|k| a.0.contains_key(*k))
+            {
+                let moving_body = node.body.ok_or_else(not_a_joint)?;
+                let tool = tool
+                    .or_else(|| JointTool::of_kind(&feature.kind))
+                    .ok_or_else(|| CommandError::bad("joint", "a ground takes no faces"))?;
+                let other = match a.opt_id("other")? {
+                    Some(id) => BodyId(id),
+                    None => feature.other_body,
+                };
+                if !ctx.document.bodies().iter().any(|b| b.id == other) || other == moving_body {
+                    return Err(CommandError::bad(
+                        "other",
+                        "must be another body of the document",
+                    ));
+                }
+                let local = |name: &str, body: BodyId, kept: Anchor| match a.0.get(name) {
+                    Some(v) => Ok::<_, CommandError>(
+                        anchor_of(Some(v), name, tool.takes())?
+                            .moved(&ctx.document.body_placement(body).inverse()),
+                    ),
+                    None => Ok(kept),
+                };
+                let moving = local("face", moving_body, feature.moving)?;
+                let fixed = local("other_face", other, feature.fixed)?;
+                let radius = a
+                    .opt_number("radius")?
+                    .map(|r| r as f32)
+                    .or_else(|| {
+                        ["face", "other_face"]
+                            .iter()
+                            .find_map(|n| a.0.get(*n)?.get("radius")?.as_f64())
+                            .map(|r| r as f32)
+                    })
+                    .or(match feature.kind {
+                        JointKind::Tangent { radius } => Some(radius),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0);
+                feature = rejoined(ctx, tool, (moving_body, moving), (other, fixed), radius)?;
+            }
             match &mut feature.kind {
                 JointKind::Mate { flip, offset } => {
                     if let Some(v) = a.opt_number("offset")? {
@@ -1319,6 +1398,44 @@ mod tests {
         let data: JointFeature =
             serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
         assert!(matches!(data.kind, JointKind::Mate { flip: true, .. }));
+    }
+
+    /// A joint made another kind keeps its faces and name; faces of the
+    /// wrong sort for the kind asked are refused, and new faces go in.
+    #[test]
+    fn a_joint_changes_kind_and_faces() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        let mate = call(
+            &mut doc,
+            "asm.mate",
+            json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
+        )
+        .unwrap();
+        let id = FeatureId(uuid::Uuid::parse_str(mate.as_str().unwrap()).unwrap());
+        let kind = |doc: &Document| {
+            serde_json::from_value::<JointFeature>(doc.get_feature_data(id).unwrap().clone())
+                .unwrap()
+                .kind
+        };
+        call(
+            &mut doc,
+            "asm.set",
+            json!({"joint": mate, "kind": "parallel"}),
+        )
+        .unwrap();
+        assert_eq!(kind(&doc), JointKind::Parallel);
+        assert!(call(&mut doc, "asm.set", json!({"joint": mate, "kind": "hinge"})).is_err());
+        let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+        call(
+            &mut doc,
+            "asm.set",
+            json!({"joint": mate, "kind": "hinge", "face": pin, "other_face": pin}),
+        )
+        .unwrap();
+        assert!(matches!(kind(&doc), JointKind::Hinge { .. }));
+        assert_eq!(doc.get_feature_meta(id).unwrap().name, "Mate 1");
     }
 
     /// An alignment's turn and slide are each driven, and an alignment

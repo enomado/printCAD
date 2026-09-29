@@ -11,7 +11,7 @@ use ui_kit::widgets::{Card, Note, QtyField, check_row, destructive_button, note_
 use ui_kit::{sans, sans_semibold};
 
 use crate::{
-    AssemblyWorkbench, Coupling, Gearing, JointFeature, JointKind, Task, body_name,
+    AssemblyWorkbench, Coupling, Gearing, JointFeature, JointKind, JointTool, Task, body_name,
     restore_placements,
 };
 
@@ -630,6 +630,65 @@ impl AssemblyWorkbench {
         let moving = node.body.map(|b| body_name(ctx, b)).unwrap_or_default();
         row(ui, "Moves", &moving);
         row(ui, "Against", &body_name(ctx, joint.other_body));
+        if let Some(current) = JointTool::of_kind(&joint.kind) {
+            let mut chosen = None;
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [90.0, INPUT],
+                    egui::Label::new(RichText::new("Kind").font(sans(FONT_SM)).color(TEXT2)),
+                );
+                egui::ComboBox::from_id_salt(("joint_kind", id))
+                    .selected_text(RichText::new(current.label()).font(sans(FONT_SM)))
+                    .width(ui.available_width() - 2.0 * ui.spacing().button_padding.x)
+                    .show_ui(ui, |ui| {
+                        for tool in JointTool::ALL {
+                            let fits = tool.fits(&joint.moving, &joint.fixed);
+                            let on = tool == current;
+                            let hint = if fits {
+                                tool.summary().to_string()
+                            } else {
+                                format!("{}; pick its faces", tool.summary())
+                            };
+                            if ui
+                                .add(egui::Button::selectable(
+                                    on,
+                                    RichText::new(tool.label()).font(sans(FONT_SM)),
+                                ))
+                                .on_hover_text(hint)
+                                .clicked()
+                                && !on
+                            {
+                                chosen = Some((tool, fits));
+                            }
+                        }
+                    });
+            });
+            match chosen {
+                Some((tool, true)) => {
+                    self.change_kind(ctx, id, created, placements, tool);
+                    return TaskOutcome::Open;
+                }
+                // Faces of the wrong sort for it: pick them afresh.
+                Some((tool, false)) => {
+                    if created {
+                        crate::commands::record_joint(ctx, id, None, placements);
+                    }
+                    self.start_repick(id, tool);
+                    return TaskOutcome::Open;
+                }
+                None => {}
+            }
+            if ui_kit::widgets::secondary_button(ui, "Pick faces again")
+                .on_hover_text("Pick the two faces afresh; the joint keeps its name and kind")
+                .clicked()
+            {
+                if created {
+                    crate::commands::record_joint(ctx, id, None, placements);
+                }
+                self.start_repick(id, current);
+                return TaskOutcome::Open;
+            }
+        }
         ui.add_space(SPACE_2);
         let mut changed = false;
         let mut formula_edits: Vec<(String, Option<String>)> = Vec::new();
@@ -920,6 +979,33 @@ impl AssemblyWorkbench {
             };
         }
         TaskOutcome::Open
+    }
+
+    /// Make the joint another kind, from where the bodies stand, as
+    /// `asm.set` with a `kind` does.
+    fn change_kind(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        created: bool,
+        placements: &[(BodyId, BodyPlacement)],
+        tool: JointTool,
+    ) {
+        if created {
+            crate::commands::record_joint(ctx, id, None, placements);
+        }
+        let args = crate::commands::object(
+            serde_json::json!({"joint": id.0.to_string(), "kind": tool.word()}),
+        );
+        match crate::commands::run("asm.set", &args, ctx) {
+            Ok(_) => ctx.record("asm.set", args, serde_json::Value::Null),
+            Err(why) => ctx.log_warn(why.to_string()),
+        }
+        self.task = Some(crate::Task::Joint {
+            id,
+            before: ctx.document.get_feature_data(id).cloned(),
+            placements: crate::all_placements(ctx),
+        });
     }
 
     /// Turn the joint's body from its task. A joint the task just made is

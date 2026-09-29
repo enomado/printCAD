@@ -266,7 +266,7 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **A turn offset and a flip on every joint** (partial, S), and an
   editable shift for a fixed joint. Turn and Turn over in every joint's
   settings (`asm.turn`, `asm.flip`), the fixed shift as three fields.
-- [ ] **Re-pick faces and change the kind** (missing, S). From the
+- [x] **Re-pick faces and change the kind** (missing, S). From the
   joint's settings, without deleting it.
 - [x] **Joints drawn in the view** (missing, S). Anchor frames, axes and
   the link between them, for the selected joint.
