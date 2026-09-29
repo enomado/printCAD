@@ -1,6 +1,7 @@
 //! Animations a bench records (a joint's motion swept through its range):
 //! the scene drawn once per frame, as the camera sees it, into an animated
-//! PNG. Frames are drawn on the CPU, on a thread of their own, all framed
+//! PNG, a GIF, or a folder of numbered PNG frames, by the kind of file
+//! saved. Frames are drawn on the CPU, on a thread of their own, all framed
 //! alike so the view holds still while the model moves.
 
 use std::path::PathBuf;
@@ -72,20 +73,22 @@ impl PrintCadApp {
     }
 }
 
-/// Draw `animation` and write it to `path`, away from the window; the log
-/// says when it is done.
+/// The extension the save dialog offers for a folder of frames: the
+/// folder takes the file's name without it.
+pub(crate) const FRAMES_EXTENSION: &str = "frames";
+
+/// Draw `animation` and write it to `path`, away from the window, as the
+/// path's extension says: `gif`, a folder of frames for
+/// [`FRAMES_EXTENSION`], else an animated PNG. The log says when it is done.
 pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
     let spawned = std::thread::Builder::new()
         .name("printcad-animation".into())
-        .spawn(move || match encode(&animation) {
-            Ok(bytes) => match std::fs::write(&path, bytes) {
-                Ok(()) => app_log::info(format!(
-                    "Saved a {}-frame animation to {}",
-                    animation.frames.len(),
-                    path.display()
-                )),
-                Err(err) => app_log::error(format!("Could not save {}: {err}", path.display())),
-            },
+        .spawn(move || match write(&animation, &path) {
+            Ok(written) => app_log::info(format!(
+                "Saved a {}-frame animation to {}",
+                animation.frames.len(),
+                written.display()
+            )),
             Err(why) => app_log::error(format!("Could not record the animation: {why}")),
         });
     if let Err(err) = spawned {
@@ -93,8 +96,46 @@ pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
     }
 }
 
-/// The frames drawn and put together as an animated PNG, played on a loop.
-fn encode(animation: &Animation) -> Result<Vec<u8>, String> {
+/// Write the animation where `path` says, in its kind; where it went.
+fn write(animation: &Animation, path: &std::path::Path) -> Result<PathBuf, String> {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    let save = |target: &std::path::Path, bytes: Vec<u8>| {
+        std::fs::write(target, bytes)
+            .map_err(|err| format!("could not save {}: {err}", target.display()))
+    };
+    match extension.as_deref() {
+        Some("gif") => {
+            save(path, encode_gif(animation)?)?;
+            Ok(path.to_path_buf())
+        }
+        Some(FRAMES_EXTENSION) => {
+            let folder = path.with_extension("");
+            std::fs::create_dir_all(&folder)
+                .map_err(|err| format!("could not make {}: {err}", folder.display()))?;
+            let stem = folder
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "frame".into());
+            for (i, rgba) in frames(animation)?.into_iter().enumerate() {
+                save(
+                    &folder.join(format!("{stem}-{:04}.png", i + 1)),
+                    encode_png(&rgba)?,
+                )?;
+            }
+            Ok(folder)
+        }
+        _ => {
+            save(path, encode(animation)?)?;
+            Ok(path.to_path_buf())
+        }
+    }
+}
+
+/// Every frame drawn, RGBA, framed alike.
+fn frames(animation: &Animation) -> Result<Vec<Vec<u8>>, String> {
     if animation.frames.is_empty() {
         return Err("there are no frames".into());
     }
@@ -108,20 +149,11 @@ fn encode(animation: &Animation) -> Result<Vec<u8>, String> {
             vertex_colours: s.vertex_colours,
         })
         .collect();
-    let mut out = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut out, WIDTH, HEIGHT);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder
-            .set_animated(animation.frames.len() as u32, 0)
-            .map_err(|e| e.to_string())?;
-        encoder
-            .set_frame_delay(animation.frame_ms.min(u32::from(u16::MAX)) as u16, 1000)
-            .map_err(|e| e.to_string())?;
-        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-        for frame in &animation.frames {
-            let rgba = crate::thumbnail::rasterize_framed(
+    animation
+        .frames
+        .iter()
+        .map(|frame| {
+            crate::thumbnail::rasterize_framed(
                 frame,
                 &framing,
                 animation.forward,
@@ -129,10 +161,65 @@ fn encode(animation: &Animation) -> Result<Vec<u8>, String> {
                 WIDTH,
                 HEIGHT,
             )
-            .ok_or("a frame had nothing to draw")?;
-            writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
+            .ok_or_else(|| "a frame had nothing to draw".to_string())
+        })
+        .collect()
+}
+
+/// The frames put together as an animated PNG, played on a loop.
+fn encode(animation: &Animation) -> Result<Vec<u8>, String> {
+    let frames = frames(animation)?;
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, WIDTH, HEIGHT);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .set_animated(frames.len() as u32, 0)
+            .map_err(|e| e.to_string())?;
+        encoder
+            .set_frame_delay(animation.frame_ms.min(u32::from(u16::MAX)) as u16, 1000)
+            .map_err(|e| e.to_string())?;
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        for rgba in &frames {
+            writer.write_image_data(rgba).map_err(|e| e.to_string())?;
         }
         writer.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+/// One frame as a PNG of its own.
+fn encode_png(rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, WIDTH, HEIGHT);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(rgba).map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+/// The frames as a GIF played on a loop, each frame's colours chosen for
+/// it.
+fn encode_gif(animation: &Animation) -> Result<Vec<u8>, String> {
+    let frames = frames(animation)?;
+    let mut out = Vec::new();
+    {
+        let mut encoder = gif::Encoder::new(&mut out, WIDTH as u16, HEIGHT as u16, &[])
+            .map_err(|e| e.to_string())?;
+        encoder
+            .set_repeat(gif::Repeat::Infinite)
+            .map_err(|e| e.to_string())?;
+        // Hundredths of a second.
+        let delay = (animation.frame_ms / 10).clamp(2, u32::from(u16::MAX)) as u16;
+        for mut rgba in frames {
+            let mut frame = gif::Frame::from_rgba_speed(WIDTH as u16, HEIGHT as u16, &mut rgba, 10);
+            frame.delay = delay;
+            encoder.write_frame(&frame).map_err(|e| e.to_string())?;
+        }
     }
     Ok(out)
 }
@@ -172,5 +259,35 @@ mod tests {
         let control = info.animation_control().expect("animated");
         assert_eq!(control.num_frames, 4);
         assert_eq!(control.num_plays, 0, "on a loop");
+    }
+
+    #[test]
+    fn frames_become_a_gif_or_a_folder_of_pngs() {
+        let animation = Animation {
+            name: "slide".into(),
+            frames: (0..3).map(|i| vec![triangle(i as f32 * 5.0)]).collect(),
+            forward: Vec3::new(0.0, 0.0, -1.0),
+            up: Vec3::Y,
+            frame_ms: 50,
+        };
+        let dir = std::env::temp_dir().join(format!("printcad-anim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let gif_path = write(&animation, &dir.join("slide.gif")).unwrap();
+        let bytes = std::fs::read(&gif_path).unwrap();
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = options.read_info(std::io::Cursor::new(bytes)).unwrap();
+        let mut count = 0;
+        while let Some(frame) = decoder.read_next_frame().unwrap() {
+            assert_eq!(frame.delay, 5);
+            count += 1;
+        }
+        assert_eq!(count, 3);
+        let folder = write(&animation, &dir.join(format!("shot.{FRAMES_EXTENSION}"))).unwrap();
+        assert_eq!(folder, dir.join("shot"));
+        for i in 1..=3 {
+            assert!(folder.join(format!("shot-{i:04}.png")).exists());
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -257,7 +257,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   and the pull halved back to contact; the release records `asm.place`),
   recording (`sweep_frames` solves a drive's sweep on a document copy;
   the host's `HostRequest::RecordAnimation` draws each frame with the CPU
-  preview renderer, framed alike, into an animated PNG, `app/animation.rs`;
+  preview renderer, framed alike, into an animated PNG, a GIF or numbered PNG frames, `app/animation.rs`;
   `HostRequest::SaveFile` writes any bytes a bench makes where the user
   picks), the
   exploded view (a task that moves bodies and puts them back on close,

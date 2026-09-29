@@ -69,7 +69,8 @@ keep the motion within a range while it is not driven; a joint resting
 on a limit shows its motion as "one way, at its limit". Play sweeps a
 driven joint through its limits (or a whole turn, or 25 mm either way) to
 show the motion, and puts it back when stopped. Record saves the same
-sweep, there and back, as an animated PNG seen from the current view.
+sweep, there and back, seen from the current view: as an animated PNG, a
+GIF, or a folder of numbered PNG frames, by the kind of file chosen.
 
 An alignment leaves two motions, the turn about its axis and the slide
 along it, and each can be driven or limited the same way (`turn_drive`,

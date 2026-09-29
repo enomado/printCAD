@@ -293,8 +293,8 @@ and noted on its item, and the rest of the item is built around it.
   play; built on `sweep_frames`.
 - [ ] **Collisions during a motion** (missing, S). The frames and pairs
   where bodies share material (`collide.rs` measures it for drags).
-- [ ] **GIF and frame sequence export** (partial, S). Recording writes an
-  animated PNG only.
+- [x] **GIF and frame sequence export** (partial, S). Recording writes an
+  animated PNG, a GIF or a folder of numbered PNG frames.
 - [ ] **Traces, speeds, plots** (missing, L).
 
 ### Exploded views and states

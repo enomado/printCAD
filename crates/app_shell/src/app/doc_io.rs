@@ -877,6 +877,11 @@ impl PrintCadApp {
                     .set_file_name(file.name.as_str()),
                 FileDialogKind::SaveAnimation(ref animation) => rfd::FileDialog::new()
                     .add_filter("Animated PNG", &["png"])
+                    .add_filter("GIF", &["gif"])
+                    .add_filter(
+                        "A folder of PNG frames",
+                        &[crate::app::animation::FRAMES_EXTENSION],
+                    )
                     .set_file_name(format!("{}.png", animation.name)),
                 FileDialogKind::InstallPackage => rfd::FileDialog::new()
                     .set_title("Install a workbench package")
