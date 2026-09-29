@@ -404,7 +404,9 @@ walkthrough. Colors reach the workbenches through
 
 **Placeholders.** Everything the design shows is built. The sketcher's
 external geometry (`external.rs`) takes solid edges picked while its tool
-is armed (clicks fall through to the host's edge picking), projects each
+is armed (clicks fall through to the host's edge picking), or a face for
+every edge around it (`KernelQueries::face_edges`: a point halfway along
+each, its seam left out), projects each
 through `ctx.kernel` (`kernel_api::KernelQueries`, the host hands benches
 `kernel_ogeom::QUERIES`) onto the sketch plane in the edge body's frame,
 and stores the result as geometry marked in `Sketch::external` with its

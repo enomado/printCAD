@@ -1664,6 +1664,14 @@ pub struct RecognizedHole {
 }
 
 pub trait KernelQueries: Send + Sync {
+    /// The edges bounding the face of `brep` nearest `near`: a point on
+    /// each, halfway along, and its direction there, in the shape's own
+    /// frame. A seam (the edge a round face meets itself along) and an
+    /// edge with no curve (a pole) are left out.
+    fn face_edges(&self, _brep: &[u8], _near: [f64; 3]) -> KernelResult<Vec<([f64; 3], [f64; 3])>> {
+        Err(KernelError::Unsupported("face_edges".into()))
+    }
+
     /// The round holes of `brep`, in its own frame, and how many bores it
     /// has that are not holes it can describe (a counterbore, a slot).
     fn recognize_holes(&self, _brep: &[u8]) -> KernelResult<(Vec<RecognizedHole>, usize)> {

@@ -36,6 +36,47 @@ fn other(message: impl std::fmt::Display) -> KernelError {
 const TOUCHING_MM3: f64 = 1e-6;
 
 impl KernelQueries for OgeomQueries {
+    fn face_edges(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<([f64; 3], [f64; 3])>> {
+        let tol = tess::tolerances();
+        let (mut model, root) = tess::read_blob(brep)?;
+        let face = nearest_of(
+            &mut model,
+            &root,
+            ShapeType::Face,
+            Point::new(near[0], near[1], near[2]),
+        )
+        .map_err(other)?;
+        // A seam turns up twice in its face's boundary, once each way.
+        let all = ogeom::topo::explore(&model, &face, ogeom::topo::Filter::OfType(ShapeType::Edge))
+            .map_err(other)?;
+        let mut out = Vec::new();
+        for edge in explore_unique(&model, &face, ShapeType::Edge).map_err(other)? {
+            if all.iter().filter(|e| e.is_same(&edge)).count() > 1 {
+                continue;
+            }
+            let Ok(points) = edge_points(&model, &edge, Deflection::default(), tol) else {
+                continue;
+            };
+            if points.len() < 2 {
+                continue;
+            }
+            let i = (points.len() - 1) / 2;
+            let (a, b) = (points[i], points[i + 1]);
+            let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            if length <= 1e-12 {
+                continue;
+            }
+            let mid = [
+                (a[0] + b[0]) / 2.0,
+                (a[1] + b[1]) / 2.0,
+                (a[2] + b[2]) / 2.0,
+            ];
+            out.push((mid, d.map(|v| v / length)));
+        }
+        Ok(out)
+    }
+
     fn recognize_holes(
         &self,
         brep: &[u8],

@@ -564,3 +564,97 @@ fn a_pad_along_a_converted_solid_s_sides_fuses() {
         .expect("the fuse settles");
     assert!(built.mesh.bounds().is_some());
 }
+
+/// A face picked for projection brings every edge around it: the box's
+/// top comes in as its four sides and closes a profile; a bore's face
+/// brings its rims, not the seam it meets itself along.
+#[test]
+fn a_face_s_edges_come_in_around_it() {
+    use kernel_api::KernelQueries;
+    let (document, body, lo, hi) = imported_box();
+    let brep = document.imported_brep_blob(body).unwrap().to_vec();
+    let centre = [
+        f64::from(lo[0] + hi[0]) / 2.0,
+        f64::from(lo[1] + hi[1]) / 2.0,
+        f64::from(hi[2]),
+    ];
+    let edges = kernel_ogeom::QUERIES.face_edges(&brep, centre).unwrap();
+    assert_eq!(edges.len(), 4, "{edges:?}");
+
+    let mut host = benches(document);
+    let list: Vec<String> = edges
+        .iter()
+        .map(|(p, d)| {
+            format!(
+                "{{body = \"{}\", point = {{{}, {}, {}}}, direction = {{{}, {}, {}}}}}",
+                body.0, p[0], p[1], p[2], d[0], d[1], d[2]
+            )
+        })
+        .collect();
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            s = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.external{{sketch = s, edges = {{{list}}}, counts = true}}
+            "#,
+            body = body.0,
+            top = hi[2],
+            list = list.join(", "),
+        ),
+        "face.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let sketch = host
+        .document
+        .feature_tree()
+        .all_nodes()
+        .find(|(_, n)| n.workbench_id.as_str() == "wb.sketch")
+        .map(|(id, _)| *id)
+        .unwrap();
+    let feature =
+        wb_sketch::SketchFeature::from_json(host.document.get_feature_data(sketch).unwrap())
+            .unwrap();
+    let wires =
+        wb_sketch::profile::extract_wires(&feature.sketch).expect("the top's outline closes");
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 4);
+
+    // A through bore: its face's rims, not its seam.
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            local c = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.circle{{sketch = c, x = {cx}, y = {cy}, radius = 2}}
+            pc.design.pocket{{sketch = c, through_all = true}}
+            "#,
+            body = body.0,
+            top = hi[2],
+            cx = centre[0],
+            cy = centre[1],
+        ),
+        "bore.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
+    let bored = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let on_bore = [centre[0] + 2.0, centre[1], f64::from(lo[2] + hi[2]) / 2.0];
+    let rims = kernel_ogeom::QUERIES
+        .face_edges(&bored.brep_blob, on_bore)
+        .unwrap();
+    // The rims, each as the arcs the kernel keeps it in; nothing along the
+    // bore, where its seam runs.
+    assert!(!rims.is_empty());
+    assert!(
+        rims.iter().all(|(_, d)| d[2].abs() < 1e-6),
+        "no seam: {rims:?}"
+    );
+    let heights: std::collections::BTreeSet<i64> = rims
+        .iter()
+        .map(|(p, _)| (p[2] * 1000.0).round() as i64)
+        .collect();
+    assert_eq!(heights.len(), 2, "both rims: {rims:?}");
+}

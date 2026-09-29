@@ -677,7 +677,8 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.trim" => ("Trim", "Click the span to remove, or drag across spans"),
         "sketch.external" => (
             "External geometry",
-            "Click edges of a solid to bring them in; Ctrl picks more",
+            "Click edges of a solid to bring them in, or a face for every edge around it; \
+             Ctrl picks more",
         ),
         "sketch.extend" => ("Extend", "Click the end to extend"),
         "sketch.split" => ("Split", "Click where to split"),
@@ -4990,7 +4991,8 @@ impl SketchWorkbench {
     }
 
     /// Project every edge picked since the external geometry tool was
-    /// armed into the edited sketch.
+    /// armed into the edited sketch; a face picked brings every edge
+    /// around it.
     fn take_external_picks(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         let fresh: Vec<core_document::EdgeRef> = ctx
             .selected_edges
@@ -5001,13 +5003,10 @@ impl SketchWorkbench {
             })
             .copied()
             .collect();
-        if fresh.is_empty() {
-            return;
-        }
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        let sources: Vec<sketch::ExternalSource> = fresh
+        // As the drawing tools do: a guide in construction mode, counting
+        // in the profile out of it.
+        let defining = !self.construction_mode;
+        let mut sources: Vec<sketch::ExternalSource> = fresh
             .iter()
             .map(|edge| {
                 let local = edge.moved(&ctx.document.body_placement(BodyId(edge.body)).inverse());
@@ -5016,13 +5015,20 @@ impl SketchWorkbench {
                     point: local.point,
                     direction: local.direction,
                     section: false,
-                    // As the drawing tools do: a guide in construction
-                    // mode, counting in the profile out of it.
-                    defining: !self.construction_mode,
+                    defining,
                     reference: None,
                 }
             })
             .collect();
+        if ctx.selected_edges.is_empty() {
+            sources.extend(self.face_outline_sources(ctx, defining));
+        }
+        if sources.is_empty() {
+            return;
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
         let before = (
             feature
                 .sketch
@@ -5070,6 +5076,47 @@ impl SketchWorkbench {
                 1 => "Added 1 external element".to_string(),
                 n => format!("Added {n} external elements"),
             });
+        }
+    }
+
+    /// The edges around the face picked on a solid, as projection sources
+    /// in its body's frame, once per face picked.
+    fn face_outline_sources(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        defining: bool,
+    ) -> Vec<sketch::ExternalSource> {
+        let (Some(face), Some(body)) = (ctx.selected_face, ctx.selected_body_id) else {
+            return Vec::new();
+        };
+        if !self
+            .external_seen
+            .insert((body, face.point.map(f32::to_bits)))
+        {
+            return Vec::new();
+        }
+        let (Some(kernel), Some(brep)) =
+            (ctx.kernel, ctx.document.imported_brep_blob(BodyId(body)))
+        else {
+            return Vec::new();
+        };
+        let local = face.moved(&ctx.document.body_placement(BodyId(body)).inverse());
+        match kernel.face_edges(brep, local.point.map(f64::from)) {
+            Ok(edges) => edges
+                .into_iter()
+                .map(|(point, direction)| sketch::ExternalSource {
+                    body,
+                    point: point.map(|v| v as f32),
+                    direction: direction.map(|v| v as f32),
+                    section: false,
+                    defining,
+                    reference: None,
+                })
+                .collect(),
+            Err(why) => {
+                ctx.log_warn(format!("The face's edges could not be read: {why}"));
+                Vec::new()
+            }
         }
     }
 
