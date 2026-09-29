@@ -1,6 +1,7 @@
 //! The assembly's mass and centre of mass: each visible solid body
 //! measured by the kernel in its own frame, its centre placed where the
-//! body sits, and the whole weighed at one density.
+//! body sits, and each weighed at its material's density, or at one given
+//! density where it has no material.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -15,6 +16,15 @@ pub struct BodyMass {
     pub volume_mm3: f64,
     /// World space.
     pub centre: [f64; 3],
+    /// Its material's density, g/cm³, when it has one.
+    pub density: Option<f64>,
+}
+
+impl BodyMass {
+    /// Its mass in grams, at `density` g/cm³ when it has no material.
+    pub fn mass_g(&self, density: f64) -> f64 {
+        self.volume_mm3 * self.density.unwrap_or(density) / 1000.0
+    }
 }
 
 /// What the measuring found.
@@ -31,19 +41,20 @@ impl MassReport {
         self.bodies.iter().map(|b| b.volume_mm3).sum()
     }
 
-    /// The mass in grams at `density` g/cm³.
+    /// The mass in grams, bodies without a material at `density` g/cm³.
     pub fn mass_g(&self, density: f64) -> f64 {
-        self.volume_mm3() * density / 1000.0
+        self.bodies.iter().map(|b| b.mass_g(density)).sum()
     }
 
-    /// The centre of mass at one density throughout, world space.
-    pub fn centre(&self) -> Option<[f64; 3]> {
-        let total = self.volume_mm3();
+    /// The centre of mass, bodies without a material at `density`, world
+    /// space.
+    pub fn centre(&self, density: f64) -> Option<[f64; 3]> {
+        let total = self.mass_g(density);
         (total > 0.0).then(|| {
             let mut c = [0.0; 3];
             for b in &self.bodies {
                 for (k, v) in c.iter_mut().enumerate() {
-                    *v += b.centre[k] * b.volume_mm3 / total;
+                    *v += b.centre[k] * b.mass_g(density) / total;
                 }
             }
             c
@@ -51,9 +62,13 @@ impl MassReport {
     }
 }
 
+/// A body to measure: its snapshot, where it sits and its material's
+/// density.
+type Solid = (BodyId, Arc<Vec<u8>>, BodyPlacement, Option<f64>);
+
 /// The bodies to measure, read from the document.
 pub struct Weighing {
-    solids: Vec<(BodyId, Arc<Vec<u8>>, BodyPlacement)>,
+    solids: Vec<Solid>,
     skipped: usize,
 }
 
@@ -68,7 +83,12 @@ pub fn plan(document: &Document, among: Option<&[BodyId]>) -> Weighing {
             continue;
         }
         match document.imported_brep_blob_arc(body.id) {
-            Some(blob) => solids.push((body.id, blob, document.body_placement(body.id))),
+            Some(blob) => solids.push((
+                body.id,
+                blob,
+                document.body_placement(body.id),
+                body.material.as_ref().map(|m| f64::from(m.density)),
+            )),
             None => skipped += 1,
         }
     }
@@ -91,7 +111,7 @@ impl Weighing {
             skipped: self.skipped,
             ..MassReport::default()
         };
-        for (body, blob, placement) in &self.solids {
+        for (body, blob, placement, density) in &self.solids {
             if stop.load(Ordering::Relaxed) {
                 report.stopped = true;
                 break;
@@ -107,6 +127,7 @@ impl Weighing {
                 body: *body,
                 volume_mm3: volume,
                 centre: placement.point(c).map(f64::from),
+                density: *density,
             });
         }
         Ok(report)
@@ -123,13 +144,14 @@ mod tests {
             body: BodyId::new(),
             volume_mm3: volume,
             centre: [x, 0.0, 0.0],
+            density: None,
         };
         let report = MassReport {
             bodies: vec![body(1000.0, 0.0), body(3000.0, 10.0)],
             ..MassReport::default()
         };
-        assert_eq!(report.centre(), Some([7.5, 0.0, 0.0]));
+        assert_eq!(report.centre(1.0), Some([7.5, 0.0, 0.0]));
         assert!((report.mass_g(1.25) - 5.0).abs() < 1e-9);
-        assert_eq!(MassReport::default().centre(), None);
+        assert_eq!(MassReport::default().centre(1.0), None);
     }
 }

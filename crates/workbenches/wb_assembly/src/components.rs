@@ -83,15 +83,7 @@ pub fn joined_outside(document: &Document, body: BodyId, joints: &[Joint]) -> bo
 /// Move `body` to `placement`, and every body that moves as one with it
 /// by the same.
 pub fn move_with_unit(document: &mut Document, body: BodyId, placement: BodyPlacement) {
-    let step = placement.after(&document.body_placement(body).inverse());
-    for member in document.rigid_unit_of(body) {
-        let moved = if member == body {
-            placement
-        } else {
-            step.after(&document.body_placement(member))
-        };
-        document.set_body_placement(member, moved);
-    }
+    document.place_with_unit(body, placement);
 }
 
 #[cfg(test)]

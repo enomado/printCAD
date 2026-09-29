@@ -70,6 +70,8 @@ pub struct TreeUiResult {
     /// A feature's menu asked to install the package it needs, from this
     /// repository.
     pub install_package: Option<String>,
+    /// A menu entry that changes the window rather than the document.
+    pub local: Option<super::MenuLocal>,
 }
 
 /// View model describing the current document tree.
@@ -129,6 +131,8 @@ struct TreeNode {
     linked: bool,
     /// A body linked from another printCAD file.
     linked_file: bool,
+    /// A frozen body: its features are not rebuilt.
+    frozen: bool,
 }
 
 impl DocumentTree {
@@ -372,6 +376,7 @@ fn build_feature_node(
         accent_icon: false,
         linked: false,
         linked_file: false,
+        frozen: false,
     }
 }
 
@@ -418,6 +423,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 accent_icon: false,
                 linked: true,
                 linked_file: false,
+                frozen: false,
             });
         }
     }
@@ -547,6 +553,7 @@ fn build_body_node_blank() -> TreeNode {
         accent_icon: false,
         linked: false,
         linked_file: false,
+        frozen: false,
     }
 }
 
@@ -576,6 +583,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         accent_icon: true,
         linked: false,
         linked_file: false,
+        frozen: body.frozen,
     }
 }
 
@@ -782,6 +790,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         accent_icon: imported.body_id.is_some(),
         linked: false,
         linked_file: false,
+        frozen: false,
     })
 }
 
@@ -1181,6 +1190,14 @@ fn draw_node(
             opens_details: false,
         });
     }
+    if node.frozen {
+        badges.push(Badge {
+            text: "FROZEN",
+            color: TEXT3,
+            tooltip: Some("Kept as it stands: its features are not rebuilt".to_string()),
+            opens_details: false,
+        });
+    }
     if editing_here {
         badges.push(Badge {
             text: "EDITING",
@@ -1268,7 +1285,24 @@ fn attach_feature_menu(
     let mut delete = false;
     let mut bench_command = None;
     let mut install = None;
+    let document = options.bench_menus.map(|(d, _)| d);
+    let body = document
+        .and_then(|d| d.get_feature_meta(feature_id))
+        .and_then(|n| n.body);
     response.context_menu(|ui| {
+        if node.needs_package.is_none()
+            && ui
+                .button(egui::RichText::new(format!("Edit {}", node.label)).strong())
+                .clicked()
+        {
+            result.activation = Some(node.id);
+            ui.close();
+        }
+        if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
+            result.local = Some(super::MenuLocal::Rename(node.id));
+            ui.close();
+        }
+        ui.separator();
         if let Some((id, repo)) = &node.needs_package {
             if ui
                 .button(format!("Install {id}"))
@@ -1328,9 +1362,62 @@ fn attach_feature_menu(
             command = Some(TreeFeatureCommand::SetTip);
             ui.close();
         }
+        if let Some(document) = document {
+            move_after_menu(ui, document, feature_id, result);
+        }
+        if let (Some(document), Some(body)) = (document, body) {
+            let frozen = document.body_frozen(body);
+            let label = if frozen { "Thaw body" } else { "Freeze body" };
+            if ui
+                .button(label)
+                .on_hover_text("A frozen body keeps its shape; its features are not rebuilt")
+                .clicked()
+            {
+                result.commands.push(super::UiCommand::BodyEdit {
+                    body,
+                    edit: super::BodyEdit::Frozen(!frozen),
+                });
+                ui.close();
+            }
+        }
         ui.separator();
+        clipboard_entries(ui, options, node.id, result);
         if menu_entry(ui, "Delete", options.key("edit.delete")).clicked() {
             delete = true;
+            ui.close();
+        }
+        ui.separator();
+        if let Some(document) = document {
+            formula_entries(ui, document, feature_id, result);
+        }
+        if let Some(body) = body
+            && ui
+                .button("Recompute")
+                .on_hover_text("Build the feature's body again from its history")
+                .clicked()
+        {
+            result.commands.push(super::UiCommand::BodyEdit {
+                body,
+                edit: super::BodyEdit::Recompute,
+            });
+            ui.close();
+        }
+        if ui
+            .button("Send to console")
+            .on_hover_text("Put the feature in the script console's input")
+            .clicked()
+        {
+            result.local = Some(super::MenuLocal::Console(format!(
+                "pc.doc.feature{{id = \"{}\"}}",
+                feature_id.0
+            )));
+            ui.close();
+        }
+        if menu_entry(ui, "Properties", options.key("edit.properties")).clicked() {
+            result.local = Some(super::MenuLocal::Properties(
+                node.id,
+                super::property_panel::PropertyTab::Data,
+            ));
             ui.close();
         }
         bench_command = bench_menu_entries(ui, options, MenuScope::TreeFeature(feature_id));
@@ -1348,6 +1435,118 @@ fn attach_feature_menu(
         result.install_package = install;
     }
     response
+}
+
+/// Cut, Copy and Paste of a row: the row is selected, then the active
+/// bench's clipboard acts on it as the Edit menu's would.
+fn clipboard_entries(
+    ui: &mut Ui,
+    options: &TreeDrawOptions<'_>,
+    item: TreeItemId,
+    result: &mut TreeUiResult,
+) {
+    use super::EditCommand;
+    for (label, id, command) in [
+        ("Cut", "edit.cut", EditCommand::Cut),
+        ("Copy", "edit.copy", EditCommand::Copy),
+        ("Paste", "edit.paste", EditCommand::Paste),
+    ] {
+        if menu_entry(ui, label, options.key(id)).clicked() {
+            result.commands.push(super::UiCommand::SelectTreeItem(item));
+            result.commands.push(super::UiCommand::Edit(command));
+            ui.close();
+        }
+    }
+}
+
+/// "Move after", listing the other features of the feature's body.
+fn move_after_menu(
+    ui: &mut Ui,
+    document: &Document,
+    feature: FeatureId,
+    result: &mut TreeUiResult,
+) {
+    let Some(body) = document.get_feature_meta(feature).map(|n| n.body) else {
+        return;
+    };
+    let mut others: Vec<(u64, FeatureId, String)> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(id, n)| n.body == body && **id != feature)
+        .map(|(id, n)| (n.seq, *id, n.name.clone()))
+        .collect();
+    if others.is_empty() {
+        return;
+    }
+    others.sort();
+    ui.menu_button("Move after", |ui| {
+        egui::ScrollArea::vertical()
+            .max_height(320.0)
+            .show(ui, |ui| {
+                for (_, after, name) in &others {
+                    if ui.button(name).clicked() {
+                        result.commands.push(super::UiCommand::MoveFeatureAfter {
+                            feature,
+                            after: *after,
+                        });
+                        ui.close();
+                    }
+                }
+            });
+    });
+}
+
+/// The id egui keeps the copied formulas under.
+fn formula_clipboard() -> egui::Id {
+    egui::Id::new("tree_formula_clipboard")
+}
+
+/// Copy a feature's formulas, and paste the ones copied onto it.
+fn formula_entries(
+    ui: &mut Ui,
+    document: &Document,
+    feature: FeatureId,
+    result: &mut TreeUiResult,
+) {
+    let Some(node) = document.get_feature_meta(feature) else {
+        return;
+    };
+    let copied: Option<std::collections::BTreeMap<String, String>> =
+        ui.data(|d| d.get_temp(formula_clipboard()));
+    if node.formulas.is_empty() && copied.is_none() {
+        return;
+    }
+    ui.menu_button("Formulas", |ui| {
+        if ui
+            .add_enabled(
+                !node.formulas.is_empty(),
+                egui::Button::new("Copy formulas"),
+            )
+            .on_hover_text("Keep this feature's formulas to paste on another")
+            .clicked()
+        {
+            let formulas: std::collections::BTreeMap<String, String> = node
+                .formulas
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            ui.data_mut(|d| d.insert_temp(formula_clipboard(), formulas));
+            ui.close();
+        }
+        if let Some(formulas) = copied
+            && ui
+                .button(format!("Paste {} formula(s)", formulas.len()))
+                .on_hover_text(
+                    "Set the numbers this feature shares with the copied one by the same formulas",
+                )
+                .clicked()
+        {
+            result
+                .commands
+                .push(super::UiCommand::PasteFormulas { feature, formulas });
+            ui.close();
+        }
+    });
 }
 
 /// A menu entry with its key, if it has one, beside it.
@@ -1493,8 +1692,49 @@ fn attach_body_menu(
                 select = true;
                 ui.close();
             }
+            if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
+                result.local = Some(super::MenuLocal::Rename(node.id));
+                ui.close();
+            }
+            ui.separator();
+            let visible_label = if node.visible { "Hide" } else { "Show" };
+            if menu_entry(ui, visible_label, options.key("view.toggle_visibility")).clicked() {
+                if let Some(body) = node.body {
+                    result.commands.push(super::UiCommand::SetBodyVisible {
+                        body,
+                        visible: !node.visible,
+                    });
+                }
+                ui.close();
+            }
+            if menu_entry(ui, "Show only this", options.key("view.isolate")).clicked() {
+                result.commands.push(super::UiCommand::Isolate(node.body));
+                ui.close();
+            }
+            if menu_entry(ui, "Show all", options.key("view.show_all")).clicked() {
+                result.commands.push(super::UiCommand::ShowAllBodies);
+                ui.close();
+            }
             ui.separator();
         }
+        if let (Some(body), Some((document, _))) = (node.body, options.bench_menus) {
+            let mut local = None;
+            if super::body_menu::body_entries(
+                ui,
+                document,
+                body,
+                None,
+                &mut result.commands,
+                &mut local,
+            ) {
+                ui.close();
+            }
+            if local.is_some() {
+                result.local = local;
+            }
+            ui.separator();
+        }
+        clipboard_entries(ui, options, node.id, result);
         if menu_entry(ui, "Delete", options.key("edit.delete"))
             .on_hover_text("Remove this body, its features and its geometry")
             .clicked()

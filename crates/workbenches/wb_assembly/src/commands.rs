@@ -663,7 +663,11 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::List,
             "Only these bodies; every visible one when left out",
         )
-        .optional("density", ParamKind::Number, "g/cm³ (1 when left out)")
+        .optional(
+            "density",
+            ParamKind::Number,
+            "g/cm³ for bodies without a material (1 when left out)",
+        )
         .returns(
             "{mass (g), volume (mm³), centre = {x, y, z} or nil, bodies = {{body, mass, \
              volume, centre}, ...}, skipped}",
@@ -952,7 +956,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map(|b| {
                     json!({
                         "body": b.body.0.to_string(),
-                        "mass": b.volume_mm3 * density / 1000.0,
+                        "mass": b.mass_g(density),
                         "volume": b.volume_mm3,
                         "centre": b.centre,
                     })
@@ -961,7 +965,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Ok(json!({
                 "mass": report.mass_g(density),
                 "volume": report.volume_mm3(),
-                "centre": report.centre(),
+                "centre": report.centre(density),
                 "bodies": bodies,
                 "skipped": report.skipped,
             }))

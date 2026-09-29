@@ -123,6 +123,26 @@ pub enum DocumentOp {
         id: crate::ComponentId,
         component: Option<crate::Component>,
     },
+    /// A body kept as it stands, or let rebuild.
+    SetBodyFrozen {
+        id: BodyId,
+        frozen: bool,
+    },
+    SetBodySelectable {
+        id: BodyId,
+        selectable: bool,
+    },
+    SetBodyMaterial {
+        id: BodyId,
+        material: Option<crate::Material>,
+    },
+    /// A face's own colour, `None` to take it away. `face` names the face;
+    /// its colour field is not read.
+    SetFaceColor {
+        id: BodyId,
+        face: crate::FaceColor,
+        color: Option<[f32; 3]>,
+    },
     /// A body put in a component, or at the top for `None`.
     SetBodyComponent {
         id: BodyId,

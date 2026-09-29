@@ -187,7 +187,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 `pc.doc.bodies`: List the bodies.
 
-- Returns a list of {id, name, visible, features}
+- Returns a list of {id, name, visible, frozen, selectable, material, features}
 
 `pc.doc.features`: List the features in build order.
 
@@ -216,6 +216,38 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - `id` (id)
 - `name` (string)
+
+`pc.doc.set_body`: Change a body: its colour, how much shows through, material, placement, whether it is frozen or clicks pick it.
+
+- `body` (id)
+- `color` (any, optional): {r, g, b} from 0 to 1, or nil for the colour it came with
+- `opacity` (number, optional): 1 solid, less to see through
+- `material` (any, optional): {name, density} with the density in g/cm³, or nil for none
+- `frozen` (boolean, optional): Keep it as it stands: its features are not rebuilt until it thaws
+- `selectable` (boolean, optional): false lets clicks pass through it
+- `face_colors` (list, optional): An empty list gives every face the body's colour again
+- `translation` (any, optional): {x, y, z}: where its origin goes; bodies moving as one with it follow
+- `rotation` (any, optional): {x, y, z, w}: its turn as a quaternion
+
+`pc.doc.set_face_color`: Colour one face of a body, over the body's colour.
+
+- `body` (id)
+- `face` (integer): The face, as doc.faces numbers it from 0
+- `color` (any, optional): {r, g, b} from 0 to 1, or nil for the body's colour
+
+`pc.doc.linked_copy`: A linked copy of a body beside it: the same shape, following every change.
+
+- `body` (id)
+- Returns the copy's id
+
+`pc.doc.move_after`: Move a feature in its body's history to just after another.
+
+- `id` (id): The feature
+- `after` (id): The feature it goes after
+
+`pc.doc.recompute`: Build a body again from its history.
+
+- `body` (id)
 
 `pc.doc.set_visible`: Show or hide a body or a feature.
 
@@ -428,6 +460,10 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.edit.copy`: Copy.
 
 `pc.edit.paste`: Paste.
+
+`pc.edit.rename`: Rename the selected item.
+
+`pc.edit.properties`: Properties of the selected item.
 
 `pc.edit.recompute`: Recompute all.
 
@@ -1458,7 +1494,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.asm.mass`: The mass and centre of mass of the solid bodies at one density.
 
 - `bodies` (list, optional): Only these bodies; every visible one when left out
-- `density` (number, optional): g/cm³ (1 when left out)
+- `density` (number, optional): g/cm³ for bodies without a material (1 when left out)
 - Returns {mass (g), volume (mm³), centre = {x, y, z} or nil, bodies = {{body, mass, volume, centre}, ...}, skipped}
 
 `pc.asm.parts`: Every part: bodies of the same shape counted together.

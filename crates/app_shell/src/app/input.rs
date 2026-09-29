@@ -515,9 +515,24 @@ impl PrintCadApp {
         };
         let vp = self.session.camera.viewport_info();
         let scale = gfx.window.scale_factor() as f32;
+        let face = self
+            .session
+            .hovered_face
+            .as_ref()
+            .filter(|hover| Some(hover.body) == body)
+            .map(|hover| {
+                let name = self
+                    .session
+                    .document
+                    .imported_geometry(core_document::BodyId(hover.body))
+                    .and_then(|g| g.mesh.face_names.get(hover.face as usize).copied())
+                    .unwrap_or(0);
+                (hover.face, name)
+            });
         self.session.viewport_menu = body.map(|body| crate::ui::ViewportMenu {
             body: core_document::BodyId(body),
             at: [(vp.0 + cx) / scale, (vp.1 + cy) / scale],
+            face,
         });
         true
     }

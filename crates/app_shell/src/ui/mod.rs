@@ -27,7 +27,9 @@ mod task_panel;
 pub(crate) mod toolbar;
 mod view_toolbar;
 
-pub use commands::{ConfigEdit, EditCommand, FileCommand, StartKind, UiCommand};
+mod body_menu;
+pub use body_menu::MenuLocal;
+pub use commands::{BodyEdit, ConfigEdit, EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
 pub use inputs::{HoverCard, Physical, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
@@ -111,9 +113,38 @@ pub struct UiLayer {
     variables: variables_view::VariablesState,
     /// The tree's share of the left column, as its divider was dragged.
     tree_share: f32,
+    /// The placement dialog, while open.
+    placement: Option<body_menu::PlacementDraft>,
 }
 
 impl UiLayer {
+    /// Act on a menu entry that changes the window: a page of the property
+    /// panel, a rename, the console's input, the placement dialog.
+    fn apply_local(
+        &mut self,
+        ctx: &Context,
+        local: MenuLocal,
+        document: &core_document::Document,
+        commands: &mut Vec<UiCommand>,
+    ) {
+        match local {
+            MenuLocal::Properties(item, tab) => {
+                commands.push(UiCommand::SelectTreeItem(item));
+                self.property_tab = tab;
+            }
+            MenuLocal::Rename(item) => {
+                commands.push(UiCommand::SelectTreeItem(item));
+                self.property_tab = property_panel::PropertyTab::Data;
+                self.rename_buffer = None;
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new(property_panel::FOCUS_LABEL), true));
+            }
+            MenuLocal::Console(text) => self.console.insert(&text),
+            MenuLocal::Placement(body) => {
+                self.placement = Some(body_menu::PlacementDraft::of(document, body));
+            }
+        }
+    }
+
     pub fn new(window: &Window) -> Self {
         let ctx = Context::default();
         ui_kit::apply_theme(&ctx);
@@ -146,6 +177,7 @@ impl UiLayer {
             console: console_view::ConsoleState::load(),
             assistant: Default::default(),
             variables: Default::default(),
+            placement: None,
             tree_share: combo_view::TREE_SHARE,
         }
     }
@@ -310,6 +342,9 @@ impl UiLayer {
             self.workbench_keys = Some(workbench_keys);
         }
 
+        // Menu entries that change the window, acted on once the frame is
+        // drawn.
+        let mut locals: Vec<MenuLocal> = Vec::new();
         let full_output = self.ctx.run_ui(raw_input, |ui| {
             // Shortcuts first, so their keys never reach a widget. They hold
             // their fire while a dialog of their own has the keyboard.
@@ -338,6 +373,9 @@ impl UiLayer {
                                 keymap::HostOutcome::OpenPalette => self.palette.open(),
                                 keymap::HostOutcome::ToggleConsole => self.console.toggle(),
                                 keymap::HostOutcome::ToggleAssistant => self.assistant.toggle(),
+                                keymap::HostOutcome::Local(local) => {
+                                    locals.push(local);
+                                }
                                 keymap::HostOutcome::OpenPreferences => {
                                     let (group, tab) =
                                         (self.preferences.group, self.preferences.tab);
@@ -624,6 +662,9 @@ impl UiLayer {
                 commands.push(UiCommand::ConvertToSolid(bodies));
             }
             commands.extend(combo.commands);
+            if let Some(local) = combo.local {
+                locals.push(local);
+            }
             if let Some((feature, parameter, edit)) = combo.parameter {
                 commands.push(UiCommand::SetParameter {
                     feature,
@@ -723,8 +764,21 @@ impl UiLayer {
                 &footer,
             );
             if let Some(menu) = &viewport_menu {
-                context_menu::draw(ui.ctx(), menu, document, registry, &keymap, &mut commands);
+                let mut local = None;
+                context_menu::draw(
+                    ui.ctx(),
+                    menu,
+                    document,
+                    registry,
+                    &keymap,
+                    &mut commands,
+                    &mut local,
+                );
+                if let Some(local) = local {
+                    locals.push(local);
+                }
             }
+            body_menu::placement_window(ui.ctx(), &mut self.placement, document, &mut commands);
             if let Some(card) = &hover_card {
                 hud::draw_hover_card(
                     ui.ctx(),
@@ -785,6 +839,10 @@ impl UiLayer {
             {
                 toolbar::activate_tool(&mut active_tool, tools, tool, &id);
             }
+        }
+        let ctx = self.ctx.clone();
+        for local in locals {
+            self.apply_local(&ctx, local, document, &mut commands);
         }
         let workbench_changed = active_workbench != prev_workbench;
         if workbench_changed && plain_switch {

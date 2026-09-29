@@ -1253,7 +1253,7 @@ impl AssemblyWorkbench {
             "Volume",
             core_document::format_volume_mm3(report.volume_mm3(), unit, 2),
         );
-        if let Some(c) = report.centre() {
+        if let Some(c) = report.centre(density) {
             let f = |v: f64| core_document::format_length_mm(v as f32, unit, 2);
             line(
                 ui,

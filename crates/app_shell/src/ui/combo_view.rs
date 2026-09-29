@@ -37,6 +37,8 @@ pub struct ComboViewResult {
     /// Edits of variables and configurations, and what the tree's
     /// document row made.
     pub commands: Vec<super::UiCommand>,
+    /// A tree menu entry that changes the window.
+    pub local: Option<super::MenuLocal>,
     pub parameter: Option<(
         core_document::FeatureId,
         core_document::Parameter,
@@ -206,6 +208,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     result.details = tree_ui.details;
                     result.convert = tree_ui.convert;
                     result.commands.extend(tree_ui.commands);
+                    result.local = tree_ui.local;
                     if let Some(repo) = tree_ui.install_package {
                         result
                             .commands

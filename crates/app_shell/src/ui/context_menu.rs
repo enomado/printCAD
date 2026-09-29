@@ -20,6 +20,9 @@ const MENU_WIDTH: f32 = 150.0;
 pub struct ViewportMenu {
     pub body: core_document::BodyId,
     pub at: [f32; 2],
+    /// The face it was opened on, when there was one: its index in the
+    /// body's mesh and its name.
+    pub face: Option<(u32, kernel_api::naming::TopoName)>,
 }
 
 pub fn draw(
@@ -29,6 +32,7 @@ pub fn draw(
     registry: &core_document::DocumentService,
     keymap: &Keymap,
     commands: &mut Vec<UiCommand>,
+    local: &mut Option<super::MenuLocal>,
 ) {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         commands.push(UiCommand::CloseViewportMenu);
@@ -120,6 +124,12 @@ pub fn draw(
                     commands.push(UiCommand::ShowAllBodies);
                     commands.push(UiCommand::CloseViewportMenu);
                 }
+                ui.separator();
+                if super::body_menu::body_entries(
+                    ui, document, menu.body, menu.face, commands, local,
+                ) {
+                    commands.push(UiCommand::CloseViewportMenu);
+                }
                 // What the benches offer for this body, after the host's
                 // own entries.
                 let scope = core_document::MenuScope::ViewportBody(menu.body);
@@ -163,7 +173,11 @@ pub fn draw(
             && i.pointer
                 .interact_pos()
                 .is_some_and(|p| !response.response.rect.contains(p))
-    });
+    }) && !ctx
+        .input(|i| i.pointer.interact_pos())
+        .and_then(|p| ctx.layer_id_at(p))
+        // A submenu the menu opened lies outside it, above the view.
+        .is_some_and(|layer| layer.order >= Order::Foreground);
     if pressed_elsewhere {
         commands.push(UiCommand::CloseViewportMenu);
     }

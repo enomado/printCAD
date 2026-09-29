@@ -51,6 +51,16 @@ impl ConsoleState {
         }
     }
 
+    /// Open the console with `text` added to what is being typed.
+    pub fn insert(&mut self, text: &str) {
+        if !self.input.is_empty() && !self.input.ends_with([' ', '\n', '(', '{', ',']) {
+            self.input.push(' ');
+        }
+        self.input.push_str(text);
+        self.open = true;
+        self.focus = true;
+    }
+
     pub fn toggle(&mut self) {
         self.open = !self.open;
         self.focus = self.open;

@@ -501,6 +501,14 @@ fn data_groups(
                     PropRow::text("Label", &body.name),
                     PropRow::mono("Features", features.to_string()),
                     PropRow::text(
+                        "Material",
+                        body.material.as_ref().map_or("None".to_string(), |m| {
+                            format!("{} ({:.2} g/cm³)", m.name, m.density)
+                        }),
+                    ),
+                    PropRow::text("Frozen", if body.frozen { "Yes" } else { "No" }),
+                    PropRow::text("Selectable", if body.unselectable { "No" } else { "Yes" }),
+                    PropRow::text(
                         "Tip",
                         body.tip
                             .and_then(|t| document.get_feature_meta(t))
@@ -737,7 +745,15 @@ pub fn draw_property_panel(
                 }
                 let mut groups = data_groups(document, registry, selected);
                 if let Some(physical) = physical {
-                    groups.push(physical_group(physical, document.display_unit()));
+                    let body = match selected {
+                        TreeItemId::Body(id) => Some(id),
+                        TreeItemId::ImportedObject(id) => document.body_of_imported_object(id),
+                        _ => None,
+                    };
+                    let material = body
+                        .and_then(|b| document.bodies().iter().find(|x| x.id == b))
+                        .and_then(|b| b.material.as_ref());
+                    groups.push(physical_group(physical, document.display_unit(), material));
                 }
                 for (group, rows) in groups {
                     group_header(ui, &group);
@@ -777,7 +793,11 @@ pub fn draw_property_panel(
 
 /// Volume, surface area and centre of mass (one row per axis, since a
 /// value column holds one length), in the display unit.
-fn physical_group(physical: &super::Physical, unit: Unit) -> (String, Vec<PropRow>) {
+fn physical_group(
+    physical: &super::Physical,
+    unit: Unit,
+    material: Option<&core_document::Material>,
+) -> (String, Vec<PropRow>) {
     let rows = match physical {
         super::Physical::Measuring => vec![PropRow::text("Measure", "Measuring…").dim(true)],
         super::Physical::Failed(why) => {
@@ -811,9 +831,27 @@ fn physical_group(physical: &super::Physical, unit: Unit) -> (String, Vec<PropRo
                 PropRow::mono("Centre Y", length(props.centre_mm[1])),
                 PropRow::mono("Centre Z", length(props.centre_mm[2])),
             ]
+            .into_iter()
+            .chain(material.zip(props.volume_mm3).map(|(m, v)| {
+                // mm³ to cm³, times g/cm³.
+                PropRow::mono(
+                    "Mass",
+                    format!("{about}{}", format_mass(v / 1000.0 * f64::from(m.density))),
+                )
+            }))
+            .collect()
         }
     };
     ("Physical".to_string(), rows)
+}
+
+/// A mass in grams, or kilograms from a thousand.
+fn format_mass(grams: f64) -> String {
+    if grams >= 1000.0 {
+        format!("{:.3} kg", grams / 1000.0)
+    } else {
+        format!("{grams:.2} g")
+    }
 }
 
 fn group_header(ui: &mut egui::Ui, title: &str) {
@@ -885,6 +923,9 @@ fn value_row(ui: &mut egui::Ui, row: &PropRow) {
 }
 
 /// The Label row edits the item's name in place.
+/// The key under which a rename asks the Label row for the keyboard.
+pub const FOCUS_LABEL: &str = "property_label_focus";
+
 fn label_row(
     ui: &mut egui::Ui,
     selected: TreeItemId,
@@ -915,6 +956,22 @@ fn label_row(
             .frame(egui::Frame::NONE)
             .font(sans(FONT_SM)),
     );
+    // Rename (F2 or a menu) puts the name up for editing here.
+    let focus_id = egui::Id::new(FOCUS_LABEL);
+    if ui
+        .data_mut(|d| d.remove_temp::<bool>(focus_id))
+        .unwrap_or(false)
+    {
+        resp.request_focus();
+        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+            let all = egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(text.chars().count()),
+            );
+            state.cursor.set_char_range(Some(all));
+            state.store(ui.ctx(), resp.id);
+        }
+    }
     if resp.changed() {
         *rename_buffer = Some((selected, text.clone()));
     }
@@ -1100,7 +1157,7 @@ mod tests {
             centre_mm: [10.0, 20.0, 30.0],
             approximate: false,
         };
-        let (title, rows) = physical_group(&crate::ui::Physical::Ready(props), Unit::Cm);
+        let (title, rows) = physical_group(&crate::ui::Physical::Ready(props), Unit::Cm, None);
         assert_eq!(title, "Physical");
         let value = |name: &str| {
             rows.iter()
@@ -1113,12 +1170,24 @@ mod tests {
         assert_eq!(value("Centre X"), "1.00 cm");
         assert_eq!(value("Centre Y"), "2.00 cm");
         assert_eq!(value("Centre Z"), "3.00 cm");
+        assert!(
+            rows.iter().all(|r| r.name != "Mass"),
+            "no material, no mass"
+        );
+        // 8 cm³ of PLA.
+        let pla = core_document::Material {
+            name: "PLA".into(),
+            density: 1.25,
+        };
+        let (_, rows) = physical_group(&crate::ui::Physical::Ready(props), Unit::Cm, Some(&pla));
+        let mass = rows.iter().find(|r| r.name == "Mass").unwrap();
+        assert_eq!(mass.value, "10.00 g");
 
         let open = kernel_api::PhysicalProperties {
             volume_mm3: None,
             ..props
         };
-        let (_, rows) = physical_group(&crate::ui::Physical::Ready(open), Unit::Mm);
+        let (_, rows) = physical_group(&crate::ui::Physical::Ready(open), Unit::Mm, None);
         assert_eq!(rows[0].value, "encloses none");
     }
 

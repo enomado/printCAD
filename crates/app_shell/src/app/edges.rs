@@ -121,7 +121,9 @@ impl PrintCadApp {
         let document = &self.session.document;
         let mut best: Option<(SegmentHit, Uuid, &TriMesh)> = None;
         for (body_id, geometry) in document.imported_geometries() {
-            if !document.imported_body_effective_visible(*body_id) {
+            if !document.imported_body_effective_visible(*body_id)
+                || !document.body_selectable(*body_id)
+            {
                 continue;
             }
             let mesh = &*geometry.mesh;

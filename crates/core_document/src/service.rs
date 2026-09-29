@@ -437,6 +437,8 @@ impl DocumentService {
                 }
             }
         }
+        // A frozen body keeps what it has.
+        jobs.retain(|job| !document.body_frozen(job.body));
         jobs
     }
 

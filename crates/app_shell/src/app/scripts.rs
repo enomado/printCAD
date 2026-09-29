@@ -42,7 +42,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .param("rules", ParamKind::String, "The rules, as plain text")
         .agent_never("only the user sets the rules an agent keeps to"),
         CommandSpec::new("doc.bodies", "List the bodies")
-            .returns("a list of {id, name, visible, features}")
+            .returns("a list of {id, name, visible, frozen, selectable, material, features}")
             .read_only(),
         CommandSpec::new("doc.features", "List the features in build order")
             .optional("body", ParamKind::Id, "Only this body's")
@@ -69,6 +69,80 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         CommandSpec::new("doc.rename", "Rename a body or a feature")
             .param("id", ParamKind::Id, "")
             .param("name", ParamKind::String, ""),
+        CommandSpec::new(
+            "doc.set_body",
+            "Change a body: its colour, how much shows through, material, placement, whether \
+             it is frozen or clicks pick it",
+        )
+        .param("body", ParamKind::Id, "")
+        .optional(
+            "color",
+            ParamKind::Any,
+            "{r, g, b} from 0 to 1, or nil for the colour it came with",
+        )
+        .optional("opacity", ParamKind::Number, "1 solid, less to see through")
+        .optional(
+            "material",
+            ParamKind::Any,
+            "{name, density} with the density in g/cm³, or nil for none",
+        )
+        .optional(
+            "frozen",
+            ParamKind::Bool,
+            "Keep it as it stands: its features are not rebuilt until it thaws",
+        )
+        .optional(
+            "selectable",
+            ParamKind::Bool,
+            "false lets clicks pass through it",
+        )
+        .optional(
+            "face_colors",
+            ParamKind::List,
+            "An empty list gives every face the body's colour again",
+        )
+        .optional(
+            "translation",
+            ParamKind::Any,
+            "{x, y, z}: where its origin goes; bodies moving as one with it follow",
+        )
+        .optional(
+            "rotation",
+            ParamKind::Any,
+            "{x, y, z, w}: its turn as a quaternion",
+        ),
+        CommandSpec::new(
+            "doc.set_face_color",
+            "Colour one face of a body, over the body's colour",
+        )
+        .param("body", ParamKind::Id, "")
+        .param(
+            "face",
+            ParamKind::Integer,
+            "The face, as doc.faces numbers it from 0",
+        )
+        .optional(
+            "color",
+            ParamKind::Any,
+            "{r, g, b} from 0 to 1, or nil for the body's colour",
+        ),
+        CommandSpec::new(
+            "doc.linked_copy",
+            "A linked copy of a body beside it: the same shape, following every change",
+        )
+        .param("body", ParamKind::Id, "")
+        .returns("the copy's id"),
+        CommandSpec::new(
+            "doc.move_after",
+            "Move a feature in its body's history to just after another",
+        )
+        .param("id", ParamKind::Id, "The feature")
+        .param("after", ParamKind::Id, "The feature it goes after"),
+        CommandSpec::new("doc.recompute", "Build a body again from its history").param(
+            "body",
+            ParamKind::Id,
+            "",
+        ),
         CommandSpec::new("doc.set_visible", "Show or hide a body or a feature")
             .param("id", ParamKind::Id, "")
             .param("visible", ParamKind::Bool, ""),
@@ -1138,6 +1212,41 @@ impl PrintCadApp {
 /// What a host UI command does, as the command a recording says it with:
 /// renaming, showing or hiding and deleting tree rows. The benches record
 /// their own.
+/// The command a body menu's edit runs, and its arguments.
+pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'static str, Value) {
+    use crate::ui::BodyEdit;
+    let id = body.0.to_string();
+    match edit {
+        BodyEdit::Frozen(frozen) => ("doc.set_body", json!({"body": id, "frozen": frozen})),
+        BodyEdit::Selectable(selectable) => (
+            "doc.set_body",
+            json!({"body": id, "selectable": selectable}),
+        ),
+        BodyEdit::Material(material) => (
+            "doc.set_body",
+            json!({"body": id, "material": material.as_ref().map(|m| json!({
+                "name": m.name,
+                "density": m.density,
+            }))}),
+        ),
+        BodyEdit::FaceColor { index, color, .. } => (
+            "doc.set_face_color",
+            json!({"body": id, "face": index, "color": color}),
+        ),
+        BodyEdit::ClearFaceColors => ("doc.set_body", json!({"body": id, "face_colors": []})),
+        BodyEdit::Place(placement) => (
+            "doc.set_body",
+            json!({
+                "body": id,
+                "translation": placement.translation,
+                "rotation": placement.rotation,
+            }),
+        ),
+        BodyEdit::LinkedCopy => ("doc.linked_copy", json!({"body": id})),
+        BodyEdit::Recompute => ("doc.recompute", json!({"body": id})),
+    }
+}
+
 pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_document::Recorded> {
     use crate::ui::{TreeFeatureCommand, UiCommand};
     let call = |id: &str, args: Value| core_document::Recorded {
@@ -1205,6 +1314,25 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
                 json!({"id": id.to_string(), "name": name}),
             ))
         }
+        UiCommand::BodyEdit { body, edit } => {
+            let (id, args) = body_edit_call(*body, edit);
+            Some(call(id, args))
+        }
+        UiCommand::SetBodyDisplay { body, display } => Some(call(
+            "doc.set_body",
+            match display {
+                Some(d) => json!({
+                    "body": body.0.to_string(),
+                    "color": d.color,
+                    "opacity": d.opacity,
+                }),
+                None => json!({"body": body.0.to_string(), "color": Value::Null}),
+            },
+        )),
+        UiCommand::MoveFeatureAfter { feature, after } => Some(call(
+            "doc.move_after",
+            json!({"id": feature.0.to_string(), "after": after.0.to_string()}),
+        )),
         UiCommand::SetBodyVisible { body, visible } => Some(call(
             "doc.set_visible",
             json!({"id": body.0.to_string(), "visible": visible}),
@@ -1347,6 +1475,12 @@ pub(crate) fn document_command(
                         "id": b.id.0.to_string(),
                         "name": b.name,
                         "visible": !b.hidden,
+                        "frozen": b.frozen,
+                        "selectable": !b.unselectable,
+                        "material": b.material.as_ref().map(|m| json!({
+                            "name": m.name,
+                            "density": m.density,
+                        })),
                         "features": features_in_order(document, Some(b.id))
                             .iter()
                             .map(|n| n.id.0.to_string())
@@ -1415,11 +1549,89 @@ pub(crate) fn document_command(
             }
             Ok(json!(body.0.to_string()))
         }
+        "doc.set_body" => {
+            let body = body_arg(document, &a)?;
+            set_body(document, registry, body, &a)?;
+            Ok(Value::Null)
+        }
+        "doc.set_face_color" => {
+            let body = body_arg(document, &a)?;
+            let index = a.number("face")? as i64;
+            let mesh = document
+                .imported_geometry(body)
+                .map(|g| std::sync::Arc::clone(&g.mesh))
+                .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
+            let faces = mesh.faces.iter().map(|f| *f as i64 + 1).max().unwrap_or(0);
+            if index < 0 || index >= faces {
+                return Err(CommandError::bad(
+                    "face",
+                    format!("is not one of its {faces} faces"),
+                ));
+            }
+            let index = index as u32;
+            let name = mesh.face_names.get(index as usize).copied().unwrap_or(0);
+            let color = match a.0.get("color") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(color_arg(v, "color")?),
+            };
+            // A colour kept for this face under an older index goes.
+            let stale: Vec<core_document::FaceColor> = document
+                .bodies()
+                .iter()
+                .filter(|b| b.id == body)
+                .flat_map(|b| b.face_colors.iter().copied())
+                .filter(|c| c.is_face(&mesh, index) && (c.index, c.name) != (index, name))
+                .collect();
+            for c in stale {
+                document.set_face_color(body, c.index, c.name, None);
+            }
+            document.set_face_color(body, index, name, color);
+            Ok(Value::Null)
+        }
+        "doc.linked_copy" => {
+            let body = body_arg(document, &a)?;
+            let copy = document
+                .create_linked_copy(body, None)
+                .ok_or_else(|| CommandError::failed("that body cannot be copied"))?;
+            // Beside the original, clear of it along X.
+            let width = document
+                .imported_geometry(body)
+                .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
+                .map_or(10.0, |(lo, hi)| hi[0] - lo[0]);
+            let at = document.body_placement(body);
+            document.set_body_placement(
+                copy,
+                core_document::BodyPlacement::new(
+                    at.quat(),
+                    at.offset() + glam::Vec3::X * (width + 10.0),
+                ),
+            );
+            Ok(json!(copy.0.to_string()))
+        }
+        "doc.move_after" => {
+            let feature = FeatureId(a.id("id")?);
+            let after = FeatureId(a.id("after")?);
+            move_after(document, feature, after).map_err(CommandError::failed)?;
+            Ok(Value::Null)
+        }
+        "doc.recompute" => {
+            let body = body_arg(document, &a)?;
+            registry.invalidate_body(document, body);
+            Ok(Value::Null)
+        }
         "doc.rename" => {
             let name = a.string("name")?.to_string();
             match tree_item(document, a.id("id")?)? {
                 TreeItemId::Body(body) => document.rename_body(body, name),
                 TreeItemId::Feature(feature) => document.rename_feature(feature, name),
+                TreeItemId::Component(id) => {
+                    if let Some(mut component) = document.component(id).cloned() {
+                        component.name = name;
+                        document
+                            .update_component(component)
+                            .map_err(|e| CommandError::failed(e.to_string()))?;
+                    }
+                }
                 _ => return Err(CommandError::bad("id", "cannot be renamed")),
             }
             Ok(Value::Null)
@@ -1711,6 +1923,169 @@ pub(crate) fn set_tip(
     document.set_body_tip(body, tip);
     // The chain changes shape: rebuild from the first feature.
     registry.invalidate_body(document, body);
+    Ok(())
+}
+
+/// A colour given as {r, g, b} (or a list of three), each 0 to 1.
+fn color_arg(value: &Value, name: &str) -> Result<[f32; 3], CommandError> {
+    let part = |key: &str, i: usize| {
+        value
+            .get(key)
+            .or_else(|| value.get(i))
+            .and_then(Value::as_f64)
+            .map(|v| v.clamp(0.0, 1.0) as f32)
+    };
+    match (part("r", 0), part("g", 1), part("b", 2)) {
+        (Some(r), Some(g), Some(b)) => Ok([r, g, b]),
+        _ => Err(CommandError::bad(name, "is {r, g, b}, each from 0 to 1")),
+    }
+}
+
+/// Numbers given as a table of named parts or a list, in `keys` order.
+fn numbers_arg<const N: usize>(
+    value: &Value,
+    name: &str,
+    keys: [&str; N],
+) -> Result<[f32; N], CommandError> {
+    let mut out = [0.0f32; N];
+    for (i, key) in keys.iter().enumerate() {
+        out[i] = value
+            .get(*key)
+            .or_else(|| value.get(i))
+            .and_then(Value::as_f64)
+            .ok_or_else(|| CommandError::bad(name, format!("is {{{}}}", keys.join(", "))))?
+            as f32;
+    }
+    Ok(out)
+}
+
+/// What `doc.set_body` changes, each named field in turn.
+fn set_body(
+    document: &mut core_document::Document,
+    registry: &core_document::DocumentService,
+    body: BodyId,
+    a: &Args,
+) -> Result<(), CommandError> {
+    let entry = document
+        .bodies()
+        .iter()
+        .find(|b| b.id == body)
+        .cloned()
+        .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
+    let color = a.0.get("color");
+    let opacity = a.opt_number("opacity")?;
+    if color.is_some() || opacity.is_some() {
+        let display = match color {
+            Some(Value::Null) if opacity.is_none() => None,
+            _ => {
+                let mut display = entry.display.unwrap_or_default();
+                if let Some(v) = color.filter(|v| !v.is_null()) {
+                    display.color = color_arg(v, "color")?;
+                }
+                if let Some(o) = opacity {
+                    display.opacity = o.clamp(0.05, 1.0) as f32;
+                }
+                Some(display)
+            }
+        };
+        document.set_body_display(body, display);
+    }
+    match a.0.get("material") {
+        None => {}
+        Some(Value::Null) => document.set_body_material(body, None),
+        Some(v) => {
+            let name = v
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Material")
+                .to_string();
+            let density = v
+                .get("density")
+                .and_then(Value::as_f64)
+                .filter(|d| *d > 0.0)
+                .ok_or_else(|| CommandError::bad("material", "needs a density above 0, g/cm³"))?;
+            document.set_body_material(
+                body,
+                Some(core_document::Material {
+                    name,
+                    density: density as f32,
+                }),
+            );
+        }
+    }
+    if let Some(frozen) = a.opt_bool("frozen")? {
+        document.set_body_frozen(body, frozen);
+        if !frozen && entry.frozen {
+            // What changed while it was frozen builds now.
+            registry.invalidate_body(document, body);
+        }
+    }
+    if let Some(selectable) = a.opt_bool("selectable")? {
+        document.set_body_selectable(body, selectable);
+    }
+    match a.0.get("face_colors") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(list)) if list.is_empty() => {
+            for c in &entry.face_colors {
+                document.set_face_color(body, c.index, c.name, None);
+            }
+        }
+        Some(_) => {
+            return Err(CommandError::bad(
+                "face_colors",
+                "takes only an empty list; doc.set_face_color colours a face",
+            ));
+        }
+    }
+    let translation = a.0.get("translation").filter(|v| !v.is_null());
+    let rotation = a.0.get("rotation").filter(|v| !v.is_null());
+    if translation.is_some() || rotation.is_some() {
+        let now = document.body_placement(body);
+        let offset = match translation {
+            Some(v) => glam::Vec3::from_array(numbers_arg(v, "translation", ["x", "y", "z"])?),
+            None => now.offset(),
+        };
+        let turn = match rotation {
+            Some(v) => glam::Quat::from_array(numbers_arg(v, "rotation", ["x", "y", "z", "w"])?)
+                .normalize(),
+            None => now.quat(),
+        };
+        document.place_with_unit(body, core_document::BodyPlacement::new(turn, offset));
+    }
+    Ok(())
+}
+
+/// Move `feature` along its body's history, a step at a time as Move up
+/// and down go, until it sits right after `after`.
+pub(crate) fn move_after(
+    document: &mut core_document::Document,
+    feature: FeatureId,
+    after: FeatureId,
+) -> Result<(), String> {
+    let history = |document: &core_document::Document| {
+        let body = document.get_feature_meta(feature).map(|n| n.body);
+        let mut nodes: Vec<(u64, FeatureId)> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| Some(n.body) == body)
+            .map(|(id, n)| (n.seq, *id))
+            .collect();
+        nodes.sort();
+        nodes.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+    };
+    let steps = history(document).len();
+    for _ in 0..steps {
+        let order = history(document);
+        let at = order.iter().position(|f| *f == feature);
+        let target = order.iter().position(|f| *f == after);
+        let (Some(at), Some(target)) = (at, target) else {
+            return Err("the two features are not in one body".into());
+        };
+        if at == target + 1 {
+            return Ok(());
+        }
+        move_in_history(document, feature, at > target)?;
+    }
     Ok(())
 }
 
@@ -2106,6 +2481,141 @@ mod tests {
         )
         .unwrap();
         assert_eq!(doc.bodies()[0].tip, None);
+    }
+
+    #[test]
+    fn a_body_menu_s_edits_are_commands() {
+        let registry = core_document::DocumentService::default();
+        let mut doc = core_document::Document::new("t");
+        let body = doc.create_body(None);
+        let mesh = kernel_api::TriMesh {
+            positions: vec![[0.0; 3], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [4.0, 4.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            indices: vec![0, 1, 2, 1, 3, 2],
+            faces: vec![0, 1],
+            face_names: vec![11, 12],
+            ..Default::default()
+        };
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(mesh),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let run = |doc: &mut core_document::Document, id: &str, args: Value| {
+            let args = match args {
+                Value::Object(map) => map,
+                _ => CommandArgs::new(),
+            };
+            doc_commands()
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .check(&args)
+                .unwrap();
+            document_command(id, &args, doc, &registry, None).unwrap()
+        };
+        let id = body.0.to_string();
+        run(
+            &mut doc,
+            "doc.set_body",
+            json!({"body": id, "frozen": true, "selectable": false, "opacity": 0.5,
+                   "material": {"name": "PETG", "density": 1.27},
+                   "translation": [1, 2, 3]}),
+        )
+        .unwrap();
+        let entry = doc.bodies()[0].clone();
+        assert!(entry.frozen && entry.unselectable);
+        assert_eq!(entry.display.unwrap().opacity, 0.5);
+        assert_eq!(entry.material.unwrap().name, "PETG");
+        assert_eq!(entry.placement.translation, [1.0, 2.0, 3.0]);
+        run(
+            &mut doc,
+            "doc.set_face_color",
+            json!({"body": id, "face": 1, "color": {"r": 1, "g": 0, "b": 0}}),
+        )
+        .unwrap();
+        assert_eq!(doc.bodies()[0].face_colors[0].name, 12);
+        assert!(
+            run(
+                &mut doc,
+                "doc.set_face_color",
+                json!({"body": id, "face": 5})
+            )
+            .is_err(),
+            "a face the body lacks"
+        );
+        run(
+            &mut doc,
+            "doc.set_body",
+            json!({"body": id, "face_colors": []}),
+        )
+        .unwrap();
+        assert!(doc.bodies()[0].face_colors.is_empty());
+        let copy = run(&mut doc, "doc.linked_copy", json!({"body": id})).unwrap();
+        let copy = BodyId(uuid::Uuid::parse_str(copy.as_str().unwrap()).unwrap());
+        assert_eq!(
+            doc.bodies().iter().find(|b| b.id == copy).unwrap().copy_of,
+            Some(body)
+        );
+        assert!(
+            doc.body_placement(copy).translation[0] > 4.0,
+            "beside the original"
+        );
+        // What the menus record is a call a script can make.
+        for edit in [
+            crate::ui::BodyEdit::Frozen(false),
+            crate::ui::BodyEdit::Selectable(true),
+            crate::ui::BodyEdit::Material(None),
+            crate::ui::BodyEdit::ClearFaceColors,
+            crate::ui::BodyEdit::Place(core_document::BodyPlacement::IDENTITY),
+            crate::ui::BodyEdit::Recompute,
+        ] {
+            let (id, args) = body_edit_call(body, &edit);
+            run(&mut doc, id, args).unwrap();
+        }
+        assert!(!doc.bodies()[0].frozen);
+    }
+
+    #[test]
+    fn features_move_after_another() {
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let mut doc = core_document::Document::new("t");
+        let body = doc.create_body(None);
+        let ids: Vec<FeatureId> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|name| {
+                doc.add_feature_in_body(
+                    core_document::DatumFeature {
+                        shape: core_document::DatumShape::Point,
+                        attachment: core_document::DatumAttachment::BasePlane(
+                            core_document::BasePlane::XY,
+                        ),
+                        offset: Default::default(),
+                    },
+                    name.to_string(),
+                    Some(body),
+                )
+                .unwrap()
+            })
+            .collect();
+        let order = |doc: &core_document::Document| -> Vec<String> {
+            features_in_order(doc, Some(body))
+                .iter()
+                .map(|n| n.name.clone())
+                .collect()
+        };
+        move_after(&mut doc, ids[0], ids[2]).unwrap();
+        assert_eq!(order(&doc), ["b", "c", "a", "d"]);
+        move_after(&mut doc, ids[3], ids[1]).unwrap();
+        assert_eq!(order(&doc), ["b", "d", "c", "a"]);
     }
 
     #[test]

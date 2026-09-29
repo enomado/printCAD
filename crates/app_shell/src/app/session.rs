@@ -143,6 +143,12 @@ pub(crate) struct DocumentSession {
     pub pick_depths: Option<render_vk::DepthWindow>,
     /// The face under the cursor, when no edge takes the hover.
     pub hovered_face: Option<crate::app::input::FaceHover>,
+    /// Each body with faces coloured on their own, as drawn: the mesh
+    /// with the colours in it, and the key of what it was made from.
+    pub face_colored: std::collections::HashMap<
+        core_document::BodyId,
+        (u64, std::sync::Arc<kernel_api::TriMesh>),
+    >,
     /// The edges picked in the viewport; Ctrl adds to them.
     pub selected_edges: Vec<crate::app::edges::EdgeHit>,
     /// Each bench's editing state for this tab while another tab is
@@ -215,6 +221,7 @@ impl DocumentSession {
             measure: None,
             hovered_edge: None,
             hovered_face: None,
+            face_colored: Default::default(),
             pick_depths: None,
             repairs_in_flight: Default::default(),
             solids_in_flight: Default::default(),

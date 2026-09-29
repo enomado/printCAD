@@ -55,6 +55,8 @@ pub enum HostAction {
     PrintBed,
     Annotations,
     Recompute,
+    Rename,
+    Properties,
     LogPanel,
     Delete,
     ToggleVisibility,
@@ -156,6 +158,20 @@ const HOST: &[HostSpec] = {
             "Delete the selected item",
             "Edit",
             &["Delete"],
+        ),
+        spec(
+            Rename,
+            "edit.rename",
+            "Rename the selected item",
+            "Edit",
+            &["F2"],
+        ),
+        spec(
+            Properties,
+            "edit.properties",
+            "Properties of the selected item",
+            "Edit",
+            &["Alt+Enter"],
         ),
         spec(
             Recompute,
@@ -716,6 +732,8 @@ pub enum HostOutcome {
     OpenPreferences,
     ToggleConsole,
     ToggleAssistant,
+    /// A change to the window only.
+    Local(super::MenuLocal),
     Nothing,
 }
 
@@ -788,12 +806,25 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         PrintBed => C(UiCommand::TogglePrintBed),
         Annotations => C(UiCommand::ToggleAnnotations),
         Recompute => C(UiCommand::RecomputeAll),
+        Rename => match state.tree_selection {
+            Some(item) if item != TreeItemId::DocumentRoot => {
+                HostOutcome::Local(super::MenuLocal::Rename(item))
+            }
+            _ => HostOutcome::Nothing,
+        },
+        Properties => state.tree_selection.map_or(HostOutcome::Nothing, |item| {
+            HostOutcome::Local(super::MenuLocal::Properties(
+                item,
+                super::property_panel::PropertyTab::Data,
+            ))
+        }),
         LogPanel => C(UiCommand::ToggleLogPanel),
         Delete => match state.tree_selection {
             Some(
                 item @ (TreeItemId::Feature(_)
                 | TreeItemId::Body(_)
-                | TreeItemId::ImportedObject(_)),
+                | TreeItemId::ImportedObject(_)
+                | TreeItemId::Component(_)),
             ) if !state.editing => C(UiCommand::DeleteTreeItem(item)),
             _ => HostOutcome::Nothing,
         },

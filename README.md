@@ -106,6 +106,8 @@ Every shortcut can be changed in Preferences › Keyboard. The defaults:
 | Recompute all | Ctrl+R |
 | Delete the selected tree row | Delete |
 | Show or hide the selected tree row | Space |
+| Rename the selected tree row | F2 |
+| Properties of the selected tree row | Alt+Enter |
 
 View keys:
 
@@ -115,6 +117,27 @@ View keys:
 | Isometric, front, top, right | 0, 1, 2, 3 |
 | Rear, bottom, left | 4, 5, 6 |
 | Orthographic, perspective | O, P |
+
+### Row and body menus
+
+Right click a row of the tree, or a body in the view, for what can be
+done to it:
+
+- A feature: Edit, Rename, Suppress, Hide, Move up, Move down, Move after
+  another, Set as tip, Freeze its body, Cut, Copy, Paste, Delete, copy its
+  formulas and paste them on another feature of the same kind, Recompute,
+  Send to console, Properties.
+- A body: Select, Rename, Hide, Show only this, Show all, Appearance,
+  Random colour, Transparent, Material (with its density, which gives the
+  mass in the Physical group), Placement by numbers, Freeze (its features
+  are not rebuilt until it thaws; the row shows FROZEN), Make unselectable
+  (clicks in the view pass through it), Linked copy, Select the original
+  of a copy, Recompute, Send to console, Properties.
+- In the view, the same body entries, and Face colour for the face under
+  the pointer: the colour follows the face through a rebuild.
+
+`doc.set_body`, `doc.set_face_color`, `doc.linked_copy`, `doc.move_after`
+and `doc.recompute` do the same from a script.
 
 A workbench's keys apply while it is active and win over the view keys.
 A plain letter picks a tool; Shift and a letter picks its partner.

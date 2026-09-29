@@ -166,6 +166,13 @@ impl PrintCadApp {
                         intents.persist_settings = true;
                     }
                 }
+                UiCommand::BodyEdit { body, edit } => self.apply_body_edit(body, edit),
+                UiCommand::MoveFeatureAfter { feature, after } => {
+                    self.move_feature_after(feature, after);
+                }
+                UiCommand::PasteFormulas { feature, formulas } => {
+                    self.paste_formulas(feature, formulas);
+                }
                 UiCommand::ReloadLink(body) => self.reload_link(body),
                 UiCommand::OpenLinkSource(body) => self.open_link_source(body),
                 UiCommand::Isolate(body) => {
@@ -967,6 +974,117 @@ impl PrintCadApp {
             }
             TreeItemId::DocumentRoot => {}
         }
+    }
+
+    /// A change a body menu asked for, one undo step, run as the command
+    /// a script would call.
+    fn apply_body_edit(&mut self, body: core_document::BodyId, edit: crate::ui::BodyEdit) {
+        use crate::ui::BodyEdit;
+        let (id, args) = crate::app::scripts::body_edit_call(body, &edit);
+        let args = match args {
+            serde_json::Value::Object(map) => map,
+            _ => return,
+        };
+        let answer = crate::app::scripts::document_command(
+            id,
+            &args,
+            &mut self.session.document,
+            &self.registry,
+            self.session.current_file.as_deref(),
+        );
+        let result = match answer {
+            Some(Ok(result)) => result,
+            Some(Err(why)) => {
+                app_log::warn(format!("{why}"));
+                return;
+            }
+            None => return,
+        };
+        let label = match edit {
+            BodyEdit::Frozen(true) => "Freeze body",
+            BodyEdit::Frozen(false) => "Thaw body",
+            BodyEdit::Selectable(selectable) => {
+                if !selectable && self.session.selected_body == Some(body.0) {
+                    self.session.selected_body = None;
+                    self.session.face_highlight = None;
+                }
+                "Body selectability"
+            }
+            BodyEdit::Material(_) => "Body material",
+            BodyEdit::FaceColor { .. } => "Face colour",
+            BodyEdit::ClearFaceColors => "Clear face colours",
+            BodyEdit::Place(_) => "Place body",
+            BodyEdit::LinkedCopy => {
+                if let Some(copy) = result.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                    self.session.tree_selection =
+                        Some(TreeItemId::Body(core_document::BodyId(copy)));
+                }
+                "Linked copy"
+            }
+            BodyEdit::Recompute => {
+                app_log::info("Rebuilding the body");
+                return;
+            }
+        };
+        self.session.journal.label_next(label);
+        self.close_gesture();
+    }
+
+    /// Move `feature` in its body's history to just after `after`.
+    fn move_feature_after(
+        &mut self,
+        feature: core_document::FeatureId,
+        after: core_document::FeatureId,
+    ) {
+        let before = self.session.document.mutation_seq();
+        match crate::app::scripts::move_after(&mut self.session.document, feature, after) {
+            Ok(()) if self.session.document.mutation_seq() != before => {
+                self.session.journal.label_next("Reorder history");
+                self.close_gesture();
+            }
+            Ok(()) => {}
+            Err(why) => app_log::warn(format!("Cannot move: {why}")),
+        }
+    }
+
+    /// Give `feature` the formulas of another, where it has the same
+    /// parameters.
+    fn paste_formulas(
+        &mut self,
+        feature: core_document::FeatureId,
+        formulas: std::collections::BTreeMap<String, String>,
+    ) {
+        let keys: Vec<String> = self
+            .session
+            .document
+            .get_feature_meta(feature)
+            .map(|n| self.registry.parameters(n))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.key)
+            .collect();
+        let mut pasted = 0;
+        for (key, formula) in formulas {
+            if keys.contains(&key)
+                && self
+                    .session
+                    .document
+                    .set_feature_formula(feature, key, Some(formula))
+                    .is_ok()
+            {
+                pasted += 1;
+            }
+        }
+        if pasted == 0 {
+            app_log::warn("No formula fits that feature");
+            return;
+        }
+        app_log::info(format!(
+            "Pasted {pasted} formula{}",
+            if pasted == 1 { "" } else { "s" }
+        ));
+        self.session.journal.label_next("Paste formulas");
+        self.close_gesture();
     }
 
     /// Remove `body` and forget every reference the app holds to it.

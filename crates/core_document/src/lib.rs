@@ -268,6 +268,93 @@ pub struct Body {
     /// The component the body sits in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<ComponentId>,
+    /// Kept as it stands: its features are not rebuilt until it thaws.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frozen: bool,
+    /// Drawn but never picked: clicks go to what is behind it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unselectable: bool,
+    /// What it is made of, for its mass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<Material>,
+    /// Colours chosen for single faces, over the body's own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_colors: Vec<FaceColor>,
+}
+
+/// A material: its name and density.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Material {
+    pub name: String,
+    /// Grams per cubic centimetre.
+    pub density: f32,
+}
+
+/// A face's own colour. The face is found by its name when the mesh
+/// names it (so the colour follows the face through a rebuild), else by
+/// its index.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FaceColor {
+    pub name: kernel_api::naming::TopoName,
+    pub index: u32,
+    pub color: [f32; 3],
+}
+
+impl FaceColor {
+    /// Whether this colour is for face `index` of `mesh`.
+    pub fn is_face(&self, mesh: &TriMesh, index: u32) -> bool {
+        match mesh.face_names.get(index as usize) {
+            Some(name) if *name != 0 && self.name != 0 => *name == self.name,
+            _ => index == self.index,
+        }
+    }
+}
+
+/// `mesh` with every face `colors` names in its colour, the rest in
+/// `base` (or the colours the mesh has). Vertices a coloured face shares
+/// with another face are split off, so the colour ends at the face's edge.
+pub fn mesh_with_face_colors(mesh: &TriMesh, colors: &[FaceColor], base: [f32; 3]) -> TriMesh {
+    let mut out = mesh.clone();
+    if colors.is_empty() || mesh.faces.len() * 3 != mesh.indices.len() {
+        return out;
+    }
+    if out.colors.len() != out.positions.len() {
+        out.colors = vec![base; out.positions.len()];
+    }
+    // Each vertex belongs to the first face that uses it.
+    let mut owner: Vec<Option<u32>> = vec![None; out.positions.len()];
+    for (t, face) in mesh.faces.iter().enumerate() {
+        for k in 0..3 {
+            let v = out.indices[t * 3 + k] as usize;
+            owner[v].get_or_insert(*face);
+        }
+    }
+    for (t, face) in mesh.faces.iter().enumerate() {
+        let Some(color) = colors.iter().find(|c| c.is_face(mesh, *face)) else {
+            continue;
+        };
+        for k in 0..3 {
+            let v = out.indices[t * 3 + k] as usize;
+            let v = match owner[v] {
+                Some(f) if f != *face => {
+                    // Shared with another face: a copy of its own.
+                    out.positions.push(out.positions[v]);
+                    if let Some(n) = out.normals.get(v).copied() {
+                        out.normals.push(n);
+                    }
+                    out.colors.push(color.color);
+                    owner.push(Some(*face));
+                    let copy = out.positions.len() - 1;
+                    out.indices[t * 3 + k] = copy as u32;
+                    copy
+                }
+                _ => v,
+            };
+            owner[v] = Some(*face);
+            out.colors[v] = color.color;
+        }
+    }
+    out
 }
 
 /// Where a linked part's shape comes from: a body of another printCAD
@@ -575,6 +662,30 @@ impl Document {
                 id: *id,
                 component: self.component(*id).cloned(),
             },
+            Op::SetBodyFrozen { id, .. } => Op::SetBodyFrozen {
+                id: *id,
+                frozen: self.bodies.iter().find(|b| b.id == *id)?.frozen,
+            },
+            Op::SetBodySelectable { id, .. } => Op::SetBodySelectable {
+                id: *id,
+                selectable: !self.bodies.iter().find(|b| b.id == *id)?.unselectable,
+            },
+            Op::SetBodyMaterial { id, .. } => Op::SetBodyMaterial {
+                id: *id,
+                material: self.bodies.iter().find(|b| b.id == *id)?.material.clone(),
+            },
+            Op::SetFaceColor { id, face, .. } => Op::SetFaceColor {
+                id: *id,
+                face: *face,
+                color: self
+                    .bodies
+                    .iter()
+                    .find(|b| b.id == *id)?
+                    .face_colors
+                    .iter()
+                    .find(|c| c.name == face.name && c.index == face.index)
+                    .map(|c| c.color),
+            },
             Op::SetBodyComponent { id, .. } => Op::SetBodyComponent {
                 id: *id,
                 component: self.bodies.iter().find(|b| b.id == *id)?.component,
@@ -749,6 +860,10 @@ impl Document {
             } => {
                 self.bodies.push(Body {
                     component: None,
+                    frozen: false,
+                    unselectable: false,
+                    material: None,
+                    face_colors: Vec::new(),
                     link: None,
                     mirror: None,
                     id: *id,
@@ -784,6 +899,10 @@ impl Document {
                     mirror: *mirror,
                     link: None,
                     component: None,
+                    frozen: false,
+                    unselectable: false,
+                    material: None,
+                    face_colors: Vec::new(),
                 });
                 self.refresh_copy(*id);
             }
@@ -807,6 +926,10 @@ impl Document {
                     mirror: None,
                     link: Some(link.clone()),
                     component: None,
+                    frozen: false,
+                    unselectable: false,
+                    material: None,
+                    face_colors: Vec::new(),
                 });
             }
             Op::SetBodyLink { id, link } => {
@@ -823,6 +946,34 @@ impl Document {
             }
             Op::SetComponent { id, component } => {
                 self.apply_set_component(*id, component.as_ref());
+            }
+            Op::SetBodyFrozen { id, frozen } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.frozen = *frozen;
+                }
+            }
+            Op::SetBodySelectable { id, selectable } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.unselectable = !selectable;
+                }
+            }
+            Op::SetBodyMaterial { id, material } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.material.clone_from(material);
+                }
+            }
+            Op::SetFaceColor { id, face, color } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry
+                        .face_colors
+                        .retain(|c| !(c.name == face.name && c.index == face.index));
+                    if let Some(color) = color {
+                        entry.face_colors.push(FaceColor {
+                            color: *color,
+                            ..*face
+                        });
+                    }
+                }
             }
             Op::SetBodyComponent { id, component } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -1026,6 +1177,10 @@ impl Document {
                 for init in bodies {
                     self.bodies.push(Body {
                         component: None,
+                        frozen: false,
+                        unselectable: false,
+                        material: None,
+                        face_colors: Vec::new(),
                         link: None,
                         mirror: None,
                         copy_of: None,
@@ -1471,6 +1626,83 @@ impl Document {
             && !name.trim().is_empty()
         {
             self.record_and_apply(op::DocumentOp::RenameBody { id: body, name });
+        }
+    }
+
+    /// Keep a body as it stands, its features not rebuilt, or let it
+    /// rebuild again.
+    pub fn set_body_frozen(&mut self, body: BodyId, frozen: bool) {
+        if self
+            .bodies
+            .iter()
+            .any(|b| b.id == body && b.frozen != frozen)
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyFrozen { id: body, frozen });
+        }
+    }
+
+    /// Whether a body is frozen.
+    pub fn body_frozen(&self, body: BodyId) -> bool {
+        self.bodies.iter().any(|b| b.id == body && b.frozen)
+    }
+
+    /// Let clicks pick a body, or pass through it.
+    pub fn set_body_selectable(&mut self, body: BodyId, selectable: bool) {
+        if self
+            .bodies
+            .iter()
+            .any(|b| b.id == body && b.unselectable == selectable)
+        {
+            self.record_and_apply(op::DocumentOp::SetBodySelectable {
+                id: body,
+                selectable,
+            });
+        }
+    }
+
+    /// Whether clicks pick a body.
+    pub fn body_selectable(&self, body: BodyId) -> bool {
+        !self.bodies.iter().any(|b| b.id == body && b.unselectable)
+    }
+
+    /// Say what a body is made of, or `None` for nothing said.
+    pub fn set_body_material(&mut self, body: BodyId, material: Option<Material>) {
+        if self
+            .bodies
+            .iter()
+            .any(|b| b.id == body && b.material != material)
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyMaterial { id: body, material });
+        }
+    }
+
+    /// Colour face `index` of `body` (named `name` in its mesh, 0 for
+    /// none), or give it back the body's colour with `None`.
+    pub fn set_face_color(
+        &mut self,
+        body: BodyId,
+        index: u32,
+        name: kernel_api::naming::TopoName,
+        color: Option<[f32; 3]>,
+    ) {
+        let Some(entry) = self.bodies.iter().find(|b| b.id == body) else {
+            return;
+        };
+        let now = entry
+            .face_colors
+            .iter()
+            .find(|c| c.name == name && c.index == index)
+            .map(|c| c.color);
+        if now != color {
+            self.record_and_apply(op::DocumentOp::SetFaceColor {
+                id: body,
+                face: FaceColor {
+                    name,
+                    index,
+                    color: color.unwrap_or_default(),
+                },
+                color,
+            });
         }
     }
 

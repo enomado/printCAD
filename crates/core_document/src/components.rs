@@ -118,6 +118,20 @@ impl Document {
             .collect()
     }
 
+    /// Move `body` to `placement`, and every body that moves as one with
+    /// it (`rigid_unit_of`) by the same.
+    pub fn place_with_unit(&mut self, body: BodyId, placement: crate::BodyPlacement) {
+        let step = placement.after(&self.body_placement(body).inverse());
+        for member in self.rigid_unit_of(body) {
+            let moved = if member == body {
+                placement
+            } else {
+                step.after(&self.body_placement(member))
+            };
+            self.set_body_placement(member, moved);
+        }
+    }
+
     /// A new component named `name` inside `parent` (at the top for
     /// `None`), rigid.
     pub fn create_component(

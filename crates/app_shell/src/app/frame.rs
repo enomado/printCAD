@@ -982,13 +982,15 @@ impl PrintCadApp {
                 // A look the user chose wins over the material the body
                 // came with; a chosen colour also drops the per-vertex
                 // colours, which would tint it.
-                let chosen = self
+                let entry = self
                     .session
                     .document
                     .bodies()
                     .iter()
-                    .find(|b| b.id == *body_id)
-                    .and_then(|b| b.display);
+                    .find(|b| b.id == *body_id);
+                let chosen = entry.and_then(|b| b.display);
+                let pickable = !entry.is_some_and(|b| b.unselectable);
+                let face_colors = entry.map(|b| b.face_colors.as_slice()).unwrap_or(&[]);
                 let use_vertex_albedo = chosen.is_none()
                     && geometry.mesh.colors.len() == geometry.mesh.positions.len()
                     && !geometry.mesh.colors.is_empty();
@@ -998,15 +1000,56 @@ impl PrintCadApp {
                     None => core_document::BodyDisplay::default().color,
                 };
                 let opacity = chosen.map(|d| d.opacity.clamp(0.05, 1.0)).unwrap_or(1.0);
+                // Faces coloured on their own: the mesh with those colours
+                // in it, the rest in the body's, made once per change.
+                let (mesh, revision, color) = if face_colors.is_empty() {
+                    (Arc::clone(&geometry.mesh), geometry.revision, base_color)
+                } else {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    geometry.revision.hash(&mut hasher);
+                    for c in face_colors {
+                        (c.name, c.index, c.color.map(f32::to_bits)).hash(&mut hasher);
+                    }
+                    chosen.map(|d| d.color.map(f32::to_bits)).hash(&mut hasher);
+                    let key = hasher.finish();
+                    let cached = self
+                        .session
+                        .face_colored
+                        .get(body_id)
+                        .filter(|(k, _)| *k == key)
+                        .map(|(_, m)| Arc::clone(m));
+                    let mesh = cached.unwrap_or_else(|| {
+                        // A body's own colours stay where no chosen colour
+                        // covers them.
+                        let base = if chosen.is_some() {
+                            let mut plain = (*geometry.mesh).clone();
+                            plain.colors.clear();
+                            core_document::mesh_with_face_colors(&plain, face_colors, base_color)
+                        } else {
+                            core_document::mesh_with_face_colors(
+                                &geometry.mesh,
+                                face_colors,
+                                base_color,
+                            )
+                        };
+                        let mesh = Arc::new(base);
+                        self.session
+                            .face_colored
+                            .insert(*body_id, (key, Arc::clone(&mesh)));
+                        mesh
+                    });
+                    (mesh, key, [1.0, 1.0, 1.0])
+                };
                 BodySubmission {
                     id: body_id.0,
-                    revision: geometry.revision,
-                    mesh: Arc::clone(&geometry.mesh),
-                    color: base_color,
+                    revision,
+                    mesh,
+                    color,
                     opacity,
                     highlight,
                     is_wireframe: wireframe,
-                    pickable: true,
+                    pickable,
                     on_top: false,
                     edge_color: None,
                     front_only: false,

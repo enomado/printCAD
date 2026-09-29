@@ -933,12 +933,12 @@ impl AssemblyWorkbench {
     fn centre_of_mass_on_screen(&self, ctx: &WorkbenchRuntimeContext) -> Option<[f32; 2]> {
         let Some(Task::Mass {
             found: Some(report),
-            ..
+            density,
         }) = &self.task
         else {
             return None;
         };
-        let c = report.centre()?;
+        let c = report.centre(f64::from(*density))?;
         let (x, y) = ctx.world_to_viewport(c.map(|v| v as f32))?;
         Some([x, y])
     }
