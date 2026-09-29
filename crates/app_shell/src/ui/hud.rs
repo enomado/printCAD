@@ -170,6 +170,7 @@ pub fn draw_viewport_hud(
             .fixed_pos(pos)
             .interactable(false)
             .show(ctx, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 Card::floating()
                     .border(BORDER_STRONG)
                     .padding(6.0)
@@ -252,6 +253,9 @@ pub fn draw_hover_card(
         .fixed_pos(pos)
         .interactable(false)
         .show(ctx, |ui| {
+            // Each line on one line: an area near the view's edge would
+            // otherwise wrap the card to a sliver.
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             Card::floating().padding(6.0).radius(5.0).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(
