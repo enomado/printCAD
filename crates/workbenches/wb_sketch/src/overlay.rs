@@ -172,8 +172,9 @@ fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = V
 }
 
 /// Color, width and dashing for one element. Selection and preselection
-/// win; external geometry takes its own colour; construction geometry is
-/// thinner and dashed; everything else takes
+/// win; external geometry takes its own colour, dashed like construction
+/// while it only guides and solid once it counts in the profile;
+/// construction geometry is thinner and dashed; everything else takes
 /// the fully-constrained color once the sketch has no freedom left.
 pub fn element_style(
     sketch: &Sketch,
@@ -186,8 +187,12 @@ pub fn element_style(
         (pal.selected, 2.5, None)
     } else if hovered == Some(id) {
         (pal.preselect, 2.0, None)
-    } else if sketch.is_external(id) {
-        (pal.external, 1.5, None)
+    } else if let Some(source) = sketch.external.get(&id) {
+        if source.defining {
+            (pal.external, 2.0, None)
+        } else {
+            (pal.external, 1.5, Some(CONSTRUCTION_DASH))
+        }
     } else if sketch.is_construction(id) {
         (pal.construction, 1.5, Some(CONSTRUCTION_DASH))
     } else if sketch.is_fully_constrained {
@@ -1492,4 +1497,29 @@ pub fn build_overlays(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sketch::{ExternalReference, ExternalSource, GeometryElement, Line, Point, Vec2D};
+
+    /// Projected geometry reads as what it is: dashed like construction
+    /// while it only guides, solid once it counts in the profile.
+    #[test]
+    fn projected_geometry_is_dashed_until_it_counts() {
+        let mut sketch = Sketch::new("s");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let source = ExternalSource::of_reference(ExternalReference::Datum {
+            datum: Uuid::new_v4(),
+        });
+        sketch.external.insert(line, source);
+        let pal = SketchPalette::default();
+        let style = |sketch: &Sketch| element_style(sketch, line, &HashSet::new(), None, &pal);
+        assert!(style(&sketch).dash.is_some(), "a guide is dashed");
+        sketch.external.get_mut(&line).unwrap().defining = true;
+        assert!(style(&sketch).dash.is_none(), "counting, it is solid");
+    }
 }

@@ -849,6 +849,46 @@ fn the_construction_button_converts_projected_geometry_with_the_rest() {
     assert!(!h.wb.tool_toggled("sketch.construction"));
 }
 
+/// Half a circle projected from outside the sketch, closed by a line drawn
+/// on its ends and made to count: one closed profile to extrude.
+#[test]
+fn a_projected_arc_closed_by_a_line_is_a_profile() {
+    use wb_sketch::sketch::{Arc, ExternalReference, ExternalSource, Point, Vec2D};
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    let sketch = &mut feature.sketch;
+    let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let start = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
+    let end = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-10.0, 0.0))));
+    let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, 10.0)));
+    let source = ExternalSource::of_reference(ExternalReference::Datum {
+        datum: uuid::Uuid::new_v4(),
+    });
+    for part in [centre, start, end, arc] {
+        sketch.external.insert(part, source);
+    }
+    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.key(KeyCode::A, None);
+
+    // A line from end to end, clicked on the arc's ends.
+    h.click(10.0, 0.0, "sketch.line");
+    h.click(-10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    // The arc made normal geometry.
+    h.click(0.0, 10.0, "sketch.select");
+    h.event(
+        WorkbenchInputEvent::ToolActivated,
+        Some("sketch.construction"),
+    );
+
+    let sketch = h.sketch();
+    assert!(sketch.external[&arc].defining, "the arc counts");
+    let wires = wb_sketch::profile::extract_wires(&sketch).expect("a profile");
+    assert_eq!(wires.len(), 1, "{wires:?}");
+    assert_eq!(wires[0].segments.len(), 2, "the arc and the line");
+}
+
 #[test]
 fn construction_toggle_with_empty_selection_flips_mode() {
     let mut h = Harness::new();

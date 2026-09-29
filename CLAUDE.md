@@ -409,7 +409,10 @@ through `ctx.kernel` (`kernel_api::KernelQueries`, the host hands benches
 `kernel_ogeom::QUERIES`) onto the sketch plane in the edge body's frame,
 and stores the result as geometry marked in `Sketch::external` with its
 `ExternalSource`: pinned in the solver, left out of profiles and passive
-drawing, drawn in the external colour, never dragged, and projected again
+drawing until marked as counting (`ExternalSource::defining`, which the
+Construction button switches as it does construction for drawn curves),
+drawn in the external colour (dashed while a guide, solid once it
+counts), never dragged, and projected again
 once per editing session (in place when the curve is the same kind). Its
 intersection variant takes picked faces instead and adds the curves where
 each crosses the sketch plane (`KernelQueries::section_face`, the face's
