@@ -179,6 +179,20 @@ impl WasmWorkbench {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// The package's settings page, asked of it once.
+    fn settings_panel(&self) -> Vec<Widget> {
+        let mut inner = self.inner();
+        if inner.settings_panel.is_none() {
+            let panel = inner
+                .guest
+                .call(Budget::Long, Access::None, |b, s| b.call_settings_panel(s))
+                .and_then(|(json, _)| parse::<Vec<Widget>>(self.id(), "the settings page", &json))
+                .unwrap_or_default();
+            inner.settings_panel = Some(panel);
+        }
+        inner.settings_panel.clone().unwrap_or_default()
+    }
+
     fn id(&self) -> &str {
         &self.package.id
     }
@@ -873,18 +887,14 @@ impl Workbench for WasmWorkbench {
         TaskOutcome::Open
     }
 
+    fn has_settings(&self) -> bool {
+        !self.settings_panel().is_empty()
+    }
+
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, _filter: &str) -> bool {
+        let panel = self.settings_panel();
         let mut inner = self.inner();
-        if inner.settings_panel.is_none() {
-            let panel = inner
-                .guest
-                .call(Budget::Long, Access::None, |b, s| b.call_settings_panel(s))
-                .and_then(|(json, _)| parse::<Vec<Widget>>(self.id(), "the settings page", &json))
-                .unwrap_or_default();
-            inner.settings_panel = Some(panel);
-        }
-        let panel = inner.settings_panel.clone().unwrap_or_default();
         let out = core_document::panel::show(
             ui,
             egui::Id::new(("bench_settings", self.id())),

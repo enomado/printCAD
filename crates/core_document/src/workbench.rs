@@ -848,6 +848,12 @@ pub trait Workbench: Send {
         true
     }
 
+    /// The bench has a Preferences page: without one it takes no place
+    /// in the rail.
+    fn has_settings(&self) -> bool {
+        false
+    }
+
     /// Draw custom settings UI in the Settings window.
     /// Called when the Settings window is open and this workbench's tab is selected.
     /// `filter` is the dialog's lowercase search text; rows that do not

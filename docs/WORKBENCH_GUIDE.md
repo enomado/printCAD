@@ -283,7 +283,9 @@ to the new one as `ctx.attach_request`.
 - `clip_plane` cuts the scene at a plane of any direction while it returns
   one (the sketcher's section view), in drawing and picking alike, standing
   in for the view toolbar's clipping plane.
-- `ui_settings` draws the workbench's page in Preferences.
+- `ui_settings` draws the workbench's page in Preferences; `has_settings`
+  returning true is what gives it a place there. A bench with nothing to
+  set leaves both alone and gets no page.
 
 ## Checklist
 
@@ -297,8 +299,8 @@ to the new one as `ctx.attach_request`.
 4. `rebuild_jobs`, `invalidate_body` and `invalidate_all` if it builds
    solids.
 5. `on_input` for the tools.
-6. `edit_feature`, `task` and `ui_task_panel` for editing, `ui_settings`
-   for preferences.
+6. `edit_feature`, `task` and `ui_task_panel` for editing, `has_settings`
+   and `ui_settings` for preferences.
 7. `menu_items` and `on_command` for menus and start cards.
 8. `register_command` and `run_command` for what scripts can do, and
    `register_import` for files it reads.

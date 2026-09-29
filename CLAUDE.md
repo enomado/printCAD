@@ -361,8 +361,9 @@ active. The UI surface: `configure` registers
 `ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);
 `viewport_hud()`, `status_items()`, `editing_feature()`,
 `get_screen_space_overlays/marks/labels()` feed the viewport and chrome;
-`ui_settings()` draws the bench's Preferences page (one rail entry per
-registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
+`ui_settings()` draws the bench's Preferences page (a rail entry for
+each bench whose `has_settings` is true; a package's is true when its
+settings page has widgets); `feature_info`/`passive_geometry`/`pick_feature`/
 `delete_feature`/`property_hints` answer for the feature kinds a bench
 claims; `linked_features` names features of other bodies the tree lists
 under a body too (a joint under the body it holds to); `derive_on_geometry`

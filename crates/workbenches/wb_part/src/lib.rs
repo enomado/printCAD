@@ -1732,6 +1732,10 @@ impl Workbench for PartDesignWorkbench {
         }
     }
 
+    fn has_settings(&self) -> bool {
+        true
+    }
+
     /// The Part Design preferences page.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {

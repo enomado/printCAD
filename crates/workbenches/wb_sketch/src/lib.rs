@@ -3322,6 +3322,10 @@ impl Workbench for SketchWorkbench {
         self.sync_active_sketch_from_ctx(ctx);
     }
 
+    fn has_settings(&self) -> bool {
+        true
+    }
+
     /// The Sketcher preferences page: the snap toggle is live, the solver
     /// automation rows are planned, and the palette shows read-only.
     #[cfg(feature = "egui")]

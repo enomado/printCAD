@@ -46,7 +46,17 @@ impl PrefGroup {
             PrefGroup::Input,
             PrefGroup::Keyboard,
         ];
-        groups.extend((0..registry.ids().len()).map(PrefGroup::Workbench));
+        // A bench with nothing to set gets no page.
+        let ids = registry.ids();
+        groups.extend(
+            (0..ids.len())
+                .filter(|&i| {
+                    registry
+                        .workbench(&ids[i])
+                        .is_ok_and(|bench| bench.has_settings())
+                })
+                .map(PrefGroup::Workbench),
+        );
         groups.extend([
             PrefGroup::Packages,
             PrefGroup::Units,
@@ -2028,23 +2038,29 @@ mod rail {
     use super::*;
     use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
 
-    struct Bench(&'static str, &'static str);
+    struct Bench(&'static str, &'static str, bool);
 
     impl Workbench for Bench {
         fn descriptor(&self) -> WorkbenchDescriptor {
             WorkbenchDescriptor::new(self.0, self.1, "")
         }
+        fn has_settings(&self) -> bool {
+            self.2
+        }
         fn configure(&self, _context: &mut WorkbenchContext) {}
     }
 
     #[test]
-    fn every_registered_workbench_gets_a_page_in_registration_order() {
+    fn every_workbench_with_settings_gets_a_page_in_registration_order() {
         let mut registry = DocumentService::default();
         registry
-            .register_workbench(Box::new(Bench("z.second", "Second")))
+            .register_workbench(Box::new(Bench("z.second", "Second", true)))
             .unwrap();
         registry
-            .register_workbench(Box::new(Bench("a.first", "First")))
+            .register_workbench(Box::new(Bench("m.none", "Nothing to set", false)))
+            .unwrap();
+        registry
+            .register_workbench(Box::new(Bench("a.first", "First", true)))
             .unwrap();
         let groups = PrefGroup::all(&registry);
         let benches: Vec<PrefGroup> = groups
@@ -2054,10 +2070,10 @@ mod rail {
             .collect();
         assert_eq!(
             benches,
-            vec![PrefGroup::Workbench(0), PrefGroup::Workbench(1)]
+            vec![PrefGroup::Workbench(0), PrefGroup::Workbench(2)]
         );
         assert_eq!(PrefGroup::Workbench(0).label(&registry), "Second");
-        assert_eq!(PrefGroup::Workbench(1).label(&registry), "First");
+        assert_eq!(PrefGroup::Workbench(2).label(&registry), "First");
         let keyboard = groups
             .iter()
             .position(|g| *g == PrefGroup::Keyboard)
