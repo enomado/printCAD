@@ -154,6 +154,11 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.set_tip",
     "doc.rebuild",
     "doc.faces",
+    "doc.set_body",
+    "doc.set_face_color",
+    "doc.linked_copy",
+    "doc.move_after",
+    "doc.recompute",
     "doc.measure",
 ];
 
