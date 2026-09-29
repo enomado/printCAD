@@ -335,7 +335,15 @@ fn sphere_tool(
         // the axis at the lower latitude's height, round the
         // meridian, and back to the axis at the upper one's. At a
         // pole the cap shrinks to nothing and is left out.
-        let p = |a: f64| [radius * a.cos(), radius * a.sin()];
+        // A point at a pole lies on the axis exactly: cos(90°) comes out a
+        // hair off it, a gap between the arc and the axis line.
+        let p = |a: f64| {
+            let x = radius * a.cos();
+            [
+                if x.abs() <= 1e-9 * radius { 0.0 } else { x },
+                radius * a.sin(),
+            ]
+        };
         let (p1, p2) = (p(a1), p(a2));
         let on_axis = |pt: [f64; 2]| pt[0].abs() <= 1e-9;
         let (below, above) = ([0.0, p1[1]], [0.0, p2[1]]);

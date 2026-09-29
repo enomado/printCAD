@@ -45,22 +45,24 @@ fn quarter_disc(model: &mut Model, t: Tolerances) -> Shape {
         .shape
 }
 
-/// Half an ellipsoid: the hemisphere turned `seam` radians about Z before
-/// its whole turn, then scaled by three radii.
+/// Half an ellipsoid, and a quarter of that: the hemisphere's section turned
+/// `seam` radians about Z, revolved a whole or a quarter turn, then scaled
+/// by three radii. Scaling multiplies every volume alike, so the quarter is
+/// a quarter wherever it starts.
 #[test]
 #[ignore = "kernel: a hemisphere scaled on all three axes does not mesh (ogeom-rs#96)"]
-fn a_scaled_hemisphere_measures_as_half_an_ellipsoid() {
+fn a_scaled_hemisphere_measures_as_its_share_of_an_ellipsoid() {
     let t = Tolerances::millimetres();
     for radii in [[2.0, 1.0, 1.0], [8.0, 5.0, 3.0]] {
-        for seam in [0.0, 1.0] {
-            let want = 2.0 / 3.0 * PI * radii[0] * radii[1] * radii[2];
+        for (seam, share) in [(0.0, 1.0), (1.0, 1.0), (0.0, 0.25), (1.0, 0.25)] {
+            let want = 2.0 / 3.0 * PI * radii[0] * radii[1] * radii[2] * share;
             let mut model = Model::new();
             let quarter = quarter_disc(&mut model, t);
             let axis = Axis::new(Point::new(0.0, 0.0, 0.0), Direction::Z);
             let quarter = transformed(&mut model, &quarter, Transform::rotation(axis, seam))
                 .unwrap()
                 .shape;
-            let solid = make_revolution(&mut model, &quarter, axis, 2.0 * PI, t)
+            let solid = make_revolution(&mut model, &quarter, axis, 2.0 * PI * share, t)
                 .unwrap()
                 .shape;
             let scale = GeneralTransform {
@@ -78,7 +80,7 @@ fn a_scaled_hemisphere_measures_as_half_an_ellipsoid() {
                 volume_properties(&model, &scaled, Deflection::default(), t).map(|p| p.mass.abs());
             assert!(
                 got.as_ref().is_ok_and(|v| (v - want).abs() < 1e-3 * want),
-                "radii {radii:?}, seam at {seam}: {got:?} for {want}"
+                "radii {radii:?}, seam at {seam}, share {share}: {got:?} for {want}"
             );
         }
     }
