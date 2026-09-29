@@ -146,7 +146,12 @@ pub fn register(context: &mut WorkbenchContext) {
         CommandSpec::new(id, summary)
             .param("body", ParamKind::Id, "The body that moves")
             .param("face", ParamKind::Any, face)
-            .param("other", ParamKind::Id, "The body it is held against")
+            .param(
+                "other",
+                ParamKind::Id,
+                "The body it is held against; the nil id (all zeros) for the world origin, \
+                 its faces then in world space",
+            )
             .param("other_face", ParamKind::Any, face)
             .optional("name", ParamKind::String, "Its name in the tree")
     };
@@ -434,7 +439,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     Some(id) => BodyId(id),
                     None => feature.other_body,
                 };
-                if !ctx.document.bodies().iter().any(|b| b.id == other) || other == moving_body {
+                if !(other == crate::WORLD || ctx.document.bodies().iter().any(|b| b.id == other))
+                    || other == moving_body
+                {
                     return Err(CommandError::bad(
                         "other",
                         "must be another body of the document",
@@ -732,7 +739,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
 fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let moving_body = body(a, ctx)?;
     let other = BodyId(a.id("other")?);
-    if !ctx.document.bodies().iter().any(|b| b.id == other) {
+    if other != crate::WORLD && !ctx.document.bodies().iter().any(|b| b.id == other) {
         return Err(CommandError::bad("other", "is not a body of this document"));
     }
     if other == moving_body {
@@ -933,11 +940,7 @@ pub(crate) fn record_joint(
 
 /// Every body's placement, in double precision.
 fn placements(document: &core_document::Document) -> std::collections::HashMap<BodyId, Rigid> {
-    document
-        .bodies()
-        .iter()
-        .map(|b| (b.id, Rigid::from(b.placement)))
-        .collect()
+    crate::solve::rigid_placements(document)
 }
 
 /// A coupling of two joints where they stand, from a command's
@@ -1230,12 +1233,12 @@ fn quaternion(value: &Value) -> Result<Quat, CommandError> {
 /// The density the mass tool starts at, g/cm³.
 pub(crate) const DEFAULT_DENSITY: f32 = 1.0;
 
-/// The first joint of an assembly grounds the body it holds against, when
-/// nothing is grounded yet: the assembly then stands on it, and what its
+/// The first joint of an assembly grounds the body it holds against (the
+/// world needs none), when nothing is grounded yet: the assembly then stands on it, and what its
 /// joints leave free reads true from the start.
 pub(crate) fn ground_first(ctx: &mut WorkbenchRuntimeContext, other: BodyId) {
     let all = crate::joints(ctx.document);
-    if all.is_empty() {
+    if all.is_empty() && other != crate::WORLD {
         set_grounded(ctx, other, true);
     }
 }
@@ -1398,6 +1401,35 @@ mod tests {
         let data: JointFeature =
             serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
         assert!(matches!(data.kind, JointKind::Mate { flip: true, .. }));
+    }
+
+    /// A joint to the world holds the body to the origin's planes, and
+    /// grounds nothing.
+    #[test]
+    fn a_body_mates_to_the_origin() {
+        let mut doc = Document::new("t");
+        let a = doc.create_body(None);
+        doc.set_body_placement(
+            a,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(3.0, 4.0, 25.0)),
+        );
+        let bottom = json!({"point": [3, 4, 25], "normal": [0, 0, -1]});
+        let xy = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        call(
+            &mut doc,
+            "asm.mate",
+            json!({"body": a.0.to_string(), "face": bottom, "other": crate::WORLD.0.to_string(),
+                   "other_face": xy}),
+        )
+        .unwrap();
+        let t = doc.body_placement(a).translation;
+        assert!(t[2].abs() < 1e-3, "on the XY plane: {t:?}");
+        assert!(
+            crate::joints(&doc)
+                .iter()
+                .all(|j| j.feature.kind != JointKind::Ground),
+            "the origin needs no ground"
+        );
     }
 
     /// A joint made another kind keeps its faces and name; faces of the

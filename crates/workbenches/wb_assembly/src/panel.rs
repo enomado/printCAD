@@ -71,11 +71,29 @@ impl AssemblyWorkbench {
             ui.label(
                 RichText::new(
                     "The first body moves; the second stays where it is. A body \
-                     with no joints of its own never moves.",
+                     with no joints of its own never moves. A datum plane or line \
+                     selected in the tree is taken as a face.",
                 )
                 .font(sans(FONT_XS))
                 .color(TEXT3),
             );
+            if let Some((_, first, _)) = picking.first {
+                let offered: Vec<_> = crate::ORIGIN
+                    .iter()
+                    .filter(|(_, anchor)| picking.kind.takes_anchor(anchor, Some(first)))
+                    .collect();
+                if !offered.is_empty() {
+                    ui.add_space(SPACE_2);
+                    overline(ui, "Or the origin's");
+                    ui.horizontal_wrapped(|ui| {
+                        for (name, anchor) in offered {
+                            if ui_kit::widgets::small_secondary_button(ui, name).clicked() {
+                                self.picked(ctx, crate::WORLD, *anchor, None);
+                            }
+                        }
+                    });
+                }
+            }
             return TaskOutcome::Open;
         }
         match self.task.clone() {

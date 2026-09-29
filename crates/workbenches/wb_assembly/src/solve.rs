@@ -14,7 +14,18 @@ use core_document::{BodyId, BodyPlacement, Document, FeatureId};
 use glam::{DQuat, DVec3};
 
 use crate::coupling::{Coupling, Link, links};
-use crate::joint::{JOINT_KIND, JointFeature, JointKind, Rigid};
+use crate::joint::{JOINT_KIND, JointFeature, JointKind, Rigid, WORLD};
+
+/// Every body's placement in double precision, and the world's, which
+/// never moves.
+pub(crate) fn rigid_placements(document: &Document) -> HashMap<BodyId, Rigid> {
+    document
+        .bodies()
+        .iter()
+        .map(|b| (b.id, Rigid::from(b.placement)))
+        .chain([(WORLD, Rigid::from(BodyPlacement::default()))])
+        .collect()
+}
 
 /// A joint as the solver reads it.
 #[derive(Debug, Clone)]
@@ -61,7 +72,7 @@ pub enum SolveError {
 /// The joints the solver reads: both bodies there and different, or a
 /// ground.
 fn usable(document: &Document) -> Vec<Joint> {
-    let exists = |body: BodyId| document.bodies().iter().any(|b| b.id == body);
+    let exists = |body: BodyId| body == WORLD || document.bodies().iter().any(|b| b.id == body);
     joints(document)
         .into_iter()
         .filter(|j| {
@@ -98,11 +109,7 @@ fn free_bodies(all: &[Joint]) -> BTreeSet<BodyId> {
 pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveError> {
     let all = usable(document);
     let free = free_bodies(&all);
-    let starts: HashMap<BodyId, Rigid> = document
-        .bodies()
-        .iter()
-        .map(|b| (b.id, Rigid::from(b.placement)))
-        .collect();
+    let starts: HashMap<BodyId, Rigid> = rigid_placements(document);
     let mut placements = starts.clone();
     // Every joint with a free body at either end: one a grounded body
     // owns still holds, by moving the body at its other end.
@@ -223,11 +230,7 @@ pub fn drag(
                 && (free.contains(&j.body) || free.contains(&j.feature.other_body))
         })
         .collect();
-    let starts: HashMap<BodyId, Rigid> = document
-        .bodies()
-        .iter()
-        .map(|b| (b.id, Rigid::from(b.placement)))
-        .collect();
+    let starts: HashMap<BodyId, Rigid> = rigid_placements(document);
     let tied = tied(document, &all, &free, &starts);
     let mut placements = starts.clone();
     let pull = Pull {
@@ -336,11 +339,7 @@ pub fn counted_couplings(
     document: &Document,
     moves: &[(BodyId, BodyPlacement)],
 ) -> Vec<(FeatureId, Coupling)> {
-    let starts: HashMap<BodyId, Rigid> = document
-        .bodies()
-        .iter()
-        .map(|b| (b.id, Rigid::from(b.placement)))
-        .collect();
+    let starts: HashMap<BodyId, Rigid> = rigid_placements(document);
     let mut after = starts.clone();
     for (body, placement) in moves {
         after.insert(*body, Rigid::from(*placement));
@@ -628,11 +627,7 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
         .iter()
         .filter(|j| j.feature.kind != JointKind::Ground)
         .collect();
-    let placements: HashMap<BodyId, Rigid> = document
-        .bodies()
-        .iter()
-        .map(|b| (b.id, Rigid::from(b.placement)))
-        .collect();
+    let placements: HashMap<BodyId, Rigid> = rigid_placements(document);
     let pivots = pivots(&placements, &free, &holding);
     // A coupling holds the body its driven joint moves: that body follows
     // the driver, which keeps its own motion.
@@ -1291,11 +1286,7 @@ mod tests {
     }
 
     fn holds(doc: &Document) -> bool {
-        let placements: HashMap<BodyId, Rigid> = doc
-            .bodies()
-            .iter()
-            .map(|b| (b.id, Rigid::from(b.placement)))
-            .collect();
+        let placements: HashMap<BodyId, Rigid> = rigid_placements(doc);
         joints(doc).iter().all(|j| {
             j.feature.kind == JointKind::Ground
                 || worst(

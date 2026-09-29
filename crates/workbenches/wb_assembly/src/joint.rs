@@ -13,6 +13,56 @@ use serde::{Deserialize, Serialize};
 /// The feature kind joints are stored as.
 pub const JOINT_KIND: &str = "wb.assembly";
 
+/// The other end of a joint held to the world: the origin, its planes and
+/// axes, which never move. No body has this id.
+pub const WORLD: BodyId = BodyId(uuid::Uuid::nil());
+
+/// The world's planes and axes, as anchors, by name.
+pub const ORIGIN: [(&str, Anchor); 6] = [
+    (
+        "XY plane",
+        Anchor::Plane {
+            point: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+        },
+    ),
+    (
+        "XZ plane",
+        Anchor::Plane {
+            point: [0.0; 3],
+            normal: [0.0, -1.0, 0.0],
+        },
+    ),
+    (
+        "YZ plane",
+        Anchor::Plane {
+            point: [0.0; 3],
+            normal: [1.0, 0.0, 0.0],
+        },
+    ),
+    (
+        "X axis",
+        Anchor::Axis {
+            point: [0.0; 3],
+            direction: [1.0, 0.0, 0.0],
+        },
+    ),
+    (
+        "Y axis",
+        Anchor::Axis {
+            point: [0.0; 3],
+            direction: [0.0, 1.0, 0.0],
+        },
+    ),
+    (
+        "Z axis",
+        Anchor::Axis {
+            point: [0.0; 3],
+            direction: [0.0, 0.0, 1.0],
+        },
+    ),
+];
+
 /// What a joint holds.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum JointKind {
@@ -609,6 +659,17 @@ impl JointTool {
 
     pub fn of_word(word: &str) -> Option<JointTool> {
         Self::ALL.into_iter().find(|t| t.word() == word)
+    }
+
+    /// Whether it takes `anchor`, after `first` when that is picked.
+    pub fn takes_anchor(self, anchor: &Anchor, first: Option<Anchor>) -> bool {
+        let flat = matches!(anchor, Anchor::Plane { .. });
+        match (self.takes(), first) {
+            (Takes::Flat, _) => flat,
+            (Takes::Round, _) => !flat,
+            (Takes::Any, _) | (Takes::FlatAndRound, None) => true,
+            (Takes::FlatAndRound, Some(first)) => matches!(first, Anchor::Plane { .. }) != flat,
+        }
     }
 
     /// Whether it takes these two anchors, in this order or the other.

@@ -29,7 +29,9 @@ use core_document::{
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
 pub use interference::{Clash, Interference, interference};
-pub use joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
+pub use joint::{
+    Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, ORIGIN, Rigid, Takes, WORLD,
+};
 pub use mass::{BodyMass, MassReport};
 pub use parts::{Part, parts_csv, parts_list};
 pub use solve::{
@@ -852,6 +854,9 @@ fn restore_placements(ctx: &mut WorkbenchRuntimeContext, placements: &[(BodyId, 
 }
 
 fn body_name(ctx: &WorkbenchRuntimeContext, body: BodyId) -> String {
+    if body == WORLD {
+        return "the origin".to_string();
+    }
     ctx.document
         .bodies()
         .iter()
@@ -890,11 +895,27 @@ impl AssemblyWorkbench {
         }
     }
 
-    /// Take a new face pick for the joint being made.
+    /// Take a new face pick for the joint being made: a face or an edge
+    /// picked in the view, or a datum plane or line selected in the tree.
     fn take_pick(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         let Some(picking) = self.picking.clone() else {
             return;
         };
+        if let Some((body, anchor, signature)) = Self::datum_pick(ctx) {
+            if self.seen == Some(signature) {
+                return;
+            }
+            self.seen = Some(signature);
+            if !picking
+                .kind
+                .takes_anchor(&anchor, picking.first.map(|f| f.1))
+            {
+                ctx.log_warn(picking.kind.refusal());
+                return;
+            }
+            self.picked(ctx, body, anchor, None);
+            return;
+        }
         // A face, or else the last edge picked, where the joint takes one.
         let edge = ctx.selected_edges.last().copied();
         let (body, point, face, edge) = match (ctx.selected_body_id, ctx.selected_face, edge) {
@@ -932,7 +953,53 @@ impl AssemblyWorkbench {
             ctx.log_warn(picking.kind.refusal());
             return;
         };
+        self.picked(ctx, body, anchor, radius);
+    }
+
+    /// A datum plane or line selected in the tree, as an anchor on its
+    /// body (or the world's, for one of no body), with the signature a
+    /// repeat of it is known by.
+    fn datum_pick(
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<(BodyId, Anchor, (uuid::Uuid, [u32; 3]))> {
+        let id = ctx.active_document_object?;
+        let node = ctx.document.get_feature_meta(id)?;
+        if node.workbench_id.as_str() != "core.datum" {
+            return None;
+        }
+        let values = ctx.document.feature_values(id).unwrap_or(&node.data);
+        let datum = core_document::DatumFeature::from_json(values).ok()?;
+        let frame = datum.frame();
+        let anchor = match datum.shape {
+            core_document::DatumShape::Plane { .. } => Anchor::Plane {
+                point: frame.origin,
+                normal: frame.normal,
+            },
+            core_document::DatumShape::Line { .. } => Anchor::Axis {
+                point: frame.origin,
+                direction: frame.x_axis,
+            },
+            _ => return None,
+        };
+        Some((node.body.unwrap_or(WORLD), anchor, (id.0, [0; 3])))
+    }
+
+    /// An anchor picked on `body` (the world for the origin's planes and
+    /// axes): the first end, or the second, which makes the joint.
+    pub(crate) fn picked(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        body: BodyId,
+        anchor: Anchor,
+        radius: Option<f32>,
+    ) {
+        let Some(picking) = self.picking.clone() else {
+            return;
+        };
         match picking.first {
+            None if body == WORLD => {
+                ctx.log_warn("Pick the body to move first; the origin stays where it is");
+            }
             None => {
                 self.picking = Some(Picking {
                     first: Some((body, anchor, radius)),
@@ -1122,12 +1189,7 @@ impl AssemblyWorkbench {
             ctx.log_warn("Couple joints needs two hinges, or a hinge and a slider");
             return;
         };
-        let placements: std::collections::HashMap<BodyId, Rigid> = ctx
-            .document
-            .bodies()
-            .iter()
-            .map(|b| (b.id, Rigid::from(b.placement)))
-            .collect();
+        let placements = solve::rigid_placements(ctx.document);
         let gearing =
             Gearing::suiting(&driver.feature.kind, &driven.feature.kind).unwrap_or(Gearing::Gears);
         let Some(coupling) = Coupling::new(
@@ -1925,6 +1987,75 @@ mod tests {
         ctx.selected_body_id = pick.map(|(b, _)| b.0);
         ctx.selected_face = pick.map(|(_, f)| f);
         wb.on_frame(0.016, &mut ctx);
+    }
+
+    /// A datum plane selected in the tree while a joint is picked is taken
+    /// as its body's face; the origin's planes are offered as the second.
+    #[test]
+    fn a_datum_or_the_origin_is_the_other_end() {
+        let (mut doc, base, part) = scene();
+        let datum = doc
+            .add_feature_in_body(
+                core_document::DatumFeature {
+                    shape: core_document::DatumShape::Plane { size: 10.0 },
+                    attachment: core_document::datum::DatumAttachment::BasePlane(
+                        core_document::BasePlane::XY,
+                    ),
+                    offset: core_document::datum::AttachmentOffset {
+                        translation: [0.0, 0.0, 7.0],
+                        ..Default::default()
+                    },
+                },
+                "Datum".into(),
+                Some(base),
+            )
+            .unwrap();
+        let mut wb = AssemblyWorkbench::default();
+        {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some("asm.mate"),
+                &mut ctx,
+            );
+        }
+        frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
+        {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(datum);
+            wb.on_frame(0.016, &mut ctx);
+        }
+        assert!(wb.picking.is_none(), "the datum made the joint");
+        let mate = joints(&doc)
+            .into_iter()
+            .find(|j| j.feature.kind != JointKind::Ground)
+            .unwrap();
+        assert_eq!(mate.feature.other_body, base);
+        let placed = doc.body_placement(part);
+        assert!((placed.point([2.0, 2.0, 0.0])[2] - 7.0).abs() < 1e-3);
+
+        // The origin's XY plane as the second end.
+        let (mut doc, _, part) = scene();
+        let mut wb = AssemblyWorkbench::default();
+        {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some("asm.mate"),
+                &mut ctx,
+            );
+        }
+        frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let (_, xy) = ORIGIN[0];
+        wb.picked(&mut ctx, WORLD, xy, None);
+        drop(ctx);
+        let mate = joints(&doc).into_iter().next().unwrap();
+        assert_eq!(mate.feature.other_body, WORLD);
+        assert!((doc.body_placement(part).point([2.0, 2.0, 0.0])[2]).abs() < 1e-3);
     }
 
     /// A joint's faces picked again keep the joint: its name, and it is

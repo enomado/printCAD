@@ -29,6 +29,12 @@ gives its own line. Settings a tool does not ask for start at what the
 bodies make now (an angle, a distance), so making the joint moves nothing
 it need not.
 
+A datum plane or line selected in the tree while a joint is picked
+counts as a face of its body. After the first pick the panel offers the
+origin's planes and axes as the other end: the body is then held to the
+world, which never moves (the nil id as `other` in a script, its face in
+world space).
+
 While a joint's faces are picked, every body but the one under the
 cursor and the one picked first fades, so faces behind it can be seen and
 clicked.

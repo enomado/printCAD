@@ -259,7 +259,7 @@ and noted on its item, and the rest of the item is built around it.
   (partial, M). Point to point, point to plane, point to line,
   axis to axis (a centre distance, for gear spacing); edges and axes for
   parallel, perpendicular and angle.
-- [ ] **Joints to the origin and datums** (missing, S). The world
+- [x] **Joints to the origin and datums** (missing, S). The world
   planes and datums as the other end.
 - [x] **Align with offset, drive and limits** (partial, S). The
   cylindrical joint's turn and slide driven or limited.
