@@ -759,6 +759,34 @@ impl HoleCut {
     }
 }
 
+/// How long a hole's modeled thread runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ThreadLength {
+    /// As deep as the thread depth given.
+    #[default]
+    Given,
+    /// The whole depth of the hole.
+    HoleDepth,
+    /// The hole's depth less the tap's run-out, three pitches.
+    RunOut,
+}
+
+impl ThreadLength {
+    pub const ALL: [ThreadLength; 3] = [
+        ThreadLength::Given,
+        ThreadLength::HoleDepth,
+        ThreadLength::RunOut,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ThreadLength::Given => "Depth given",
+            ThreadLength::HoleDepth => "Whole hole",
+            ThreadLength::RunOut => "Less the run-out",
+        }
+    }
+}
+
 /// ISO 273 metric clearance style for a threaded hole size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum HoleFit {
@@ -1246,6 +1274,12 @@ pub enum PartFeature {
         thread_depth: f32,
         #[serde(default)]
         fit: HoleFit,
+        /// A clearance diameter of one's own, in place of the fit's, mm.
+        #[serde(default)]
+        clearance: Option<f32>,
+        /// How long a modeled thread runs.
+        #[serde(default)]
+        thread_length: ThreadLength,
         /// The bottom of a blind hole.
         #[serde(default)]
         drill_point: DrillPoint,

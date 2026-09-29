@@ -53,6 +53,8 @@ pub(super) fn hole_editor(
         modeled_thread,
         thread_depth,
         fit,
+        clearance,
+        thread_length,
         drill_point,
         point_in_depth,
         taper_deg,
@@ -168,21 +170,55 @@ pub(super) fn hole_editor(
                 changed = true;
             }
             if *modeled_thread {
-                changed |= mm_drag(ui, fx, thread_depth, "Thread depth:");
+                combo_row(
+                    ui,
+                    "Thread length",
+                    ("hole_thread_length", feature_id),
+                    thread_length.label(),
+                    |ui| {
+                        for candidate in crate::feature::ThreadLength::ALL {
+                            if ui
+                                .selectable_label(*thread_length == candidate, candidate.label())
+                                .clicked()
+                                && *thread_length != candidate
+                            {
+                                *thread_length = candidate;
+                                changed = true;
+                            }
+                        }
+                    },
+                );
+                if *thread_length == crate::feature::ThreadLength::Given {
+                    changed |= mm_drag(ui, fx, thread_depth, "Thread depth:");
+                }
             }
-        } else if size.as_ref().is_ok_and(|s| s.clearance.is_some()) {
-            combo_row(ui, "Fit", ("hole_fit", feature_id), fit.label(), |ui| {
-                for candidate in HoleFit::ALL {
-                    if ui
-                        .selectable_label(*fit == candidate, candidate.label())
-                        .clicked()
-                        && *fit != candidate
-                    {
-                        *fit = candidate;
-                        changed = true;
+        } else if size.as_ref().is_ok() {
+            let shown = match clearance {
+                Some(_) => "Custom",
+                None if size.as_ref().is_ok_and(|s| s.clearance.is_some()) => fit.label(),
+                None => "Major diameter",
+            };
+            combo_row(ui, "Fit", ("hole_fit", feature_id), shown, |ui| {
+                if size.as_ref().is_ok_and(|s| s.clearance.is_some()) {
+                    for candidate in HoleFit::ALL {
+                        let current = clearance.is_none() && *fit == candidate;
+                        if ui.selectable_label(current, candidate.label()).clicked() && !current {
+                            *fit = candidate;
+                            *clearance = None;
+                            changed = true;
+                        }
                     }
                 }
+                if ui.selectable_label(clearance.is_some(), "Custom").clicked()
+                    && clearance.is_none()
+                {
+                    *clearance = Some(drilled);
+                    changed = true;
+                }
             });
+            if let Some(own) = clearance {
+                changed |= mm_drag(ui, fx, own, "Clearance:");
+            }
         }
         let summary = match &size {
             Ok(size) => {

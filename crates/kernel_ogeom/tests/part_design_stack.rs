@@ -364,6 +364,8 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
         .unwrap();
     doc.add_feature_in_body(
         PartFeature::Hole {
+            clearance: None,
+            thread_length: Default::default(),
             refine: false,
             sketch: holes_id,
             diameter: 4.0,
@@ -1021,6 +1023,8 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         )
         .unwrap();
     let hole = |modeled_thread: bool| PartFeature::Hole {
+        clearance: None,
+        thread_length: Default::default(),
         refine: false,
         sketch: holes_id,
         diameter: 5.0,
@@ -1743,6 +1747,8 @@ fn drilled_block_solid(
 /// change.
 fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> PartFeature {
     PartFeature::Hole {
+        clearance: None,
+        thread_length: Default::default(),
         refine: false,
         sketch,
         diameter,

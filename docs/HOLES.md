@@ -20,7 +20,7 @@ by name (`pc.part.hole`, `pc.part.set`).
 A sized hole drills the tap drill when **Threaded** is on, otherwise the
 clearance of its **Fit** (close, normal, loose: ISO 273 for metric sizes,
 ASME B18.2.8 for unified ones; the other standards drill the major
-diameter). A tapped taper thread drills the thread's minor diameter at the
+diameter), or **Custom**, a clearance diameter of your own. A tapped taper thread drills the thread's minor diameter at the
 face and narrows 1:16 on the diameter from there.
 
 **Class** is the internal thread's class: 4H to 8H and 4G to 8G for metric
@@ -29,9 +29,11 @@ face and narrows 1:16 on the diameter from there.
 threads have none. **Left-hand thread** turns a modeled thread the other
 way.
 
-**Modeled thread** cuts the thread itself into the wall, to **Thread
-depth**, for printing it rather than tapping it: the standard's flank angle,
-out to its major diameter, along a cone for a taper thread.
+**Modeled thread** cuts the thread itself into the wall, for printing it
+rather than tapping it: the standard's flank angle, out to its major
+diameter, along a cone for a taper thread. **Thread length** is the
+**Thread depth** given, the **Whole hole**, or the hole **Less the
+run-out** of three pitches a tap leaves at the bottom.
 
 ## Depth and bottom
 
@@ -52,6 +54,14 @@ its own).
   hole's metric size (DIN 974-1 diameters).
 - **ISO 10642 seat:** the 90° countersink for a countersunk socket screw of
   the hole's metric size.
+- **ISO 7380 seat:** the counterbore for a button head screw.
+- **ISO 2009 seat** and **ISO 7046 seat:** the 90° countersink for a
+  slotted or cross recessed countersunk screw.
+- **DIN 7984 seat:** the counterbore for a low head cap screw.
+- **ISO 4762 + washer seat:** the counterbore for a socket head cap screw
+  on an ISO 7089 washer (DIN 974-1's wider row).
+- **ISO 4017 seat:** the counterbore for a hex head screw, with room for a
+  socket wrench (DIN 974-2).
 
 ## Your own cuts
 
@@ -88,4 +98,7 @@ pc.part.hole{
 `standard` is one of `IsoMetricCoarse`, `IsoMetricFine`, `Unc`, `Unf`,
 `Unef`, `Bsw`, `Bsf`, `BspParallel`, `BspTaper` or `Npt`; `size` is the
 designation the panel lists. A screw seat is `cut = {Seat = {seat =
-"SocketHead"}}` or `"Countersunk"`.
+"SocketHead"}}`, or `"Countersunk"`, `"ButtonHead"`, `"SlottedCountersunk"`,
+`"CrossCountersunk"`, `"LowHeadCap"`, `"CapScrewWithWasher"`, `"HexHead"`.
+`clearance` sets a clearance of your own; `thread_length` is `"Given"`,
+`"HoleDepth"` or `"RunOut"`.

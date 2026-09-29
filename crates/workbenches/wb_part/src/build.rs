@@ -1641,6 +1641,7 @@ pub fn hole_diameter(feature: &PartFeature) -> f32 {
         thread,
         threaded,
         fit,
+        clearance,
         ..
     } = feature
     else {
@@ -1649,6 +1650,9 @@ pub fn hole_diameter(feature: &PartFeature) -> f32 {
     let Some((spec, Ok(size))) = thread.as_ref().map(|t| (t, t.resolve())) else {
         return *diameter;
     };
+    if let (false, Some(own)) = (*threaded, clearance) {
+        return *own;
+    }
     if *threaded {
         let drill = if spec.standard.is_tapered() {
             size.minor
@@ -1721,6 +1725,7 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
         threaded,
         modeled_thread,
         thread_depth,
+        thread_length,
         drill_point,
         point_in_depth,
         ..
@@ -1937,14 +1942,34 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
             .as_ref()
             .zip(size)
             .ok_or("a modeled thread needs a standard size")?;
-        if *thread_depth <= 0.0 {
+        // A through hole's whole depth: as far as the solid reaches.
+        let hole_depth = if *through_all {
+            document
+                .get_feature_meta(*sketch)
+                .and_then(|n| n.body)
+                .and_then(|b| document.imported_geometry(b))
+                .and_then(|g| g.bounds_mm)
+                .map(|(lo, hi)| {
+                    let d = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+                    f64::from((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt())
+                })
+                .ok_or("a through hole's thread needs the solid built first, or a depth given")?
+        } else {
+            f64::from(*depth)
+        };
+        let length = match thread_length {
+            crate::feature::ThreadLength::Given => f64::from(*thread_depth),
+            crate::feature::ThreadLength::HoleDepth => hole_depth,
+            crate::feature::ThreadLength::RunOut => hole_depth - 3.0 * size.pitch,
+        };
+        if length <= 0.0 {
             return Err("give the modeled thread a depth".into());
         }
         let form = ThreadForm {
             wall: radius,
             major: (size.major + spec.allowance(&size)) * 0.5,
             pitch: size.pitch,
-            depth: f64::from(*thread_depth),
+            depth: length,
             flank_deg: spec.standard.flank_angle_deg(),
             taper_deg: taper,
             left_handed: spec.left_handed,
@@ -3334,6 +3359,8 @@ mod tests {
             .unwrap();
         doc.add_feature_in_body(
             PartFeature::Hole {
+                clearance: None,
+                thread_length: Default::default(),
                 refine: false,
                 sketch: hole_sketch_id,
                 diameter: 3.0,
@@ -3392,6 +3419,89 @@ mod tests {
         assert!(error.message.contains("its own tool"), "{}", error.message);
     }
 
+    /// An M6 hole 10 deep, its thread modeled `length` long or cleared
+    /// with `clearance`; the ops it makes.
+    fn m6_hole(
+        threaded: bool,
+        length: crate::feature::ThreadLength,
+        clearance: Option<f32>,
+    ) -> (PartFeature, Vec<SolidOp>) {
+        let (mut doc, body, base_sketch) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(base_sketch, 20.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut hole_sketch = Sketch::new("holes");
+        hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 2.5))));
+        let plane = hole_sketch.plane;
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(hole_sketch, plane),
+                "holes".into(),
+                Some(body),
+            )
+            .unwrap();
+        let hole = PartFeature::Hole {
+            clearance,
+            thread_length: length,
+            refine: false,
+            sketch,
+            diameter: 3.0,
+            depth: 10.0,
+            through_all: false,
+            cut: HoleCut::None,
+            thread: Some(crate::feature::ThreadSpec::new(
+                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                "M6",
+            )),
+            threaded,
+            modeled_thread: threaded,
+            thread_depth: 4.0,
+            fit: crate::feature::HoleFit::Normal,
+            drill_point: DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
+            reversed: false,
+        };
+        let ops = hole_ops(&doc, &hole).unwrap();
+        (hole, ops)
+    }
+
+    /// The height of the thread's helix: its length and one pitch.
+    fn thread_run(ops: &[SolidOp]) -> f64 {
+        ops.iter()
+            .find_map(|op| match op {
+                SolidOp::Sweep {
+                    kind: SweepKind::Helix { height, .. },
+                    ..
+                } => Some(*height),
+                _ => None,
+            })
+            .expect("a thread")
+    }
+
+    #[test]
+    fn a_modeled_thread_runs_as_long_as_asked() {
+        use crate::feature::ThreadLength;
+        // M6 coarse: pitch 1.
+        let given = thread_run(&m6_hole(true, ThreadLength::Given, None).1);
+        let whole = thread_run(&m6_hole(true, ThreadLength::HoleDepth, None).1);
+        let run_out = thread_run(&m6_hole(true, ThreadLength::RunOut, None).1);
+        assert!((given - 5.0).abs() < 1e-9, "{given}");
+        assert!((whole - 11.0).abs() < 1e-9, "{whole}");
+        assert!((run_out - 8.0).abs() < 1e-9, "{run_out}");
+    }
+
+    #[test]
+    fn a_clearance_of_ones_own_takes_the_fits_place() {
+        use crate::feature::ThreadLength;
+        let (normal, _) = m6_hole(false, ThreadLength::Given, None);
+        assert!(
+            (hole_diameter(&normal) - 6.6).abs() < 1e-4,
+            "ISO 273 normal"
+        );
+        let (own, _) = m6_hole(false, ThreadLength::Given, Some(6.3));
+        assert!((hole_diameter(&own) - 6.3).abs() < 1e-6);
+    }
+
     #[test]
     fn a_hole_of_a_size_the_table_lacks_fails_cleanly() {
         for (threaded, modeled_thread) in [(false, false), (true, false), (true, true)] {
@@ -3412,6 +3522,8 @@ mod tests {
                 .unwrap();
             doc.add_feature_in_body(
                 PartFeature::Hole {
+                    clearance: None,
+                    thread_length: Default::default(),
                     refine: false,
                     sketch: hole_sketch_id,
                     diameter: 3.0,
@@ -3461,6 +3573,8 @@ mod tests {
             )
             .unwrap();
         let mut hole = PartFeature::Hole {
+            clearance: None,
+            thread_length: Default::default(),
             refine: false,
             sketch: hole_sketch_id,
             diameter: 3.0,
@@ -3803,6 +3917,8 @@ mod tests {
     #[test]
     fn metric_hole_diameter_uses_the_table() {
         let feature = PartFeature::Hole {
+            clearance: None,
+            thread_length: Default::default(),
             refine: false,
             sketch: FeatureId::new(),
             diameter: 99.0,
@@ -3824,6 +3940,8 @@ mod tests {
         };
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
         let clearance = PartFeature::Hole {
+            clearance: None,
+            thread_length: Default::default(),
             refine: false,
             sketch: FeatureId::new(),
             diameter: 99.0,

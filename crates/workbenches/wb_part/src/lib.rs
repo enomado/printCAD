@@ -432,6 +432,8 @@ impl PartDesignWorkbench {
                 need_material(has_solid)?;
                 (
                     PartFeature::Hole {
+                        clearance: None,
+                        thread_length: Default::default(),
                         refine: false,
                         sketch: need_sketch(sketch)?,
                         diameter: 5.0,

@@ -503,16 +503,54 @@ pub enum ScrewSeat {
     /// A 90° countersink for an ISO 10642 countersunk socket screw, as
     /// wide as the head and a little more.
     Countersunk,
+    /// A counterbore for an ISO 7380 button head screw.
+    ButtonHead,
+    /// A 90° countersink for an ISO 2009 slotted countersunk screw.
+    SlottedCountersunk,
+    /// A 90° countersink for an ISO 7046 cross recessed countersunk screw,
+    /// whose head is the slotted one's.
+    CrossCountersunk,
+    /// A counterbore for a DIN 7984 low head cap screw.
+    LowHeadCap,
+    /// A counterbore for an ISO 4762 cap screw on an ISO 7089 washer, DIN
+    /// 974-1's wider row.
+    CapScrewWithWasher,
+    /// A counterbore for an ISO 4017 hex head screw, room for a socket
+    /// wrench round the head (DIN 974-2).
+    HexHead,
 }
 
 impl ScrewSeat {
-    pub const ALL: [ScrewSeat; 2] = [ScrewSeat::SocketHead, ScrewSeat::Countersunk];
+    pub const ALL: [ScrewSeat; 8] = [
+        ScrewSeat::SocketHead,
+        ScrewSeat::Countersunk,
+        ScrewSeat::ButtonHead,
+        ScrewSeat::SlottedCountersunk,
+        ScrewSeat::CrossCountersunk,
+        ScrewSeat::LowHeadCap,
+        ScrewSeat::CapScrewWithWasher,
+        ScrewSeat::HexHead,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             ScrewSeat::SocketHead => "ISO 4762 seat",
             ScrewSeat::Countersunk => "ISO 10642 seat",
+            ScrewSeat::ButtonHead => "ISO 7380 seat",
+            ScrewSeat::SlottedCountersunk => "ISO 2009 seat",
+            ScrewSeat::CrossCountersunk => "ISO 7046 seat",
+            ScrewSeat::LowHeadCap => "DIN 7984 seat",
+            ScrewSeat::CapScrewWithWasher => "ISO 4762 + washer seat",
+            ScrewSeat::HexHead => "ISO 4017 seat",
         }
+    }
+
+    /// Whether the seat is a countersink rather than a counterbore.
+    fn sunk(self) -> bool {
+        matches!(
+            self,
+            ScrewSeat::Countersunk | ScrewSeat::SlottedCountersunk | ScrewSeat::CrossCountersunk
+        )
     }
 
     /// The cut this seat makes for a screw of `nominal` diameter.
@@ -520,17 +558,25 @@ impl ScrewSeat {
         let table = match self {
             ScrewSeat::SocketHead => SOCKET_HEAD_SEATS,
             ScrewSeat::Countersunk => COUNTERSUNK_SEATS,
+            ScrewSeat::ButtonHead => BUTTON_HEAD_SEATS,
+            ScrewSeat::SlottedCountersunk | ScrewSeat::CrossCountersunk => {
+                SLOTTED_COUNTERSUNK_SEATS
+            }
+            ScrewSeat::LowHeadCap => LOW_HEAD_SEATS,
+            ScrewSeat::CapScrewWithWasher => WASHER_SEATS,
+            ScrewSeat::HexHead => HEX_HEAD_SEATS,
         };
         let &(_, diameter, depth) = table.iter().find(|(d, ..)| (d - nominal).abs() < 1e-9)?;
-        Some(match self {
-            ScrewSeat::SocketHead => HoleCut::Counterbore {
-                diameter: diameter as f32,
-                depth: depth as f32,
-            },
-            ScrewSeat::Countersunk => HoleCut::Countersink {
+        Some(if self.sunk() {
+            HoleCut::Countersink {
                 diameter: diameter as f32,
                 angle_deg: 90.0,
-            },
+            }
+        } else {
+            HoleCut::Counterbore {
+                diameter: diameter as f32,
+                depth: depth as f32,
+            }
         })
     }
 }
@@ -570,6 +616,75 @@ const COUNTERSUNK_SEATS: &[(f64, f64, f64)] = &[
     (14.0, 31.1, 0.0),
     (16.0, 33.9, 0.0),
     (20.0, 40.7, 0.0),
+];
+
+/// ISO 7380 button heads: nominal, counterbore diameter (the head's dk and
+/// a clearance), depth (its height k and a clearance).
+const BUTTON_HEAD_SEATS: &[(f64, f64, f64)] = &[
+    (3.0, 6.5, 2.1),
+    (4.0, 8.5, 2.6),
+    (5.0, 10.5, 3.2),
+    (6.0, 11.5, 3.7),
+    (8.0, 15.0, 4.8),
+    (10.0, 18.5, 5.9),
+    (12.0, 22.0, 7.0),
+    (16.0, 29.0, 9.2),
+];
+
+/// ISO 2009 (and ISO 7046) countersunk heads: nominal, diameter at the
+/// face (dk and a clearance), unused depth.
+const SLOTTED_COUNTERSUNK_SEATS: &[(f64, f64, f64)] = &[
+    (1.6, 4.0, 0.0),
+    (2.0, 4.8, 0.0),
+    (2.5, 5.9, 0.0),
+    (3.0, 6.7, 0.0),
+    (4.0, 9.8, 0.0),
+    (5.0, 10.8, 0.0),
+    (6.0, 13.0, 0.0),
+    (8.0, 17.7, 0.0),
+    (10.0, 20.4, 0.0),
+];
+
+/// DIN 7984 low head cap screws: nominal, counterbore diameter (DIN 974-1),
+/// depth (head height k and a clearance).
+const LOW_HEAD_SEATS: &[(f64, f64, f64)] = &[
+    (3.0, 6.5, 2.4),
+    (4.0, 8.0, 3.2),
+    (5.0, 10.0, 3.9),
+    (6.0, 11.0, 4.4),
+    (8.0, 15.0, 5.4),
+    (10.0, 18.0, 6.4),
+    (12.0, 20.0, 7.4),
+    (16.0, 26.0, 9.4),
+    (20.0, 33.0, 11.4),
+];
+
+/// ISO 4762 cap screws on ISO 7089 washers: nominal, counterbore diameter
+/// (DIN 974-1's washer row), depth (head height, washer and a clearance).
+const WASHER_SEATS: &[(f64, f64, f64)] = &[
+    (3.0, 8.0, 3.9),
+    (4.0, 10.0, 5.2),
+    (5.0, 11.0, 6.4),
+    (6.0, 13.0, 8.0),
+    (8.0, 18.0, 10.0),
+    (10.0, 22.0, 12.4),
+    (12.0, 26.0, 14.9),
+    (16.0, 33.0, 19.4),
+    (20.0, 40.0, 23.4),
+];
+
+/// ISO 4017 hex heads: nominal, counterbore diameter (DIN 974-2, a socket
+/// wrench's room), depth (head height k and a clearance).
+const HEX_HEAD_SEATS: &[(f64, f64, f64)] = &[
+    (3.0, 11.0, 2.4),
+    (4.0, 13.0, 3.2),
+    (5.0, 15.0, 3.9),
+    (6.0, 18.0, 4.4),
+    (8.0, 24.0, 5.7),
+    (10.0, 28.0, 6.8),
+    (12.0, 33.0, 7.9),
+    (16.0, 40.0, 10.4),
+    (20.0, 46.0, 12.9),
 ];
 
 /// A named cut from the user's table.
@@ -768,5 +883,33 @@ mod tests {
         );
         assert!(parse_cut_profiles("{ nope").is_err());
         assert_eq!(parse_cut_profiles("{}").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn every_seat_cuts_the_way_its_head_sits() {
+        for seat in ScrewSeat::ALL {
+            let cut = seat.cut(6.0).unwrap_or_else(|| panic!("{seat:?} has M6"));
+            match cut {
+                HoleCut::Countersink {
+                    diameter,
+                    angle_deg,
+                } => {
+                    assert!(seat.sunk(), "{seat:?}");
+                    assert!(diameter > 6.0 && angle_deg == 90.0);
+                }
+                HoleCut::Counterbore { diameter, depth } => {
+                    assert!(!seat.sunk(), "{seat:?}");
+                    assert!(diameter > 6.0 && depth > 0.0, "{seat:?}");
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(
+            ScrewSeat::ButtonHead.cut(5.0),
+            Some(HoleCut::Counterbore {
+                diameter: 10.5,
+                depth: 3.2
+            })
+        );
     }
 }

@@ -174,11 +174,11 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Hole
 
-- [ ] **Custom clearance** (partial, S). A number beside the close,
+- [x] **Custom clearance** (partial, S). A number beside the close,
   normal and loose fits (`HoleFit`, `hole_tables.rs`).
-- [ ] **More screw seats** (partial, S each). Button head, slotted and
+- [x] **More screw seats** (partial, S each). Button head, slotted and
   cross countersunk, low head cap, cap screw with washer, hex head.
-- [ ] **Thread length choices** (partial, S). The whole hole depth, or by
+- [x] **Thread length choices** (partial, S). The whole hole depth, or by
   the thread's run-out.
 
 ### Dress-ups, patterns and booleans
