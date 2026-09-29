@@ -456,6 +456,25 @@ fn in_plane(projected: ProjectedCurve) -> KernelResult<ProjectedEdge> {
             ratio,
             range,
         },
+        // A clamped spline goes across whole, so a profile drawn on it is
+        // the same curve as the edge it came from.
+        ProjectedCurve::BSpline { curve, .. } if curve.knots().is_clamped() => {
+            let control: Vec<_> = curve
+                .control_points()
+                .iter()
+                .map(|w| (w.point(), w.weight))
+                .collect();
+            ProjectedEdge::Spline {
+                degree: curve.knots().degree() as u32,
+                knots: curve.knots().knots().to_vec(),
+                control_points: control.iter().map(|(p, _)| [p.x, p.y]).collect(),
+                weights: if curve.is_rational() {
+                    control.iter().map(|(_, w)| *w).collect()
+                } else {
+                    Vec::new()
+                },
+            }
+        }
         ProjectedCurve::BSpline { curve, .. } => {
             let (a, b) = curve.domain();
             let points = (0..=POLYLINE_POINTS)

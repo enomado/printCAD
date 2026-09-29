@@ -1476,6 +1476,78 @@ fn an_edge_projects_onto_a_plane_as_an_exact_curve() {
     assert!(matches!(seam, ProjectedEdge::Point(_)), "{seam:?}");
 }
 
+/// A spline edge projects as the spline it is, not points along it: a pad
+/// of a quintic's top rim comes back with the quintic's degree, knots and
+/// control points.
+#[test]
+fn a_spline_edge_projects_as_its_spline() {
+    use kernel_api::{KernelQueries, ProjectedEdge};
+    let mut kernel = new_kernel();
+    let knots = vec![
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+    ];
+    let control = vec![
+        [0.0, 0.0],
+        [3.0, 6.0],
+        [7.0, 8.0],
+        [11.0, 7.0],
+        [15.0, 5.0],
+        [18.0, 2.0],
+        [20.0, 0.0],
+    ];
+    let wire = ProfileWire {
+        names: Vec::new(),
+        segments: vec![
+            ProfileSegment::Nurbs {
+                degree: 5,
+                knots: knots.clone(),
+                control_points: control.clone(),
+                weights: Vec::new(),
+                periodic: false,
+            },
+            ProfileSegment::Line {
+                start: [20.0, 0.0],
+                end: [0.0, 0.0],
+            },
+        ],
+    };
+    let solid = kernel
+        .execute_solid_chain(
+            &[blind_pad(vec![wire], 3.0, BooleanOp::NewSolid)],
+            &TessellationSettings::default(),
+        )
+        .expect("the spline pads");
+    let raised = ProfilePlane {
+        origin: [0.0, 0.0, 30.0],
+        ..xy_plane()
+    };
+    let rim = kernel_ogeom::QUERIES
+        .project_edge(&solid.brep_blob, [10.0, 7.0, 3.0], &raised)
+        .expect("the rim projects");
+    let ProjectedEdge::Spline {
+        degree,
+        knots: got_knots,
+        control_points,
+        weights,
+    } = rim
+    else {
+        panic!("{rim:?}");
+    };
+    assert_eq!(degree, 5);
+    assert_eq!(got_knots.len(), knots.len());
+    assert!(weights.is_empty(), "not rational: {weights:?}");
+    // The edge may run either way along the spline.
+    let forward = control_points
+        .iter()
+        .zip(&control)
+        .all(|(a, b)| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9);
+    let backward = control_points
+        .iter()
+        .zip(control.iter().rev())
+        .all(|(a, b)| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9);
+    assert!(forward || backward, "{control_points:?}");
+}
+
 /// A half space bounded by a plane, the material on `inside`'s side.
 fn half_space_at(
     model: &mut ogeom::topo::Model,

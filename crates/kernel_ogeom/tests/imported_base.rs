@@ -548,13 +548,13 @@ fn a_pad_along_a_converted_solid_s_sides_fuses() {
     fuses_along_its_sides("base.ogeom", "tool.ogeom");
 }
 
-/// The same outline padded out through the converted solid's bottom: the
-/// fuse keeps what leaves it. Read from `PRINTCAD_TEST_FUSE_DIR`
-/// (`pad-base.ogeom`, `pad-tool.ogeom`).
+/// The same face's outline, its spline sides exact, padded out through the
+/// converted solid's bottom: the fuse keeps what leaves it. Read from
+/// `PRINTCAD_TEST_FUSE_DIR` (`exact-base.ogeom`, `exact-tool.ogeom`).
 #[test]
-#[ignore = "kernel: a marched section wanders beside a chart's pole and the fuse gives up (ogeom-rs#100)"]
+#[ignore = "kernel: the arrangement leaves no piece of a face and the fuse gives up (ogeom-rs#100)"]
 fn a_pad_out_through_a_converted_solid_s_bottom_fuses() {
-    fuses_along_its_sides("pad-base.ogeom", "pad-tool.ogeom");
+    fuses_along_its_sides("exact-base.ogeom", "exact-tool.ogeom");
 }
 
 /// Fuses the tool into the base, both read from `PRINTCAD_TEST_FUSE_DIR`,

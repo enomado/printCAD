@@ -2,9 +2,9 @@
 //! curves where its faces cross the sketch plane (intersection references).
 //!
 //! The kernel gives each as the exact curve it is on the sketch plane (a
-//! line, a circle or arc, an ellipse or arc of one, a point); a curve with
-//! no closed form comes as points along it and is kept as a chain of
-//! lines. Each element remembers its edge or face (`ExternalSource`), so the
+//! line, a circle or arc, an ellipse or arc of one, a spline, a point); a
+//! curve with no closed form comes as points along it and is kept as a
+//! chain of lines. Each element remembers its edge or face (`ExternalSource`), so the
 //! sketch brings it up to the solid again when it is edited and the solid
 //! has changed: in place where the shapes are the same kinds, keeping the
 //! constraints that refer to them, and afresh where they are not.
@@ -16,7 +16,7 @@ use kernel_api::ProjectedEdge;
 use uuid::Uuid;
 
 use crate::sketch::{
-    Arc, Circle, Ellipse, ExternalSource, GeometryElement, Line, Point, Sketch, Vec2D,
+    Arc, BSpline, Circle, Ellipse, ExternalSource, GeometryElement, Line, Point, Sketch, Vec2D,
 };
 
 fn v(p: [f64; 2]) -> Vec2D {
@@ -83,6 +83,20 @@ pub fn add(sketch: &mut Sketch, projected: &ProjectedEdge, source: ExternalSourc
                 GeometryElement::Ellipse(Ellipse::new_arc(c, v(*major), *ratio as f32, s, e))
             };
             made.push(sketch.add_geometry(element));
+        }
+        ProjectedEdge::Spline {
+            degree,
+            knots,
+            control_points,
+            weights,
+        } => {
+            let ids: Vec<Uuid> = control_points.iter().map(|p| point(sketch, *p)).collect();
+            made.push(sketch.add_geometry(GeometryElement::BSpline(BSpline {
+                degree: *degree,
+                knots: knots.clone(),
+                weights: weights.clone(),
+                ..BSpline::new(ids, false)
+            })));
         }
         ProjectedEdge::Polyline(points) => {
             let ids: Vec<Uuid> = points.iter().map(|p| point(sketch, *p)).collect();
@@ -182,6 +196,24 @@ fn update(sketch: &mut Sketch, group: &[Uuid], projected: &ProjectedEdge) -> boo
                 e.ratio = *ratio as f32;
             }
         }
+        (
+            ProjectedEdge::Spline {
+                degree,
+                knots,
+                control_points,
+                weights,
+            },
+            [GeometryElement::BSpline(spline)],
+        ) if !spline.periodic && spline.control_points.len() == control_points.len() => {
+            for (id, p) in spline.control_points.iter().zip(control_points) {
+                place(sketch, *id, *p);
+            }
+            if let Some(GeometryElement::BSpline(b)) = sketch.get_geometry_mut(spline.id) {
+                b.degree = *degree;
+                b.knots = knots.clone();
+                b.weights = weights.clone();
+            }
+        }
         (ProjectedEdge::Polyline(points), lines)
             if lines.len() + 1 == points.len()
                 && lines.iter().all(|l| matches!(l, GeometryElement::Line(_))) =>
@@ -273,6 +305,49 @@ mod tests {
             defining: false,
             reference: None,
         }
+    }
+
+    /// A projected spline is one spline of the sketch, with the kernel's
+    /// degree, knots and weights, which the profile hands on exactly and a
+    /// fresh projection moves in place.
+    #[test]
+    fn a_projected_spline_stays_a_spline() {
+        let mut sketch = Sketch::new("t");
+        let spline = |lift: f64| ProjectedEdge::Spline {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![[0.0, 0.0], [5.0, 5.0 + lift], [10.0, 0.0]],
+            weights: vec![1.0, 0.5, 1.0],
+        };
+        let counting = ExternalSource {
+            defining: true,
+            ..source()
+        };
+        assert_eq!(add(&mut sketch, &spline(0.0), counting), 1);
+        let a = sketch.geometry[0].id();
+        let c = sketch.geometry[2].id();
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(c, a)));
+        assert!(sketch.get_geometry(line).is_some());
+        let wires = crate::profile::extract_wires(&sketch).expect("the spline and line close");
+        let nurbs = wires[0]
+            .segments
+            .iter()
+            .find_map(|s| match s {
+                kernel_api::ProfileSegment::Nurbs {
+                    degree, weights, ..
+                } => Some((*degree, weights.clone())),
+                _ => None,
+            })
+            .expect("the spline goes across as a NURBS segment");
+        assert_eq!(nurbs, (2, vec![1.0, 0.5, 1.0]));
+
+        let group = groups(&sketch)[0].1.clone();
+        assert!(update(&mut sketch, &group, &spline(1.0)), "in place");
+        let GeometryElement::BSpline(b) = sketch.get_geometry(group[0]).unwrap() else {
+            panic!("still a spline");
+        };
+        let middle = sketch.point_position(b.control_points[1]).unwrap();
+        assert!((middle.y - 6.0).abs() < 1e-6, "{middle:?}");
     }
 
     #[test]

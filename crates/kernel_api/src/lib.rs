@@ -1417,6 +1417,15 @@ pub enum ProjectedEdge {
         ratio: f64,
         range: (f64, f64),
     },
+    /// A B-spline, as the kernel projects it: `degree`, its clamped
+    /// `knots` (`control_points + degree + 1` of them), and a weight per
+    /// control point when rational (empty when every weight is one).
+    Spline {
+        degree: u32,
+        knots: Vec<f64>,
+        control_points: Vec<[f64; 2]>,
+        weights: Vec<f64>,
+    },
     /// Any other curve, as points along it: exact at each point, straight
     /// between.
     Polyline(Vec<[f64; 2]>),
