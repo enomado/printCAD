@@ -101,6 +101,10 @@ pub enum DocumentOp {
         name: String,
         created_at: i64,
         source: BodyId,
+        /// The plane, in the source's frame, a mirrored copy is mirrored
+        /// across.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mirror: Option<crate::MirrorPlane>,
     },
     RenameBody {
         id: BodyId,

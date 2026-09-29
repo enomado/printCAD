@@ -317,6 +317,21 @@ impl PrintCadApp {
         }
     }
 
+    /// Ask the kernel for the snapshot of every mirrored copy that has
+    /// none: its source's, mirrored.
+    pub(crate) fn drive_mirrored_copies(&mut self) {
+        for (body, blob, plane) in self.session.document.copies_awaiting_shape() {
+            let failed = self
+                .session
+                .mirrors_failed
+                .get(&body.0)
+                .is_some_and(|f| std::sync::Arc::ptr_eq(f, &blob));
+            if !failed && self.session.mirrors_in_flight.insert(body.0) {
+                self.kernel_worker.request_mirror(body.0, blob, plane);
+            }
+        }
+    }
+
     /// Land a mesh body's solid: its snapshot, its mesh with kernel faces
     /// and edges, the checker's verdict, and a line on what it became.
     pub(crate) fn apply_mesh_solid(

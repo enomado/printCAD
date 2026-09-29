@@ -411,7 +411,12 @@ snapshot and face colours are derived from the source's
 (`refresh_copy`, run whenever the source's geometry is set or dropped and
 after a load; a copy's snapshot is not saved), placed by its own
 placement. It takes no features (`body_solid_is_imported` is true for it,
-Part Design's target body skips it).
+Part Design's target body skips it). A mirrored copy (`mirror`, a plane in
+the source's frame) draws the source's mesh mirrored at once and waits for
+its snapshot, the kernel's mirror of the source's (`KernelQueries::mirror`),
+which `drive_mirrored_copies` asks the kernel worker for
+(`copies_awaiting_shape`, kept by `set_mirrored_shape` only while the
+source still has the snapshot it was made from).
 
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,

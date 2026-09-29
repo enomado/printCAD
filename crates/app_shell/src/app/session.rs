@@ -123,6 +123,11 @@ pub(crate) struct DocumentSession {
     pub physical: std::collections::HashMap<Uuid, (u64, crate::ui::Physical)>,
     /// Mesh bodies the kernel worker is turning into solids.
     pub solids_in_flight: std::collections::HashSet<Uuid>,
+    /// Mirrored copies whose snapshot the kernel is making.
+    pub mirrors_in_flight: std::collections::HashSet<Uuid>,
+    /// Mirrored copies the kernel could not mirror, with the source
+    /// snapshot it failed on: not asked again until that changes.
+    pub mirrors_failed: std::collections::HashMap<Uuid, std::sync::Arc<Vec<u8>>>,
     /// The feature an open task edits, which builds carry a preview of.
     pub preview_feature: Option<core_document::FeatureId>,
     /// Bodies showing that preview: the body without the feature stands in
@@ -211,6 +216,8 @@ impl DocumentSession {
             pick_depths: None,
             repairs_in_flight: Default::default(),
             solids_in_flight: Default::default(),
+            mirrors_in_flight: Default::default(),
+            mirrors_failed: Default::default(),
             preview_feature: None,
             previews: Default::default(),
             physical: Default::default(),

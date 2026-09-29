@@ -1277,6 +1277,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `around` (any, optional): {point = {x, y, z}, direction = {x, y, z}, angle}: the copies turned about this axis instead, spread evenly over `angle` degrees (360 when left out)
 - Returns the copies' ids
 
+`pc.asm.mirror`: Insert a linked copy that is a body's mirror image, following every change to it.
+
+- `body` (id): The body to mirror
+- `point` (list): A point of the mirror plane, {x, y, z}, in the world
+- `normal` (list): The plane's normal, {x, y, z}
+- Returns the mirrored copy's id
+
 `pc.asm.group`: Lock bodies together where they sit, in one rigid group.
 
 - `bodies` (list): Two bodies or more; the first the one the rest hold to

@@ -61,6 +61,28 @@ impl KernelQueries for OgeomQueries {
         })
     }
 
+    fn mirror(&self, brep: &[u8], point: [f64; 3], normal: [f64; 3]) -> KernelResult<Vec<u8>> {
+        let n = Vector::new(normal[0], normal[1], normal[2]);
+        let len = n.dot(n).sqrt();
+        if len < 1e-12 {
+            return Err(other("a mirror plane needs a normal"));
+        }
+        let n = n * (1.0 / len);
+        let d = 2.0 * (point[0] * n.x + point[1] * n.y + point[2] * n.z);
+        let c = [n.x, n.y, n.z];
+        let mut m = [[0.0; 4]; 4];
+        for (i, row) in m.iter_mut().enumerate().take(3) {
+            for (j, cell) in row.iter_mut().enumerate().take(3) {
+                *cell = f64::from(u8::from(i == j)) - 2.0 * c[i] * c[j];
+            }
+            row[3] = d * c[i];
+        }
+        m[3][3] = 1.0;
+        let (mut model, root) = tess::read_blob(brep)?;
+        let shape = crate::ops::pattern::mirrored(&mut model, &root, &m).map_err(other)?;
+        tess::write_blob(&model, &shape)
+    }
+
     fn measure(&self, brep: &[u8]) -> KernelResult<kernel_api::PhysicalProperties> {
         crate::health::measure_blob(brep)
     }

@@ -239,7 +239,7 @@ and noted on its item, and the rest of the item is built around it.
   nested. A group node in `core_document` and a group-aware solver.
 - [x] **Rigid group** (partial, S). Several bodies locked in one
   action, not pairwise fixed joints.
-- [ ] **Patterns and mirrors of components** (missing, M). Arrays and
+- [x] **Patterns and mirrors of components** (missing, M). Arrays and
   mirrored copies of bodies in the assembly, built on linked copies.
 - [x] **Insert several copies, place by dragging** (missing, S).
 - [ ] **Replace a component** (missing, M), keeping its joints where the

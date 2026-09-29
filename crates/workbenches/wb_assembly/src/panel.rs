@@ -127,7 +127,8 @@ impl AssemblyWorkbench {
                 count,
                 step,
                 around,
-            }) => self.copies_panel(ui, ctx, request, body, (count, step, around)),
+                mirror,
+            }) => self.copies_panel(ui, ctx, request, body, (count, step, around), mirror),
             Some(Task::Group { editing, members }) => {
                 self.group_panel(ui, ctx, request, editing, &members)
             }
@@ -389,10 +390,36 @@ impl AssemblyWorkbench {
         request: TaskRequest,
         body: BodyId,
         (count, step, around): (u32, [f32; 3], Option<crate::Around>),
+        mirror: Option<([f32; 3], [f32; 3])>,
     ) -> TaskOutcome {
         if request.cancel {
             self.task = None;
             return TaskOutcome::Cancelled;
+        }
+        if request.accept
+            && let Some((point, normal)) = mirror
+        {
+            let plane = core_document::MirrorPlane { point, normal };
+            let made = ctx.document.create_mirrored_copy(body, plane, None);
+            match made {
+                Some(copy) => {
+                    ctx.record(
+                        "asm.mirror",
+                        crate::commands::object(serde_json::json!({
+                            "body": body.0.to_string(),
+                            "point": point,
+                            "normal": normal,
+                        })),
+                        serde_json::json!(copy.0.to_string()),
+                    );
+                    self.task = None;
+                    return TaskOutcome::Accepted {
+                        label: "Insert mirrored copy".to_string(),
+                    };
+                }
+                None => ctx.log_warn("A mirrored copy cannot be mirrored again"),
+            }
+            return TaskOutcome::Open;
         }
         if request.accept {
             let made = match around {
@@ -455,6 +482,59 @@ impl AssemblyWorkbench {
                 .speed(0.1)
                 .show(ui);
         });
+        let mut mirrored = mirror.is_some();
+        let mut plane = mirror.unwrap_or(([0.0; 3], [1.0, 0.0, 0.0]));
+        let mut mirror_changed = check_row(ui, &mut mirrored, "A mirror image")
+            .on_hover_text("One copy mirrored across a plane, rather than copies as they are")
+            .changed();
+        if mirrored {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [90.0, INPUT],
+                    egui::Label::new(RichText::new("Across").font(sans(FONT_SM)).color(TEXT2)),
+                );
+                for (name, normal) in [
+                    ("YZ", [1.0, 0.0, 0.0]),
+                    ("XZ", [0.0, 1.0, 0.0]),
+                    ("XY", [0.0, 0.0, 1.0]),
+                ] {
+                    if ui
+                        .selectable_label(
+                            plane.1 == normal,
+                            RichText::new(name).font(sans(FONT_SM)),
+                        )
+                        .clicked()
+                    {
+                        plane.1 = normal;
+                        mirror_changed = true;
+                    }
+                }
+            });
+            for (k, label) in ["Through x", "Through y", "Through z"]
+                .into_iter()
+                .enumerate()
+            {
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [90.0, INPUT],
+                        egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+                    );
+                    mirror_changed |= QtyField::mm(&mut plane.0[k]).show(ui);
+                });
+            }
+        }
+        if mirror_changed && let Some(Task::Copies { mirror, .. }) = &mut self.task {
+            *mirror = mirrored.then_some(plane);
+        }
+        if mirrored {
+            ui.add_space(SPACE_1);
+            note(
+                ui,
+                "The mirror image takes the body's shape, mirrored, and follows every change \
+                 to it.",
+            );
+            return TaskOutcome::Open;
+        }
         let mut turned = around.is_some();
         let mut pivot = around.unwrap_or(([0.0; 3], [0.0, 0.0, 1.0], 360.0));
         changed |= check_row(ui, &mut turned, "Around an axis")

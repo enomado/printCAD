@@ -543,6 +543,7 @@ impl PrintCadApp {
             app.drive_part_recompute();
             app.drive_shape_repairs();
             app.drive_mesh_solids();
+            app.drive_mirrored_copies();
         });
         // What formulas moved is followed within the gesture that moved
         // it: a joint an open panel binds re-solves on the next frame.

@@ -2981,3 +2981,32 @@ fn two_solids_are_as_near_as_their_facing_walls() {
         .unwrap();
     assert!(crossing.distance_mm.abs() < 1e-6, "{crossing:?}");
 }
+
+/// A solid mirrored across a plane keeps its volume and lands on the other
+/// side of it.
+#[test]
+fn a_solid_mirrors_across_a_plane() {
+    use kernel_api::KernelQueries;
+    let mut kernel = new_kernel();
+    let cube = [SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 10.0,
+            width: 20.0,
+            height: 30.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }];
+    let solid = kernel
+        .execute_solid_chain(&cube, &TessellationSettings::default())
+        .expect("a box builds");
+    let mirrored = kernel_ogeom::QUERIES
+        .mirror(&solid.brep_blob, [20.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        .unwrap();
+    let measured = kernel_ogeom::QUERIES.measure(&mirrored).unwrap();
+    assert!(
+        (measured.volume_mm3.unwrap() - 6000.0).abs() < 1e-6,
+        "{measured:?}"
+    );
+    assert!((measured.centre_mm[0] - 35.0).abs() < 1e-6, "{measured:?}");
+}

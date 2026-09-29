@@ -245,6 +245,53 @@ pub struct Body {
     /// change to it; it takes no features.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copy_of: Option<BodyId>,
+    /// A linked copy that is the source's mirror image: the plane, in the
+    /// source's own frame, it is mirrored across.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<MirrorPlane>,
+}
+
+/// A plane a shape is mirrored across: a point on it and its normal.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MirrorPlane {
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+impl MirrorPlane {
+    /// `p` mirrored across the plane.
+    pub fn point_of(&self, p: [f32; 3]) -> [f32; 3] {
+        let n = glam::Vec3::from_array(self.normal).normalize_or_zero();
+        let p = glam::Vec3::from_array(p);
+        let d = (p - glam::Vec3::from_array(self.point)).dot(n);
+        (p - 2.0 * d * n).to_array()
+    }
+
+    /// A direction mirrored across the plane.
+    pub fn direction_of(&self, v: [f32; 3]) -> [f32; 3] {
+        let n = glam::Vec3::from_array(self.normal).normalize_or_zero();
+        let v = glam::Vec3::from_array(v);
+        (v - 2.0 * v.dot(n) * n).to_array()
+    }
+
+    /// A mesh mirrored across the plane, its triangles wound the other way
+    /// so they still face out.
+    pub fn mesh(&self, mesh: &TriMesh) -> TriMesh {
+        let mut out = mesh.clone();
+        for p in &mut out.positions {
+            *p = self.point_of(*p);
+        }
+        for n in &mut out.normals {
+            *n = self.direction_of(*n);
+        }
+        for tri in out.indices.as_chunks_mut::<3>().0 {
+            tri.swap(1, 2);
+        }
+        for surface in &mut out.face_surfaces {
+            *surface = surface.moved(|p| self.point_of(p), |d| self.direction_of(d));
+        }
+        out
+    }
 }
 
 /// A user-chosen look for a body: its colour and how much of it shows.
@@ -628,6 +675,7 @@ impl Document {
                 created_at,
             } => {
                 self.bodies.push(Body {
+                    mirror: None,
                     id: *id,
                     name: name.clone(),
                     created_at: *created_at,
@@ -645,6 +693,7 @@ impl Document {
                 name,
                 created_at,
                 source,
+                mirror,
             } => {
                 self.bodies.push(Body {
                     id: *id,
@@ -657,6 +706,7 @@ impl Document {
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
                     copy_of: Some(*source),
+                    mirror: *mirror,
                 });
                 self.refresh_copy(*id);
             }
@@ -856,6 +906,7 @@ impl Document {
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
                 for init in bodies {
                     self.bodies.push(Body {
+                        mirror: None,
                         copy_of: None,
                         id: init.id,
                         name: init.name.clone(),
@@ -1738,7 +1789,40 @@ impl Document {
     /// a body of the same shape, which follows every change to it, placed
     /// where `source` sits until it is moved.
     pub fn create_linked_copy(&mut self, source: BodyId, name: Option<String>) -> Option<BodyId> {
+        self.create_copy(source, name, None)
+    }
+
+    /// A linked copy of `source` that is its mirror image across the plane
+    /// `mirror` (in the world), placed where `source` sits. Its snapshot
+    /// is the kernel's mirror of the source's, which the host derives
+    /// (`copies_awaiting_shape`). `None` for a mirror of a mirror.
+    pub fn create_mirrored_copy(
+        &mut self,
+        source: BodyId,
+        mirror: MirrorPlane,
+        name: Option<String>,
+    ) -> Option<BodyId> {
         let entry = self.bodies.iter().find(|b| b.id == source)?;
+        let to_local = entry.placement.inverse();
+        let local = MirrorPlane {
+            point: to_local.point(mirror.point),
+            normal: to_local.direction(mirror.normal),
+        };
+        self.create_copy(source, name, Some(local))
+    }
+
+    fn create_copy(
+        &mut self,
+        source: BodyId,
+        name: Option<String>,
+        mirror: Option<MirrorPlane>,
+    ) -> Option<BodyId> {
+        let entry = self.bodies.iter().find(|b| b.id == source)?;
+        if entry.mirror.is_some() && mirror.is_some() {
+            return None;
+        }
+        // A copy of a mirrored copy is mirrored alike.
+        let mirror = mirror.or(entry.mirror);
         let root = entry.copy_of.unwrap_or(source);
         let placement = entry.placement;
         let base = self
@@ -1756,6 +1840,7 @@ impl Document {
             name,
             created_at: epoch_ms_now(),
             source: root,
+            mirror,
         });
         self.set_body_placement(id, placement);
         Some(id)
@@ -1781,12 +1866,25 @@ impl Document {
         let Some(source) = self.copy_source(copy) else {
             return;
         };
+        let mirror = self
+            .bodies
+            .iter()
+            .find(|b| b.id == copy)
+            .and_then(|b| b.mirror);
         let Some((mesh, bounds)) = self.local_geometry(source) else {
             self.imported_meshes.remove(&copy);
             self.local_meshes.remove(&copy);
             self.imported_brep_blobs.remove(&copy);
             self.imported_brep_face_colors.remove(&copy);
             return;
+        };
+        let (mesh, bounds) = match mirror {
+            Some(plane) => {
+                let mirrored = plane.mesh(&mesh);
+                let bounds = mirrored.bounds();
+                (Arc::new(mirrored), bounds)
+            }
+            None => (mesh, bounds),
         };
         let from = self.imported_meshes.get(&source);
         let geometry = ImportedGeometry {
@@ -1798,11 +1896,13 @@ impl Document {
             face_colors_path: None,
             health: from.and_then(|g| g.health.clone()),
         };
+        // A mirror's snapshot is the kernel's, derived by the host; until
+        // then it has none.
         match self.imported_brep_blobs.get(&source).cloned() {
-            Some(blob) => {
+            Some(blob) if mirror.is_none() => {
                 self.imported_brep_blobs.insert(copy, blob);
             }
-            None => {
+            _ => {
                 self.imported_brep_blobs.remove(&copy);
             }
         }
@@ -1832,6 +1932,52 @@ impl Document {
         if !self.body_placement(copy).is_identity() {
             self.place_geometry(copy);
         }
+    }
+
+    /// Mirrored copies whose snapshot is still to be derived: each with its
+    /// source's snapshot and the plane, in the source's frame, to mirror
+    /// it across.
+    pub fn copies_awaiting_shape(&self) -> Vec<(BodyId, std::sync::Arc<Vec<u8>>, MirrorPlane)> {
+        self.bodies
+            .iter()
+            .filter_map(|b| {
+                let (source, plane) = (b.copy_of?, b.mirror?);
+                if self.imported_brep_blobs.contains_key(&b.id) {
+                    return None;
+                }
+                Some((b.id, self.imported_brep_blobs.get(&source)?.clone(), plane))
+            })
+            .collect()
+    }
+
+    /// A mirrored copy's snapshot, as the kernel made it from `from` (the
+    /// source's snapshot then): kept when the source still has that one.
+    /// Derived state: no op.
+    pub fn set_mirrored_shape(
+        &mut self,
+        copy: BodyId,
+        from: &std::sync::Arc<Vec<u8>>,
+        blob: Vec<u8>,
+    ) -> bool {
+        let Some(source) = self.copy_source(copy) else {
+            return false;
+        };
+        let current = self.imported_brep_blobs.get(&source);
+        if !current.is_some_and(|c| std::sync::Arc::ptr_eq(c, from)) {
+            return false;
+        }
+        let colors = self.imported_brep_face_colors.get(&source).cloned();
+        self.imported_brep_blobs
+            .insert(copy, std::sync::Arc::new(blob));
+        match colors {
+            Some(colors) => {
+                self.imported_brep_face_colors.insert(copy, colors);
+            }
+            None => {
+                self.imported_brep_face_colors.remove(&copy);
+            }
+        }
+        true
     }
 
     /// Every linked copy of `body` derived again from it.

@@ -519,6 +519,23 @@ pub(crate) fn moved(
         .shape)
 }
 
+/// A copy of `shape` mirrored by the reflecting isometry `matrix`.
+pub(crate) fn mirrored(
+    model: &mut Model,
+    shape: &Shape,
+    matrix: &[[f64; 4]; 4],
+) -> Result<Shape, String> {
+    if !is_isometry(matrix) {
+        return Err("a mirror must keep lengths".into());
+    }
+    let fresh = copied(model, shape)
+        .map_err(|e| format!("copying the shape failed: {e}"))?
+        .shape;
+    Ok(transformed(model, &fresh, reflection_of(matrix))
+        .map_err(|e| format!("mirroring the shape failed: {e}"))?
+        .shape)
+}
+
 /// The similarity transform when the matrix is rigid (orthonormal, unit
 /// scale, right-handed); `None` for reflections and the general path.
 fn rigid_of(m: &[[f64; 4]; 4]) -> Option<Transform> {

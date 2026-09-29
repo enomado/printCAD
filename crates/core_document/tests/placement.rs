@@ -161,3 +161,46 @@ fn a_linked_copy_follows_its_source() {
     journal.undo(&mut doc);
     assert!(doc.bodies().iter().all(|b| b.id != copy), "undone");
 }
+
+/// A mirrored copy draws the source mirrored, wound to face out, and
+/// waits for the kernel's mirror of the source's snapshot, which it keeps
+/// only while the source still has the snapshot it was made from.
+#[test]
+fn a_mirrored_copy_waits_for_its_snapshot() {
+    use core_document::MirrorPlane;
+    let mut doc = Document::new("t");
+    let source = doc.create_body(Some("Left".into()));
+    doc.set_imported_geometry(source, geometry(triangle()));
+    doc.set_imported_brep_data(source, b"ogeom left".to_vec(), Vec::new());
+    let plane = MirrorPlane {
+        point: [5.0, 0.0, 0.0],
+        normal: [1.0, 0.0, 0.0],
+    };
+    let copy = doc.create_mirrored_copy(source, plane, None).unwrap();
+    let mesh = &doc.imported_geometry(copy).unwrap().mesh;
+    assert!(
+        close(mesh.positions[1], [9.0, 0.0, 0.0]),
+        "{:?}",
+        mesh.positions
+    );
+    assert_eq!(mesh.indices, [0, 2, 1], "wound the other way");
+    assert!(doc.imported_brep_blob(copy).is_none());
+    let waiting = doc.copies_awaiting_shape();
+    assert_eq!(waiting.len(), 1);
+    let (body, from, local) = &waiting[0];
+    assert_eq!(*body, copy);
+    assert_eq!(*local, plane);
+    assert!(doc.set_mirrored_shape(copy, from, b"ogeom right".to_vec()));
+    assert_eq!(doc.imported_brep_blob(copy), Some(&b"ogeom right"[..]));
+    assert!(doc.copies_awaiting_shape().is_empty());
+    // The source changes: the mirror is made again, and an answer from the
+    // old snapshot is not kept.
+    let stale = from.clone();
+    doc.set_imported_brep_data(source, b"ogeom left 2".to_vec(), Vec::new());
+    assert!(doc.imported_brep_blob(copy).is_none());
+    assert!(!doc.set_mirrored_shape(copy, &stale, b"ogeom old".to_vec()));
+    assert!(
+        doc.create_mirrored_copy(copy, plane, None).is_none(),
+        "no mirror of a mirror"
+    );
+}

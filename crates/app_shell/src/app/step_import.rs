@@ -86,9 +86,8 @@ impl PrintCadApp {
                 | KernelResponse::RepairFailed { body_id, .. }
                 | KernelResponse::Measured { body_id, .. }
                 | KernelResponse::MeshSolidBuilt { body_id, .. }
-                | KernelResponse::MeshSolidFailed { body_id, .. } => {
-                    self.tab_index_of_body(*body_id)
-                }
+                | KernelResponse::MeshSolidFailed { body_id, .. }
+                | KernelResponse::ShapeMirrored { body_id, .. } => self.tab_index_of_body(*body_id),
             };
             match target {
                 Some(index) => self.with_tab(index, |app| app.apply_kernel_response(response)),
@@ -202,6 +201,28 @@ impl PrintCadApp {
                         app_log::info(format!("Conversion of `{name}` cancelled"));
                     } else {
                         app_log::error(format!("`{name}` did not convert to a solid: {error}"));
+                    }
+                }
+                KernelResponse::ShapeMirrored {
+                    body_id,
+                    from,
+                    result,
+                } => {
+                    self.session.mirrors_in_flight.remove(&body_id);
+                    match result {
+                        // A source that changed meanwhile asks again.
+                        Ok(blob) => {
+                            self.session
+                                .document
+                                .set_mirrored_shape(BodyId(body_id), &from, blob);
+                        }
+                        Err(error) => {
+                            self.session.mirrors_failed.insert(body_id, from);
+                            app_log::error(format!(
+                                "`{}` could not be mirrored: {error}",
+                                self.body_name(BodyId(body_id))
+                            ));
+                        }
                     }
                 }
                 KernelResponse::Measured {

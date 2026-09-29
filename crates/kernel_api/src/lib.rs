@@ -1625,6 +1625,12 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("gap".into()))
     }
 
+    /// `brep` mirrored across the plane through `point` with `normal`, in
+    /// its own frame, as a snapshot of its own.
+    fn mirror(&self, _brep: &[u8], _point: [f64; 3], _normal: [f64; 3]) -> KernelResult<Vec<u8>> {
+        Err(KernelError::Unsupported("mirror".into()))
+    }
+
     /// The volume, area and centre of mass of `brep`, in its own frame.
     fn measure(&self, _brep: &[u8]) -> KernelResult<PhysicalProperties> {
         Err(KernelError::Unsupported("measure".into()))

@@ -58,7 +58,11 @@ and a dashed link between the ends with the joint's name.
 Insert linked copies (Y) puts copies of the selected body in a row
 beside it, as many as you ask, a step apart, or turned about an axis
 (Around an axis: the axis, a point it runs through and the angle they
-spread over; a whole turn shares it with the original). Each copy takes the body's
+spread over; a whole turn shares it with the original), or one mirror
+image across a plane (A mirror image: the plane and a point it runs
+through). A mirror image follows the original the same way; the kernel
+makes its solid, which the parts list counts as a part of its own.
+`asm.mirror` makes one from a script. Each copy takes the body's
 shape and follows every change to it (an edit to the original's features,
 a new import), is placed on its own and takes joints like any body, and
 the parts list counts it with the original. A body with no joints is

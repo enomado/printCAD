@@ -103,6 +103,9 @@ enum Task {
         count: u32,
         step: [f32; 3],
         around: Option<Around>,
+        /// A mirror image instead: the plane, a point on it and its
+        /// normal, in the world.
+        mirror: Option<([f32; 3], [f32; 3])>,
     },
     /// Bodies picked for a rigid group, one click each (a second click
     /// takes one out); `editing` the group changed, `None` for a new one.
@@ -1840,6 +1843,7 @@ impl Workbench for AssemblyWorkbench {
                         count: 1,
                         step: commands::copy_step(ctx.document, body).to_array(),
                         around: None,
+                        mirror: None,
                     });
                 }
                 None => ctx.log_warn("Select a body to copy"),

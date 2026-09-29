@@ -55,6 +55,13 @@ pub enum KernelRequest {
         mesh: Arc<kernel_api::TriMesh>,
         detail: TessellationSettings,
     },
+    /// Mirror a source's snapshot across a plane in its own frame, for a
+    /// mirrored copy.
+    MirrorShape {
+        body_id: Uuid,
+        source_blob: Arc<Vec<u8>>,
+        plane: core_document::MirrorPlane,
+    },
     /// Run the kernel's repair on an imported body's snapshot.
     RepairShape {
         body_id: Uuid,
@@ -115,6 +122,12 @@ pub enum KernelResponse {
     MeshSolidFailed {
         body_id: Uuid,
         error: String,
+    },
+    /// A mirrored copy's snapshot, made from `from`.
+    ShapeMirrored {
+        body_id: Uuid,
+        from: Arc<Vec<u8>>,
+        result: Result<Vec<u8>, String>,
     },
 }
 
@@ -282,6 +295,27 @@ impl KernelWorker {
                 body_id,
                 mesh,
                 detail,
+            })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit the mirror of a source's snapshot for a mirrored copy. One
+    /// response arrives per request.
+    pub fn request_mirror(
+        &mut self,
+        body_id: Uuid,
+        source_blob: Arc<Vec<u8>>,
+        plane: core_document::MirrorPlane,
+    ) {
+        if self
+            .tx
+            .send(KernelRequest::MirrorShape {
+                body_id,
+                source_blob,
+                plane,
             })
             .is_ok()
         {
@@ -573,6 +607,25 @@ fn worker_loop(
                     .physical_properties(&brep_blob)
                     .map_err(|e| e.to_string()),
             },
+            KernelRequest::MirrorShape {
+                body_id,
+                source_blob,
+                plane,
+            } => {
+                use kernel_api::KernelQueries;
+                let result = kernel_ogeom::QUERIES
+                    .mirror(
+                        &source_blob,
+                        plane.point.map(f64::from),
+                        plane.normal.map(f64::from),
+                    )
+                    .map_err(|e| e.to_string());
+                KernelResponse::ShapeMirrored {
+                    body_id,
+                    from: source_blob,
+                    result,
+                }
+            }
             KernelRequest::RepairShape {
                 body_id,
                 brep_blob,

@@ -342,6 +342,20 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.mirror",
+            "Insert a linked copy that is a body's mirror image, following every change to it",
+        )
+        .param("body", ParamKind::Id, "The body to mirror")
+        .param(
+            "point",
+            ParamKind::List,
+            "A point of the mirror plane, {x, y, z}, in the world",
+        )
+        .param("normal", ParamKind::List, "The plane's normal, {x, y, z}")
+        .returns("the mirrored copy's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.group",
             "Lock bodies together where they sit, in one rigid group",
         )
@@ -910,6 +924,25 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Ok(Value::from(
                 made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
             ))
+        }
+        "asm.mirror" => {
+            let source = body(&a, ctx)?;
+            let point = vector(a.0.get("point").unwrap_or(&Value::Null), "point")?;
+            let normal = vector(a.0.get("normal").unwrap_or(&Value::Null), "normal")?;
+            if normal.length() < 1e-9 {
+                return Err(CommandError::bad("normal", "must not be zero"));
+            }
+            let plane = core_document::MirrorPlane {
+                point: point.to_array(),
+                normal: normal.normalize().to_array(),
+            };
+            let copy = ctx
+                .document
+                .create_mirrored_copy(source, plane, None)
+                .ok_or_else(|| {
+                    CommandError::bad("body", "cannot be mirrored: a mirror of a mirror")
+                })?;
+            Ok(json!(copy.0.to_string()))
         }
         "asm.group" => {
             let bodies = body_list(&a)?.unwrap_or_default();
