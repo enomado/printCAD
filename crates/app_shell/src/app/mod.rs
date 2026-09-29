@@ -14,6 +14,7 @@ pub(crate) mod gfx;
 pub(crate) mod import_report;
 pub(crate) mod input;
 pub(crate) mod mcp;
+pub(crate) mod measure;
 pub(crate) mod packages;
 pub(crate) mod recompute;
 pub(crate) mod scripts;

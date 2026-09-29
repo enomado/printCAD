@@ -389,8 +389,10 @@ plane of any direction `Workbench::clip_plane` gives (the sketcher's
 per-sketch section view), reaches the renderer as
 `FrameSubmission.clip_plane`: every scene shader and the pick pass write
 a clip distance, the cut's back faces draw as a flat darker section, and
-CPU edge picking skips what it hides; the toolbar's Measure arms a two-click distance
-readout drawn over the scene (Escape puts it away); the print bed is a
+CPU edge picking skips what it hides; the toolbar's Measure arms a readout
+drawn over the scene (`app/measure.rs`: a point, an edge or a face picked
+gives a length, radius or area, two give the distance and angle between
+them; Escape puts it away); the print bed is a
 line box from the Printing preferences. The design shows Part Design and Sketcher elements the app
 does not implement yet. They stay on screen as disabled controls with a
 `// PLANNED: <what it does when built>` comment next to them and a

@@ -451,37 +451,48 @@ impl PrintCadApp {
         }
     }
 
-    /// A click with the measure tool armed: the point under the cursor
-    /// joins the measurement; a third click starts over.
+    /// A click with the measure tool armed: the edge or face under the
+    /// cursor, else the point, joins the measurement; a third click starts
+    /// over.
     fn measure_click(&mut self) -> bool {
-        // An edge under the cursor snaps the pick onto it.
-        let Some(point) = self
-            .session
-            .hovered_edge
-            .map(|e| e.point)
-            .or(self.session.hovered_world_pos)
-        else {
+        use crate::app::measure::{MeasurePick, describe_pair, mesh_area};
+        let pick = if let Some(edge) = self.session.hovered_edge {
+            MeasurePick::Edge {
+                point: edge.point,
+                direction: edge.direction,
+                length: edge.length_mm,
+                circle: edge.circle,
+            }
+        } else if let (Some(hover), Some(body)) =
+            (&self.session.hovered_face, self.session.hovered_body)
+            && hover.body == body
+            && let Some(face) = self.face_hit_under_cursor(body)
+        {
+            MeasurePick::Face {
+                point: face.point,
+                normal: face.normal,
+                surface: face.surface,
+                area: mesh_area(&hover.mesh),
+            }
+        } else if let Some(point) = self.session.hovered_world_pos {
+            MeasurePick::Point(point)
+        } else {
             return false;
         };
         let unit = self.session.document.display_unit();
-        let Some(points) = self.session.measure.as_mut() else {
+        let Some(picks) = self.session.measure.as_mut() else {
             return false;
         };
-        if points.len() >= 2 {
-            points.clear();
+        if picks.len() >= 2 {
+            picks.clear();
         }
-        points.push(point);
-        if let [a, b] = points.as_slice() {
-            let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
-            let fmt = |v: f32| core_document::format_length_mm(v, unit, 2);
-            app_log::info(format!(
-                "Measured {} (Δx {} Δy {} Δz {})",
-                fmt(d),
-                fmt((b[0] - a[0]).abs()),
-                fmt((b[1] - a[1]).abs()),
-                fmt((b[2] - a[2]).abs()),
-            ));
-        }
+        picks.push(pick);
+        let lines = match picks.as_slice() {
+            [a, b] => describe_pair(a, b, unit),
+            [one] => one.describe(unit),
+            _ => Vec::new(),
+        };
+        app_log::info(format!("Measured {}", lines.join(", ")));
         true
     }
 

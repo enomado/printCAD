@@ -112,8 +112,9 @@ pub(crate) struct DocumentSession {
     pub task_open: bool,
     /// Bounds of the last measured body mesh, keyed by body and revision.
     pub dimension_cache: Option<DimensionCache>,
-    /// The measure tool: armed with the points picked so far (up to two).
-    pub measure: Option<Vec<[f32; 3]>>,
+    /// The measure tool: armed with the points, edges or faces picked so
+    /// far (up to two).
+    pub measure: Option<Vec<crate::app::measure::MeasurePick>>,
     /// The edge under the cursor, found on the CPU against the hovered
     /// body's outline segments.
     pub hovered_edge: Option<crate::app::edges::EdgeHit>,

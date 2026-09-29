@@ -217,8 +217,11 @@ and noted on its item, and the rest of the item is built around it.
   at angles about the axis and a torque; reactions, bending moment, von
   Mises stress and deflection along the shaft, in its panel and its
   summary. Stress concentrations at the steps are not counted.
-- [ ] **Measure angles, radii and face areas** (partial, M). The tool
-  measures distance only (`app_shell/src/app/input.rs::measure_click`).
+- [x] **Measure angles, radii and face areas** (partial, M). The tool
+  takes edges and faces as well as points (`app_shell/src/app/measure.rs`):
+  an edge's length or a circle's radius, a face's area or a round face's
+  radius, and between two the distance (square across parallel faces)
+  and the angle.
 
 ## Assembly
 

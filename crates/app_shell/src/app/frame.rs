@@ -1074,12 +1074,16 @@ impl PrintCadApp {
 
         // The measurement in progress: its points, the line between them
         // and the distance, drawn over the scene.
-        if let Some(points) = &self.session.measure {
+        if let Some(picks) = &self.session.measure {
             let unit = self.session.document.display_unit();
             let color = HOVER_PAINT;
-            let px: Vec<(f32, f32)> = points
+            let px: Vec<(f32, f32)> = picks
                 .iter()
-                .filter_map(|p| self.session.camera.world_to_viewport(Vec3::from_array(*p)))
+                .filter_map(|p| {
+                    self.session
+                        .camera
+                        .world_to_viewport(Vec3::from_array(p.point()))
+                })
                 .collect();
             for (x, y) in &px {
                 data.marks.push(core_document::ScreenSpaceMark::crosshair(
@@ -1088,29 +1092,44 @@ impl PrintCadApp {
                     color,
                 ));
             }
-            if let ([a, b], [pa, pb]) = (points.as_slice(), px.as_slice()) {
+            let lines = match picks.as_slice() {
+                [a, b] => crate::app::measure::describe_pair(a, b, unit),
+                [one] => one.describe(unit),
+                _ => Vec::new(),
+            };
+            if let [pa, pb] = px.as_slice() {
                 data.overlays.push(core_document::ScreenSpaceOverlay::new(
                     [pa.0, pa.1],
                     [pb.0, pb.1],
                     color,
                     1.5,
                 ));
-                let d =
-                    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
-                screen_space_labels.push(
-                    core_document::ScreenSpaceLabel::new(
-                        [(pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0 - 12.0],
-                        core_document::format_length_mm(d, unit, 2),
-                        color,
-                        12.0,
-                    )
-                    .pill(),
-                );
-            } else if let Some((x, y)) = self.cursor_in_viewport {
-                let prompt = if points.is_empty() {
-                    "Measure: pick the first point"
+            }
+            // The readout beside the last pick, one line a row.
+            if let Some((x, y)) = px.last().copied() {
+                let anchor = match px.as_slice() {
+                    [pa, pb] => ((pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0),
+                    _ => (x, y),
+                };
+                for (i, line) in lines.into_iter().enumerate() {
+                    screen_space_labels.push(
+                        core_document::ScreenSpaceLabel::new(
+                            [anchor.0 + 14.0, anchor.1 - 12.0 + 20.0 * i as f32],
+                            line,
+                            color,
+                            12.0,
+                        )
+                        .pill(),
+                    );
+                }
+            }
+            if picks.len() < 2
+                && let Some((x, y)) = self.cursor_in_viewport
+            {
+                let prompt = if picks.is_empty() {
+                    "Measure: pick a point, an edge or a face"
                 } else {
-                    "Measure: pick the second point"
+                    "Measure: pick a second one to measure between"
                 };
                 screen_space_labels.push(
                     core_document::ScreenSpaceLabel::new(

@@ -560,7 +560,9 @@ impl PrintCadApp {
                 None => Some(Vec::new()),
             };
             if self.session.measure.is_some() {
-                app_log::info("Measure: click two points on the model");
+                app_log::info(
+                    "Measure: click a point, an edge or a face, then another to measure between",
+                );
             }
         }
 
