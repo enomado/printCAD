@@ -39,11 +39,14 @@ pub use hole_tables::{
 };
 
 use core_document::{
-    BodyId, Document, FeatureId, FeatureInfo, HostRequest, InputResult, TaskInfo, ToolDescriptor,
-    ToolVariant, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
-    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BodyId, Document, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope,
+    TaskInfo, ToolDescriptor, ToolVariant, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    WorkbenchFeature, WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id,
+    tool_variant,
 };
 use wb_sketch::SketchFeature;
+
+const MOVE_TO_BODY: &str = "part.move_to_body";
 
 /// The switches on the Part Design Preferences page.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1166,6 +1169,75 @@ impl Workbench for PartDesignWorkbench {
             context,
             action("part.centre_line", "Centre line", centre::ICON, "measure"),
         );
+    }
+
+    /// A feature row offers to move the feature into each other body built
+    /// here (not one read from a file).
+    fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
+        let MenuScope::TreeFeature(id) = scope else {
+            return Vec::new();
+        };
+        let Some(node) = document.get_feature_meta(*id) else {
+            return Vec::new();
+        };
+        let Some(from) = node.body else {
+            return Vec::new();
+        };
+        if !matches!(node.workbench_id.as_str(), "wb.part" | "core.datum") {
+            return Vec::new();
+        }
+        document
+            .bodies()
+            .iter()
+            .filter(|b| b.id != from && !document.body_solid_is_imported(b.id))
+            .enumerate()
+            .map(|(i, b)| {
+                let item = MenuItem::new(
+                    format!("{MOVE_TO_BODY}:{}", b.id.0),
+                    format!("Move to {}", b.name),
+                )
+                .hint("With the sketch and datums only it uses");
+                if i == 0 {
+                    item.separator_before()
+                } else {
+                    item
+                }
+            })
+            .collect()
+    }
+
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        let (MenuScope::TreeFeature(feature), Some(body)) = (scope, id.strip_prefix(MOVE_TO_BODY))
+        else {
+            return false;
+        };
+        let Some(body) = body
+            .strip_prefix(':')
+            .and_then(|b| uuid::Uuid::parse_str(b).ok())
+            .map(BodyId)
+        else {
+            return false;
+        };
+        match commands::move_feature(ctx, *feature, body) {
+            Ok(moved) => {
+                ctx.record(
+                    MOVE_TO_BODY,
+                    commands::object(serde_json::json!({
+                        "feature": feature.0.to_string(),
+                        "body": body.0.to_string(),
+                    })),
+                    serde_json::json!(moved.iter().map(|f| f.0.to_string()).collect::<Vec<_>>()),
+                );
+                ctx.request(HostRequest::JournalLabel("Move to body".into()));
+            }
+            Err(message) => ctx.log_warn(format!("Cannot move the feature: {message}")),
+        }
+        true
     }
 
     fn run_command(

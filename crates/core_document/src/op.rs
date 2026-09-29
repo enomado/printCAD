@@ -192,6 +192,12 @@ pub enum DocumentOp {
     RemoveFeature {
         id: FeatureId,
     },
+    /// A feature moved into another body's history, at `seq` in it.
+    SetFeatureBody {
+        id: FeatureId,
+        body: Option<BodyId>,
+        seq: u64,
+    },
     AddAsset {
         asset: AssetReference,
         /// Empty when the asset was registered without loaded bytes.

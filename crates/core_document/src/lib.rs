@@ -536,6 +536,14 @@ impl Document {
                 deps: self.feature_tree.dependencies(*id),
             },
             Op::SwapFeatureSeq { a, b } => Op::SwapFeatureSeq { a: *a, b: *b },
+            Op::SetFeatureBody { id, .. } => {
+                let node = self.feature_tree.get_node(*id)?;
+                Op::SetFeatureBody {
+                    id: *id,
+                    body: node.body,
+                    seq: node.seq,
+                }
+            }
             Op::RemoveFeature { id } => {
                 let node = self.feature_tree.get_node(*id)?;
                 Op::AddFeature {
@@ -771,6 +779,25 @@ impl Document {
                 // Order changes results: rebuild the whole history.
                 self.feature_tree.mark_dirty(*a);
                 self.feature_tree.mark_dirty(*b);
+            }
+            Op::SetFeatureBody { id, body, seq } => {
+                let Some(from) = self.feature_tree.get_node(*id).map(|n| n.body) else {
+                    return;
+                };
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    node.body = *body;
+                    node.seq = *seq;
+                }
+                // Both histories change: rebuild every feature of either.
+                let touched: Vec<FeatureId> = self
+                    .feature_tree
+                    .all_nodes()
+                    .filter(|(_, n)| n.body.is_some() && (n.body == from || n.body == *body))
+                    .map(|(fid, _)| *fid)
+                    .collect();
+                for fid in touched {
+                    self.feature_tree.mark_dirty(fid);
+                }
             }
             Op::RemoveFeature { id } => {
                 for dep in self.feature_tree.dependents(*id) {
@@ -1487,6 +1514,104 @@ impl Document {
             b: neighbour_id,
         });
         Ok(())
+    }
+
+    /// Move a feature into `body`'s history, at its tip, with the features
+    /// of its own body that only it uses (its sketch, a datum it alone
+    /// reads), in their order. Their data stays as it is, in the body's own
+    /// frame, so a body placed elsewhere shows them where it sits. Refuses
+    /// a feature something left behind uses, or one that uses something
+    /// left behind. Returns the features moved, the given one last.
+    pub fn move_feature_to_body(
+        &mut self,
+        feature_id: FeatureId,
+        body: BodyId,
+    ) -> Result<Vec<FeatureId>, String> {
+        let node = self
+            .feature_tree
+            .get_node(feature_id)
+            .ok_or("no such feature")?;
+        let from = node.body.ok_or("the feature belongs to no body")?;
+        if from == body {
+            return Err("the feature is in that body already".into());
+        }
+        if !self.bodies.iter().any(|b| b.id == body) {
+            return Err("no such body".into());
+        }
+        let in_from = |doc: &Self, id: FeatureId| {
+            doc.feature_tree
+                .get_node(id)
+                .is_some_and(|n| n.body == Some(from))
+        };
+        // The feature and, taken in turn, each input of the moving set that
+        // nothing staying behind reads.
+        let mut moving = vec![feature_id];
+        let mut i = 0;
+        while i < moving.len() {
+            for dep in self.feature_tree.dependencies(moving[i]) {
+                if moving.contains(&dep) || !in_from(self, dep) {
+                    continue;
+                }
+                let shared = self
+                    .feature_tree
+                    .dependents(dep)
+                    .iter()
+                    .any(|user| !moving.contains(user) && in_from(self, *user));
+                if shared {
+                    let name = self
+                        .feature_tree
+                        .get_node(dep)
+                        .map(|n| n.name.clone())
+                        .unwrap_or_default();
+                    return Err(format!("it uses {name}, which other features use too"));
+                }
+                moving.push(dep);
+            }
+            i += 1;
+        }
+        for id in &moving {
+            if let Some(user) = self
+                .feature_tree
+                .dependents(*id)
+                .into_iter()
+                .find(|user| !moving.contains(user) && in_from(self, *user))
+            {
+                let name = self
+                    .feature_tree
+                    .get_node(user)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_default();
+                return Err(format!("{name} is built from it"));
+            }
+        }
+        let seq_of = |doc: &Self, id: FeatureId| doc.feature_tree.get_node(id).map(|n| n.seq);
+        moving.sort_by_key(|id| (seq_of(self, *id), *id));
+
+        // The source body's tip steps back past what leaves.
+        let tip = self
+            .bodies
+            .iter()
+            .find(|b| b.id == from)
+            .and_then(|b| b.tip);
+        if let Some(tip) = tip.filter(|t| moving.contains(t)) {
+            let tip_seq = seq_of(self, tip).unwrap_or(0);
+            let before = self
+                .feature_tree
+                .all_nodes()
+                .filter(|(fid, n)| n.body == Some(from) && !moving.contains(fid) && n.seq < tip_seq)
+                .max_by_key(|(fid, n)| (n.seq, **fid))
+                .map(|(fid, _)| *fid);
+            self.set_body_tip(from, before);
+        }
+        for id in &moving {
+            self.record_and_apply(op::DocumentOp::SetFeatureBody {
+                id: *id,
+                body: Some(body),
+                seq: self.feature_tree.next_seq(),
+            });
+            self.insert_at_tip(*id);
+        }
+        Ok(moving)
     }
 
     /// Record (or clear) a recompute error on a feature. Derived state: no

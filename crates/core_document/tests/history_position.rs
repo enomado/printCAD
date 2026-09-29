@@ -95,3 +95,53 @@ fn moving_the_tip_alone_is_no_undo_step_and_an_insert_undoes_whole() {
     assert_eq!(tip(&doc, body), Some(a), "the tip goes back with it");
     assert_eq!(history(&doc, body), [a, b]);
 }
+
+#[test]
+fn a_feature_moves_to_another_body_with_what_only_it_uses() {
+    let mut doc = Document::new("t");
+    let mut journal = OpJournal::new(50);
+    let from = doc.create_body(None);
+    let to = doc.create_body(None);
+    let a = add(&mut doc, from, "a");
+    let sketch = add(&mut doc, from, "sketch");
+    let pad = add(&mut doc, from, "pad");
+    doc.set_feature_dependencies(pad, vec![sketch]);
+    let t1 = add(&mut doc, to, "t1");
+    let t2 = add(&mut doc, to, "t2");
+    doc.set_body_tip(to, Some(t1));
+    doc.set_body_tip(from, Some(pad));
+    journal.note(&mut doc);
+
+    let moved = doc.move_feature_to_body(pad, to).expect("moves");
+    journal.note(&mut doc);
+    assert_eq!(moved, [sketch, pad], "its sketch goes with it, first");
+    assert_eq!(history(&doc, from), [a]);
+    assert_eq!(tip(&doc, from), Some(a), "the tip steps back");
+    assert_eq!(history(&doc, to), [t1, sketch, pad, t2], "in at the tip");
+    assert_eq!(tip(&doc, to), Some(pad));
+    assert!(doc.feature_tree().get_node(t2).unwrap().dirty);
+
+    journal.undo(&mut doc).expect("the move");
+    assert_eq!(history(&doc, from), [a, sketch, pad]);
+    assert_eq!(history(&doc, to), [t1, t2]);
+    assert_eq!(tip(&doc, from), Some(pad));
+}
+
+#[test]
+fn a_move_that_would_split_what_is_shared_is_refused() {
+    let mut doc = Document::new("t");
+    let from = doc.create_body(None);
+    let to = doc.create_body(None);
+    let sketch = add(&mut doc, from, "sketch");
+    let pad = add(&mut doc, from, "pad");
+    let pocket = add(&mut doc, from, "pocket");
+    doc.set_feature_dependencies(pad, vec![sketch]);
+    doc.set_feature_dependencies(pocket, vec![sketch]);
+    assert!(doc.move_feature_to_body(pad, to).is_err(), "shared sketch");
+    assert!(
+        doc.move_feature_to_body(sketch, to).is_err(),
+        "used by others"
+    );
+    assert!(doc.move_feature_to_body(pad, from).is_err(), "same body");
+    assert_eq!(history(&doc, from), [sketch, pad, pocket]);
+}

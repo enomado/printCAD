@@ -196,7 +196,9 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Body and history
 
-- [ ] **Move a feature to another body** (missing, M).
+- [x] **Move a feature to another body** (missing, M). A feature row's
+  menu, or `part.move_to_body`; the sketch and datums only it uses go
+  along.
 - [ ] **Duplicate, copy and paste features** (missing, M).
 - [ ] **Drag handles in the view** (missing, L). Drag a pad's end or a
   fillet's radius.

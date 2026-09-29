@@ -1078,6 +1078,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `feature` (id): The borrow
 - `frozen` (boolean, optional): true (the default) takes the source as it is now; false follows it again
 
+`pc.part.move_to_body`: Move a feature into another body's history, with the sketch and datums only it uses.
+
+- `feature` (id): The feature
+- `body` (id): The body it goes to, in at its tip
+- Returns the ids of the features moved, the given one last
+
 `pc.part.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
 
 - `body` (id): The body whose solid it runs through

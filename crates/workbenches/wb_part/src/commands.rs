@@ -249,6 +249,15 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "part.move_to_body",
+            "Move a feature into another body's history, with the sketch and datums only it uses",
+        )
+        .param("feature", ParamKind::Id, "The feature")
+        .param("body", ParamKind::Id, "The body it goes to, in at its tip")
+        .returns("the ids of the features moved, the given one last"),
+    );
+    context.register_command(
+        CommandSpec::new(
             "part.centre_line",
             "Measure the centre line of a tube-like solid between two of its faces",
         )
@@ -313,6 +322,9 @@ pub fn run(
     }
     if id == "part.freeze" {
         return freeze(&a, ctx);
+    }
+    if id == "part.move_to_body" {
+        return move_to_body(&a, ctx);
     }
     if !FEATURES.iter().any(|(f, _)| *f == id) {
         return Err(CommandError::Unknown(id.to_string()));
@@ -657,6 +669,31 @@ fn freeze(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .set_feature_dependencies(id, feature.dependencies());
     ctx.document.mark_feature_dirty(id);
     Ok(Value::Null)
+}
+
+fn move_to_body(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let id = FeatureId(a.id("feature")?);
+    let body = BodyId(a.id("body")?);
+    move_feature(ctx, id, body)
+        .map(|moved| Value::from(moved.iter().map(|f| f.0.to_string()).collect::<Vec<_>>()))
+        .map_err(CommandError::failed)
+}
+
+/// Move `id` into `body` and rebuild both bodies.
+pub(crate) fn move_feature(
+    ctx: &mut WorkbenchRuntimeContext,
+    id: FeatureId,
+    body: BodyId,
+) -> Result<Vec<FeatureId>, String> {
+    let from = ctx
+        .document
+        .get_feature_meta(id)
+        .and_then(|n| n.body)
+        .ok_or("the feature belongs to no body")?;
+    let moved = ctx.document.move_feature_to_body(id, body)?;
+    crate::invalidate_body(ctx.document, from);
+    crate::invalidate_body(ctx.document, body);
+    Ok(moved)
 }
 
 pub(crate) fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
@@ -1055,6 +1092,39 @@ mod tests {
         let data = fields(&doc, &pad);
         assert_eq!(data["Pad"]["length"], json!(40.0));
         assert_eq!(data["Pad"]["reversed"], json!(true));
+    }
+
+    /// A pad moved to another body takes its sketch along, and the tree
+    /// offers the move for each other body.
+    #[test]
+    fn a_pad_moves_to_another_body_with_its_sketch() {
+        let mut doc = Document::new("t");
+        let (from, sketch) = sketch_in(&mut doc);
+        let mut bench = PartDesignWorkbench::default();
+        let pad = call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"sketch": sketch.0.to_string()}),
+        )
+        .unwrap();
+        let pad_id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
+        let to = doc.create_body(Some("Other".into()));
+        let items = bench.menu_items(&core_document::MenuScope::TreeFeature(pad_id), &doc);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Move to Other");
+
+        let moved = call(
+            &mut bench,
+            &mut doc,
+            "part.move_to_body",
+            json!({"feature": pad, "body": to.0.to_string()}),
+        )
+        .unwrap();
+        assert_eq!(moved, json!([sketch.0.to_string(), pad]));
+        assert_eq!(doc.get_feature_meta(pad_id).unwrap().body, Some(to));
+        assert_eq!(doc.get_feature_meta(sketch).unwrap().body, Some(to));
+        assert!(crate::part_feature_ids(&doc, from).is_empty());
     }
 
     /// A boolean starts with the body made last, the one just built to
