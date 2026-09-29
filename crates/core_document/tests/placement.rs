@@ -250,3 +250,25 @@ fn a_linked_part_is_read_from_its_file() {
     assert_eq!(doc.links_awaiting_geometry()[0].1.stamp, 9);
     let _ = &mut loaded;
 }
+
+/// A pick a hair off a flat face lands on the face's exact plane.
+#[test]
+fn a_pick_on_a_flat_face_is_carried_onto_its_plane() {
+    let pick = core_document::FaceRef {
+        point: [3.0, 4.0, 8.499],
+        normal: [0.0, 0.0, 1.0],
+        surface: Some(kernel_api::FaceSurface::Plane {
+            origin: [0.0, 0.0, 8.5],
+            normal: [0.0, 0.0, -1.0],
+        }),
+        name: 0,
+    };
+    let on = pick.on_its_plane();
+    assert_eq!(on.point, [3.0, 4.0, 8.5]);
+    assert_eq!(on.normal, [0.0, 0.0, 1.0], "facing as the pick did");
+    let curved = core_document::FaceRef {
+        surface: None,
+        ..pick
+    };
+    assert_eq!(curved.on_its_plane().point, pick.point, "no plane to go to");
+}

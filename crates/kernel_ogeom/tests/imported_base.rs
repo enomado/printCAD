@@ -537,3 +537,30 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
         placed.origin
     );
 }
+
+/// A pad fused into a solid converted from a mesh, its sides along the
+/// solid's own: the fuse settles inside and outside. The two shapes are
+/// read from `PRINTCAD_TEST_FUSE_DIR` (`base.ogeom`, `tool.ogeom`, made
+/// from a user's part, not bundled).
+#[test]
+#[ignore = "kernel: every ray meets an ambiguous crossing and the fuse gives up (ogeom-rs#99)"]
+fn a_pad_along_a_converted_solid_s_sides_fuses() {
+    let Some(dir) = std::env::var_os("PRINTCAD_TEST_FUSE_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let base = std::fs::read(dir.join("base.ogeom")).unwrap();
+    let tool = std::fs::read(dir.join("tool.ogeom")).unwrap();
+    let ops = [
+        kernel_api::SolidOp::Shape { brep: base },
+        kernel_api::SolidOp::Boolean {
+            tool_brep: tool,
+            kind: kernel_api::BoolKind::Fuse,
+            tool_transform: None,
+        },
+    ];
+    let built = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the fuse settles");
+    assert!(built.mesh.bounds().is_some());
+}

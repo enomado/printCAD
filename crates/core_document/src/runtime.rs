@@ -206,6 +206,31 @@ impl EdgeRef {
 }
 
 impl FaceRef {
+    /// The pick on its face's exact plane, when the face is flat: the
+    /// point carried square onto it, and the plane's normal facing as the
+    /// pick's does. A clicked point lies on the drawn mesh, which can stand
+    /// a hair off the face; a sketch placed on the face should stand on
+    /// the face itself.
+    pub fn on_its_plane(&self) -> Self {
+        let Some(kernel_api::FaceSurface::Plane { origin, normal }) = self.surface else {
+            return *self;
+        };
+        let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+        if length <= f32::EPSILON {
+            return *self;
+        }
+        let mut n = normal.map(|v| v / length);
+        if n[0] * self.normal[0] + n[1] * self.normal[1] + n[2] * self.normal[2] < 0.0 {
+            n = n.map(|v| -v);
+        }
+        let off: f32 = (0..3).map(|i| (self.point[i] - origin[i]) * n[i]).sum();
+        Self {
+            point: std::array::from_fn(|i| self.point[i] - n[i] * off),
+            normal: n,
+            ..*self
+        }
+    }
+
     /// The same face seen from a frame `placement` moves points into.
     pub fn moved(&self, placement: &crate::BodyPlacement) -> Self {
         Self {

@@ -4754,7 +4754,7 @@ impl SketchWorkbench {
             Some(body) => ctx.selected_face_in(body),
             None => ctx.selected_face,
         };
-        let Some(face) = face else {
+        let Some(face) = face.map(|f| f.on_its_plane()) else {
             ctx.log_warn("Click a face of a solid first");
             return InputResult::consumed();
         };

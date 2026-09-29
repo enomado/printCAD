@@ -1691,7 +1691,8 @@ impl Workbench for DesignWorkbench {
                 {
                     Some(body) => face.moved(&ctx.document.body_placement(body).inverse()),
                     None => face,
-                };
+                }
+                .on_its_plane();
                 let plane = wb_sketch::sketch::SketchPlane::from_face(face.point, face.normal);
                 feature.plane = plane;
                 feature.sketch.plane = plane;

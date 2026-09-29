@@ -338,6 +338,8 @@ impl SketchWorkbench {
                     )
                     .clicked()
             {
+                // On the face itself, not the drawn mesh the click met.
+                let face = face.on_its_plane();
                 let plane = SketchPlane::from_face(face.point, face.normal);
                 // A face of the sketch's own body, or one it borrows, is
                 // followed.
