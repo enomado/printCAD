@@ -258,6 +258,19 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "part.duplicate",
+            "Make a copy of a feature, with its own copies of the sketches and datums it reads",
+        )
+        .param("feature", ParamKind::Id, "The feature")
+        .optional(
+            "body",
+            ParamKind::Id,
+            "The body the copy goes in, at its tip (the feature's own when left out)",
+        )
+        .returns("the ids of the features made, the copy of the given one last"),
+    );
+    context.register_command(
+        CommandSpec::new(
             "part.centre_line",
             "Measure the centre line of a tube-like solid between two of its faces",
         )
@@ -325,6 +338,13 @@ pub fn run(
     }
     if id == "part.move_to_body" {
         return move_to_body(&a, ctx);
+    }
+    if id == "part.duplicate" {
+        let feature = FeatureId(a.id("feature")?);
+        let body = a.opt_id("body")?.map(BodyId);
+        return duplicate(ctx, feature, body)
+            .map(|made| Value::from(made.iter().map(|f| f.0.to_string()).collect::<Vec<_>>()))
+            .map_err(CommandError::failed);
     }
     if !FEATURES.iter().any(|(f, _)| *f == id) {
         return Err(CommandError::Unknown(id.to_string()));
@@ -677,6 +697,26 @@ fn move_to_body(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     move_feature(ctx, id, body)
         .map(|moved| Value::from(moved.iter().map(|f| f.0.to_string()).collect::<Vec<_>>()))
         .map_err(CommandError::failed)
+}
+
+/// Copy `id` into `body`, its own when `None`.
+pub(crate) fn duplicate(
+    ctx: &mut WorkbenchRuntimeContext,
+    id: FeatureId,
+    body: Option<BodyId>,
+) -> Result<Vec<FeatureId>, String> {
+    let copied = crate::clipboard::Clipboard::copy(ctx.document, id)
+        .ok_or("the feature belongs to no body")?;
+    let body = match body {
+        Some(body) if ctx.document.bodies().iter().any(|b| b.id == body) => body,
+        Some(_) => return Err("no such body".into()),
+        None => ctx
+            .document
+            .get_feature_meta(id)
+            .and_then(|n| n.body)
+            .ok_or("the feature belongs to no body")?,
+    };
+    Ok(copied.paste(ctx.document, body))
 }
 
 /// Move `id` into `body` and rebuild both bodies.
@@ -1111,8 +1151,8 @@ mod tests {
         let pad_id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
         let to = doc.create_body(Some("Other".into()));
         let items = bench.menu_items(&core_document::MenuScope::TreeFeature(pad_id), &doc);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "Move to Other");
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["Duplicate", "Move to Other"]);
 
         let moved = call(
             &mut bench,
@@ -1125,6 +1165,67 @@ mod tests {
         assert_eq!(doc.get_feature_meta(pad_id).unwrap().body, Some(to));
         assert_eq!(doc.get_feature_meta(sketch).unwrap().body, Some(to));
         assert!(crate::part_feature_ids(&doc, from).is_empty());
+    }
+
+    /// A duplicate reads a copy of its sketch, named as a new feature is,
+    /// and the original is untouched.
+    #[test]
+    fn a_duplicated_pad_reads_its_own_copy_of_the_sketch() {
+        let mut doc = Document::new("t");
+        let (body, sketch) = sketch_in(&mut doc);
+        let mut bench = PartDesignWorkbench::default();
+        let pad = call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"sketch": sketch.0.to_string(), "length": 7.0, "name": "Pad"}),
+        )
+        .unwrap();
+        let made = call(
+            &mut bench,
+            &mut doc,
+            "part.duplicate",
+            json!({"feature": pad}),
+        )
+        .unwrap();
+        let made: Vec<FeatureId> = made
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| FeatureId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap()))
+            .collect();
+        assert_eq!(made.len(), 2, "the sketch and the pad");
+        let (new_sketch, new_pad) = (made[0], made[1]);
+        assert_ne!(new_sketch, sketch);
+        let data = doc.get_feature_data(new_pad).unwrap();
+        assert_eq!(data["Pad"]["sketch"], json!(new_sketch.0.to_string()));
+        assert_eq!(data["Pad"]["length"], json!(7.0));
+        assert_eq!(doc.feature_tree().dependencies(new_pad), [new_sketch]);
+        assert_eq!(doc.get_feature_meta(new_pad).unwrap().name, "Pad_1");
+        assert_eq!(doc.get_feature_meta(new_pad).unwrap().body, Some(body));
+        assert_eq!(
+            doc.get_feature_meta(new_sketch).unwrap().visible,
+            doc.get_feature_meta(sketch).unwrap().visible
+        );
+        assert_eq!(
+            fields(&doc, &pad)["Pad"]["sketch"],
+            json!(sketch.0.to_string())
+        );
+
+        // Cut and paste puts it back, in the body selected.
+        let other = doc.create_body(None);
+        let pad_id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.active_document_object = Some(pad_id);
+        assert!(bench.on_command("edit.cut", &core_document::MenuScope::EditMenu, &mut ctx));
+        ctx.active_document_object = None;
+        ctx.selected_body_id = Some(other.0);
+        assert!(bench.on_command("edit.paste", &core_document::MenuScope::EditMenu, &mut ctx));
+        let pasted = ctx.active_document_object.expect("the paste is selected");
+        drop(ctx);
+        assert!(doc.get_feature_meta(pad_id).is_none(), "cut");
+        assert!(doc.get_feature_meta(sketch).is_none(), "with its sketch");
+        assert_eq!(doc.get_feature_meta(pasted).unwrap().body, Some(other));
     }
 
     /// A boolean starts with the body made last, the one just built to

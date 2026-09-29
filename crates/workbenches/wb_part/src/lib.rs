@@ -6,6 +6,7 @@
 mod borrow;
 mod build;
 mod centre;
+mod clipboard;
 mod commands;
 #[cfg(feature = "egui")]
 mod datum_panel;
@@ -47,6 +48,25 @@ use core_document::{
 use wb_sketch::SketchFeature;
 
 const MOVE_TO_BODY: &str = "part.move_to_body";
+const DUPLICATE: &str = "part.duplicate";
+
+/// Duplicate `feature` into `body` (its own when `None`), record it as the
+/// command and select the copy.
+fn duplicate_recorded(ctx: &mut WorkbenchRuntimeContext, feature: FeatureId, body: Option<BodyId>) {
+    match commands::duplicate(ctx, feature, body) {
+        Ok(made) => {
+            let mut args = serde_json::json!({"feature": feature.0.to_string()});
+            if let Some(body) = body {
+                args["body"] = serde_json::json!(body.0.to_string());
+            }
+            let ids: Vec<String> = made.iter().map(|f| f.0.to_string()).collect();
+            ctx.record(DUPLICATE, commands::object(args), serde_json::json!(ids));
+            ctx.active_document_object = made.last().copied();
+            ctx.request(HostRequest::JournalLabel("Duplicate".into()));
+        }
+        Err(message) => ctx.log_warn(format!("Cannot duplicate the feature: {message}")),
+    }
+}
 
 /// The switches on the Part Design Preferences page.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -87,6 +107,8 @@ pub struct PartDesignWorkbench {
     edit_request: Option<FeatureId>,
     /// The centre line tool, while it is out.
     centre: Option<centre::CentreTask>,
+    /// Features Edit › Copy or Cut took.
+    clipboard: Option<clipboard::Clipboard>,
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -867,6 +889,52 @@ fn register(context: &mut WorkbenchContext, tool: ToolDescriptor) {
     });
 }
 
+impl PartDesignWorkbench {
+    /// Edit › Copy (or Cut) of the feature selected in the tree.
+    fn copy(&mut self, ctx: &mut WorkbenchRuntimeContext, cut: bool) -> bool {
+        let Some(id) = ctx.active_document_object else {
+            return false;
+        };
+        let Some(copied) = clipboard::Clipboard::copy(ctx.document, id) else {
+            return false;
+        };
+        let count = copied.ids().len();
+        if cut {
+            clipboard::cut(ctx.document, &copied);
+            ctx.active_document_object = None;
+            ctx.request(HostRequest::JournalLabel("Cut".into()));
+            ctx.log_info(format!("Cut {count} feature(s)"));
+        } else {
+            ctx.log_info(format!("Copied {count} feature(s)"));
+        }
+        self.clipboard = Some(copied);
+        true
+    }
+
+    /// Edit › Paste: the copied features again, after the tip of the body
+    /// selected (or the selected feature's body).
+    fn paste(&mut self, ctx: &mut WorkbenchRuntimeContext) -> bool {
+        let Some(copied) = self.clipboard.as_ref().filter(|c| !c.is_empty()) else {
+            return false;
+        };
+        let body = ctx
+            .active_document_object
+            .and_then(|f| ctx.document.get_feature_meta(f))
+            .and_then(|n| n.body)
+            .or(ctx.selected_body_id.map(BodyId))
+            .filter(|b| ctx.document.bodies().iter().any(|x| x.id == *b));
+        let Some(body) = body else {
+            ctx.log_warn("Select a body to paste into");
+            return true;
+        };
+        let made = copied.paste(ctx.document, body);
+        ctx.active_document_object = made.last().copied();
+        ctx.request(HostRequest::JournalLabel("Paste".into()));
+        ctx.log_info(format!("Pasted {} feature(s)", made.len()));
+        true
+    }
+}
+
 impl Workbench for PartDesignWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
@@ -1186,23 +1254,29 @@ impl Workbench for PartDesignWorkbench {
         if !matches!(node.workbench_id.as_str(), "wb.part" | "core.datum") {
             return Vec::new();
         }
-        document
-            .bodies()
-            .iter()
-            .filter(|b| b.id != from && !document.body_solid_is_imported(b.id))
-            .enumerate()
-            .map(|(i, b)| {
-                let item = MenuItem::new(
-                    format!("{MOVE_TO_BODY}:{}", b.id.0),
-                    format!("Move to {}", b.name),
-                )
-                .hint("With the sketch and datums only it uses");
-                if i == 0 {
-                    item.separator_before()
-                } else {
-                    item
-                }
-            })
+        let duplicate = MenuItem::new(DUPLICATE, "Duplicate")
+            .hint("A copy after the tip, with its own sketch")
+            .separator_before();
+        std::iter::once(duplicate)
+            .chain(
+                document
+                    .bodies()
+                    .iter()
+                    .filter(|b| b.id != from && !document.body_solid_is_imported(b.id))
+                    .enumerate()
+                    .map(|(i, b)| {
+                        let item = MenuItem::new(
+                            format!("{MOVE_TO_BODY}:{}", b.id.0),
+                            format!("Move to {}", b.name),
+                        )
+                        .hint("With the sketch and datums only it uses");
+                        if i == 0 {
+                            item.separator_before()
+                        } else {
+                            item
+                        }
+                    }),
+            )
             .collect()
     }
 
@@ -1212,6 +1286,16 @@ impl Workbench for PartDesignWorkbench {
         scope: &MenuScope,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> bool {
+        match (scope, id) {
+            (MenuScope::EditMenu, "edit.copy") => return self.copy(ctx, false),
+            (MenuScope::EditMenu, "edit.cut") => return self.copy(ctx, true),
+            (MenuScope::EditMenu, "edit.paste") => return self.paste(ctx),
+            (MenuScope::TreeFeature(feature), DUPLICATE) => {
+                duplicate_recorded(ctx, *feature, None);
+                return true;
+            }
+            _ => {}
+        }
         let (MenuScope::TreeFeature(feature), Some(body)) = (scope, id.strip_prefix(MOVE_TO_BODY))
         else {
             return false;
@@ -1899,7 +1983,7 @@ fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
 
 /// `base` when none of `names` is it, else `base_n` one past the highest
 /// `n` among the names.
-fn next_name<'a>(names: impl Iterator<Item = &'a str>, base: &str) -> String {
+pub(crate) fn next_name<'a>(names: impl Iterator<Item = &'a str>, base: &str) -> String {
     let mut taken = false;
     let mut highest = 0u32;
     for name in names {

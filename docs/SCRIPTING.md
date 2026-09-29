@@ -1084,6 +1084,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `body` (id): The body it goes to, in at its tip
 - Returns the ids of the features moved, the given one last
 
+`pc.part.duplicate`: Make a copy of a feature, with its own copies of the sketches and datums it reads.
+
+- `feature` (id): The feature
+- `body` (id, optional): The body the copy goes in, at its tip (the feature's own when left out)
+- Returns the ids of the features made, the copy of the given one last
+
 `pc.part.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
 
 - `body` (id): The body whose solid it runs through

@@ -199,7 +199,10 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Move a feature to another body** (missing, M). A feature row's
   menu, or `part.move_to_body`; the sketch and datums only it uses go
   along.
-- [ ] **Duplicate, copy and paste features** (missing, M).
+- [x] **Duplicate, copy and paste features** (missing, M). A feature
+  row's Duplicate, Edit's Cut, Copy and Paste in Part Design, and
+  `part.duplicate`; a copy reads its own copies of the sketches and
+  datums of its body it is built from.
 - [ ] **Drag handles in the view** (missing, L). Drag a pad's end or a
   fillet's radius.
 
