@@ -3618,11 +3618,9 @@ impl Workbench for SketchWorkbench {
             }
             key("Enter", "finish");
         }
-        if tool == "sketch.select" {
-            key("Click", "add to selection");
-            key("Empty click", "clear");
-            key("Del", "delete");
-        } else {
+        // Selecting is what the view does at rest: it takes no card.
+        let resting = tool == "sketch.select" && self.tool_state.hint().is_none();
+        if !resting {
             key("Esc", "cancel");
         }
         let verdict = self.solver_verdict(&feature.sketch);
@@ -3647,7 +3645,7 @@ impl Workbench for SketchWorkbench {
             })
         });
         Some(ViewportHud {
-            tool: Some(ToolHint {
+            tool: (!resting).then(|| ToolHint {
                 icon: tool_icon(tool),
                 name: name.to_string(),
                 prompt: prompt.to_string(),
