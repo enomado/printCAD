@@ -147,8 +147,10 @@ pub fn recognize_holes(brep: &[u8]) -> KernelResult<(Vec<RecognizedHole>, usize)
     let mut unknown = 0;
     for group in groups {
         match describe(&model, &faces, &bores, &group, &edge_faces) {
-            Some(hole) => holes.push(hole),
-            None => unknown += 1,
+            Found::Hole(hole) => holes.push(*hole),
+            Found::Bore => unknown += 1,
+            // A round's or a slot end's arc is no bore.
+            Found::Nothing => {}
         }
     }
     Ok((holes, unknown))
@@ -179,6 +181,15 @@ fn edge_face_map(model: &Model, faces: &[Face]) -> ogeom::core::OgeomResult<Vec<
     Ok(out)
 }
 
+/// What a group of concave cylinder faces turned out to be.
+enum Found {
+    Hole(Box<RecognizedHole>),
+    /// A whole bore, ended in a way no Hole feature makes.
+    Bore,
+    /// Less than a whole turn: a round, a slot's end.
+    Nothing,
+}
+
 /// What closes one end of a bore.
 enum End {
     Open,
@@ -192,7 +203,7 @@ fn describe(
     bores: &[BoreFace],
     group: &[usize],
     neighbours: &[Vec<usize>],
-) -> Option<RecognizedHole> {
+) -> Found {
     let first = &bores[group[0]];
     let (origin, axis, radius) = (first.origin, first.axis, first.radius);
     let along = |p: V| dot(sub(p, origin), axis);
@@ -207,14 +218,44 @@ fn describe(
     }
     let length = t1 - t0;
     if length <= 1e-6 {
-        return None;
+        return Found::Nothing;
     }
     // A whole turn: the faces' area is the full bore's.
     let area: f64 = members.iter().map(|&f| faces[f].area).sum();
     let turn = area / (radius * length);
     if (turn - std::f64::consts::TAU).abs() > 0.1 * std::f64::consts::TAU {
-        return None;
+        return Found::Nothing;
     }
+    match hole_of(
+        model,
+        faces,
+        &members,
+        origin,
+        axis,
+        radius,
+        (t0, t1),
+        neighbours,
+    ) {
+        Some(hole) => Found::Hole(Box::new(hole)),
+        None => Found::Bore,
+    }
+}
+
+/// The hole a whole bore makes, when both its ends are ones a Hole
+/// feature makes.
+#[allow(clippy::too_many_arguments)]
+fn hole_of(
+    model: &Model,
+    faces: &[Face],
+    members: &[usize],
+    origin: V,
+    axis: V,
+    radius: f64,
+    (t0, t1): (f64, f64),
+    neighbours: &[Vec<usize>],
+) -> Option<RecognizedHole> {
+    let along = |p: V| dot(sub(p, origin), axis);
+    let length = t1 - t0;
     let others: Vec<usize> = members
         .iter()
         .flat_map(|&f| neighbours[f].iter().copied())
