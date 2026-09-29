@@ -176,6 +176,10 @@ pub struct Document {
     /// document, even for a body whose geometry went and came back.
     #[serde(skip)]
     next_geometry_revision: u64,
+    /// The bodies the configuration in effect leaves out, kept as the
+    /// table changes.
+    #[serde(skip)]
+    left_out: Vec<BodyId>,
     /// What each feature was last built against from outside its own
     /// history (another body's solid, where it sat), as its bench sums it
     /// up. Derived on each replica, never an op.
@@ -427,6 +431,7 @@ impl Document {
             history_suppressed: false,
             evaluated: Evaluated::default(),
             next_geometry_revision: 0,
+            left_out: Vec::new(),
             built_against: HashMap::new(),
             probed: HashMap::new(),
         }
@@ -658,6 +663,34 @@ impl Document {
     /// that changes build inputs marks the affected features dirty, which is
     /// what triggers this replica's own recompute.
     pub fn apply_op(&mut self, operation: &op::DocumentOp) {
+        self.apply_op_itself(operation);
+        // The bodies the configuration in effect leaves out follow its
+        // table.
+        let touches_table = match operation {
+            op::DocumentOp::AddFeature { workbench_id, .. } => {
+                workbench_id.as_str() == configurations::CONFIGURATIONS_KIND
+            }
+            op::DocumentOp::UpdateFeatureData { id, .. } => self
+                .feature_tree
+                .get_node(*id)
+                .is_some_and(|n| n.workbench_id.as_str() == configurations::CONFIGURATIONS_KIND),
+            op::DocumentOp::RemoveFeature { .. } | op::DocumentOp::RemoveBody { .. } => true,
+            _ => false,
+        };
+        if touches_table {
+            self.refresh_left_out();
+        }
+    }
+
+    /// The bodies the configuration in effect leaves out, read again.
+    fn refresh_left_out(&mut self) {
+        self.left_out = self
+            .configurations()
+            .map(|(_, t)| t.left_out())
+            .unwrap_or_default();
+    }
+
+    fn apply_op_itself(&mut self, operation: &op::DocumentOp) {
         use op::DocumentOp as Op;
         match operation {
             Op::SetDocumentName { name } => {
@@ -2327,7 +2360,7 @@ impl Document {
     }
 
     pub fn imported_body_effective_visible(&self, body: BodyId) -> bool {
-        if self.bodies.iter().any(|b| b.id == body && b.hidden) {
+        if self.bodies.iter().any(|b| b.id == body && b.hidden) || self.left_out.contains(&body) {
             return false;
         }
         match self.imported_body_to_object.get(&body).copied() {
@@ -2551,6 +2584,7 @@ impl Document {
         let mut doc: Document = serde_json::from_slice(&json)?;
         doc.thumbnail = thumbnail.map(std::sync::Arc::new);
         doc.recover_local_meshes();
+        doc.refresh_left_out();
 
         // Resolve any asset blobs that match an `AssetReference::path`.
         for (asset_id, asset) in &doc.assets {

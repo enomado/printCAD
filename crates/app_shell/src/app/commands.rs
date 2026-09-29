@@ -1336,6 +1336,10 @@ impl PrintCadApp {
                 doc.set_configuration_value(name, variable, value),
                 format!("Set {variable} in {name}"),
             ),
+            ConfigEdit::LeaveOut { name, bodies } => (
+                doc.set_configuration_left_out(name, bodies.clone()),
+                format!("Leave bodies out of {name}"),
+            ),
             ConfigEdit::Activate(name) => (
                 doc.activate_configuration(name.as_deref()),
                 match name {

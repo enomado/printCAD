@@ -247,6 +247,16 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "As formulas read it: Size.width",
         )
         .param("value", ParamKind::String, "Such as \"60 mm\""),
+        CommandSpec::new(
+            "config.leave_out",
+            "The bodies a configuration leaves out: not drawn, picked, exported or checked",
+        )
+        .param("name", ParamKind::String, "The configuration")
+        .param(
+            "bodies",
+            ParamKind::List,
+            "The bodies' ids; an empty list leaves none out",
+        ),
         CommandSpec::new("config.activate", "Put a configuration in effect").optional(
             "name",
             ParamKind::String,
@@ -1553,7 +1563,11 @@ pub(crate) fn document_command(
                 .unwrap_or_default();
             Ok(json!({
                 "columns": table.columns,
-                "rows": table.rows.iter().map(|r| json!({"name": r.name, "values": r.values})).collect::<Vec<_>>(),
+                "rows": table.rows.iter().map(|r| json!({
+                    "name": r.name,
+                    "values": r.values,
+                    "left_out": r.left_out.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
                 "active": table.active,
             }))
         }
@@ -1581,6 +1595,24 @@ pub(crate) fn document_command(
             .set_configuration_value(a.string("name")?, a.string("variable")?, a.string("value")?)
             .map(|()| Value::Null)
             .map_err(CommandError::failed),
+        "config.leave_out" => {
+            let bodies =
+                a.0.get("bodies")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| CommandError::bad("bodies", "must be a list of ids"))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .and_then(|t| Uuid::parse_str(t).ok())
+                            .map(core_document::BodyId)
+                            .ok_or_else(|| CommandError::bad("bodies", "must be a list of ids"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+            document
+                .set_configuration_left_out(a.string("name")?, bodies)
+                .map(|()| Value::Null)
+                .map_err(CommandError::failed)
+        }
         "config.activate" => document
             .activate_configuration(a.opt_string("name")?)
             .map(|()| Value::Null)

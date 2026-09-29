@@ -113,6 +113,12 @@ everything that follows those variables rebuilds.
 A row's value takes the place of the variable's formula, so it cannot
 read that same variable (that would be a loop).
 
+A configuration can also leave bodies out ("Leaves out" in its editor):
+while it is in effect they are not drawn, picked, exported or checked. An
+assembly with two versions of a part swaps them by leaving one out of each
+configuration. `pc.config.leave_out{name = ..., bodies = {...}}` does the
+same from a script.
+
 File › Export offers "Every configuration": one file per configuration,
 named after it (`bracket-Large.3mf`), each built in turn; the
 configuration in effect before comes back after. From a script:

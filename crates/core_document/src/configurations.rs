@@ -34,6 +34,11 @@ pub struct Configuration {
     pub name: String,
     /// A formula per column; an empty one keeps the variable's own.
     pub values: Vec<String>,
+    /// Bodies this configuration leaves out: not drawn, picked, exported
+    /// or checked while it is in effect. Leaving one of two alternatives
+    /// out in each configuration swaps them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_out: Vec<crate::BodyId>,
 }
 
 impl Configurations {
@@ -56,6 +61,15 @@ impl Configurations {
                 Some((reference, value.clone()))
             })
             .collect()
+    }
+
+    /// The bodies the active row leaves out.
+    pub fn left_out(&self) -> Vec<crate::BodyId> {
+        self.active
+            .as_ref()
+            .and_then(|name| self.rows.iter().find(|r| &r.name == name))
+            .map(|r| r.left_out.clone())
+            .unwrap_or_default()
     }
 
     fn row_mut(&mut self, name: &str) -> Result<&mut Configuration, String> {
@@ -166,9 +180,14 @@ impl crate::Document {
                 Some(like) => t.row_mut(like)?.values.clone(),
                 None => vec![String::new(); t.columns.len()],
             };
+            let left_out = match like {
+                Some(like) => t.row_mut(like)?.left_out.clone(),
+                None => Vec::new(),
+            };
             t.rows.push(Configuration {
                 name: name.to_string(),
                 values,
+                left_out,
             });
             Ok(())
         })
@@ -264,6 +283,24 @@ impl crate::Document {
         })
     }
 
+    /// The bodies configuration `name` leaves out.
+    pub fn set_configuration_left_out(
+        &mut self,
+        name: &str,
+        bodies: Vec<crate::BodyId>,
+    ) -> Result<(), String> {
+        if let Some(b) = bodies
+            .iter()
+            .find(|b| !self.bodies().iter().any(|x| x.id == **b))
+        {
+            return Err(format!("{} is not a body of this document", b.0));
+        }
+        self.edit_configurations(|t| {
+            t.row_mut(name)?.left_out = bodies;
+            Ok(())
+        })
+    }
+
     /// Put configuration `name` in effect, or none.
     pub fn activate_configuration(&mut self, name: Option<&str>) -> Result<(), String> {
         self.edit_configurations(|t| {
@@ -281,6 +318,33 @@ impl crate::Document {
 #[cfg(test)]
 mod tests {
     use crate::Document;
+
+    /// A configuration leaves bodies out while it is in effect: swapped
+    /// with another that leaves the other out, and back to both when none
+    /// is; kept through a save.
+    #[test]
+    fn a_configuration_leaves_bodies_out() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        doc.add_configuration("Left", None).unwrap();
+        doc.add_configuration("Right", None).unwrap();
+        doc.set_configuration_left_out("Left", vec![b]).unwrap();
+        doc.set_configuration_left_out("Right", vec![a]).unwrap();
+        assert!(doc.imported_body_effective_visible(a) && doc.imported_body_effective_visible(b));
+        doc.activate_configuration(Some("Left")).unwrap();
+        assert!(doc.imported_body_effective_visible(a) && !doc.imported_body_effective_visible(b));
+        doc.activate_configuration(Some("Right")).unwrap();
+        assert!(!doc.imported_body_effective_visible(a) && doc.imported_body_effective_visible(b));
+        let bytes = doc.save_to_bytes(crate::Compression::None).unwrap();
+        let loaded = Document::load_from_bytes(bytes).unwrap();
+        assert!(!loaded.imported_body_effective_visible(a));
+        doc.activate_configuration(None).unwrap();
+        assert!(doc.imported_body_effective_visible(a));
+        assert!(
+            doc.set_configuration_left_out("Left", vec![crate::BodyId::new()])
+                .is_err()
+        );
+    }
 
     #[test]
     fn a_table_is_made_on_first_use_and_checks_what_it_is_given() {

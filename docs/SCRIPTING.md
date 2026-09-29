@@ -355,6 +355,11 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `variable` (string): As formulas read it: Size.width
 - `value` (string): Such as "60 mm"
 
+`pc.config.leave_out`: The bodies a configuration leaves out: not drawn, picked, exported or checked.
+
+- `name` (string): The configuration
+- `bodies` (list): The bodies' ids; an empty list leaves none out
+
 `pc.config.activate`: Put a configuration in effect.
 
 - `name` (string, optional): Nil leaves every variable its own

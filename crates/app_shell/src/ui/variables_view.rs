@@ -611,6 +611,41 @@ fn configuration_editor(
                 );
                 preview(ui, document, value);
             }
+            // The bodies it leaves out, each a tick.
+            ui.menu_button(
+                RichText::new(format!(
+                    "Leaves out {} bod{}",
+                    configuration.left_out.len(),
+                    if configuration.left_out.len() == 1 {
+                        "y"
+                    } else {
+                        "ies"
+                    }
+                ))
+                .font(sans(FONT_SM)),
+                |ui| {
+                    for body in document.bodies() {
+                        let mut out = configuration.left_out.contains(&body.id);
+                        if ui.checkbox(&mut out, &body.name).changed() {
+                            let mut bodies = configuration.left_out.clone();
+                            if out {
+                                bodies.push(body.id);
+                            } else {
+                                bodies.retain(|b| *b != body.id);
+                            }
+                            commands.push(UiCommand::Config(ConfigEdit::LeaveOut {
+                                name: configuration.name.clone(),
+                                bodies,
+                            }));
+                        }
+                    }
+                },
+            )
+            .response
+            .on_hover_text(
+                "Bodies this configuration leaves out: not drawn, picked, exported or checked \
+                 while it is in effect",
+            );
             ui.horizontal(|ui| {
                 if small_secondary_button(ui, "Apply").clicked() {
                     apply = true;
@@ -680,6 +715,7 @@ mod tests {
             rows: vec![Configuration {
                 name: "S".into(),
                 values: vec!["30 mm".into()],
+                left_out: Vec::new(),
             }],
             active: None,
         };

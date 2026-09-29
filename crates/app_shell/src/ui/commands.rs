@@ -320,6 +320,11 @@ pub enum ConfigEdit {
         value: String,
     },
     Activate(Option<String>),
+    /// The bodies a configuration leaves out.
+    LeaveOut {
+        name: String,
+        bodies: Vec<core_document::BodyId>,
+    },
 }
 
 impl ConfigEdit {
@@ -342,6 +347,13 @@ impl ConfigEdit {
                 json!({"name": name, "variable": variable, "value": value}),
             ),
             ConfigEdit::Activate(name) => ("config.activate", json!({"name": name})),
+            ConfigEdit::LeaveOut { name, bodies } => (
+                "config.leave_out",
+                json!({
+                    "name": name,
+                    "bodies": bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
+                }),
+            ),
         }
     }
 }
