@@ -889,6 +889,107 @@ fn a_projected_arc_closed_by_a_line_is_a_profile() {
     assert_eq!(wires[0].segments.len(), 2, "the arc and the line");
 }
 
+/// A line drawn on the ends of a projected arc cannot move: the sketch has
+/// no freedom left, and says so.
+#[test]
+fn a_line_on_projected_ends_leaves_no_freedom() {
+    use wb_sketch::sketch::{Arc, ExternalReference, ExternalSource, Point, Vec2D};
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    let sketch = &mut feature.sketch;
+    let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let start = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
+    let end = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-10.0, 0.0))));
+    let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, 10.0)));
+    let source = ExternalSource::of_reference(ExternalReference::Datum {
+        datum: uuid::Uuid::new_v4(),
+    });
+    for part in [centre, start, end, arc] {
+        sketch.external.insert(part, source);
+    }
+    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.key(KeyCode::A, None);
+    h.click(10.0, 0.0, "sketch.line");
+    h.click(-10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let badge = h.hud().and_then(|hud| hud.badge).map(|(_, text)| text);
+    let sketch = h.sketch();
+    let lines: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => Some((l.start, l.end)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        badge.as_deref(),
+        Some("0 DoF"),
+        "lines {lines:?}, arc ends {start} {end}"
+    );
+}
+
+/// As with an arc, a line drawn on the ends of a projected spline cannot
+/// move.
+#[test]
+fn a_line_on_projected_spline_ends_leaves_no_freedom() {
+    use wb_sketch::sketch::{BSpline, ExternalReference, ExternalSource, Point, Vec2D};
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    let sketch = &mut feature.sketch;
+    let source = ExternalSource::of_reference(ExternalReference::Datum {
+        datum: uuid::Uuid::new_v4(),
+    });
+    let mut poles = Vec::new();
+    for (x, y) in [
+        (10.0, 0.0),
+        (10.0, 6.0),
+        (4.0, 10.0),
+        (-4.0, 10.0),
+        (-10.0, 6.0),
+        (-10.0, 0.0),
+    ] {
+        let p = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+        sketch.external.insert(p, source);
+        poles.push(p);
+    }
+    let spline = sketch.add_geometry(GeometryElement::BSpline(BSpline::new(poles.clone(), false)));
+    sketch.external.insert(spline, source);
+    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.key(KeyCode::A, None);
+    h.click(10.0, 0.0, "sketch.line");
+    h.click(-10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let badge = h.hud().and_then(|hud| hud.badge).map(|(_, text)| text);
+    let sketch = h.sketch();
+    let lines: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => Some((l.start, l.end)),
+            _ => None,
+        })
+        .collect();
+    let constraints: Vec<_> = sketch
+        .constraints
+        .iter()
+        .map(|c| format!("{:?}", c.kind))
+        .collect();
+    assert_eq!(
+        badge.as_deref(),
+        Some("0 DoF"),
+        "lines {lines:?}, spline ends {} {}, constraints {constraints:?}",
+        poles[0],
+        poles[5]
+    );
+    assert!(
+        sketch.is_fully_constrained,
+        "drawn in the fully constrained colour"
+    );
+}
+
 #[test]
 fn construction_toggle_with_empty_selection_flips_mode() {
     let mut h = Harness::new();

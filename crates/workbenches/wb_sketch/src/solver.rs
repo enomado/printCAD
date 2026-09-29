@@ -87,7 +87,11 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
 
 fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     if sys.specs.is_empty() || sys.vars.is_empty() {
-        sketch.is_fully_constrained = false;
+        // Nothing to solve can still leave nothing free: a line drawn on
+        // the ends of projected geometry, which the solver holds, cannot
+        // move though no constraint names it.
+        sketch.is_fully_constrained = sketch.geometry.iter().any(|g| !sketch.is_external(g.id()))
+            && dof_estimate(sketch) == 0;
         return SolveOutcome::NothingToSolve;
     }
 
