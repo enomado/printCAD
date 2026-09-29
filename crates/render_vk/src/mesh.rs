@@ -1033,17 +1033,22 @@ impl MeshRenderer {
                 self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
                 self.push_frame_constants(command_buffer, &frame_pc);
             }
-            for (body, _) in bodies
-                .iter()
-                .zip(&edges_eligible)
-                .filter(|(b, v)| **v && !b.is_wireframe && !b.on_top && !edges_later(b))
-            {
-                let cached = match cache.get(&body.id) {
-                    Some(c) if draws_edges(c) => c,
-                    _ => continue,
-                };
-                stats.edge_indices += u64::from(cached.edge_index_count);
-                self.draw_body_edges(command_buffer, cached, body, lighting);
+            // Solids' boundary edges first, then line bodies: a sketch
+            // drawn along a solid's own edges ties with them in depth, and
+            // the later draw wins the tie, so the sketch shows.
+            for lines in [false, true] {
+                for (body, _) in bodies
+                    .iter()
+                    .zip(&edges_eligible)
+                    .filter(|(b, v)| **v && !b.is_wireframe && !b.on_top && !edges_later(b))
+                {
+                    let cached = match cache.get(&body.id) {
+                        Some(c) if draws_edges(c) && (c.index_count == 0) == lines => c,
+                        _ => continue,
+                    };
+                    stats.edge_indices += u64::from(cached.edge_index_count);
+                    self.draw_body_edges(command_buffer, cached, body, lighting);
+                }
             }
         }
 
