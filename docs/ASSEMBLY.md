@@ -105,6 +105,11 @@ same shape counted together, and the size of each along its own axes.
 Copy as CSV puts it on the clipboard for a spreadsheet; Save as CSV
 writes it to a file.
 
+Mass and centre of mass (W) measures every visible solid body at the
+density you set (g/cm³), with each body's share, and marks the centre of
+mass in the view: what a tip-over check needs. `asm.mass` answers the
+same to a script.
+
 ## From a script
 
 Every joint tool is a command (`asm.mate`, `asm.hinge`, ...) taking faces

@@ -99,6 +99,9 @@ impl AssemblyWorkbench {
                 self.explode_panel(ui, ctx, request, placements, spread)
             }
             Some(Task::Parts) => self.parts_panel(ui, ctx, request),
+            Some(Task::Mass { found, density }) => {
+                self.mass_panel(ui, ctx, request, found.as_ref(), density)
+            }
             None => TaskOutcome::Open,
         }
     }
@@ -284,6 +287,126 @@ impl AssemblyWorkbench {
             .font(sans(FONT_XS))
             .color(TEXT3),
         );
+        TaskOutcome::Open
+    }
+
+    /// The mass of the visible bodies at one density, their centre of mass,
+    /// and each body's share.
+    fn mass_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        found: Option<&crate::MassReport>,
+        density: f32,
+    ) -> TaskOutcome {
+        if request.accept || request.cancel {
+            self.measuring = None;
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        }
+        header(ui, "measure", "Mass");
+        ui.add_space(SPACE_2);
+        self.collect_mass(ctx);
+        let Some(report) = found else {
+            let (done, total) = self.mass_progress().unwrap_or((0, 0));
+            ui.label(
+                RichText::new(format!("Measuring {done} of {total} bodies"))
+                    .font(sans(FONT_SM))
+                    .color(TEXT1),
+            );
+            ui.add(egui::ProgressBar::new(if total == 0 {
+                0.0
+            } else {
+                done as f32 / total as f32
+            }));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+            return TaskOutcome::Open;
+        };
+        let mut edited = density;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Density").font(sans(FONT_SM)).color(TEXT2));
+            QtyField::new(&mut edited)
+                .unit("g/cm³")
+                .speed(0.01)
+                .range(0.0..=100.0)
+                .show(ui);
+        });
+        if edited != density
+            && let Some(crate::Task::Mass { density, .. }) = &mut self.task
+        {
+            *density = edited;
+        }
+        let density = f64::from(edited);
+        let unit = ctx.document.display_unit();
+        let line = |ui: &mut egui::Ui, label: &str, text: String| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
+                ui.label(RichText::new(text).font(ui_kit::mono(FONT_SM)).color(TEXT1));
+            });
+        };
+        ui.add_space(SPACE_1);
+        line(ui, "Mass", mass_text(report.mass_g(density)));
+        line(
+            ui,
+            "Volume",
+            core_document::format_volume_mm3(report.volume_mm3(), unit, 2),
+        );
+        if let Some(c) = report.centre() {
+            let f = |v: f64| core_document::format_length_mm(v as f32, unit, 2);
+            line(
+                ui,
+                "Centre of mass",
+                format!("{}, {}, {}", f(c[0]), f(c[1]), f(c[2])),
+            );
+        }
+        ui.add_space(SPACE_2);
+        egui::Grid::new("assembly_mass")
+            .num_columns(2)
+            .striped(true)
+            .spacing([SPACE_3, SPACE_1])
+            .show(ui, |ui| {
+                for heading in ["Body", "Mass"] {
+                    ui.label(RichText::new(heading).font(sans(FONT_XS)).color(TEXT3));
+                }
+                ui.end_row();
+                for b in &report.bodies {
+                    let name = ui.add(
+                        egui::Button::new(
+                            RichText::new(body_name(ctx, b.body))
+                                .font(sans(FONT_SM))
+                                .color(TEXT1),
+                        )
+                        .frame(false),
+                    );
+                    if name.clicked() {
+                        ctx.request(core_document::HostRequest::SelectBody(b.body));
+                    }
+                    ui.label(
+                        RichText::new(mass_text(b.volume_mm3 * density / 1000.0))
+                            .font(ui_kit::mono(FONT_SM))
+                            .color(TEXT1),
+                    );
+                    ui.end_row();
+                }
+            });
+        if report.skipped > 0 {
+            ui.add_space(SPACE_1);
+            ui.label(
+                RichText::new(format!(
+                    "{} visible bod{} without a closed solid left out",
+                    report.skipped,
+                    if report.skipped == 1 { "y" } else { "ies" }
+                ))
+                .font(sans(FONT_XS))
+                .color(TEXT3),
+            );
+        }
+        ui.add_space(SPACE_2);
+        if ui_kit::widgets::secondary_button(ui, "Measure again").clicked() {
+            self.measure_mass(ctx, edited);
+        }
         TaskOutcome::Open
     }
 
@@ -1239,4 +1362,13 @@ fn freedom_line(ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext, body: BodyId) 
     };
     ui.add_space(SPACE_1);
     ui.add(egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).wrap());
+}
+
+/// A mass in grams, or kilograms from a thousand.
+fn mass_text(grams: f64) -> String {
+    if grams >= 1000.0 {
+        format!("{:.3} kg", grams / 1000.0)
+    } else {
+        format!("{grams:.2} g")
+    }
 }

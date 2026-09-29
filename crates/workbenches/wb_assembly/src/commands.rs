@@ -192,6 +192,23 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.mass",
+            "The mass and centre of mass of the solid bodies at one density",
+        )
+        .optional(
+            "bodies",
+            ParamKind::List,
+            "Only these bodies; every visible one when left out",
+        )
+        .optional("density", ParamKind::Number, "g/cm³ (1 when left out)")
+        .returns(
+            "{mass (g), volume (mm³), centre = {x, y, z} or nil, bodies = {{body, mass, \
+             volume, centre}, ...}, skipped}",
+        )
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.parts",
             "Every part: bodies of the same shape counted together",
         )
@@ -336,25 +353,46 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             ctx.document.clear_feature_dirty(joint);
             solved(ctx, Value::Null)
         }
+        "asm.mass" => {
+            let kernel = ctx
+                .kernel
+                .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+            let among = body_list(&a)?;
+            let density = a
+                .opt_number("density")?
+                .unwrap_or(f64::from(DEFAULT_DENSITY));
+            let report = crate::mass::plan(ctx.document, among.as_deref())
+                .run(
+                    kernel,
+                    &std::sync::atomic::AtomicUsize::new(0),
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+                .map_err(CommandError::failed)?;
+            let bodies: Vec<Value> = report
+                .bodies
+                .iter()
+                .map(|b| {
+                    json!({
+                        "body": b.body.0.to_string(),
+                        "mass": b.volume_mm3 * density / 1000.0,
+                        "volume": b.volume_mm3,
+                        "centre": b.centre,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "mass": report.mass_g(density),
+                "volume": report.volume_mm3(),
+                "centre": report.centre(),
+                "bodies": bodies,
+                "skipped": report.skipped,
+            }))
+        }
         "asm.interference" => {
             let kernel = ctx
                 .kernel
                 .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
-            let among = match a.0.get("bodies") {
-                None | Some(Value::Null) => None,
-                Some(list) => Some(
-                    list.as_array()
-                        .ok_or_else(|| CommandError::bad("bodies", "must be a list of ids"))?
-                        .iter()
-                        .map(|v| {
-                            v.as_str()
-                                .and_then(|t| uuid::Uuid::parse_str(t).ok())
-                                .map(BodyId)
-                                .ok_or_else(|| CommandError::bad("bodies", "must be a list of ids"))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                ),
-            };
+            let among = body_list(&a)?;
             let found = crate::interference(ctx.document, kernel, among.as_deref())
                 .map_err(CommandError::failed)?;
             let clashes: Vec<Value> = found
@@ -864,6 +902,26 @@ pub(crate) fn record_coupling(
 }
 
 /// A JSON object as named arguments.
+/// The `bodies` a command is limited to, when it names any.
+fn body_list(a: &Args) -> Result<Option<Vec<BodyId>>, CommandError> {
+    let bad = || CommandError::bad("bodies", "must be a list of ids");
+    match a.0.get("bodies") {
+        None | Some(Value::Null) => Ok(None),
+        Some(list) => list
+            .as_array()
+            .ok_or_else(bad)?
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .and_then(|t| uuid::Uuid::parse_str(t).ok())
+                    .map(BodyId)
+                    .ok_or_else(bad)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+    }
+}
+
 pub(crate) fn object(value: Value) -> CommandArgs {
     match value {
         Value::Object(map) => map,
@@ -957,6 +1015,9 @@ fn quaternion(value: &Value) -> Result<Quat, CommandError> {
     }
     Ok(q.normalize())
 }
+
+/// The density the mass tool starts at, g/cm³.
+pub(crate) const DEFAULT_DENSITY: f32 = 1.0;
 
 /// The first joint of an assembly grounds the body it holds against, when
 /// nothing is grounded yet: the assembly then stands on it, and what its

@@ -2915,3 +2915,31 @@ fn a_skewed_prism_leans() {
         "{lo:?}..{hi:?}"
     );
 }
+
+/// A workbench measuring a solid gets its volume and centre, in its own
+/// frame.
+#[test]
+fn a_bench_measures_a_box() {
+    use kernel_api::KernelQueries;
+    let mut kernel = new_kernel();
+    let cube = [SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 10.0,
+            width: 20.0,
+            height: 30.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }];
+    let solid = kernel
+        .execute_solid_chain(&cube, &TessellationSettings::default())
+        .expect("a box builds");
+    let measured = kernel_ogeom::QUERIES.measure(&solid.brep_blob).unwrap();
+    let volume = measured.volume_mm3.expect("a closed solid");
+    assert!((volume - 6000.0).abs() < 1e-6, "{volume}");
+    let c = measured.centre_mm;
+    assert!(
+        (c[0] - 5.0).abs() < 1e-6 && (c[1] - 10.0).abs() < 1e-6 && (c[2] - 15.0).abs() < 1e-6,
+        "{c:?}"
+    );
+}

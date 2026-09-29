@@ -15,6 +15,7 @@ mod commands;
 mod coupling;
 mod interference;
 mod joint;
+mod mass;
 #[cfg(feature = "egui")]
 mod panel;
 mod parts;
@@ -29,6 +30,7 @@ use core_document::{
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
 pub use interference::{Clash, Interference, interference};
 pub use joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
+pub use mass::{BodyMass, MassReport};
 pub use parts::{Part, parts_csv, parts_list};
 pub use solve::{
     HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints, solve,
@@ -79,6 +81,12 @@ enum Task {
     },
     /// Every part and how many of it.
     Parts,
+    /// The assembly's mass and centre of mass at `density` g/cm³; `None`
+    /// while it is measured.
+    Mass {
+        found: Option<MassReport>,
+        density: f32,
+    },
 }
 
 #[derive(Default)]
@@ -98,6 +106,8 @@ pub struct AssemblyWorkbench {
     collisions_off: bool,
     /// An interference check running on its own thread.
     checking: Option<Checking>,
+    /// The bodies being measured for their mass, on their own thread.
+    measuring: Option<Measuring>,
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
@@ -130,6 +140,21 @@ struct Checking {
 
 impl Drop for Checking {
     /// A check nobody waits for stops at its next pair.
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Bodies being measured: the report to come, how many are done of
+/// `total`, and the flag that stops it.
+struct Measuring {
+    answer: std::sync::mpsc::Receiver<Result<MassReport, String>>,
+    done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    total: usize,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Measuring {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -327,6 +352,92 @@ impl AssemblyWorkbench {
 }
 
 impl AssemblyWorkbench {
+    /// Measure the visible solid bodies away from the window and show
+    /// their mass and centre of mass.
+    pub(crate) fn measure_mass(&mut self, ctx: &mut WorkbenchRuntimeContext, density: f32) {
+        let Some(kernel) = ctx.kernel else {
+            ctx.log_warn("No kernel to measure with");
+            return;
+        };
+        let weighing = mass::plan(ctx.document, None);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (send, answer) = std::sync::mpsc::channel();
+        let total = weighing.len();
+        {
+            let (done, stop) = (done.clone(), stop.clone());
+            let spawned = std::thread::Builder::new()
+                .name("printcad-mass".into())
+                .spawn(move || {
+                    let _ = send.send(weighing.run(kernel, &done, &stop));
+                });
+            if let Err(why) = spawned {
+                ctx.log_warn(format!("The measuring could not start: {why}"));
+                return;
+            }
+        }
+        self.measuring = Some(Measuring {
+            answer,
+            done,
+            total,
+            stop,
+        });
+        self.task = Some(Task::Mass {
+            found: None,
+            density,
+        });
+    }
+
+    /// A finished measuring's report, when it has come.
+    pub(crate) fn collect_mass(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if !matches!(self.task, Some(Task::Mass { .. })) {
+            self.measuring = None;
+            return;
+        }
+        let Some(measuring) = &self.measuring else {
+            return;
+        };
+        let answer = match measuring.answer.try_recv() {
+            Ok(answer) => answer,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("the measuring ended without an answer".to_string())
+            }
+        };
+        self.measuring = None;
+        match answer {
+            Ok(report) => {
+                if let Some(Task::Mass { found, .. }) = &mut self.task {
+                    *found = Some(report);
+                }
+            }
+            Err(why) => {
+                ctx.log_warn(format!("The bodies could not be measured: {why}"));
+                self.task = None;
+            }
+        }
+    }
+
+    /// How far a measuring has got: bodies done, of how many.
+    pub(crate) fn mass_progress(&self) -> Option<(usize, usize)> {
+        let m = self.measuring.as_ref()?;
+        Some((m.done.load(std::sync::atomic::Ordering::Relaxed), m.total))
+    }
+
+    /// The centre of mass shown, on screen.
+    fn centre_of_mass_on_screen(&self, ctx: &WorkbenchRuntimeContext) -> Option<[f32; 2]> {
+        let Some(Task::Mass {
+            found: Some(report),
+            ..
+        }) = &self.task
+        else {
+            return None;
+        };
+        let c = report.centre()?;
+        let (x, y) = ctx.world_to_viewport(c.map(|v| v as f32))?;
+        Some([x, y])
+    }
+
     /// An exploded view open: the bodies back where they were.
     pub(crate) fn put_back_explosion(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         if let Some(Task::Explode { placements, .. }) = &self.task {
@@ -952,6 +1063,7 @@ impl Workbench for AssemblyWorkbench {
             tool("asm.collisions", "Stop drags at collisions", "boolean").shortcut("C"),
         );
         context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
+        context.register_tool(tool("asm.mass", "Mass and centre of mass", "measure").shortcut("W"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
@@ -1025,6 +1137,12 @@ impl Workbench for AssemblyWorkbench {
         })
     }
 
+    /// A check or a measuring running away from the window: its answer
+    /// shows once it comes.
+    fn busy(&self) -> bool {
+        self.checking.is_some() || self.measuring.is_some()
+    }
+
     fn tool_toggled(&self, tool_id: &str) -> bool {
         tool_id == "asm.collisions" && !self.collisions_off
     }
@@ -1033,7 +1151,7 @@ impl Workbench for AssemblyWorkbench {
         match tool_id {
             id if JointTool::of_command(id).is_some() => ctx.document.bodies().len() >= 2,
             "asm.interference" | "asm.explode" => ctx.document.bodies().len() >= 2,
-            "asm.parts" => !ctx.document.bodies().is_empty(),
+            "asm.parts" | "asm.mass" => !ctx.document.bodies().is_empty(),
             "asm.collisions" => true,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
@@ -1110,6 +1228,10 @@ impl Workbench for AssemblyWorkbench {
                 self.picking = None;
                 self.task = Some(Task::Parts);
             }
+            Some("asm.mass") => {
+                self.picking = None;
+                self.measure_mass(ctx, commands::DEFAULT_DENSITY);
+            }
             Some("asm.move") => match Self::body_to_move(ctx) {
                 Some(body) => {
                     self.picking = None;
@@ -1168,6 +1290,7 @@ impl Workbench for AssemblyWorkbench {
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.collect_interference(ctx);
+        self.collect_mass(ctx);
         if self.picking.is_some() {
             self.take_pick(ctx);
             return;
@@ -1273,6 +1396,12 @@ impl Workbench for AssemblyWorkbench {
                 confirmable: false,
                 stepwise: false,
             }),
+            Task::Mass { .. } => Some(core_document::TaskInfo {
+                title: "Mass".to_string(),
+                icon: "measure",
+                confirmable: false,
+                stepwise: false,
+            }),
         }
     }
 
@@ -1307,7 +1436,8 @@ impl Workbench for AssemblyWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceMark> {
-        self.clashes_on_screen(ctx)
+        let mut marks: Vec<core_document::ScreenSpaceMark> = self
+            .clashes_on_screen(ctx)
             .map(|(pos, _)| {
                 core_document::ScreenSpaceMark::icon(
                     pos,
@@ -1316,7 +1446,20 @@ impl Workbench for AssemblyWorkbench {
                     ctx.sketch_palette.conflict,
                 )
             })
-            .collect()
+            .collect();
+        if let Some(pos) = self.centre_of_mass_on_screen(ctx) {
+            marks.push(core_document::ScreenSpaceMark::crosshair(
+                pos,
+                14.0,
+                ctx.sketch_palette.selected,
+            ));
+            marks.push(core_document::ScreenSpaceMark::dot(
+                pos,
+                3.0,
+                ctx.sketch_palette.selected,
+            ));
+        }
+        marks
     }
 
     /// How much each clash shares, beside its mark.
@@ -1325,6 +1468,15 @@ impl Workbench for AssemblyWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceLabel> {
+        let com = self.centre_of_mass_on_screen(ctx).map(|[x, y]| {
+            core_document::ScreenSpaceLabel::new(
+                [x + 14.0, y - 14.0],
+                "Centre of mass".to_string(),
+                ctx.sketch_palette.selected,
+                11.0,
+            )
+            .pill()
+        });
         self.clashes_on_screen(ctx)
             .map(|([x, y], clash)| {
                 core_document::ScreenSpaceLabel::new(
@@ -1336,6 +1488,7 @@ impl Workbench for AssemblyWorkbench {
                 .pill()
                 .mono()
             })
+            .chain(com)
             .collect()
     }
 
@@ -1365,6 +1518,7 @@ impl Workbench for AssemblyWorkbench {
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.picking = None;
         self.checking = None;
+        self.measuring = None;
         self.put_back_explosion(ctx);
         self.task = None;
     }
@@ -1372,6 +1526,7 @@ impl Workbench for AssemblyWorkbench {
     fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.picking = None;
         self.checking = None;
+        self.measuring = None;
         self.put_back_explosion(ctx);
         self.task = None;
     }
@@ -1790,6 +1945,74 @@ mod tests {
     }
 
     static ALWAYS_SHARED: AlwaysShared = AlwaysShared;
+
+    /// A kernel whose every solid is 1000 mm³ about its own (1, 2, 3).
+    struct Litre;
+
+    impl kernel_api::KernelQueries for Litre {
+        fn project_edge(
+            &self,
+            _: &[u8],
+            _: [f64; 3],
+            _: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("projection".into()))
+        }
+
+        fn measure(&self, _: &[u8]) -> kernel_api::KernelResult<kernel_api::PhysicalProperties> {
+            Ok(kernel_api::PhysicalProperties {
+                volume_mm3: Some(1000.0),
+                area_mm2: 600.0,
+                centre_mm: [1.0, 2.0, 3.0],
+                approximate: false,
+            })
+        }
+    }
+
+    static LITRE: Litre = Litre;
+
+    /// Two bodies weighed: the centre between their placed centres, the
+    /// mass at the density asked; the tool shows the same away from the
+    /// window.
+    #[test]
+    fn the_mass_tool_weighs_the_bodies_where_they_sit() {
+        let (mut doc, base, part) = scene();
+        for body in [base, part] {
+            doc.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
+        }
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.kernel = Some(&LITRE);
+        let args = serde_json::json!({"density": 2.0});
+        let got = commands::run("asm.mass", args.as_object().unwrap(), &mut ctx).unwrap();
+        assert!((got["mass"].as_f64().unwrap() - 4.0).abs() < 1e-9, "{got}");
+        // The part sits at (30, 0, 40): the centres are (1, 2, 3) and
+        // (31, 2, 43).
+        let centre: Vec<f64> = serde_json::from_value(got["centre"].clone()).unwrap();
+        assert!((centre[0] - 16.0).abs() < 1e-4 && (centre[2] - 23.0).abs() < 1e-4);
+
+        let mut wb = AssemblyWorkbench::default();
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("asm.mass"),
+            &mut ctx,
+        );
+        assert!(wb.busy());
+        let started = std::time::Instant::now();
+        while wb.measuring.is_some() {
+            assert!(started.elapsed().as_secs() < 5, "the measuring finishes");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            wb.on_frame(0.016, &mut ctx);
+        }
+        assert!(!wb.busy());
+        let Some(Task::Mass {
+            found: Some(report),
+            ..
+        }) = &wb.task
+        else {
+            panic!("the report is shown")
+        };
+        assert_eq!(report.bodies.len(), 2);
+    }
 
     #[test]
     fn an_interference_check_runs_away_from_the_window_and_draws_what_is_shared() {

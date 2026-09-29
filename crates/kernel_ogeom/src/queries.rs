@@ -36,6 +36,10 @@ fn other(message: impl std::fmt::Display) -> KernelError {
 const TOUCHING_MM3: f64 = 1e-6;
 
 impl KernelQueries for OgeomQueries {
+    fn measure(&self, brep: &[u8]) -> KernelResult<kernel_api::PhysicalProperties> {
+        crate::health::measure_blob(brep)
+    }
+
     fn overlap(&self, a: &[u8], b: &[u8], b_in_a: &[[f64; 4]; 4]) -> KernelResult<Option<Overlap>> {
         let tol = tess::tolerances();
         let (mut model, first) = tess::read_blob(a)?;

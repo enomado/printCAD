@@ -319,7 +319,9 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Interference among the selected bodies from the toolbar** (partial,
   medium, S). The command takes a list; the tool takes the selected body
   against every other, or every pair with nothing selected.
-- [ ] **Total mass and centre of mass** (partial, S). For tip-over checks.
+- [x] **Total mass and centre of mass** (partial, S). For tip-over checks.
+  The Mass tool and `asm.mass`, at one density, through the kernel's
+  `KernelQueries::measure`.
 - [x] **Isolate, show only the selection** (missing, S). View › Isolate
   selection and Show all bodies, and the viewport menu's Isolate.
 - [ ] **Configurations that suppress or swap bodies** (partial, M).

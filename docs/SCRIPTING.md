@@ -1266,6 +1266,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `bodies` (list, optional): Only these bodies; every visible one when left out
 - Returns {checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; skipped counts visible bodies with no solid
 
+`pc.asm.mass`: The mass and centre of mass of the solid bodies at one density.
+
+- `bodies` (list, optional): Only these bodies; every visible one when left out
+- `density` (number, optional): g/cm³ (1 when left out)
+- Returns {mass (g), volume (mm³), centre = {x, y, z} or nil, bodies = {{body, mass, volume, centre}, ...}, skipped}
+
 `pc.asm.parts`: Every part: bodies of the same shape counted together.
 
 - Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh}, in name order

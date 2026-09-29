@@ -1609,6 +1609,11 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("overlap".into()))
     }
 
+    /// The volume, area and centre of mass of `brep`, in its own frame.
+    fn measure(&self, _brep: &[u8]) -> KernelResult<PhysicalProperties> {
+        Err(KernelError::Unsupported("measure".into()))
+    }
+
     /// The edge of `brep` nearest `near`, projected orthogonally onto
     /// `plane`. Both are in the shape's own frame.
     fn project_edge(
