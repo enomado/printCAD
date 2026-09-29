@@ -91,6 +91,12 @@ enum Task {
     },
     /// Every part and how many of it.
     Parts,
+    /// Linked copies of `body` to insert: how many, and how far apart.
+    Copies {
+        body: BodyId,
+        count: u32,
+        step: [f32; 3],
+    },
     /// Bodies picked for a rigid group, one click each (a second click
     /// takes one out); `editing` the group changed, `None` for a new one.
     Group {
@@ -154,6 +160,8 @@ struct Grab {
     reached: Option<[f32; 3]>,
     /// What bodies shared when the drag began.
     baseline: collide::Baseline,
+    /// A body no joint places, moved straight across the view plane.
+    free: bool,
 }
 
 /// An interference check under way: its answer to come, the pairs asked
@@ -783,10 +791,22 @@ impl AssemblyWorkbench {
             return;
         };
         let body = BodyId(body);
-        let Some((_, facing)) = ctx.viewport_to_ray(at) else {
+        let Some((_, ray)) = ctx.viewport_to_ray(at) else {
             return;
         };
-        if !draggable(ctx.document, body) {
+        // The plane square to the view, through the point taken.
+        let forward =
+            glam::Vec3::from_array(ctx.camera_target) - glam::Vec3::from_array(ctx.camera_position);
+        let facing = if forward.length_squared() > 1e-12 {
+            forward.normalize().to_array()
+        } else {
+            ray
+        };
+        let jointed = draggable(ctx.document, body);
+        let grounded = joints(ctx.document)
+            .iter()
+            .any(|j| j.body == body && j.feature.kind == JointKind::Ground);
+        if !jointed && grounded {
             return;
         }
         self.grab = Some(Grab {
@@ -798,6 +818,7 @@ impl AssemblyWorkbench {
             baseline: collide::Baseline::new(&all_placements(ctx)),
             placements: all_placements(ctx),
             reached: None,
+            free: !jointed,
         });
     }
 
@@ -817,6 +838,24 @@ impl AssemblyWorkbench {
         let Some(target) = ctx.viewport_to_plane(at, origin, normal) else {
             return InputResult::ignored();
         };
+        if grab.free {
+            // Straight across the plane; what is joined to it follows.
+            let start = grab
+                .placements
+                .iter()
+                .find(|(b, _)| *b == grab.body)
+                .map(|(_, p)| *p)
+                .unwrap_or_default();
+            let by = glam::Vec3::from_array(target) - glam::Vec3::from_array(origin);
+            ctx.document.set_body_placement(
+                grab.body,
+                BodyPlacement::new(start.quat(), start.offset() + by),
+            );
+            if let Ok(moves) = solve(ctx.document) {
+                place_bodies(ctx.document, &moves);
+            }
+            return InputResult::redraw_only();
+        }
         let kernel = ctx.kernel.filter(|_| !self.collisions_off);
         let proposed = drag(ctx.document, grab.body, grab.point, target);
         let moves = match kernel {
@@ -1599,6 +1638,7 @@ impl Workbench for AssemblyWorkbench {
         context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
         context.register_tool(tool("asm.mass", "Mass and centre of mass", "measure").shortcut("W"));
         context.register_tool(tool("asm.group", "Rigid group", "tree-group").shortcut("U"));
+        context.register_tool(tool("asm.copy", "Insert linked copies", "clone").shortcut("Y"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
@@ -1704,6 +1744,7 @@ impl Workbench for AssemblyWorkbench {
             "asm.interference" | "asm.explode" => ctx.document.bodies().len() >= 2,
             "asm.parts" | "asm.mass" => !ctx.document.bodies().is_empty(),
             "asm.group" => ctx.document.bodies().len() >= 2,
+            "asm.copy" => Self::body_to_move(ctx).is_some(),
             "asm.collisions" => true,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
@@ -1784,6 +1825,17 @@ impl Workbench for AssemblyWorkbench {
                 self.picking = None;
                 self.task = Some(Task::Parts);
             }
+            Some("asm.copy") => match Self::body_to_move(ctx) {
+                Some(body) => {
+                    self.picking = None;
+                    self.task = Some(Task::Copies {
+                        body,
+                        count: 1,
+                        step: commands::copy_step(ctx.document, body).to_array(),
+                    });
+                }
+                None => ctx.log_warn("Select a body to copy"),
+            },
             Some("asm.group") => {
                 self.picking = None;
                 self.group_seen = ctx.selected_body_id;
@@ -1978,6 +2030,12 @@ impl Workbench for AssemblyWorkbench {
                 title: "Parts list".to_string(),
                 icon: "file-document",
                 confirmable: false,
+                stepwise: false,
+            }),
+            Task::Copies { .. } => Some(core_document::TaskInfo {
+                title: "Insert linked copies".to_string(),
+                icon: "clone",
+                confirmable: true,
                 stepwise: false,
             }),
             Task::Group { .. } => Some(core_document::TaskInfo {
@@ -2742,6 +2800,89 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].id, "asm.place");
         assert!(requests.contains(&HostRequest::JournalLabel("Drag body".into())));
+    }
+
+    /// Linked copies go in a row beside the body, count as the same part,
+    /// and one with no joints is dragged straight across the view.
+    #[test]
+    fn copies_go_in_a_row_and_a_free_one_is_dragged() {
+        use glam::{Mat4, Vec3};
+        let (mut doc, base, _) = scene();
+        doc.set_imported_brep_data(base, b"ogeom base".to_vec(), Vec::new());
+        let made = {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            let args = serde_json::json!({"body": base.0.to_string(), "count": 2});
+            commands::run("asm.copy", args.as_object().unwrap(), &mut ctx).unwrap()
+        };
+        let made: Vec<BodyId> = made
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| BodyId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap()))
+            .collect();
+        assert_eq!(made.len(), 2);
+        let x = |b: BodyId, doc: &Document| doc.body_placement(b).translation[0];
+        assert!(
+            (x(made[0], &doc) - 11.0).abs() < 1e-3,
+            "a width and a tenth on"
+        );
+        assert!((x(made[1], &doc) - 22.0).abs() < 1e-3);
+        let parts = parts_list(&doc);
+        assert!(
+            parts.iter().any(|p| p.bodies.len() == 3),
+            "one part, three of it"
+        );
+
+        let copy = made[0];
+        let proj = glam::camera::rh::proj::directx::perspective(
+            60f32.to_radians(),
+            800.0 / 600.0,
+            0.1,
+            1000.0,
+        );
+        let view =
+            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 100.0), Vec3::ZERO, Vec3::Y);
+        let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
+        let screen = |p: [f32; 3]| {
+            core_document::runtime::world_to_viewport(vp, (0, 0, 800, 600), p).unwrap()
+        };
+        let mut wb = AssemblyWorkbench::default();
+        let mut send = |doc: &mut Document, event: WorkbenchInputEvent| {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+            ctx.view_proj = Some(vp);
+            ctx.hovered_body_id = Some(copy.0);
+            ctx.hovered_world_pos = Some([12.0, 2.0, 0.0]);
+            wb.on_input(&event, None, &mut ctx);
+            core_document::HookOutcome::take(&mut ctx).recorded
+        };
+        send(
+            &mut doc,
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos: screen([12.0, 2.0, 0.0]),
+            },
+        );
+        send(
+            &mut doc,
+            WorkbenchInputEvent::MouseMove {
+                viewport_pos: screen([32.0, 12.0, 0.0]),
+            },
+        );
+        let recorded = send(
+            &mut doc,
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Left,
+                viewport_pos: screen([32.0, 12.0, 0.0]),
+            },
+        );
+        let t = doc.body_placement(copy).translation;
+        assert!(
+            (t[0] - 31.0).abs() < 1e-2 && (t[1] - 10.0).abs() < 1e-2,
+            "{t:?}"
+        );
+        assert_eq!(recorded.len(), 1);
     }
 
     /// A kernel for which every pair shares a little.

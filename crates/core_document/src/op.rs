@@ -95,6 +95,13 @@ pub enum DocumentOp {
         name: String,
         created_at: i64,
     },
+    /// A body that takes another's shape: a linked copy of `source`.
+    CreateLinkedCopy {
+        id: BodyId,
+        name: String,
+        created_at: i64,
+        source: BodyId,
+    },
     RenameBody {
         id: BodyId,
         name: String,

@@ -103,3 +103,61 @@ fn a_placement_survives_a_save_with_the_body_s_own_mesh() {
     let (local, _) = loaded.local_geometry(body).unwrap();
     assert!(close(local.positions[1], [1.0, 0.0, 0.0]));
 }
+
+/// A linked copy takes its source's shape where it sits itself, follows
+/// every change to the source's shape, shares its snapshot, and loses it
+/// with the source; undoing its making takes it away.
+#[test]
+fn a_linked_copy_follows_its_source() {
+    let sized = |x: f32| {
+        geometry(Arc::new(TriMesh {
+            positions: vec![[0.0, 0.0, 0.0], [x, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            ..TriMesh::default()
+        }))
+    };
+    let mut doc = Document::new("t");
+    let mut journal = OpJournal::new(10);
+    let source = doc.create_body(Some("Bracket".into()));
+    doc.set_imported_geometry(source, sized(1.0));
+    doc.set_imported_brep_data(source, b"ogeom bracket".to_vec(), Vec::new());
+    journal.note(&mut doc);
+    let copy = doc.create_linked_copy(source, None).expect("a copy");
+    journal.note(&mut doc);
+    assert_eq!(doc.copy_source(copy), Some(source));
+    assert!(
+        doc.bodies()
+            .iter()
+            .any(|b| b.id == copy && b.name == "Bracket_1"),
+        "{:?}",
+        doc.bodies().iter().map(|b| &b.name).collect::<Vec<_>>()
+    );
+    assert_eq!(doc.imported_brep_blob(copy), Some(&b"ogeom bracket"[..]));
+    doc.set_body_placement(
+        copy,
+        BodyPlacement::new(Quat::IDENTITY, Vec3::new(50.0, 0.0, 0.0)),
+    );
+    let x = |doc: &Document, b| doc.imported_geometry(b).unwrap().mesh.positions[1][0];
+    assert!((x(&doc, copy) - 51.0).abs() < 1e-5, "placed on its own");
+    doc.set_imported_geometry(source, sized(3.0));
+    assert!(
+        (x(&doc, copy) - 53.0).abs() < 1e-5,
+        "follows the source's shape"
+    );
+    assert!(
+        doc.body_solid_is_imported(copy),
+        "no history of its own to build"
+    );
+    let bytes = doc.save_to_bytes(Compression::None).unwrap();
+    let loaded = Document::load_from_bytes(bytes).unwrap();
+    assert_eq!(loaded.copy_source(copy), Some(source));
+    assert_eq!(loaded.imported_brep_blob(copy), Some(&b"ogeom bracket"[..]));
+    assert!(
+        (x(&loaded, copy) - 53.0).abs() < 1e-5,
+        "derived again on load"
+    );
+    journal.undo(&mut doc);
+    journal.undo(&mut doc);
+    assert!(doc.bodies().iter().all(|b| b.id != copy), "undone");
+}

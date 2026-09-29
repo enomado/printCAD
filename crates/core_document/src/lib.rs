@@ -240,6 +240,11 @@ pub struct Body {
     /// scene draws and picks is placed.
     #[serde(default, skip_serializing_if = "BodyPlacement::is_identity")]
     pub placement: BodyPlacement,
+    /// A linked copy: the body whose shape this one takes, placed on its
+    /// own. Its geometry is derived from the source's and follows every
+    /// change to it; it takes no features.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_of: Option<BodyId>,
 }
 
 /// A user-chosen look for a body: its colour and how much of it shows.
@@ -480,6 +485,7 @@ impl Document {
                 rules: self.agent_rules.clone(),
             },
             Op::CreateBody { id, .. } => Op::RemoveBody { id: *id },
+            Op::CreateLinkedCopy { id, .. } => Op::RemoveBody { id: *id },
             Op::RemoveBody { .. } => return None,
             Op::RenameBody { id, .. } => Op::RenameBody {
                 id: *id,
@@ -631,7 +637,28 @@ impl Document {
                     solid_requested: false,
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
+                    copy_of: None,
                 });
+            }
+            Op::CreateLinkedCopy {
+                id,
+                name,
+                created_at,
+                source,
+            } => {
+                self.bodies.push(Body {
+                    id: *id,
+                    name: name.clone(),
+                    created_at: *created_at,
+                    tip: None,
+                    display: None,
+                    repair_requested: false,
+                    solid_requested: false,
+                    hidden: false,
+                    placement: BodyPlacement::IDENTITY,
+                    copy_of: Some(*source),
+                });
+                self.refresh_copy(*id);
             }
             Op::RenameBody { id, name } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -676,8 +703,11 @@ impl Document {
                     self.feature_tree.remove_node(fid);
                 }
                 self.imported_meshes.remove(id);
+                self.local_meshes.remove(id);
                 self.imported_brep_blobs.remove(id);
                 self.imported_brep_face_colors.remove(id);
+                // Its copies have no shape to take any more.
+                self.refresh_copies_of(*id);
             }
             Op::SetBodyTip { id, tip } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -826,6 +856,7 @@ impl Document {
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
                 for init in bodies {
                     self.bodies.push(Body {
+                        copy_of: None,
                         id: init.id,
                         name: init.name.clone(),
                         created_at: init.created_at,
@@ -1703,6 +1734,113 @@ impl Document {
         id
     }
 
+    /// A linked copy of `source` (of its source, when it is a copy itself):
+    /// a body of the same shape, which follows every change to it, placed
+    /// where `source` sits until it is moved.
+    pub fn create_linked_copy(&mut self, source: BodyId, name: Option<String>) -> Option<BodyId> {
+        let entry = self.bodies.iter().find(|b| b.id == source)?;
+        let root = entry.copy_of.unwrap_or(source);
+        let placement = entry.placement;
+        let base = self
+            .bodies
+            .iter()
+            .find(|b| b.id == root)
+            .map(|b| b.name.clone())?;
+        let id = BodyId::new();
+        let name = match name {
+            Some(explicit) => explicit,
+            None => next_indexed_name(&base, self.bodies.iter().map(|b| b.name.as_str())),
+        };
+        self.record_and_apply(op::DocumentOp::CreateLinkedCopy {
+            id,
+            name,
+            created_at: epoch_ms_now(),
+            source: root,
+        });
+        self.set_body_placement(id, placement);
+        Some(id)
+    }
+
+    /// The body whose shape `body` takes, when it is a linked copy.
+    pub fn copy_source(&self, body: BodyId) -> Option<BodyId> {
+        self.bodies.iter().find(|b| b.id == body)?.copy_of
+    }
+
+    /// The linked copies of `body`.
+    pub fn copies_of(&self, body: BodyId) -> Vec<BodyId> {
+        self.bodies
+            .iter()
+            .filter(|b| b.copy_of == Some(body))
+            .map(|b| b.id)
+            .collect()
+    }
+
+    /// A linked copy's geometry, derived again from its source's: the same
+    /// shape, placed where the copy sits. Derived state: no op.
+    fn refresh_copy(&mut self, copy: BodyId) {
+        let Some(source) = self.copy_source(copy) else {
+            return;
+        };
+        let Some((mesh, bounds)) = self.local_geometry(source) else {
+            self.imported_meshes.remove(&copy);
+            self.local_meshes.remove(&copy);
+            self.imported_brep_blobs.remove(&copy);
+            self.imported_brep_face_colors.remove(&copy);
+            return;
+        };
+        let from = self.imported_meshes.get(&source);
+        let geometry = ImportedGeometry {
+            mesh,
+            source_asset: from.and_then(|g| g.source_asset),
+            revision: 0,
+            bounds_mm: bounds,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: from.and_then(|g| g.health.clone()),
+        };
+        match self.imported_brep_blobs.get(&source).cloned() {
+            Some(blob) => {
+                self.imported_brep_blobs.insert(copy, blob);
+            }
+            None => {
+                self.imported_brep_blobs.remove(&copy);
+            }
+        }
+        match self.imported_brep_face_colors.get(&source).cloned() {
+            Some(colors) => {
+                self.imported_brep_face_colors.insert(copy, colors);
+            }
+            None => {
+                self.imported_brep_face_colors.remove(&copy);
+            }
+        }
+        let next_revision = self
+            .imported_meshes
+            .get(&copy)
+            .map(|prev| prev.revision.saturating_add(1))
+            .unwrap_or(0)
+            .max(self.next_geometry_revision);
+        self.next_geometry_revision = next_revision.saturating_add(1);
+        self.local_meshes.remove(&copy);
+        self.imported_meshes.insert(
+            copy,
+            ImportedGeometry {
+                revision: next_revision,
+                ..geometry
+            },
+        );
+        if !self.body_placement(copy).is_identity() {
+            self.place_geometry(copy);
+        }
+    }
+
+    /// Every linked copy of `body` derived again from it.
+    fn refresh_copies_of(&mut self, body: BodyId) {
+        for copy in self.copies_of(body) {
+            self.refresh_copy(copy);
+        }
+    }
+
     /// Apply one STEP import as a single atomic op: the asset with its
     /// source bytes, the bodies it created (identities resolved by the
     /// caller), the object hierarchy, and — on a fresh document — the
@@ -1792,6 +1930,7 @@ impl Document {
         if !self.body_placement(body).is_identity() {
             self.place_geometry(body);
         }
+        self.refresh_copies_of(body);
         self.mark_dirty();
     }
 
@@ -1861,6 +2000,7 @@ impl Document {
         self.local_meshes.remove(&body);
         self.imported_brep_blobs.remove(&body);
         self.imported_brep_face_colors.remove(&body);
+        self.refresh_copies_of(body);
         if removed {
             self.mark_dirty();
         }
@@ -1883,6 +2023,7 @@ impl Document {
                 .insert(body, std::sync::Arc::new(brep_blob));
             self.imported_brep_face_colors.insert(body, face_colors);
         }
+        self.refresh_copies_of(body);
         self.mark_dirty();
     }
 
@@ -1907,8 +2048,10 @@ impl Document {
     /// feature history. Only the import path stamps the source asset; a
     /// rebuild's own result leaves it unset.
     pub fn body_solid_is_imported(&self, body: BodyId) -> bool {
-        self.imported_geometry(body)
-            .is_some_and(|geometry| geometry.source_asset.is_some())
+        self.copy_source(body).is_some()
+            || self
+                .imported_geometry(body)
+                .is_some_and(|geometry| geometry.source_asset.is_some())
     }
 
     pub fn imported_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
@@ -2298,6 +2441,15 @@ impl Document {
                 doc.imported_brep_face_colors.insert(*body_id, parsed);
             }
         }
+        let copies: Vec<BodyId> = doc
+            .bodies
+            .iter()
+            .filter(|b| b.copy_of.is_some())
+            .map(|b| b.id)
+            .collect();
+        for copy in copies {
+            doc.refresh_copy(copy);
+        }
 
         doc.rebuild_imported_body_index();
         Ok(doc)
@@ -2393,7 +2545,19 @@ impl Document {
     }
 
     fn sync_brep_paths_for_archive(doc: &mut Document) {
+        let copies: Vec<BodyId> = doc
+            .bodies
+            .iter()
+            .filter(|b| b.copy_of.is_some())
+            .map(|b| b.id)
+            .collect();
         for (body_id, geom) in doc.imported_meshes.iter_mut() {
+            // A linked copy's shape is its source's, derived again on load.
+            if copies.contains(body_id) {
+                geom.brep_blob_path = None;
+                geom.face_colors_path = None;
+                continue;
+            }
             if doc.imported_brep_blobs.contains_key(body_id) {
                 geom.brep_blob_path = Some(format!("brep/{}.bin", body_id.0));
                 geom.face_colors_path = Some(format!("brep/{}.colors", body_id.0));

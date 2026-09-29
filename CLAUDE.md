@@ -405,6 +405,14 @@ does not implement yet. They stay on screen as disabled controls with a
 the host never dispatches a planned id). Nothing outside those two
 workbenches gets a placeholder.
 
+**Linked copies.** A body with `copy_of` (op `CreateLinkedCopy`,
+`Document::create_linked_copy`) takes its source's shape: its geometry,
+snapshot and face colours are derived from the source's
+(`refresh_copy`, run whenever the source's geometry is set or dropped and
+after a load; a copy's snapshot is not saved), placed by its own
+placement. It takes no features (`body_solid_is_imported` is true for it,
+Part Design's target body skips it).
+
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,
 datums and kernel shape stay in the body's own frame; the document keeps

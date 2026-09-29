@@ -122,6 +122,9 @@ impl AssemblyWorkbench {
                 self.explode_panel(ui, ctx, request, placements, spread)
             }
             Some(Task::Parts) => self.parts_panel(ui, ctx, request),
+            Some(Task::Copies { body, count, step }) => {
+                self.copies_panel(ui, ctx, request, body, count, step)
+            }
             Some(Task::Group { editing, members }) => {
                 self.group_panel(ui, ctx, request, editing, &members)
             }
@@ -370,6 +373,88 @@ impl AssemblyWorkbench {
             )
             .font(sans(FONT_XS))
             .color(TEXT3),
+        );
+        TaskOutcome::Open
+    }
+
+    /// Linked copies of a body: how many and how far apart; OK inserts them
+    /// in a row, to be dragged where they go.
+    fn copies_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        body: BodyId,
+        count: u32,
+        step: [f32; 3],
+    ) -> TaskOutcome {
+        if request.cancel {
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        }
+        if request.accept {
+            let made = crate::commands::insert_copies(
+                ctx,
+                body,
+                count as usize,
+                Some(glam::Vec3::from_array(step)),
+            )
+            .unwrap_or_default();
+            ctx.record(
+                "asm.copy",
+                crate::commands::object(serde_json::json!({
+                    "body": body.0.to_string(),
+                    "count": count,
+                    "step": step,
+                })),
+                serde_json::json!(made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>()),
+            );
+            ctx.log_info(format!(
+                "Inserted {} linked cop{} of {}: drag them where they go",
+                made.len(),
+                if made.len() == 1 { "y" } else { "ies" },
+                body_name(ctx, body)
+            ));
+            self.task = None;
+            return TaskOutcome::Accepted {
+                label: "Insert linked copies".to_string(),
+            };
+        }
+        header(ui, "clone", "Insert linked copies");
+        ui.add_space(SPACE_2);
+        row(ui, "Of", &body_name(ctx, body));
+        let mut n = count as f32;
+        let mut at = step;
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [90.0, INPUT],
+                egui::Label::new(RichText::new("How many").font(sans(FONT_SM)).color(TEXT2)),
+            );
+            changed |= QtyField::new(&mut n)
+                .range(1.0..=500.0)
+                .decimals(0)
+                .speed(0.1)
+                .show(ui);
+        });
+        for (k, label) in ["Step x", "Step y", "Step z"].into_iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [90.0, INPUT],
+                    egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+                );
+                changed |= QtyField::mm(&mut at[k]).show(ui);
+            });
+        }
+        if changed && let Some(Task::Copies { count, step, .. }) = &mut self.task {
+            *count = n.round().max(1.0) as u32;
+            *step = at;
+        }
+        ui.add_space(SPACE_1);
+        note(
+            ui,
+            "Each copy takes the body's shape and follows every change to it. They go in a \
+             row, each a step from the one before; drag one to put it where it goes.",
         );
         TaskOutcome::Open
     }

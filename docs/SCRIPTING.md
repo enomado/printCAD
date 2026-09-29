@@ -1269,6 +1269,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `slide_drive` (any, optional): How far along the axis (mm) to hold an alignment; false lets it slide
 - `slide_limits` (any, optional): {low, high}: the range an alignment's slide stays in, mm; false takes it away
 
+`pc.asm.copy`: Insert linked copies of a body: each takes its shape and follows it, placed on its own.
+
+- `body` (id): The body to copy
+- `count` (number, optional): How many (1 when left out)
+- `step` (list, optional): {x, y, z}: how far each copy sits from the one before, mm; beside it along X when left out
+- Returns the copies' ids
+
 `pc.asm.group`: Lock bodies together where they sit, in one rigid group.
 
 - `bodies` (list): Two bodies or more; the first the one the rest hold to

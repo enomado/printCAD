@@ -157,14 +157,18 @@ impl PartDesignWorkbench {
 
     /// The body the current selection belongs to: the selected feature's
     /// owning body, or the selected body itself.
+    /// The body a new feature goes in: the selected feature's, else the
+    /// selected body. A linked copy takes its shape from its source and
+    /// takes no features.
     fn target_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
-        if let Some(id) = ctx.active_document_object
-            && let Some(node) = ctx.document.get_feature_meta(id)
-            && node.body.is_some()
+        let body = match ctx
+            .active_document_object
+            .and_then(|id| ctx.document.get_feature_meta(id))
         {
-            return node.body;
-        }
-        ctx.selected_body_id.map(BodyId)
+            Some(node) if node.body.is_some() => node.body,
+            _ => ctx.selected_body_id.map(BodyId),
+        };
+        body.filter(|b| ctx.document.copy_source(*b).is_none())
     }
 
     /// The part feature currently selected in the tree, if any.

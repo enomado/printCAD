@@ -198,6 +198,14 @@ impl DocumentTree {
                 if let Some(children) = roots_by_body.remove(&Some(body.id)) {
                     node.children = children;
                 }
+                if let Some(source) = body
+                    .copy_of
+                    .and_then(|s| document.bodies().iter().find(|b| b.id == s))
+                {
+                    let text = format!("Linked copy of {}", source.name);
+                    node.tooltip = Some(text.clone());
+                    node.detail = Some(text);
+                }
                 node
             })
             .collect();

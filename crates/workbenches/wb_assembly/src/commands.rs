@@ -27,6 +27,36 @@ const RATIO: &str = "Turns of the driven hinge per turn of the driver for gears 
 const LIMITS: &str = "{low, high}: the range a hinge's angle or a slider's position stays \
     in while not driven; false takes the limits away";
 
+/// How far apart copies of `body` sit by default: its width along X and
+/// a tenth more, in the world.
+pub(crate) fn copy_step(document: &core_document::Document, body: BodyId) -> Vec3 {
+    let width = document
+        .imported_geometry(body)
+        .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
+        .map_or(20.0, |(lo, hi)| hi[0] - lo[0]);
+    Vec3::new((width * 1.1).max(1.0), 0.0, 0.0)
+}
+
+/// `count` linked copies of `source`, each `step` (world) on from the
+/// one before, the first `step` from the source; their ids.
+pub(crate) fn insert_copies(
+    ctx: &mut WorkbenchRuntimeContext,
+    source: BodyId,
+    count: usize,
+    step: Option<Vec3>,
+) -> Option<Vec<BodyId>> {
+    let step = step.unwrap_or_else(|| copy_step(ctx.document, source));
+    let from = ctx.document.body_placement(source);
+    let mut made = Vec::with_capacity(count);
+    for i in 1..=count {
+        let copy = ctx.document.create_linked_copy(source, None)?;
+        let placed = BodyPlacement::new(from.quat(), from.offset() + step * i as f32);
+        ctx.document.set_body_placement(copy, placed);
+        made.push(copy);
+    }
+    Some(made)
+}
+
 /// The joint `tool` makes between these two anchors (each in its own
 /// body's frame) where the bodies stand.
 pub(crate) fn rejoined(
@@ -262,6 +292,21 @@ pub fn register(context: &mut WorkbenchContext) {
     .optional("drive", ParamKind::Any, DRIVE)
     .optional("limits", ParamKind::Any, LIMITS);
     context.register_command(align_drives(set));
+    context.register_command(
+        CommandSpec::new(
+            "asm.copy",
+            "Insert linked copies of a body: each takes its shape and follows it, placed on its own",
+        )
+        .param("body", ParamKind::Id, "The body to copy")
+        .optional("count", ParamKind::Number, "How many (1 when left out)")
+        .optional(
+            "step",
+            ParamKind::List,
+            "{x, y, z}: how far each copy sits from the one before, mm; beside it along X \
+             when left out",
+        )
+        .returns("the copies' ids"),
+    );
     context.register_command(
         CommandSpec::new(
             "asm.group",
@@ -807,6 +852,19 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             ctx.document
                 .set_body_placement(body, BodyPlacement::new(rotation, translation));
             Ok(Value::Null)
+        }
+        "asm.copy" => {
+            let source = body(&a, ctx)?;
+            let count = a.opt_number("count")?.unwrap_or(1.0).clamp(1.0, 500.0) as usize;
+            let step = match a.0.get("step") {
+                Some(v) if !v.is_null() => Some(vector(v, "step")?),
+                _ => None,
+            };
+            let made = insert_copies(ctx, source, count, step)
+                .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
+            Ok(Value::from(
+                made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
+            ))
         }
         "asm.group" => {
             let bodies = body_list(&a)?.unwrap_or_default();

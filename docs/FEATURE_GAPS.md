@@ -227,7 +227,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Components and structure
 
-- [ ] **Linked copies of a body** (missing, L). Several placements
+- [x] **Linked copies of a body** (missing, L). Several placements
   sharing one definition: edit once, every copy follows, and the parts
   list counts them. A body kind in `core_document` referring to another
   body's solid, picked up by `parts.rs`, `solve.rs` and export.
@@ -241,7 +241,7 @@ and noted on its item, and the rest of the item is built around it.
   action, not pairwise fixed joints.
 - [ ] **Patterns and mirrors of components** (missing, M). Arrays and
   mirrored copies of bodies in the assembly, built on linked copies.
-- [ ] **Insert several copies, place by dragging** (missing, S).
+- [x] **Insert several copies, place by dragging** (missing, S).
 - [ ] **Replace a component** (missing, M), keeping its joints where the
   new faces allow.
 - [x] **Ground the first component** (partial, S), so the free motions
