@@ -1358,6 +1358,12 @@ impl Workbench for AssemblyWorkbench {
             .collect()
     }
 
+    /// Bought parts are not made: exports of the model and the slicer
+    /// leave them out.
+    fn not_printed(&self, document: &core_document::Document) -> Vec<BodyId> {
+        parts::bought_bodies(document)
+    }
+
     /// The joints of other bodies that hold them to `body`.
     fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
         joints(document)
@@ -1378,7 +1384,7 @@ impl Workbench for AssemblyWorkbench {
             "Place bodies against each other with joints",
         )
         .icon("workbench-assembly")
-        .feature_kinds([JOINT_KIND, COUPLING_KIND])
+        .feature_kinds([JOINT_KIND, COUPLING_KIND, parts::PARTS_KIND])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -1418,6 +1424,14 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == parts::PARTS_KIND {
+            return FeatureInfo {
+                icon: "file-document",
+                kind_label: "Parts list".to_string(),
+                family_label: "Assembly parts list".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == COUPLING_KIND {
             let gearing = Coupling::from_json(&node.data).map(|c| c.gearing).ok();
             return FeatureInfo {
@@ -1660,6 +1674,10 @@ impl Workbench for AssemblyWorkbench {
             .get_feature_meta(id)
             .map(|n| n.workbench_id.as_str().to_string());
         if self.picking.is_some() {
+            return;
+        }
+        if kind.as_deref() == Some(parts::PARTS_KIND) {
+            self.task = Some(Task::Parts);
             return;
         }
         if kind.as_deref() == Some(COUPLING_KIND) {

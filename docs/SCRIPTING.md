@@ -1292,7 +1292,18 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 `pc.asm.parts`: Every part: bodies of the same shape counted together.
 
-- Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh}, in name order
+- Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number or nil, bought, values = {column = text}}, numbered parts first by number, then by name
+
+`pc.asm.part`: Set what the parts list keeps for a part: its number, whether it is bought, its values in the added columns.
+
+- `body` (id): Any body of the part
+- `number` (number, optional): Its item number
+- `bought` (boolean, optional): Bought rather than made: left out of exports and the slicer
+- `values` (any, optional): {column = text}: its values, a column not yet in the list added to it
+
+`pc.asm.parts_table`: Replace what the parts list keeps, whole.
+
+- `table` (any): {columns = {...}, entries = {[body id] = {number, bought, values}}}
 
 `pc.asm.travel`: Where a hinge or a slider has got to: the hinge's angle in degrees, the slider's position in mm.
 

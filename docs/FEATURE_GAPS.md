@@ -307,10 +307,10 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Parts list
 
-- [ ] **Bought parts** (missing, S). Marked apart from printed ones and
+- [x] **Bought parts** (missing, S). Marked apart from printed ones and
   left out of export.
-- [ ] **Kept in the document, numbered** (missing, S).
-- [ ] **Custom columns** (missing, M). Part number, supplier, any property.
+- [x] **Kept in the document, numbered** (missing, S).
+- [x] **Custom columns** (missing, M). Part number, supplier, any property.
 - [ ] **Sub-assembly levels** (missing, low, S, after sub-assemblies).
 
 ### Checks and display

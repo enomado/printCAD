@@ -289,15 +289,18 @@ impl PrintCadApp {
     }
 
     /// The bodies the draft asks for: the selected one, or every visible
-    /// body with geometry, in the document's body order.
+    /// body with geometry that is made, in the document's body order.
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
         let document = &self.session.document;
         let selected = self.session.selected_body;
+        // What a bench says is not made (a bought part) stays out of an
+        // export of everything.
+        let not_made = self.registry.not_printed(document);
         bodies_to_export(document, |id| {
             if draft.selected_only {
                 selected == Some(id.0)
             } else {
-                document.imported_body_effective_visible(id)
+                document.imported_body_effective_visible(id) && !not_made.contains(&id)
             }
         })
     }

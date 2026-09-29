@@ -541,6 +541,13 @@ impl DocumentService {
             .collect()
     }
 
+    /// The bodies any bench says are not made.
+    pub fn not_printed(&self, document: &Document) -> Vec<BodyId> {
+        self.benches()
+            .flat_map(|wb| wb.not_printed(document))
+            .collect()
+    }
+
     /// The features every bench links to `body` from other bodies.
     pub fn linked_features(&self, document: &Document, body: BodyId) -> Vec<FeatureId> {
         self.benches()

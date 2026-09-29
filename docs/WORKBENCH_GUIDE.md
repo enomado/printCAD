@@ -185,6 +185,10 @@ fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -
 /// for the property panel.
 fn property_hints(&self) -> PropertyHints;
 
+/// Bodies that are not made (bought parts): an export of every visible
+/// body and the slicer leave them out.
+fn not_printed(&self, doc: &Document) -> Vec<BodyId>;
+
 /// Bodies drawn faded while the bench is active (still pickable): what
 /// a tool asks the user to see past.
 fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId>;

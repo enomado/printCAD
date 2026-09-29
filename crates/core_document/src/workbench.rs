@@ -867,6 +867,12 @@ pub trait Workbench: Send {
     /// nothing when `state` is `None` (a new tab).
     fn resume_session(&mut self, _state: Option<Box<dyn std::any::Any + Send>>) {}
 
+    /// Bodies that are not made (bought parts): an export of every
+    /// visible body and what goes to the slicer leave them out.
+    fn not_printed(&self, _document: &Document) -> Vec<BodyId> {
+        Vec::new()
+    }
+
     /// Bodies to draw faded while this bench is active: what it asks the
     /// user to see past (a joint tool, the bodies not being picked). They
     /// stay pickable.

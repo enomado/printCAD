@@ -344,7 +344,8 @@ registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
 claims; `linked_features` names features of other bodies the tree lists
 under a body too (a joint under the body it holds to); `faded_bodies`
 draws bodies translucent, still pickable, while a tool wants them seen
-past (the Assembly's picking); `edit_feature` is
+past (the Assembly's picking); `not_printed` names bodies an export of
+everything and the slicer leave out (bought parts); `edit_feature` is
 the double click that opens a feature's task
 (selecting one never does, so a feature stays selected after its task
 closes); `references`/`set_reference` offer the inputs the property

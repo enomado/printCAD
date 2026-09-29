@@ -492,7 +492,8 @@ impl AssemblyWorkbench {
     }
 
     /// Every part, how many of it and its size, with a copy for a
-    /// spreadsheet.
+    /// spreadsheet; its item number, whether it is bought and the added
+    /// columns, kept in the document.
     fn parts_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -506,6 +507,10 @@ impl AssemblyWorkbench {
         header(ui, "file-document", "Parts list");
         ui.add_space(SPACE_2);
         let parts = crate::parts_list(ctx.document);
+        let mut table = crate::parts::table_of(ctx.document)
+            .map(|(_, t)| t)
+            .unwrap_or_default();
+        let before = table.clone();
         let total: usize = parts.iter().map(|p| p.bodies.len()).sum();
         ui.label(
             RichText::new(format!(
@@ -518,45 +523,141 @@ impl AssemblyWorkbench {
             .color(TEXT2),
         );
         ui.add_space(SPACE_1);
-        egui::Grid::new("assembly_parts")
-            .num_columns(3)
-            .striped(true)
-            .spacing([SPACE_3, SPACE_1])
-            .show(ui, |ui| {
-                for heading in ["Part", "Qty", "Size (mm)"] {
-                    ui.label(RichText::new(heading).font(sans(FONT_XS)).color(TEXT3));
-                }
-                ui.end_row();
-                for part in &parts {
-                    let name = ui.add(
-                        egui::Button::new(
-                            RichText::new(&part.name).font(sans(FONT_SM)).color(TEXT1),
-                        )
-                        .frame(false),
-                    );
-                    if name.clicked() {
-                        ctx.request(core_document::HostRequest::SelectBody(part.bodies[0]));
+        let columns = table.columns.clone();
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            egui::Grid::new("assembly_parts")
+                .num_columns(5 + columns.len())
+                .striped(true)
+                .spacing([SPACE_3, SPACE_1])
+                .show(ui, |ui| {
+                    for heading in ["No.", "Part", "Qty", "Size (mm)", "Bought"] {
+                        ui.label(RichText::new(heading).font(sans(FONT_XS)).color(TEXT3));
                     }
-                    ui.label(
-                        RichText::new(part.bodies.len().to_string())
-                            .font(ui_kit::mono(FONT_SM))
-                            .color(TEXT1),
-                    );
-                    let size = part.size_mm.map_or_else(
-                        || "-".to_string(),
-                        |s| format!("{:.1} × {:.1} × {:.1}", s[0], s[1], s[2]),
-                    );
-                    ui.label(RichText::new(size).font(ui_kit::mono(FONT_SM)).color(TEXT1));
+                    for column in &columns {
+                        ui.label(RichText::new(column).font(sans(FONT_XS)).color(TEXT3));
+                    }
                     ui.end_row();
-                }
-            });
+                    for part in &parts {
+                        let number = part.number.map_or("-".to_string(), |n| n.to_string());
+                        ui.label(
+                            RichText::new(number)
+                                .font(ui_kit::mono(FONT_SM))
+                                .color(TEXT2),
+                        );
+                        let name = ui.add(
+                            egui::Button::new(
+                                RichText::new(&part.name).font(sans(FONT_SM)).color(TEXT1),
+                            )
+                            .frame(false),
+                        );
+                        if name.clicked() {
+                            ctx.request(core_document::HostRequest::SelectBody(part.bodies[0]));
+                        }
+                        ui.label(
+                            RichText::new(part.bodies.len().to_string())
+                                .font(ui_kit::mono(FONT_SM))
+                                .color(TEXT1),
+                        );
+                        let size = part.size_mm.map_or_else(
+                            || "-".to_string(),
+                            |s| format!("{:.1} × {:.1} × {:.1}", s[0], s[1], s[2]),
+                        );
+                        ui.label(RichText::new(size).font(ui_kit::mono(FONT_SM)).color(TEXT1));
+                        let mut bought = part.bought;
+                        if ui
+                            .checkbox(&mut bought, "")
+                            .on_hover_text(
+                                "Bought rather than made: left out of exports and the slicer",
+                            )
+                            .changed()
+                        {
+                            table.entry_mut(&part.bodies).bought = bought;
+                        }
+                        for column in &columns {
+                            let mut text = part.values.get(column).cloned().unwrap_or_default();
+                            let edit = ui.add(
+                                egui::TextEdit::singleline(&mut text)
+                                    .desired_width(90.0)
+                                    .font(ui_kit::sans(FONT_SM)),
+                            );
+                            if edit.lost_focus()
+                                && part.values.get(column).cloned().unwrap_or_default() != text
+                            {
+                                table
+                                    .entry_mut(&part.bodies)
+                                    .values
+                                    .insert(column.clone(), text);
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
         ui.add_space(SPACE_2);
         ui.horizontal(|ui| {
-            if ui_kit::widgets::secondary_button(ui, "Copy as CSV")
-                .on_hover_text("For a spreadsheet: part, quantity, size and kind")
+            if ui_kit::widgets::secondary_button(ui, "Number the parts")
+                .on_hover_text("Give every part without an item number the next one, in list order")
                 .clicked()
             {
-                ui.ctx().copy_text(crate::parts_csv(&parts));
+                table.number(&parts);
+            }
+            let draft_id = ui.id().with("new_parts_column");
+            let mut draft: String = ui.data(|d| d.get_temp(draft_id)).unwrap_or_default();
+            ui.add(
+                egui::TextEdit::singleline(&mut draft)
+                    .hint_text("New column")
+                    .desired_width(100.0)
+                    .font(ui_kit::sans(FONT_SM)),
+            );
+            let name = draft.trim().to_string();
+            if ui_kit::widgets::small_secondary_button(ui, "Add column").clicked()
+                && !name.is_empty()
+                && !table.columns.contains(&name)
+            {
+                table.columns.push(name);
+                draft.clear();
+            }
+            ui.data_mut(|d| d.insert_temp(draft_id, draft));
+        });
+        if !columns.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                for column in &columns {
+                    if ui_kit::widgets::small_secondary_button(ui, &format!("Remove {column}"))
+                        .clicked()
+                    {
+                        table.columns.retain(|c| c != column);
+                        for entry in table.entries.values_mut() {
+                            entry.values.remove(column);
+                        }
+                    }
+                }
+            });
+        }
+        if table != before {
+            match crate::parts::store_table(ctx.document, &table) {
+                Ok(_) => {
+                    ctx.record(
+                        "asm.parts_table",
+                        crate::commands::object(serde_json::json!({
+                            "table": serde_json::to_value(&table).unwrap_or_default(),
+                        })),
+                        serde_json::Value::Null,
+                    );
+                    ctx.request(core_document::HostRequest::JournalLabel(
+                        "Edit parts list".into(),
+                    ));
+                }
+                Err(why) => ctx.log_warn(format!("Could not keep the parts list: {why}")),
+            }
+        }
+        ui.add_space(SPACE_2);
+        let csv = crate::parts_csv(&crate::parts_list(ctx.document), &table.columns);
+        ui.horizontal(|ui| {
+            if ui_kit::widgets::secondary_button(ui, "Copy as CSV")
+                .on_hover_text("For a spreadsheet: every column of the list")
+                .clicked()
+            {
+                ui.ctx().copy_text(csv.clone());
                 ctx.log_info("Parts list copied");
             }
             if ui_kit::widgets::secondary_button(ui, "Save as CSV")
@@ -567,7 +668,7 @@ impl AssemblyWorkbench {
                     name: "parts.csv".into(),
                     kind: "Comma-separated values".into(),
                     extension: "csv".into(),
-                    contents: crate::parts_csv(&parts).into_bytes(),
+                    contents: csv.clone().into_bytes(),
                 });
             }
         });

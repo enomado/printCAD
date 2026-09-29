@@ -136,7 +136,12 @@ it closes.
 Parts list (B) lists every part with how many there are, bodies of the
 same shape counted together, and the size of each along its own axes.
 Copy as CSV puts it on the clipboard for a spreadsheet; Save as CSV
-writes it to a file.
+writes it to a file. Number the parts gives each part an item number, kept
+from then on; Bought marks a part bought rather than made, which leaves
+its bodies out of an export of every visible body and out of Send to
+slicer; Add column adds a column of your own (a part number, a supplier)
+with a value per part. All of it is kept in the document as the Parts list
+row of the tree, and `asm.part` sets it from a script.
 
 Mass and centre of mass (W) measures every visible solid body at the
 density you set (g/cm³), with each body's share, and marks the centre of

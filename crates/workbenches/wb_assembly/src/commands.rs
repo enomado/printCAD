@@ -323,10 +323,41 @@ pub fn register(context: &mut WorkbenchContext) {
             "Every part: bodies of the same shape counted together",
         )
         .returns(
-            "a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh}, \
-             in name order",
+            "a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number \
+             or nil, bought, values = {column = text}}, numbered parts first by number, \
+             then by name",
         )
         .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.part",
+            "Set what the parts list keeps for a part: its number, whether it is bought, \
+             its values in the added columns",
+        )
+        .param("body", ParamKind::Id, "Any body of the part")
+        .optional("number", ParamKind::Number, "Its item number")
+        .optional(
+            "bought",
+            ParamKind::Bool,
+            "Bought rather than made: left out of exports and the slicer",
+        )
+        .optional(
+            "values",
+            ParamKind::Any,
+            "{column = text}: its values, a column not yet in the list added to it",
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.parts_table",
+            "Replace what the parts list keeps, whole",
+        )
+        .param(
+            "table",
+            ParamKind::Any,
+            "{columns = {...}, entries = {[body id] = {number, bought, values}}}",
+        ),
     );
     context.register_command(
         CommandSpec::new(
@@ -618,10 +649,55 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         "bodies": part.bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
                         "size": part.size_mm,
                         "mesh": part.mesh,
+                        "number": part.number,
+                        "bought": part.bought,
+                        "values": part.values,
                     })
                 })
                 .collect(),
         )),
+        "asm.parts_table" => {
+            let table: crate::parts::PartsTable =
+                serde_json::from_value(a.0.get("table").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| CommandError::bad("table", e.to_string()))?;
+            crate::parts::store_table(ctx.document, &table)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            Ok(Value::Null)
+        }
+        "asm.part" => {
+            let body = body(&a, ctx)?;
+            let bodies = crate::parts_list(ctx.document)
+                .into_iter()
+                .find(|p| p.bodies.contains(&body))
+                .map(|p| p.bodies)
+                .unwrap_or_else(|| vec![body]);
+            let mut table = crate::parts::table_of(ctx.document)
+                .map(|(_, t)| t)
+                .unwrap_or_default();
+            let entry = table.entry_mut(&bodies);
+            if let Some(n) = a.opt_number("number")? {
+                entry.number = n.max(0.0) as u32;
+            }
+            if let Some(bought) = a.opt_bool("bought")? {
+                entry.bought = bought;
+            }
+            if let Some(values) = a.0.get("values").and_then(Value::as_object) {
+                for (column, value) in values {
+                    let text = value
+                        .as_str()
+                        .map_or_else(|| value.to_string(), str::to_string);
+                    entry.values.insert(column.clone(), text);
+                }
+                for column in values.keys() {
+                    if !table.columns.contains(column) {
+                        table.columns.push(column.clone());
+                    }
+                }
+            }
+            crate::parts::store_table(ctx.document, &table)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            Ok(Value::Null)
+        }
         "asm.travel" => {
             let joint = FeatureId(a.id("joint")?);
             let found = joints(ctx.document).into_iter().find(|j| j.id == joint);
@@ -1401,6 +1477,33 @@ mod tests {
         let data: JointFeature =
             serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
         assert!(matches!(data.kind, JointKind::Mate { flip: true, .. }));
+    }
+
+    /// A part set bought is bought for every body of its shape, the
+    /// bench leaves them out of what is printed, and the list says so.
+    #[test]
+    fn a_part_is_marked_bought_and_given_a_column() {
+        use core_document::Workbench;
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(Some("Screw".into())), doc.create_body(None));
+        doc.set_imported_brep_data(a, b"screw".to_vec(), Vec::new());
+        doc.set_imported_brep_data(b, b"screw".to_vec(), Vec::new());
+        call(
+            &mut doc,
+            "asm.part",
+            json!({"body": b.0.to_string(), "bought": true, "number": 4,
+                   "values": {"Supplier": "Fasteners Ltd"}}),
+        )
+        .unwrap();
+        let listed = call(&mut doc, "asm.parts", json!({})).unwrap();
+        assert_eq!(listed[0]["bought"], json!(true));
+        assert_eq!(listed[0]["number"], json!(4));
+        assert_eq!(listed[0]["values"]["Supplier"], json!("Fasteners Ltd"));
+        let mut not_made = crate::AssemblyWorkbench::default().not_printed(&doc);
+        not_made.sort();
+        let mut both = vec![a, b];
+        both.sort();
+        assert_eq!(not_made, both);
     }
 
     /// A joint to the world holds the body to the origin's planes, and
