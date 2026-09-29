@@ -812,11 +812,30 @@ impl AssemblyWorkbench {
                          the joint was made.",
                     );
                 }
-                JointKind::Fixed { .. } => note(
-                    ui,
-                    "The body is held to the other as it sat when the joint was made; \
-                     it moves only with it.",
-                ),
+                JointKind::Fixed { shift, .. } => {
+                    for (k, label) in ["Shift x", "Shift y", "Shift z"].into_iter().enumerate() {
+                        let mut value = shift[k] as f32;
+                        if number_row(
+                            ui,
+                            (document, id, &mut formula_edits),
+                            (
+                                label,
+                                "Where the body sits from the other, along the other's own axes",
+                            ),
+                            &format!("/kind/Fixed/shift/{k}"),
+                            core_document::expr::Dim::LENGTH,
+                            &mut value,
+                        ) {
+                            shift[k] = f64::from(value);
+                            changed = true;
+                        }
+                    }
+                    note(
+                        ui,
+                        "The body is held to the other as it sat when the joint was made; \
+                         it moves only with it.",
+                    );
+                }
                 JointKind::Parallel => note(
                     ui,
                     "Only the turn is held, the faces parallel: pair it with other joints \
@@ -849,6 +868,31 @@ impl AssemblyWorkbench {
                 });
             }
         }
+        if joint.kind != JointKind::Ground {
+            ui.add_space(SPACE_2);
+            let mut by = self.turn_by.unwrap_or(90.0);
+            let mut turn = None;
+            ui.horizontal(|ui| {
+                if QtyField::degrees(&mut by).width(70.0).show(ui) {
+                    self.turn_by = Some(by);
+                }
+                if ui_kit::widgets::secondary_button(ui, "Turn")
+                    .on_hover_text("Turn the body about the joint's axis or normal by this much")
+                    .clicked()
+                {
+                    turn = Some((f64::from(by), false));
+                }
+                if ui_kit::widgets::secondary_button(ui, "Turn over")
+                    .on_hover_text("Half a turn across the joint: the body the other way round")
+                    .clicked()
+                {
+                    turn = Some((0.0, true));
+                }
+            });
+            if let Some((degrees, over)) = turn {
+                self.turn_in_task(ctx, id, created, placements, degrees, over);
+            }
+        }
         ui.add_space(SPACE_2);
         self.verdict_card(ui);
         if let Some(body) = node.body {
@@ -876,6 +920,49 @@ impl AssemblyWorkbench {
             };
         }
         TaskOutcome::Open
+    }
+
+    /// Turn the joint's body from its task. A joint the task just made is
+    /// recorded first, so the recording has it to turn; the task goes on
+    /// as an edit of it from the turned place.
+    fn turn_in_task(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        created: bool,
+        placements: &[(BodyId, BodyPlacement)],
+        degrees: f64,
+        over: bool,
+    ) {
+        let Some(joint) = crate::joints(ctx.document).into_iter().find(|j| j.id == id) else {
+            return;
+        };
+        if created {
+            crate::commands::record_joint(ctx, id, None, placements);
+        }
+        if let Err(why) = crate::commands::turn_joint(ctx, &joint, degrees, over) {
+            ctx.log_warn(format!("Could not turn the body: {why}"));
+            return;
+        }
+        let (command, args) = if over {
+            ("asm.flip", serde_json::json!({"joint": id.0.to_string()}))
+        } else {
+            (
+                "asm.turn",
+                serde_json::json!({"joint": id.0.to_string(), "degrees": degrees}),
+            )
+        };
+        self.solve_and_apply(ctx);
+        ctx.record(
+            command,
+            crate::commands::object(args),
+            serde_json::Value::Null,
+        );
+        self.task = Some(crate::Task::Joint {
+            id,
+            before: ctx.document.get_feature_data(id).cloned(),
+            placements: crate::all_placements(ctx),
+        });
     }
 
     /// A coupling's settings: its two joints, what ties them, the ratio.

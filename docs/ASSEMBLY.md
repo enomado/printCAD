@@ -33,6 +33,13 @@ While a joint's faces are picked, every body but the one under the
 cursor and the one picked first fades, so faces behind it can be seen and
 clicked.
 
+Every joint's settings can turn its body about the joint's axis or
+normal by an angle (Turn), or half a turn across it (Turn over, the body
+the other way round); the joint takes the new place as its own, a driven
+hinge keeping its angle. A fixed joint's shift, where the body sits from
+the other along the other's axes, is three fields that take formulas.
+`asm.turn` and `asm.flip` do the same from a script.
+
 A selected joint is drawn in the view: a dot where each end takes hold,
 a flat face's normal and a square in its plane, an axis as a dashed line,
 and a dashed link between the ends with the joint's name.

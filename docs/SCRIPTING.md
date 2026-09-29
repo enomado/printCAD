@@ -1269,6 +1269,15 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `slide_drive` (any, optional): How far along the axis (mm) to hold an alignment; false lets it slide
 - `slide_limits` (any, optional): {low, high}: the range an alignment's slide stays in, mm; false takes it away
 
+`pc.asm.turn`: Turn a joint's body about the joint's axis or normal, the joint keeping it there.
+
+- `joint` (id): The joint
+- `degrees` (number): How far, degrees
+
+`pc.asm.flip`: Turn a joint's body over, half a turn across the joint's axis or normal.
+
+- `joint` (id): The joint
+
 `pc.asm.interference`: Where solid bodies share material: each pair that clashes, how much and where.
 
 - `bodies` (list, optional): Only these bodies; every visible one when left out

@@ -27,6 +27,29 @@ const RATIO: &str = "Turns of the driven hinge per turn of the driver for gears 
 const LIMITS: &str = "{low, high}: the range a hinge's angle or a slider's position stays \
     in while not driven; false takes the limits away";
 
+/// Turn a joint's moving body by `degrees` about the joint's direction,
+/// or half a turn over with `over`, and carry the joint's settings with
+/// it so it holds the body there.
+pub(crate) fn turn_joint(
+    ctx: &mut WorkbenchRuntimeContext,
+    joint: &crate::Joint,
+    degrees: f64,
+    over: bool,
+) -> Result<(), CommandError> {
+    let at = |b: BodyId| -> Rigid { ctx.document.body_placement(b).into() };
+    let (before, fixed) = (at(joint.body), at(joint.feature.other_body));
+    let step = joint.feature.turning_step(&before, &fixed, degrees, over);
+    let after = before.then(&step);
+    let mut feature = joint.feature.clone();
+    feature.carried(&before, &after, &fixed);
+    ctx.document
+        .update_feature_data(joint.id, core_document::WorkbenchFeature::to_json(&feature))
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.clear_feature_dirty(joint.id);
+    ctx.document.set_body_placement(joint.body, after.into());
+    Ok(())
+}
+
 /// Read `drive` and `limits` into a hinge's or a slider's drive.
 fn drive_args(a: &Args, drive: &mut Drive) -> Result<(), CommandError> {
     drive_args_named(a, drive, "drive", "limits")
@@ -207,6 +230,21 @@ pub fn register(context: &mut WorkbenchContext) {
     .optional("drive", ParamKind::Any, DRIVE)
     .optional("limits", ParamKind::Any, LIMITS);
     context.register_command(align_drives(set));
+    context.register_command(
+        CommandSpec::new(
+            "asm.turn",
+            "Turn a joint's body about the joint's axis or normal, the joint keeping it there",
+        )
+        .param("joint", ParamKind::Id, "The joint")
+        .param("degrees", ParamKind::Number, "How far, degrees"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.flip",
+            "Turn a joint's body over, half a turn across the joint's axis or normal",
+        )
+        .param("joint", ParamKind::Id, "The joint"),
+    );
     context.register_command(
         CommandSpec::new(
             "asm.interference",
@@ -566,6 +604,20 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             ctx.document
                 .set_body_placement(body, BodyPlacement::new(rotation, translation));
             Ok(Value::Null)
+        }
+        "asm.turn" | "asm.flip" => {
+            let joint = FeatureId(a.id("joint")?);
+            let found = joints(ctx.document)
+                .into_iter()
+                .find(|j| j.id == joint && j.feature.kind != JointKind::Ground)
+                .ok_or_else(|| CommandError::bad("joint", "is not a joint between two bodies"))?;
+            let degrees = if id == "asm.turn" {
+                a.number("degrees")?
+            } else {
+                0.0
+            };
+            turn_joint(ctx, &found, degrees, id == "asm.flip")?;
+            solved(ctx, Value::Null)
         }
         "asm.move" => {
             let body = body(&a, ctx)?;
@@ -1219,6 +1271,54 @@ mod tests {
             json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
         );
         assert!(both_flat.is_err(), "one face of each");
+    }
+
+    /// Turning a joint's body keeps it there: a driven hinge keeps its
+    /// angle with the body turned further, a slider turned over runs the
+    /// other way round, a mate turned over faces the same way.
+    #[test]
+    fn a_joint_s_body_turns_and_turns_over_and_stays() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+        let hinge = call(
+            &mut doc,
+            "asm.hinge",
+            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
+                   "drive": 30}),
+        )
+        .unwrap();
+        call(&mut doc, "asm.turn", json!({"joint": hinge, "degrees": 20})).unwrap();
+        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+        assert!((x[1].atan2(x[0]).to_degrees() - 50.0).abs() < 1e-2, "{x:?}");
+        let travel = call(&mut doc, "asm.travel", json!({"joint": hinge})).unwrap();
+        assert!((travel.as_f64().unwrap() - 30.0).abs() < 1e-2, "{travel}");
+        call(&mut doc, "asm.solve", json!({})).unwrap();
+        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+        assert!(
+            (x[1].atan2(x[0]).to_degrees() - 50.0).abs() < 1e-2,
+            "stays: {x:?}"
+        );
+
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        let mate = call(
+            &mut doc,
+            "asm.mate",
+            json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
+        )
+        .unwrap();
+        let up = doc.body_placement(a).direction([0.0, 0.0, 1.0]);
+        assert!(up[2] < -0.99, "faces the other: {up:?}");
+        call(&mut doc, "asm.flip", json!({"joint": mate})).unwrap();
+        call(&mut doc, "asm.solve", json!({})).unwrap();
+        let up = doc.body_placement(a).direction([0.0, 0.0, 1.0]);
+        assert!(up[2] > 0.99, "the same way now: {up:?}");
+        let id = FeatureId(uuid::Uuid::parse_str(mate.as_str().unwrap()).unwrap());
+        let data: JointFeature =
+            serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
+        assert!(matches!(data.kind, JointKind::Mate { flip: true, .. }));
     }
 
     /// An alignment's turn and slide are each driven, and an alignment

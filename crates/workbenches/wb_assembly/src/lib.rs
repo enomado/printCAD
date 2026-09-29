@@ -112,6 +112,8 @@ pub struct AssemblyWorkbench {
     measuring: Option<Measuring>,
     /// The clearance the interference panel checks for, mm, as last typed.
     clearance_mm: Option<f32>,
+    /// How far a joint's Turn turns its body, degrees, as last typed.
+    turn_by: Option<f32>,
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
@@ -1137,6 +1139,18 @@ impl Workbench for AssemblyWorkbench {
                 out
             }
             Ok(JointKind::Slider { drive, .. }) => drive_parameters("Slider", &drive, Dim::LENGTH),
+            Ok(JointKind::Fixed { .. }) => ["x", "y", "z"]
+                .into_iter()
+                .enumerate()
+                .map(|(k, axis)| {
+                    Parameter::new(
+                        &format!("shift_{axis}"),
+                        &format!("Shift {axis}"),
+                        Dim::LENGTH,
+                        format!("/kind/Fixed/shift/{k}"),
+                    )
+                })
+                .collect(),
             Ok(JointKind::Align { turn, slide, .. }) => {
                 let mut out =
                     named_drive_parameters("/kind/Align/turn", ("turn", "Turn"), &turn, Dim::ANGLE);

@@ -263,8 +263,9 @@ and noted on its item, and the rest of the item is built around it.
   planes and datums as the other end.
 - [x] **Align with offset, drive and limits** (partial, S). The
   cylindrical joint's turn and slide driven or limited.
-- [ ] **A turn offset and a flip on every joint** (partial, S), and an
-  editable shift for a fixed joint.
+- [x] **A turn offset and a flip on every joint** (partial, S), and an
+  editable shift for a fixed joint. Turn and Turn over in every joint's
+  settings (`asm.turn`, `asm.flip`), the fixed shift as three fields.
 - [ ] **Re-pick faces and change the kind** (missing, S). From the
   joint's settings, without deleting it.
 - [x] **Joints drawn in the view** (missing, S). Anchor frames, axes and

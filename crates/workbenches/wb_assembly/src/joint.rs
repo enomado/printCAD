@@ -320,6 +320,16 @@ pub struct Rigid {
     pub translation: DVec3,
 }
 
+impl Rigid {
+    /// This placement after `step`.
+    pub fn then(&self, step: &Rigid) -> Rigid {
+        Rigid {
+            rotation: (step.rotation * self.rotation).normalize(),
+            translation: step.rotation * self.translation + step.translation,
+        }
+    }
+}
+
 impl From<BodyPlacement> for Rigid {
     fn from(p: BodyPlacement) -> Self {
         Self {
@@ -381,6 +391,56 @@ impl JointFeature {
         let (_, axis) = self.fixed.parts();
         let along = DVec3::new(d.x, d.y, d.z).dot(axis.normalize_or_zero());
         (2.0 * along.atan2(d.w)).to_degrees()
+    }
+
+    /// The moving body moved from `before` to `after`, the other body at
+    /// `fixed`: what the joint holds follows it (a held turn, a fixed
+    /// shift, an angle, a distance, the side a mate's faces are on), so
+    /// the joint holds the body at `after`.
+    pub fn carried(&mut self, before: &Rigid, after: &Rigid, fixed: &Rigid) {
+        let (was, _) = relative(before, fixed);
+        let (now, shift) = relative(after, fixed);
+        let step = (now * was.inverse()).normalize();
+        let turn = |q: &mut [f64; 4]| *q = (step * quat(*q)).normalize().to_array();
+        let (pm, dm) = self.moving.placed(after);
+        let (pf, df) = self.fixed.placed(fixed);
+        match &mut self.kind {
+            JointKind::Hinge { zero, .. } | JointKind::Align { zero, .. } => turn(zero),
+            JointKind::Slider { turn: held, .. } => turn(held),
+            JointKind::Fixed {
+                turn: held,
+                shift: s,
+            } => {
+                turn(held);
+                *s = shift.to_array();
+            }
+            JointKind::Angle { degrees } => {
+                *degrees = dm.cross(df).length().atan2(dm.dot(df)).to_degrees() as f32;
+            }
+            JointKind::Distance { offset } => *offset = (pm - pf).dot(df) as f32,
+            JointKind::Mate { flip, .. } => *flip = dm.dot(df) > 0.0,
+            JointKind::Ground
+            | JointKind::Parallel
+            | JointKind::Perpendicular
+            | JointKind::Tangent { .. } => {}
+        }
+    }
+
+    /// The step that turns the moving body by `degrees` about the other
+    /// end's direction, through where the moving end takes hold; with
+    /// `over`, half a turn about a line square to it instead.
+    pub fn turning_step(&self, moving: &Rigid, fixed: &Rigid, degrees: f64, over: bool) -> Rigid {
+        let (pm, _) = self.moving.placed(moving);
+        let (_, df) = self.fixed.placed(fixed);
+        let rotation = if over {
+            DQuat::from_axis_angle(df.any_orthonormal_vector(), std::f64::consts::PI)
+        } else {
+            DQuat::from_axis_angle(df, degrees.to_radians())
+        };
+        Rigid {
+            rotation,
+            translation: pm - rotation * pm,
+        }
     }
 
     /// Where an alignment has got to: its turn in degrees and its slide in
