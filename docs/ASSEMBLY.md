@@ -25,6 +25,8 @@ body it goes against. The first body moves; the second stays where it is.
 | Ball joint (Shift+B) | two points | turning every way about the point |
 | Universal joint (Shift+U) | two axes, the yokes' pins | turning about either pin |
 | Pin in a slot (Shift+S) | a point, then a line | sliding along the line, turning every way |
+| Along a path (Shift+P) | a point, then an edge of any shape | running along the edge, turning every way |
+| Cam and follower (Shift+C) | a point or a roller, then the cam's face | everything but staying on the face |
 
 An axis is a round face (a hole, a pin, a boss) or an edge: a circular
 edge gives its circle's axis, so a hole's rim works, and a straight edge
@@ -32,7 +34,9 @@ gives its own line. A point is a ball's centre, a circular edge's centre,
 or where a face was clicked. A distance is along a flat face's normal
 when one end is a flat face, from a point to an axis, between two
 parallel axes (a centre distance, for gear spacing), or between two
-points. Settings a tool does not ask for start at what the
+points. A path keeps the whole edge it was put on, and a cam the whole
+face; a roller follower, picked on its round face, takes its axis and its
+radius. Settings a tool does not ask for start at what the
 bodies make now (an angle, a distance), so making the joint moves nothing
 it need not.
 

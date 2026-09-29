@@ -104,6 +104,7 @@ pub(crate) fn rejoined(
     }
     let at = |b: BodyId| -> Rigid { ctx.document.body_placement(b).into() };
     Ok(JointFeature {
+        shape: Vec::new(),
         ends: [0.0; 2],
         names: [0; 2],
         kind: tool.joint(&moving, &at(moving_body), &fixed, &at(other), radius),
@@ -240,6 +241,13 @@ pub fn register(context: &mut WorkbenchContext) {
                 "The pin: a point ({centre} or {point}) on the moving body; the slot: a line \
                  {axis = {point, direction}} on the other"
             }
+            Takes::PointAndEdge => {
+                "The point that runs ({centre} or {point}); on the other body, a {point} on \
+                 the edge it runs along"
+            }
+            Takes::PointAndFace => {
+                "The follower ({centre} or {point}); on the other body, a {point} on the cam's face"
+            }
         };
         let spec = if tool == JointTool::Fixed {
             CommandSpec::new(tool.command(), tool.summary())
@@ -287,6 +295,11 @@ pub fn register(context: &mut WorkbenchContext) {
                 "radius",
                 ParamKind::Number,
                 "The round face's radius, mm; the face's own when left out",
+            ),
+            JointTool::Cam => spec.optional(
+                "radius",
+                ParamKind::Number,
+                "The follower's roller radius, mm; 0 for a point follower",
             ),
             _ => spec,
         };
@@ -716,7 +729,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 | JointKind::Perpendicular
                 | JointKind::Ball
                 | JointKind::Universal
-                | JointKind::Slot => {}
+                | JointKind::Slot
+                | JointKind::Path => {}
+                JointKind::Cam { radius } => {
+                    if let Some(v) = a.opt_number("radius")? {
+                        *radius = v as f32;
+                    }
+                }
             }
             let data =
                 serde_json::to_value(&feature).map_err(|e| CommandError::failed(e.to_string()))?;
@@ -1203,6 +1222,7 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
             .unwrap_or(0)
     };
     let joint = JointFeature {
+        shape: Vec::new(),
         ends: [0.0; 2],
         names: [name_of("face"), name_of("other_face")],
         kind,
@@ -1210,6 +1230,14 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
         other_body: other,
         fixed,
     };
+    let mut joint = joint;
+    crate::shapes::take_shape(ctx.document, &mut joint);
+    if matches!(joint.kind, JointKind::Path | JointKind::Cam { .. }) && joint.shape.is_empty() {
+        return Err(CommandError::bad(
+            "other_face",
+            "finds no edge or face of the other body there",
+        ));
+    }
     ground_first(ctx, other);
     let feature = ctx
         .document
@@ -1263,7 +1291,9 @@ pub(crate) fn record_joint(
         | JointKind::Perpendicular
         | JointKind::Ball
         | JointKind::Universal
-        | JointKind::Slot => json!({}),
+        | JointKind::Slot
+        | JointKind::Path => json!({}),
+        JointKind::Cam { radius } => json!({"radius": radius}),
     };
     match before {
         None => {
@@ -1616,6 +1646,7 @@ fn anchor_of(value: Option<&Value>, name: &str, takes: Takes) -> Result<Anchor, 
         // The pin is a point, the slot a line.
         Takes::PointAndLine if name == "face" => point(),
         Takes::PointAndLine => round(),
+        Takes::PointAndEdge | Takes::PointAndFace => point(),
     }
 }
 
@@ -1695,6 +1726,7 @@ pub(crate) fn set_grounded(
     ctx.document
         .add_feature_in_body(
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Ground,
@@ -1951,6 +1983,87 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// A point on a path runs along the edge it was put on; a follower on
+    /// a cam sits a roller's radius off the cam's face.
+    #[test]
+    fn a_path_and_a_cam_hold_to_the_other_body_s_edge_and_face() {
+        use std::sync::Arc;
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        // An L-shaped edge along X then Y at height 10, and a floor face at
+        // z = 10 facing up.
+        let mesh = kernel_api::TriMesh {
+            positions: vec![
+                [0.0, 0.0, 10.0],
+                [20.0, 0.0, 10.0],
+                [20.0, 20.0, 10.0],
+                [0.0, 20.0, 10.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            faces: vec![0, 0],
+            edges: vec![0, 1, 1, 2],
+            edge_ids: vec![4, 4],
+            ..kernel_api::TriMesh::default()
+        };
+        doc.set_imported_geometry(
+            b,
+            core_document::ImportedGeometry {
+                mesh: Arc::new(mesh),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        doc.set_body_placement(
+            a,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(18.0, 6.0, 15.0)),
+        );
+        call(
+            &mut doc,
+            "asm.path",
+            json!({"body": a.0.to_string(), "face": {"point": [18, 6, 15]}, "other": b.0.to_string(),
+                   "other_face": {"point": [20, 5, 10]}}),
+        )
+        .unwrap();
+        let at = doc.body_placement(a).point([0.0; 3]);
+        let joint = crate::joints(&doc)
+            .into_iter()
+            .find(|j| j.body == a)
+            .unwrap();
+        assert!(
+            (at[0] - 20.0).abs() < 1e-3 && (at[2] - 10.0).abs() < 1e-3,
+            "{at:?}"
+        );
+        assert_eq!(joint.feature.shape.len(), 3, "the whole L");
+
+        let mut doc2 = doc.clone();
+        let doc = &mut doc2;
+        for id in crate::joints(doc).iter().map(|j| j.id).collect::<Vec<_>>() {
+            doc.remove_feature(id).unwrap();
+        }
+        call(
+            doc,
+            "asm.cam",
+            json!({"body": a.0.to_string(), "face": {"point": [5, 5, 30]}, "other": b.0.to_string(),
+                   "other_face": {"point": [5, 5, 10]}, "radius": 2}),
+        )
+        .unwrap();
+        // The follower was picked at (5, 5, 30) where the body stood.
+        let cam = crate::joints(doc)
+            .into_iter()
+            .find(|j| j.body == a)
+            .unwrap();
+        let Anchor::Point { point } = cam.feature.moving else {
+            panic!()
+        };
+        let follower = doc.body_placement(a).point(point);
+        assert!((follower[2] - 12.0).abs() < 1e-3, "{follower:?}");
     }
 
     /// A pin in a slot rides on the slot's line with four motions left; a

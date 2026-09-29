@@ -1436,6 +1436,22 @@ impl AssemblyWorkbench {
                     ui,
                     "The pin stays on the slot's line: it slides along it and turns every way.",
                 ),
+                JointKind::Path => note(
+                    ui,
+                    "The point stays on the edge, whatever its shape: it runs along it and \
+                     turns every way.",
+                ),
+                JointKind::Cam { radius } => {
+                    changed |= number_row(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        ("Radius", "The follower's roller radius; 0 for a point"),
+                        "/kind/Cam/radius",
+                        core_document::expr::Dim::LENGTH,
+                        radius,
+                    );
+                    note(ui, "The follower stays on the cam's face, a radius off it.");
+                }
             }
             if joint.kind != JointKind::Ground {
                 ui.add_space(SPACE_1);

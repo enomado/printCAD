@@ -21,6 +21,7 @@ mod mass;
 mod panel;
 mod parts;
 mod replace;
+mod shapes;
 mod solve;
 mod sweep_check;
 
@@ -1217,6 +1218,39 @@ impl AssemblyWorkbench {
             (Takes::Anything, _) => flat().map(|a| (a, None)).or_else(round).or_else(pointed),
             (Takes::PointAndLine, None) => pointed(),
             (Takes::PointAndLine, Some(_)) => round(),
+            (Takes::PointAndEdge, None) => pointed(),
+            // Where on the edge it was picked: the edge itself is kept.
+            (Takes::PointAndEdge, Some(_)) => edge
+                .map(|e| (Anchor::Point { point: e.point }, None))
+                .or_else(|| {
+                    face.as_ref()
+                        .map(|f| (Anchor::Point { point: f.point }, None))
+                }),
+            // A roller is the point of its axis beside the pick, and its
+            // radius.
+            (Takes::PointAndFace, None) => match face.as_ref().and_then(|f| {
+                let (p, d) = f.surface?.axis()?;
+                Some((f, p, d, Anchor::radius_of(f)?))
+            }) {
+                Some((f, p, d, radius)) => {
+                    let (p, d, at) = (
+                        glam::Vec3::from_array(p),
+                        glam::Vec3::from_array(d).normalize_or_zero(),
+                        glam::Vec3::from_array(f.point),
+                    );
+                    let centre = p + d * (at - p).dot(d);
+                    Some((
+                        Anchor::Point {
+                            point: centre.to_array(),
+                        },
+                        Some(radius),
+                    ))
+                }
+                None => pointed(),
+            },
+            (Takes::PointAndFace, Some(_)) => face
+                .as_ref()
+                .map(|f| (Anchor::Point { point: f.point }, None)),
         };
         let Some((anchor, radius)) = picked else {
             ctx.log_warn(picking.kind.refusal());
@@ -1308,6 +1342,7 @@ impl AssemblyWorkbench {
                     ctx,
                     first_body,
                     JointFeature {
+                        shape: Vec::new(),
                         ends: [0.0; 2],
                         names: [first_name, name],
                         kind,
@@ -1399,7 +1434,13 @@ impl AssemblyWorkbench {
     }
 
     /// Add a joint, solve, and open its settings.
-    fn make_joint(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId, joint: JointFeature) {
+    fn make_joint(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        body: BodyId,
+        mut joint: JointFeature,
+    ) {
+        shapes::take_shape(ctx.document, &mut joint);
         let placements = all_placements(ctx);
         let label = joint.kind.label();
         let number = joints(ctx.document)
@@ -1592,6 +1633,14 @@ impl AssemblyWorkbench {
                     "Radius",
                     Dim::LENGTH,
                     "/kind/Tangent/radius",
+                )]
+            }
+            Ok(JointKind::Cam { .. }) => {
+                vec![Parameter::new(
+                    "radius",
+                    "Radius",
+                    Dim::LENGTH,
+                    "/kind/Cam/radius",
                 )]
             }
             _ => Vec::new(),
@@ -2570,6 +2619,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
@@ -2609,6 +2659,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
@@ -2885,6 +2936,7 @@ mod tests {
         };
         doc.add_feature_in_body(
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointTool::Hinge.joint(
@@ -3288,6 +3340,7 @@ mod tests {
         let slider = doc
             .add_feature_in_body(
                 JointFeature {
+                    shape: Vec::new(),
                     ends: [0.0; 2],
                     names: [0; 2],
                     kind,
@@ -3370,6 +3423,7 @@ mod tests {
         let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
         doc.add_feature_in_body(
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind,
@@ -3470,6 +3524,7 @@ mod tests {
         let hinge = doc
             .add_feature_in_body(
                 JointFeature {
+                    shape: Vec::new(),
                     ends: [0.0; 2],
                     names: [0; 2],
                     kind: JointTool::Hinge.joint(&pin, &at, &pin, &at, 0.0),

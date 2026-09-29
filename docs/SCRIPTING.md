@@ -1267,6 +1267,25 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the joint's id
 
+`pc.asm.path`: Keep a point on an edge of any shape: it runs along it.
+
+- `body` (id): The body that moves
+- `face` (any): The point that runs ({centre} or {point}); on the other body, a {point} on the edge it runs along
+- `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
+- `other_face` (any): The point that runs ({centre} or {point}); on the other body, a {point} on the edge it runs along
+- `name` (string, optional): Its name in the tree
+- Returns the joint's id
+
+`pc.asm.cam`: Keep a follower on a cam's face, a roller's radius off it.
+
+- `body` (id): The body that moves
+- `face` (any): The follower ({centre} or {point}); on the other body, a {point} on the cam's face
+- `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
+- `other_face` (any): The follower ({centre} or {point}); on the other body, a {point} on the cam's face
+- `name` (string, optional): Its name in the tree
+- `radius` (number, optional): The follower's roller radius, mm; 0 for a point follower
+- Returns the joint's id
+
 `pc.asm.couple`: Tie two joints' motions together: gears or a belt between two hinges, a rack and pinion or a screw between a hinge and a slider.
 
 - `driver` (id): The hinge or slider that leads

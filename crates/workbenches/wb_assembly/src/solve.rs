@@ -843,7 +843,9 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
             | JointKind::Tangent { .. }
             | JointKind::Ball
             | JointKind::Universal
-            | JointKind::Slot => return None,
+            | JointKind::Slot
+            | JointKind::Path
+            | JointKind::Cam { .. } => return None,
         };
         (dm.length_squared() > 0.0 && target.length_squared() > 0.0)
             .then(|| DQuat::from_rotation_arc(dm, target))
@@ -1019,6 +1021,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
@@ -1056,6 +1059,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
@@ -1092,6 +1096,7 @@ mod tests {
             &mut doc,
             pin,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::align(),
@@ -1121,6 +1126,7 @@ mod tests {
         let b = doc.create_body(None);
         let c = doc.create_body(None);
         let mate = |other| JointFeature {
+            shape: Vec::new(),
             ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Mate {
@@ -1146,6 +1152,7 @@ mod tests {
         // Grounding a lets it take a joint of its own: a ring that can
         // close does, one that cannot is named.
         let ground = JointFeature {
+            shape: Vec::new(),
             ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Ground,
@@ -1189,6 +1196,7 @@ mod tests {
             normal: [0.0, 0.0, 1.0],
         };
         let joint = JointFeature {
+            shape: Vec::new(),
             ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Angle { degrees: 90.0 },
@@ -1219,6 +1227,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Mate {
@@ -1245,6 +1254,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Angle { degrees: 30.0 },
@@ -1271,6 +1281,7 @@ mod tests {
         let base = doc.create_body(None);
         let part = doc.create_body(None);
         let on = |z: f32| JointFeature {
+            shape: Vec::new(),
             ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Mate {
@@ -1304,6 +1315,7 @@ mod tests {
 
     fn mate(moving: Anchor, other: BodyId, fixed: Anchor, flip: bool, offset: f32) -> JointFeature {
         JointFeature {
+            shape: Vec::new(),
             ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Mate { flip, offset },
@@ -1418,6 +1430,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::align(),
@@ -1494,6 +1507,7 @@ mod tests {
         fixed: Anchor,
     ) -> JointFeature {
         JointFeature {
+            shape: Vec::new(),
             ends: [0.0; 2],
             names: [0; 2],
             kind: tool.joint(&moving, &rigid(doc, body), &fixed, &rigid(doc, other), 0.0),
@@ -1523,6 +1537,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Hinge {
@@ -1631,6 +1646,7 @@ mod tests {
                 &mut doc,
                 part,
                 JointFeature {
+                    shape: Vec::new(),
                     ends: [0.0; 2],
                     names: [0; 2],
                     kind,
@@ -1655,6 +1671,7 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Tangent { radius: 4.0 },
@@ -1679,6 +1696,7 @@ mod tests {
             &mut doc,
             door,
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Hinge {

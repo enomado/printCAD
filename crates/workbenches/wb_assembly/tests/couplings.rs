@@ -26,6 +26,7 @@ fn axis(point: [f32; 3], direction: [f32; 3]) -> Anchor {
 
 fn hinge_on(doc: &mut Document, body: BodyId, frame: BodyId, at: [f32; 3]) -> FeatureId {
     let joint = JointFeature {
+        shape: Vec::new(),
         ends: [0.0; 2],
         names: [0; 2],
         kind: JointKind::Hinge {
@@ -61,6 +62,7 @@ fn scene() -> Scene {
     };
     doc.add_feature_in_body(
         JointFeature {
+            shape: Vec::new(),
             ends: [0.0; 2],
             names: [0; 2],
             kind: JointKind::Ground,
@@ -77,6 +79,7 @@ fn scene() -> Scene {
     let rack_slider = doc
         .add_feature_in_body(
             JointFeature {
+                shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
                 kind: JointKind::Slider {
