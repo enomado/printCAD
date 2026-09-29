@@ -122,9 +122,12 @@ impl AssemblyWorkbench {
                 self.explode_panel(ui, ctx, request, placements, spread)
             }
             Some(Task::Parts) => self.parts_panel(ui, ctx, request),
-            Some(Task::Copies { body, count, step }) => {
-                self.copies_panel(ui, ctx, request, body, count, step)
-            }
+            Some(Task::Copies {
+                body,
+                count,
+                step,
+                around,
+            }) => self.copies_panel(ui, ctx, request, body, (count, step, around)),
             Some(Task::Group { editing, members }) => {
                 self.group_panel(ui, ctx, request, editing, &members)
             }
@@ -385,28 +388,43 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         body: BodyId,
-        count: u32,
-        step: [f32; 3],
+        (count, step, around): (u32, [f32; 3], Option<crate::Around>),
     ) -> TaskOutcome {
         if request.cancel {
             self.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
-            let made = crate::commands::insert_copies(
-                ctx,
-                body,
-                count as usize,
-                Some(glam::Vec3::from_array(step)),
-            )
+            let made = match around {
+                Some((point, axis, angle)) => crate::commands::insert_copies_around(
+                    ctx,
+                    body,
+                    count as usize,
+                    (
+                        glam::Vec3::from_array(point),
+                        glam::Vec3::from_array(axis).normalize_or_zero(),
+                        angle,
+                    ),
+                ),
+                None => crate::commands::insert_copies(
+                    ctx,
+                    body,
+                    count as usize,
+                    Some(glam::Vec3::from_array(step)),
+                ),
+            }
             .unwrap_or_default();
+            let mut args = serde_json::json!({"body": body.0.to_string(), "count": count});
+            match around {
+                Some((point, direction, angle)) => {
+                    args["around"] =
+                        serde_json::json!({"point": point, "direction": direction, "angle": angle});
+                }
+                None => args["step"] = serde_json::json!(step),
+            }
             ctx.record(
                 "asm.copy",
-                crate::commands::object(serde_json::json!({
-                    "body": body.0.to_string(),
-                    "count": count,
-                    "step": step,
-                })),
+                crate::commands::object(args),
                 serde_json::json!(made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>()),
             );
             ctx.log_info(format!(
@@ -437,18 +455,66 @@ impl AssemblyWorkbench {
                 .speed(0.1)
                 .show(ui);
         });
-        for (k, label) in ["Step x", "Step y", "Step z"].into_iter().enumerate() {
+        let mut turned = around.is_some();
+        let mut pivot = around.unwrap_or(([0.0; 3], [0.0, 0.0, 1.0], 360.0));
+        changed |= check_row(ui, &mut turned, "Around an axis")
+            .on_hover_text("Turn the copies about an axis instead of setting them in a row")
+            .changed();
+        let label_row = |ui: &mut egui::Ui, label: &str| {
+            ui.add_sized(
+                [90.0, INPUT],
+                egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+            );
+        };
+        if turned {
             ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
-                );
-                changed |= QtyField::mm(&mut at[k]).show(ui);
+                label_row(ui, "Axis");
+                for (name, axis) in [
+                    ("X", [1.0, 0.0, 0.0]),
+                    ("Y", [0.0, 1.0, 0.0]),
+                    ("Z", [0.0, 0.0, 1.0]),
+                ] {
+                    if ui
+                        .selectable_label(pivot.1 == axis, RichText::new(name).font(sans(FONT_SM)))
+                        .clicked()
+                    {
+                        pivot.1 = axis;
+                        changed = true;
+                    }
+                }
             });
+            for (k, label) in ["Through x", "Through y", "Through z"]
+                .into_iter()
+                .enumerate()
+            {
+                ui.horizontal(|ui| {
+                    label_row(ui, label);
+                    changed |= QtyField::mm(&mut pivot.0[k]).show(ui);
+                });
+            }
+            ui.horizontal(|ui| {
+                label_row(ui, "Over");
+                changed |= QtyField::degrees(&mut pivot.2).show(ui);
+            });
+        } else {
+            for (k, label) in ["Step x", "Step y", "Step z"].into_iter().enumerate() {
+                ui.horizontal(|ui| {
+                    label_row(ui, label);
+                    changed |= QtyField::mm(&mut at[k]).show(ui);
+                });
+            }
         }
-        if changed && let Some(Task::Copies { count, step, .. }) = &mut self.task {
+        if changed
+            && let Some(Task::Copies {
+                count,
+                step,
+                around,
+                ..
+            }) = &mut self.task
+        {
             *count = n.round().max(1.0) as u32;
             *step = at;
+            *around = turned.then_some(pivot);
         }
         ui.add_space(SPACE_1);
         note(

@@ -52,6 +52,10 @@ struct Picking {
     repick: Option<FeatureId>,
 }
 
+/// An axis copies are turned about: a point on it, its direction, and
+/// the angle, degrees, they spread over.
+type Around = ([f32; 3], [f32; 3], f32);
+
 /// What the task panel holds open.
 #[derive(Debug, Clone)]
 enum Task {
@@ -91,11 +95,14 @@ enum Task {
     },
     /// Every part and how many of it.
     Parts,
-    /// Linked copies of `body` to insert: how many, and how far apart.
+    /// Linked copies of `body` to insert: how many, and how far apart, or
+    /// turned about an axis (a point on it, its direction, the angle they
+    /// spread over).
     Copies {
         body: BodyId,
         count: u32,
         step: [f32; 3],
+        around: Option<Around>,
     },
     /// Bodies picked for a rigid group, one click each (a second click
     /// takes one out); `editing` the group changed, `None` for a new one.
@@ -1832,6 +1839,7 @@ impl Workbench for AssemblyWorkbench {
                         body,
                         count: 1,
                         step: commands::copy_step(ctx.document, body).to_array(),
+                        around: None,
                     });
                 }
                 None => ctx.log_warn("Select a body to copy"),

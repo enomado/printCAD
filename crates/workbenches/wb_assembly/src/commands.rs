@@ -57,6 +57,33 @@ pub(crate) fn insert_copies(
     Some(made)
 }
 
+/// `count` linked copies of `source` turned about the axis through
+/// `point` along `direction`, spread evenly over `angle` degrees: a whole
+/// turn shares it with the source, a part turn ends on its far end.
+pub(crate) fn insert_copies_around(
+    ctx: &mut WorkbenchRuntimeContext,
+    source: BodyId,
+    count: usize,
+    (point, direction, angle): (Vec3, Vec3, f32),
+) -> Option<Vec<BodyId>> {
+    let full = (angle.abs() - 360.0).abs() < 1e-3;
+    let each = if full {
+        angle / (count + 1) as f32
+    } else {
+        angle / count.max(1) as f32
+    };
+    let from = ctx.document.body_placement(source);
+    let mut made = Vec::with_capacity(count);
+    for i in 1..=count {
+        let turn = Quat::from_axis_angle(direction, (each * i as f32).to_radians());
+        let step = BodyPlacement::new(turn, point - turn * point);
+        let copy = ctx.document.create_linked_copy(source, None)?;
+        ctx.document.set_body_placement(copy, step.after(&from));
+        made.push(copy);
+    }
+    Some(made)
+}
+
 /// The joint `tool` makes between these two anchors (each in its own
 /// body's frame) where the bodies stand.
 pub(crate) fn rejoined(
@@ -304,6 +331,12 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::List,
             "{x, y, z}: how far each copy sits from the one before, mm; beside it along X \
              when left out",
+        )
+        .optional(
+            "around",
+            ParamKind::Any,
+            "{point = {x, y, z}, direction = {x, y, z}, angle}: the copies turned about this \
+             axis instead, spread evenly over `angle` degrees (360 when left out)",
         )
         .returns("the copies' ids"),
     );
@@ -860,8 +893,20 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 Some(v) if !v.is_null() => Some(vector(v, "step")?),
                 _ => None,
             };
-            let made = insert_copies(ctx, source, count, step)
-                .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
+            let made = match a.0.get("around").filter(|v| !v.is_null()) {
+                Some(around) => {
+                    let point = vector(around.get("point").unwrap_or(&json!([0, 0, 0])), "around")?;
+                    let direction =
+                        vector(around.get("direction").unwrap_or(&Value::Null), "around")?;
+                    if direction.length() < 1e-9 {
+                        return Err(CommandError::bad("around", "needs a direction"));
+                    }
+                    let angle = around.get("angle").and_then(Value::as_f64).unwrap_or(360.0) as f32;
+                    insert_copies_around(ctx, source, count, (point, direction.normalize(), angle))
+                }
+                None => insert_copies(ctx, source, count, step),
+            }
+            .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
             Ok(Value::from(
                 made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
             ))
@@ -1671,6 +1716,41 @@ mod tests {
         let mut both = vec![a, b];
         both.sort();
         assert_eq!(not_made, both);
+    }
+
+    /// Copies turned about an axis spread over a whole turn with the
+    /// original: three about Z make four in all, a quarter turn apart.
+    #[test]
+    fn copies_spread_round_an_axis() {
+        let mut doc = Document::new("t");
+        let arm = doc.create_body(Some("Arm".into()));
+        doc.set_body_placement(
+            arm,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(10.0, 0.0, 0.0)),
+        );
+        let made = call(
+            &mut doc,
+            "asm.copy",
+            json!({"body": arm.0.to_string(), "count": 3,
+                   "around": {"point": [0, 0, 0], "direction": [0, 0, 1]}}),
+        )
+        .unwrap();
+        let at: Vec<[f32; 3]> = made
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let id = BodyId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap());
+                doc.body_placement(id).translation
+            })
+            .collect();
+        let want = [[0.0, 10.0], [-10.0, 0.0], [0.0, -10.0]];
+        for (got, want) in at.iter().zip(want) {
+            assert!(
+                (got[0] - want[0]).abs() < 1e-3 && (got[1] - want[1]).abs() < 1e-3,
+                "{at:?}"
+            );
+        }
     }
 
     /// A group moves as one: the body held to its first member follows it

@@ -1274,6 +1274,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `body` (id): The body to copy
 - `count` (number, optional): How many (1 when left out)
 - `step` (list, optional): {x, y, z}: how far each copy sits from the one before, mm; beside it along X when left out
+- `around` (any, optional): {point = {x, y, z}, direction = {x, y, z}, angle}: the copies turned about this axis instead, spread evenly over `angle` degrees (360 when left out)
 - Returns the copies' ids
 
 `pc.asm.group`: Lock bodies together where they sit, in one rigid group.
