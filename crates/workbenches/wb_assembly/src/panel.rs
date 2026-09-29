@@ -2169,24 +2169,26 @@ impl AssemblyWorkbench {
         if created {
             crate::commands::record_joint(ctx, id, None, placements);
         }
-        if let Err(why) = crate::commands::turn_joint(ctx, &joint, degrees, over) {
-            ctx.log_warn(format!("Could not turn the body: {why}"));
-            return;
-        }
         let (command, args) = if over {
-            ("asm.flip", serde_json::json!({"joint": id.0.to_string()}))
+            (
+                "asm.flip",
+                serde_json::json!({"joint": joint.id.0.to_string()}),
+            )
         } else {
             (
                 "asm.turn",
-                serde_json::json!({"joint": id.0.to_string(), "degrees": degrees}),
+                serde_json::json!({"joint": joint.id.0.to_string(), "degrees": degrees}),
             )
         };
+        // As the command turns it: a hinge's motion moves on, a coupled
+        // one takes its partner along.
+        let args = crate::commands::object(args);
+        if let Err(why) = crate::commands::run(command, &args, ctx) {
+            ctx.log_warn(format!("Could not turn the body: {why}"));
+            return;
+        }
         self.solve_and_apply(ctx);
-        ctx.record(
-            command,
-            crate::commands::object(args),
-            serde_json::Value::Null,
-        );
+        ctx.record(command, args, serde_json::Value::Null);
         self.task = Some(crate::Task::Joint {
             id,
             before: ctx.document.get_feature_data(id).cloned(),

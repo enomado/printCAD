@@ -1120,10 +1120,23 @@ impl JointTool {
                 zero: turn.to_array(),
                 drive: Drive::default(),
             },
-            JointTool::Slider => JointKind::Slider {
-                turn: turn.to_array(),
-                drive: Drive::default(),
-            },
+            // The turn it keeps is the one it has once its axis lies along
+            // the other's, the shortest way round: kept as it is now, a
+            // body whose axis points elsewhere would never come onto it.
+            JointTool::Slider => {
+                let (_, dm) = moving.placed(at);
+                let (_, df) = fixed.placed(fixed_at);
+                let (dm, df) = (dm.normalize_or_zero(), df.normalize_or_zero());
+                let onto = if dm.dot(df) < 0.0 { -df } else { df };
+                let lined_up = Rigid {
+                    rotation: (glam::DQuat::from_rotation_arc(dm, onto) * at.rotation).normalize(),
+                    translation: at.translation,
+                };
+                JointKind::Slider {
+                    turn: relative(&lined_up, fixed_at).0.to_array(),
+                    drive: Drive::default(),
+                }
+            }
             JointTool::Fixed => JointKind::Fixed {
                 turn: turn.to_array(),
                 shift: shift.to_array(),

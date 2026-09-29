@@ -507,6 +507,21 @@ fn is_isometry(m: &[[f64; 4]; 4]) -> bool {
     unit && ortho
 }
 
+/// Whether the matrix is a rotation or reflection to single precision:
+/// what a placement kept in `f32` gives.
+fn near_isometry(m: &[[f64; 4]; 4]) -> bool {
+    const REACH: f64 = 1e-5;
+    let c0 = Vector::new(m[0][0], m[1][0], m[2][0]);
+    let c1 = Vector::new(m[0][1], m[1][1], m[2][1]);
+    let c2 = Vector::new(m[0][2], m[1][2], m[2][2]);
+    [c0, c1, c2]
+        .iter()
+        .all(|c| (c.magnitude() - 1.0).abs() < REACH)
+        && c0.dot(c1).abs() < REACH
+        && c1.dot(c2).abs() < REACH
+        && c0.dot(c2).abs() < REACH
+}
+
 /// `shape` moved by a rigid row-major matrix, as a shape of its own.
 pub(crate) fn moved(
     model: &mut Model,
@@ -542,10 +557,13 @@ pub(crate) fn rigid_of(m: &[[f64; 4]; 4]) -> Option<Transform> {
     let c0 = Vector::new(m[0][0], m[1][0], m[2][0]);
     let c1 = Vector::new(m[0][1], m[1][1], m[2][1]);
     let c2 = Vector::new(m[0][2], m[1][2], m[2][2]);
-    if !is_isometry(m) || c0.dot(c1.cross(c2)) < 0.0 {
+    if !near_isometry(m) || c0.dot(c1.cross(c2)) < 0.0 {
         return None;
     }
+    // A placement kept in single precision is a rotation to about 1e-7:
+    // taken as the exact rotation its quaternion, made unit, is.
     let q = quaternion_from_columns(c0, c1, c2);
+    let q = q.normalized(super::tol()).ok()?;
     let t = Vector::new(m[0][3], m[1][3], m[2][3]);
     Some(Transform::translation(t) * Transform::from_quaternion(q))
 }
@@ -597,4 +615,38 @@ fn quaternion_from_columns(c0: Vector, c1: Vector, c2: Vector) -> ogeom::math::Q
         ((m10 - m01) / s, (m02 + m20) / s, (m12 + m21) / s, s * 0.25)
     };
     ogeom::math::Quaternion::new(w, x, y, z)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A placement turned in single precision is a rigid motion: its
+    /// columns are unit and square only to about 1e-7.
+    #[test]
+    fn a_single_precision_turn_is_rigid() {
+        // A turn of 0.73 rad about (0.3, -0.5, 0.8), worked in f32.
+        let n = (0.3f32 * 0.3 + 0.25 + 0.64).sqrt();
+        let (x, y, z) = (0.3f32 / n, -0.5f32 / n, 0.8f32 / n);
+        let (sin, cos) = 0.73f32.sin_cos();
+        let t = 1.0 - cos;
+        let r = [
+            [t * x * x + cos, t * x * y - sin * z, t * x * z + sin * y],
+            [t * x * y + sin * z, t * y * y + cos, t * y * z - sin * x],
+            [t * x * z - sin * y, t * y * z + sin * x, t * z * z + cos],
+        ];
+        let shift = [4.0f32, -2.0, 7.5];
+        let mut rows = [[0.0f64; 4]; 4];
+        for i in 0..3 {
+            for j in 0..3 {
+                rows[i][j] = f64::from(r[i][j]);
+            }
+            rows[i][3] = f64::from(shift[i]);
+        }
+        rows[3][3] = 1.0;
+        assert!(rigid_of(&rows).is_some());
+        // A scaled one is not.
+        rows[0][0] *= 1.01;
+        assert!(rigid_of(&rows).is_none());
+    }
 }

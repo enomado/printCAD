@@ -65,8 +65,14 @@ pub fn joints(document: &Document) -> Vec<Joint> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SolveError {
     /// A body's joints ask for more than one place at once; the named
-    /// joints are the ones left apart.
-    Conflict { body: BodyId, joints: Vec<String> },
+    /// joints are the ones left apart. `moves` places the bodies joined
+    /// neither to it nor to another such body: a conflict holds up only
+    /// what it is joined to.
+    Conflict {
+        body: BodyId,
+        joints: Vec<String>,
+        moves: Vec<(BodyId, BodyPlacement)>,
+    },
 }
 
 /// The joints the solver reads, rigid groups' and rigid components' holds
@@ -168,8 +174,10 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
     // Every free body together, against every joint and coupling.
     refine(&mut placements, &free, &holding, &tied);
 
-    // Joints still apart: the first free body with one, and every one at
-    // either end of it.
+    // Joints still apart: each free body with one, and every one at either
+    // end of it.
+    let mut conflict: Option<(BodyId, Vec<String>)> = None;
+    let mut apart: BTreeSet<BodyId> = BTreeSet::new();
     for body in &free {
         let mut left_apart: Vec<String> = holding
             .iter()
@@ -194,14 +202,17 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
                 .map(|l| l.name.clone()),
         );
         if !left_apart.is_empty() {
-            return Err(SolveError::Conflict {
-                body: *body,
-                joints: left_apart,
-            });
+            apart.insert(*body);
+            if conflict.is_none() {
+                conflict = Some((*body, left_apart));
+            }
         }
     }
+    // A body joined, however far round, to one whose joints are apart
+    // keeps its place; the rest of the assembly is placed.
+    let held_up = joined_to(&apart, &free, &holding, &tied);
     let mut moved = Vec::new();
-    for body in &free {
+    for body in free.iter().filter(|b| !held_up.contains(b)) {
         // Rounding is no move: an assembly that already holds records
         // nothing when solved again.
         let before = BodyPlacement::from(starts[body]);
@@ -210,7 +221,44 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
             moved.push((*body, after));
         }
     }
-    Ok(moved)
+    match conflict {
+        Some((body, joints)) => Err(SolveError::Conflict {
+            body,
+            joints,
+            moves: moved,
+        }),
+        None => Ok(moved),
+    }
+}
+
+/// `from` and every free body joined to them, however far round, by a
+/// joint or a coupling between two free bodies.
+fn joined_to(
+    from: &BTreeSet<BodyId>,
+    free: &BTreeSet<BodyId>,
+    holding: &[&Joint],
+    tied: &[Link],
+) -> BTreeSet<BodyId> {
+    let mut reached = from.clone();
+    loop {
+        let before = reached.len();
+        let pairs = holding
+            .iter()
+            .map(|j| (j.body, j.feature.other_body))
+            .chain(tied.iter().map(|l| (l.driven.body, l.driver.body)));
+        for (a, b) in pairs {
+            if !(free.contains(&a) && free.contains(&b)) {
+                continue;
+            }
+            if reached.contains(&a) || reached.contains(&b) {
+                reached.insert(a);
+                reached.insert(b);
+            }
+        }
+        if reached.len() == before {
+            return reached;
+        }
+    }
 }
 
 /// Whether dragging `body` moves it: it has joints and is not grounded,
@@ -925,11 +973,14 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
     });
     // With only angles, the first one turns the body to its angle, in the
     // plane of the two normals (or about any line square to them when they
-    // start parallel, where the angle has no slope to follow).
+    // start parallel, where the angle has no slope to follow). Square faces
+    // are an angle of 90 degrees.
     let first_turn = first_turn.or_else(|| {
         joints.iter().find_map(|joint| {
-            let JointKind::Angle { degrees } = joint.feature.kind else {
-                return None;
+            let degrees = match joint.feature.kind {
+                JointKind::Angle { degrees } => degrees,
+                JointKind::Perpendicular => 90.0,
+                _ => return None,
             };
             let (_, dm) = joint.feature.moving.placed(&current);
             let (_, df) = joint
@@ -1383,7 +1434,7 @@ mod tests {
         add_joint(&mut doc, part, on(0.0));
         add_joint(&mut doc, part, on(10.0));
         match solve(&doc) {
-            Err(SolveError::Conflict { body, joints }) => {
+            Err(SolveError::Conflict { body, joints, .. }) => {
                 assert_eq!(body, part);
                 assert_eq!(joints.len(), 2);
             }

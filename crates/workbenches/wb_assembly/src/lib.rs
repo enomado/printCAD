@@ -1403,11 +1403,19 @@ pub(crate) fn apply_solve(ctx: &mut WorkbenchRuntimeContext) -> Result<String, S
                 n => format!("Moved {n} bodies; every joint holds"),
             })
         }
-        Err(SolveError::Conflict { body, joints }) => Err(format!(
-            "{} cannot hold all its joints at once: {}",
-            body_name(ctx, body),
-            joints.join(", ")
-        )),
+        Err(SolveError::Conflict {
+            body,
+            joints,
+            moves,
+        }) => {
+            // What the conflict does not hold up is placed all the same.
+            place_bodies(ctx.document, &moves);
+            Err(format!(
+                "{} cannot hold all its joints at once: {}",
+                body_name(ctx, body),
+                joints.join(", ")
+            ))
+        }
     }
 }
 

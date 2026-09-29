@@ -138,6 +138,56 @@ pub(crate) fn turn_joint(
     Ok(())
 }
 
+/// Move a hinge's or a slider's motion on by `amount` (degrees or mm),
+/// its drive holding it there for the solve that follows: a held drive's
+/// value moves, else a drive is set where the motion now reaches, and
+/// answered, with the joint's data before it, to be taken off after the
+/// solve. A joint a coupling drives moves its driver instead, by what
+/// brings it `amount` along.
+fn advance(
+    ctx: &mut WorkbenchRuntimeContext,
+    joint: &crate::Joint,
+    amount: f64,
+    depth: usize,
+) -> Result<Option<(FeatureId, Value)>, CommandError> {
+    if depth < 8
+        && let Some(coupling) = crate::coupling::driving(ctx.document, joint.id)
+        && let Some(driver) = joints(ctx.document)
+            .into_iter()
+            .find(|j| j.id == coupling.driver)
+    {
+        let step = coupling
+            .driver_step(amount, crate::coupling::angular(&driver.feature))
+            .ok_or_else(|| CommandError::failed("the coupling moves nothing"))?;
+        return advance(ctx, &driver, step, depth + 1);
+    }
+    let at = |b: BodyId| -> Rigid { ctx.document.body_placement(b).into() };
+    let now = joint
+        .feature
+        .travel(&at(joint.body), &at(joint.feature.other_body))
+        .ok_or_else(|| CommandError::bad("joint", "is not a hinge or a slider"))?;
+    let before = core_document::WorkbenchFeature::to_json(&joint.feature);
+    let mut feature = joint.feature.clone();
+    let released = match &mut feature.kind {
+        JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } => match &mut drive.to {
+            Some(to) => {
+                *to += amount as f32;
+                None
+            }
+            None => {
+                drive.to = Some((now + amount) as f32);
+                Some((joint.id, before))
+            }
+        },
+        _ => return Err(CommandError::bad("joint", "is not a hinge or a slider")),
+    };
+    ctx.document
+        .update_feature_data(joint.id, core_document::WorkbenchFeature::to_json(&feature))
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.clear_feature_dirty(joint.id);
+    Ok(released)
+}
+
 /// Read `drive` and `limits` into a hinge's or a slider's drive.
 fn drive_args(a: &Args, drive: &mut Drive) -> Result<(), CommandError> {
     drive_args_named(a, drive, "drive", "limits")
@@ -1547,6 +1597,19 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             } else {
                 0.0
             };
+            if id == "asm.turn" && matches!(found.feature.kind, JointKind::Hinge { .. }) {
+                let release = advance(ctx, &found, degrees, 0)?;
+                let answer = solved(ctx, Value::Null);
+                // A drive held only for the solve goes; nothing moves with
+                // it, the bodies being where it held them.
+                if let Some((joint, data)) = release {
+                    ctx.document
+                        .update_feature_data(joint, data)
+                        .map_err(|e| CommandError::failed(e.to_string()))?;
+                    ctx.document.clear_feature_dirty(joint);
+                }
+                return answer;
+            }
             turn_joint(ctx, &found, degrees, id == "asm.flip")?;
             solved(ctx, Value::Null)
         }
@@ -1697,14 +1760,65 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
             "finds no edge or face of the other body there",
         ));
     }
-    ground_first(ctx, other);
+    let grounded = ground_first(ctx, other);
     let feature = ctx
         .document
         .add_feature_in_body(joint, name, Some(moving_body))
         .map_err(|e| CommandError::failed(e.to_string()))?;
     // A joint has no solid to rebuild.
     ctx.document.clear_feature_dirty(feature);
-    solved(ctx, json!(feature.0.to_string()))
+    let made: Vec<FeatureId> = std::iter::once(feature).chain(grounded).collect();
+    solved_with(ctx, &made, json!(feature.0.to_string()))
+}
+
+/// Solve with `made` just added. A joint that cannot hold is not left
+/// behind: when the assembly holds without what was made, it is taken
+/// back out and the call fails saying why. A conflict that was there
+/// before is no fault of the new joint, which stays; what the conflict
+/// does not hold up is placed.
+fn solved_with(
+    ctx: &mut WorkbenchRuntimeContext,
+    made: &[FeatureId],
+    value: Value,
+) -> CommandResult {
+    match crate::solve(ctx.document) {
+        Ok(moves) => {
+            crate::place_bodies(ctx.document, &moves);
+            Ok(value)
+        }
+        Err(crate::SolveError::Conflict {
+            body,
+            joints,
+            moves,
+        }) => {
+            let mut without = ctx.document.clone();
+            for id in made {
+                let _ = without.remove_feature(*id);
+            }
+            let name = ctx
+                .document
+                .bodies()
+                .iter()
+                .find(|b| b.id == body)
+                .map(|b| b.name.clone())
+                .unwrap_or_default();
+            if crate::solve(&without).is_ok() {
+                for id in made {
+                    let _ = ctx.document.remove_feature(*id);
+                }
+                return Err(CommandError::failed(format!(
+                    "{name} cannot hold this joint with the others ({}): it is not made",
+                    joints.join(", ")
+                )));
+            }
+            crate::place_bodies(ctx.document, &moves);
+            ctx.log_warn(format!(
+                "{name} cannot hold all its joints at once: {}",
+                joints.join(", ")
+            ));
+            Ok(value)
+        }
+    }
 }
 
 /// A joint's task accepted, as a recording says it: a new joint as the
@@ -1942,7 +2056,7 @@ fn couple(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .add_feature_in_body(coupling, name, Some(body))
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.clear_feature_dirty(id);
-    solved(ctx, json!(id.0.to_string()))
+    solved_with(ctx, &[id], json!(id.0.to_string()))
 }
 
 fn set_coupling(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
@@ -2178,11 +2292,12 @@ pub(crate) const DEFAULT_DENSITY: f32 = 1.0;
 /// The first joint of an assembly grounds the body it holds against (the
 /// world needs none), when nothing is grounded yet: the assembly then stands on it, and what its
 /// joints leave free reads true from the start.
-pub(crate) fn ground_first(ctx: &mut WorkbenchRuntimeContext, other: BodyId) {
+pub(crate) fn ground_first(ctx: &mut WorkbenchRuntimeContext, other: BodyId) -> Option<FeatureId> {
     let all = crate::joints(ctx.document);
     if all.is_empty() && other != crate::WORLD {
-        set_grounded(ctx, other, true);
+        return set_grounded(ctx, other, true);
     }
+    None
 }
 
 /// Ground `body`, or let it move again: a ground joint on it, or none.
@@ -2319,8 +2434,9 @@ mod tests {
         call(&mut doc, "asm.turn", json!({"joint": hinge, "degrees": 20})).unwrap();
         let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
         assert!((x[1].atan2(x[0]).to_degrees() - 50.0).abs() < 1e-2, "{x:?}");
+        // The drive moved with it: the hinge reads where the body is.
         let travel = call(&mut doc, "asm.travel", json!({"joint": hinge})).unwrap();
-        assert!((travel.as_f64().unwrap() - 30.0).abs() < 1e-2, "{travel}");
+        assert!((travel.as_f64().unwrap() - 50.0).abs() < 1e-2, "{travel}");
         call(&mut doc, "asm.solve", json!({})).unwrap();
         let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
         assert!(
@@ -2347,6 +2463,92 @@ mod tests {
         let data: JointFeature =
             serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
         assert!(matches!(data.kind, JointKind::Mate { flip: true, .. }));
+    }
+
+    /// Turning either of two geared hinges turns both: the driver by what
+    /// it is turned, or by what takes the driven one along.
+    #[test]
+    fn a_turn_of_either_geared_hinge_turns_both() {
+        let mut doc = Document::new("t");
+        let [base, g1, g2] = [
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+        ];
+        let pin = |x: f32| json!({"axis": {"point": [x, 0, 0], "direction": [0, 0, 1]}});
+        let hinge = |doc: &mut Document, body: BodyId, x: f32| {
+            call(
+                doc,
+                "asm.hinge",
+                json!({"body": body.0.to_string(), "face": pin(x), "other": base.0.to_string(),
+                       "other_face": pin(x)}),
+            )
+            .unwrap()
+        };
+        let h1 = hinge(&mut doc, g1, -20.0);
+        let h2 = hinge(&mut doc, g2, 10.0);
+        call(
+            &mut doc,
+            "asm.couple",
+            json!({"driver": h1, "driven": h2, "gearing": "gears", "ratio": 2}),
+        )
+        .unwrap();
+        let travel = |doc: &mut Document, joint: &Value| {
+            call(doc, "asm.travel", json!({"joint": joint}))
+                .unwrap()
+                .as_f64()
+                .unwrap()
+        };
+        call(&mut doc, "asm.turn", json!({"joint": h1, "degrees": 30})).unwrap();
+        assert!((travel(&mut doc, &h1) - 30.0).abs() < 1e-2);
+        assert!((travel(&mut doc, &h2) + 60.0).abs() < 1e-2);
+        call(&mut doc, "asm.turn", json!({"joint": h2, "degrees": 30})).unwrap();
+        assert!((travel(&mut doc, &h1) - 15.0).abs() < 1e-2);
+        assert!((travel(&mut doc, &h2) + 30.0).abs() < 1e-2);
+        // The drives held for the turns are taken off again.
+        for joint in crate::joints(&doc) {
+            if let JointKind::Hinge { drive, .. } = joint.feature.kind {
+                assert_eq!(drive.to, None);
+            }
+        }
+    }
+
+    /// A slider turns its body onto the axis, whichever way the body's
+    /// own axis pointed when it was made.
+    #[test]
+    fn a_slider_turns_its_body_onto_the_axis() {
+        for along in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]] {
+            let mut doc = Document::new("t");
+            let (a, b) = (doc.create_body(None), doc.create_body(None));
+            let peg = json!({"axis": {"point": [0, 0, 20], "direction": along}});
+            let hole = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+            call(
+                &mut doc,
+                "asm.slider",
+                json!({"body": a.0.to_string(), "face": peg, "other": b.0.to_string(),
+                       "other_face": hole}),
+            )
+            .unwrap();
+            let d = doc.body_placement(a).direction(along);
+            let n = glam::Vec3::from_array(d).normalize();
+            assert!(n.z.abs() > 0.999, "{along:?} now {d:?}");
+        }
+    }
+
+    /// Faces that start exactly parallel are turned square.
+    #[test]
+    fn perpendicular_faces_start_parallel_and_end_square() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let up = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        call(
+            &mut doc,
+            "asm.perpendicular",
+            json!({"body": a.0.to_string(), "face": up, "other": b.0.to_string(), "other_face": up}),
+        )
+        .unwrap();
+        let n = doc.body_placement(a).direction([0.0, 0.0, 1.0]);
+        assert!(n[2].abs() < 1e-3, "square to Z: {n:?}");
     }
 
     /// A part set bought is bought for every body of its shape, the
@@ -3002,6 +3204,90 @@ mod tests {
         .unwrap();
         assert_eq!(doc.component_of(b), None);
         assert_eq!(doc.components().len(), 1);
+    }
+
+    /// A joint that cannot hold with the others is not made, and one
+    /// conflict holds up only the bodies joined to it: a joint between two
+    /// other bodies still solves.
+    #[test]
+    fn a_joint_that_cannot_hold_is_not_made_and_blocks_nothing_else() {
+        let mut doc = Document::new("t");
+        let [a, b, c, d] = [
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+        ];
+        let up = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, 1]});
+        let down = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, -1]});
+        // B's bottom 5 above A's top.
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": b.0.to_string(), "face": down(0.0), "other": a.0.to_string(),
+                   "other_face": up(0.0), "offset": 5}),
+        )
+        .unwrap();
+        let joints_before = crate::joints(&doc).len();
+        // The same faces 9 apart as well: it cannot hold.
+        let refused = call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": b.0.to_string(), "face": down(0.0), "other": a.0.to_string(),
+                   "other_face": up(0.0), "offset": 9}),
+        );
+        assert!(refused.is_err(), "{refused:?}");
+        assert_eq!(crate::joints(&doc).len(), joints_before, "not left behind");
+        // An unrelated pair solves.
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": d.0.to_string(), "face": down(0.0), "other": c.0.to_string(),
+                   "other_face": up(0.0), "offset": 3}),
+        )
+        .unwrap();
+        let z = doc.body_placement(d).translation[2] - doc.body_placement(c).translation[2];
+        assert!((z - 3.0).abs() < 1e-3, "{z}");
+    }
+
+    /// With a conflict already in the assembly, the rest is still placed.
+    #[test]
+    fn a_conflict_holds_up_only_what_it_is_joined_to() {
+        let mut doc = Document::new("t");
+        let [a, b, c, d] = [
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+        ];
+        let up = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, 1]});
+        let down = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, -1]});
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": b.0.to_string(), "face": down(0.0), "other": a.0.to_string(),
+                   "other_face": up(0.0), "offset": 5}),
+        )
+        .unwrap();
+        // A conflicting joint written straight into the document, as an
+        // old file might hold it.
+        let mut conflicting = crate::joints(&doc)[1].feature.clone();
+        conflicting.kind = JointKind::Distance { offset: 9.0 };
+        doc.add_feature_in_body(conflicting, "Clash".into(), Some(b))
+            .unwrap();
+        doc.set_body_placement(
+            d,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 40.0)),
+        );
+        let made = call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": d.0.to_string(), "face": down(40.0), "other": c.0.to_string(),
+                   "other_face": up(0.0), "offset": 3}),
+        );
+        assert!(made.is_ok(), "{made:?}");
+        let z = doc.body_placement(d).translation[2] - doc.body_placement(c).translation[2];
+        assert!((z - 3.0).abs() < 1e-3, "D's bottom 3 above C's top: {z}");
     }
 
     /// A joint to the world holds the body to the origin's planes, and

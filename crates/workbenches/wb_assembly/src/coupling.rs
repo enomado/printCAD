@@ -177,7 +177,19 @@ fn travel(joint: &Joint, placements: &HashMap<BodyId, Rigid>) -> Option<f64> {
     )
 }
 
-fn angular(feature: &JointFeature) -> bool {
+/// The coupling that drives `joint`, if one does.
+pub fn driving(document: &Document, joint: FeatureId) -> Option<Coupling> {
+    document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, node)| node.workbench_id.as_str() == COUPLING_KIND && !node.suppressed)
+        .filter_map(|(id, _)| {
+            serde_json::from_value::<Coupling>(document.feature_values(*id)?.clone()).ok()
+        })
+        .find(|c| c.driven == joint)
+}
+
+pub(crate) fn angular(feature: &JointFeature) -> bool {
     matches!(feature.kind, JointKind::Hinge { .. })
 }
 
@@ -211,6 +223,13 @@ impl Coupling {
             driven_at: travel(driven, placements)?,
             turns: 0,
         })
+    }
+
+    /// How far the driver goes (degrees or mm) to take the driven motion
+    /// `step` along (its own degrees or mm).
+    pub fn driver_step(&self, step: f64, driver_angular: bool) -> Option<f64> {
+        let factor = self.factor(driver_angular);
+        (factor.abs() > 1e-12).then(|| step / factor)
     }
 
     /// How far the driven motion goes, in its own units (degrees or mm),
