@@ -819,7 +819,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             {
                 return Err(CommandError::bad(
                     "bodies",
-                    &format!("{} is not a body of this document", b.0),
+                    format!("{} is not a body of this document", b.0),
                 ));
             }
             let group = crate::RigidGroup::of(ctx.document, &bodies);
