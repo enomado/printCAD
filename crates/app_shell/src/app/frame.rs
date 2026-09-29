@@ -576,6 +576,7 @@ impl PrintCadApp {
             task,
             editing_feature,
             clip_plane: _,
+            faded: _,
         } = viewport_data;
         let planar_view_lock = self.sketch_editing_active();
         let hover_card = self.hover_card();
@@ -950,7 +951,7 @@ impl PrintCadApp {
         // renderer so panning/orbiting never re-uploads the static mesh.
         let draw_style = self.user_settings.rendering.draw_style;
         let wireframe = draw_style == settings::DrawStyle::Wireframe;
-        let imported_meshes: Vec<BodySubmission> = self
+        let mut imported_meshes: Vec<BodySubmission> = self
             .session
             .document
             .imported_geometries()
@@ -1063,6 +1064,7 @@ impl PrintCadApp {
             task: wb.task(ctx),
             editing_feature: wb.editing_feature(),
             clip_plane: wb.clip_plane(ctx),
+            faded: wb.faded_bodies(ctx),
         }) {
             Some((data, outcome)) => {
                 self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Lifecycle);
@@ -1070,6 +1072,12 @@ impl PrintCadApp {
             }
             None => ViewportData::default(),
         };
+        // What the bench asks to see past draws faded, still pickable.
+        for body in imported_meshes.iter_mut() {
+            if data.faded.iter().any(|f| f.0 == body.id) {
+                body.opacity = body.opacity.min(FADED_OPACITY);
+            }
+        }
         let screen_space_labels = &mut data.labels;
 
         // The measurement in progress: its points, the line between them
@@ -1382,7 +1390,12 @@ pub(crate) struct ViewportData {
     pub editing_feature: Option<core_document::FeatureId>,
     /// The plane the active bench cuts the scene at, if it does.
     pub clip_plane: Option<[f32; 4]>,
+    /// Bodies the active bench asks to be drawn faded.
+    pub faded: Vec<core_document::BodyId>,
 }
+
+/// How opaque a body a bench fades draws.
+const FADED_OPACITY: f32 = 0.3;
 
 impl PrintCadApp {
     /// Dev/bench hook: a body with a small constrained sketch, opened for

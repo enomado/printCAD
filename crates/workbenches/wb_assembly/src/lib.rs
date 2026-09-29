@@ -1146,6 +1146,24 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
+    /// While a joint's faces are picked, every body but the one under the
+    /// cursor and the one already picked fades, so faces behind show.
+    fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
+        let Some(picking) = &self.picking else {
+            return Vec::new();
+        };
+        let keep = [
+            ctx.hovered_body_id.map(BodyId),
+            picking.first.map(|(body, ..)| body),
+        ];
+        ctx.document
+            .bodies()
+            .iter()
+            .map(|b| b.id)
+            .filter(|b| !keep.contains(&Some(*b)))
+            .collect()
+    }
+
     /// The joints of other bodies that hold them to `body`.
     fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
         joints(document)
@@ -1845,6 +1863,39 @@ mod tests {
         wb.task = None;
         ctx.active_document_object = None;
         assert!(wb.joint_drawing(&ctx).is_none());
+    }
+
+    /// Picking fades every body but the one under the cursor and the one
+    /// picked first; nothing fades otherwise.
+    #[test]
+    fn bodies_fade_while_a_joint_is_picked() {
+        let (mut doc, base, part) = scene();
+        let third = doc.create_body(None);
+        let mut wb = AssemblyWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        assert!(wb.faded_bodies(&ctx).is_empty());
+        wb.picking = Some(Picking {
+            kind: JointTool::Mate,
+            first: None,
+        });
+        ctx.hovered_body_id = Some(base.0);
+        let mut faded = wb.faded_bodies(&ctx);
+        faded.sort();
+        let mut want = vec![part, third];
+        want.sort();
+        assert_eq!(faded, want);
+        wb.picking = Some(Picking {
+            kind: JointTool::Mate,
+            first: Some((
+                part,
+                Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                None,
+            )),
+        });
+        assert_eq!(wb.faded_bodies(&ctx), vec![third]);
     }
 
     #[test]

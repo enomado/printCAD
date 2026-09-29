@@ -29,6 +29,10 @@ gives its own line. Settings a tool does not ask for start at what the
 bodies make now (an angle, a distance), so making the joint moves nothing
 it need not.
 
+While a joint's faces are picked, every body but the one under the
+cursor and the one picked first fades, so faces behind it can be seen and
+clicked.
+
 A selected joint is drawn in the view: a dot where each end takes hold,
 a flat face's normal and a square in its plane, an axis as a dashed line,
 and a dashed link between the ends with the joint's name.

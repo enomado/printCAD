@@ -867,6 +867,13 @@ pub trait Workbench: Send {
     /// nothing when `state` is `None` (a new tab).
     fn resume_session(&mut self, _state: Option<Box<dyn std::any::Any + Send>>) {}
 
+    /// Bodies to draw faded while this bench is active: what it asks the
+    /// user to see past (a joint tool, the bodies not being picked). They
+    /// stay pickable.
+    fn faded_bodies(&self, _ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
+        Vec::new()
+    }
+
     /// Features of other bodies that act on `body` (a joint holding
     /// another body to it): the tree lists each under `body` too, as a
     /// link to the feature.

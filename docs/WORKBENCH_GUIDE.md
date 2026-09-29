@@ -185,6 +185,10 @@ fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -
 /// for the property panel.
 fn property_hints(&self) -> PropertyHints;
 
+/// Bodies drawn faded while the bench is active (still pickable): what
+/// a tool asks the user to see past.
+fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId>;
+
 /// Features of other bodies that act on `body` (a joint holding one
 /// body to another); the tree lists each under `body` too, as a link.
 fn linked_features(&self, doc: &Document, body: BodyId) -> Vec<FeatureId>;
