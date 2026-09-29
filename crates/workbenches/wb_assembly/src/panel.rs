@@ -1535,6 +1535,14 @@ impl AssemblyWorkbench {
         }
         ui.add_space(SPACE_2);
         self.verdict_card(ui);
+        if self.redundant_now(ctx).iter().any(|(j, _)| *j == id) {
+            note_card(
+                ui,
+                Note::Warning,
+                Some("Redundant"),
+                "The body's other joints already hold everything this one does; it could go.",
+            );
+        }
         if let Some(body) = node.body {
             freedom_line(ui, ctx, body);
         }

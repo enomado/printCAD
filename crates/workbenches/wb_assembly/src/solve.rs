@@ -649,42 +649,7 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
                 .filter(|l| l.driven.body == *body)
                 .cloned()
                 .collect();
-            // This body's six columns, turns first, by central
-            // differences: both sides go through the same steps (a stored
-            // rotation is normalised on the way), so nothing but the
-            // motion differs.
-            let h = 1e-6;
-            let at = |x: [f64; 6]| {
-                let mut moved = placements.clone();
-                moved.insert(
-                    *body,
-                    stepped(
-                        placements[body],
-                        pivots[body],
-                        DVec3::new(x[0], x[1], x[2]),
-                        DVec3::new(x[3], x[4], x[5]),
-                    ),
-                );
-                residuals_of(&moved, &own, &own_tied)
-            };
-            let mut columns = vec![[0.0f64; 6]; at([0.0; 6]).len()];
-            for k in 0..6 {
-                let (mut plus, mut minus) = ([0.0; 6], [0.0; 6]);
-                plus[k] = h;
-                minus[k] = -h;
-                let (rp, rm) = (at(plus), at(minus));
-                for (row, (a, b)) in columns.iter_mut().zip(rp.iter().zip(&rm)) {
-                    row[k] = (a - b) / (2.0 * h);
-                }
-            }
-            let mut jtj = [[0.0f64; 6]; 6];
-            for row in &columns {
-                for a in 0..6 {
-                    for b in 0..6 {
-                        jtj[a][b] += row[a] * row[b];
-                    }
-                }
-            }
+            let jtj = normal_matrix(&placements, &pivots, *body, &own, &own_tied);
             let (values, vectors) = eigen6(jtj);
 
             let scale = values.iter().fold(1.0f64, |m, v| m.max(*v));
@@ -726,6 +691,106 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
             (*body, motions)
         })
         .collect()
+}
+
+/// `JᵀJ` of `body`'s six motions against `own` joints and `tied`
+/// couplings, where the bodies are placed: its null space is what they
+/// leave free.
+fn normal_matrix(
+    placements: &HashMap<BodyId, Rigid>,
+    pivots: &HashMap<BodyId, DVec3>,
+    body: BodyId,
+    own: &[&Joint],
+    tied: &[Link],
+) -> [[f64; 6]; 6] {
+    // This body's six columns, turns first, by central differences: both
+    // sides go through the same steps (a stored rotation is normalised on
+    // the way), so nothing but the motion differs.
+    let h = 1e-6;
+    let at = |x: [f64; 6]| {
+        let mut moved = placements.clone();
+        moved.insert(
+            body,
+            stepped(
+                placements[&body],
+                pivots[&body],
+                DVec3::new(x[0], x[1], x[2]),
+                DVec3::new(x[3], x[4], x[5]),
+            ),
+        );
+        residuals_of(&moved, own, tied)
+    };
+    let mut columns = vec![[0.0f64; 6]; at([0.0; 6]).len()];
+    for k in 0..6 {
+        let (mut plus, mut minus) = ([0.0; 6], [0.0; 6]);
+        plus[k] = h;
+        minus[k] = -h;
+        let (rp, rm) = (at(plus), at(minus));
+        for (row, (a, b)) in columns.iter_mut().zip(rp.iter().zip(&rm)) {
+            row[k] = (a - b) / (2.0 * h);
+        }
+    }
+    let mut jtj = [[0.0f64; 6]; 6];
+    for row in &columns {
+        for a in 0..6 {
+            for b in 0..6 {
+                jtj[a][b] += row[a] * row[b];
+            }
+        }
+    }
+    jtj
+}
+
+/// How many of a body's six motions `JᵀJ` holds.
+fn rank(jtj: [[f64; 6]; 6]) -> usize {
+    let (values, _) = eigen6(jtj);
+    let scale = values.iter().fold(1.0f64, |m, v| m.max(*v));
+    values.iter().filter(|v| **v >= 1e-6 * scale).count()
+}
+
+/// Joints that hold, but hold nothing the body's other joints do not:
+/// each such joint could go without freeing any motion. Each with the
+/// body it moves.
+pub fn redundant(document: &Document) -> Vec<(FeatureId, String)> {
+    let all = usable(document);
+    let free = free_bodies(&all);
+    let holding: Vec<&Joint> = all
+        .iter()
+        .filter(|j| j.feature.kind != JointKind::Ground)
+        .collect();
+    let placements: HashMap<BodyId, Rigid> = rigid_placements(document);
+    let pivots = pivots(&placements, &free, &holding);
+    let tied = links(document, &all, &placements);
+    let mut found: Vec<(FeatureId, String)> = Vec::new();
+    for body in &free {
+        let own: Vec<&Joint> = holding
+            .iter()
+            .copied()
+            .filter(|j| j.body == *body || j.feature.other_body == *body)
+            .collect();
+        let own_tied: Vec<Link> = tied
+            .iter()
+            .filter(|l| l.driven.body == *body)
+            .cloned()
+            .collect();
+        let whole = rank(normal_matrix(&placements, &pivots, *body, &own, &own_tied));
+        for joint in &own {
+            if found.iter().any(|(id, _)| *id == joint.id)
+                || worst(
+                    &joint.feature,
+                    &placements[&joint.body],
+                    &placements[&joint.feature.other_body],
+                ) > HOLDS_MM
+            {
+                continue;
+            }
+            let rest: Vec<&Joint> = own.iter().copied().filter(|j| j.id != joint.id).collect();
+            if rank(normal_matrix(&placements, &pivots, *body, &rest, &own_tied)) == whole {
+                found.push((joint.id, joint.name.clone()));
+            }
+        }
+    }
+    found
 }
 
 /// A direction pointing its larger part the positive way, noise dropped.

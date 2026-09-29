@@ -1354,6 +1354,10 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): A new group's name in the tree
 - Returns the group's id
 
+`pc.asm.redundant`: The joints that hold nothing a body's other joints do not.
+
+- Returns a list of {joint, name}
+
 `pc.asm.motion_clashes`: Step a hinge's or a slider's drive through a range and find where bodies collide.
 
 - `joint` (id): The hinge or slider

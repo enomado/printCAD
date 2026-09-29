@@ -40,7 +40,8 @@ pub use joint::{
 pub use mass::{BodyMass, MassReport};
 pub use parts::{Part, parts_csv, parts_list};
 pub use solve::{
-    HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints, solve,
+    HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints,
+    redundant, solve,
 };
 pub use sweep_check::MotionClash;
 
@@ -166,6 +167,9 @@ pub struct AssemblyWorkbench {
     /// What each jointed body may still do, and at which edit of the
     /// document that was worked out: the status bar asks every frame.
     freedom: std::sync::Mutex<Option<(u64, Freedom)>>,
+    /// The joints that hold nothing the others do not, at an edit of the
+    /// document, for the status bar and the joint panel.
+    redundant: std::sync::Mutex<Option<(u64, Named)>>,
     /// A body held by the mouse, dragged with its joints holding.
     grab: Option<Grab>,
     /// Drags go through other bodies rather than stopping at them.
@@ -274,7 +278,24 @@ struct Play {
 /// Each jointed body and the motions its joints leave it.
 type Freedom = Vec<(BodyId, Vec<Motion>)>;
 
+/// Joints by id and name.
+type Named = Vec<(FeatureId, String)>;
+
 impl AssemblyWorkbench {
+    /// The redundant joints, worked out again only after an edit.
+    pub(crate) fn redundant_now(&self, ctx: &WorkbenchRuntimeContext) -> Vec<(FeatureId, String)> {
+        let seq = ctx.document.mutation_seq();
+        let mut cache = self.redundant.lock().unwrap();
+        match &*cache {
+            Some((at, found)) if *at == seq => found.clone(),
+            _ => {
+                let found = redundant(ctx.document);
+                *cache = Some((seq, found.clone()));
+                found
+            }
+        }
+    }
+
     /// Each jointed body's free motions, worked out again only after an
     /// edit.
     fn freedom_now(&self, ctx: &WorkbenchRuntimeContext) -> Freedom {
@@ -1957,12 +1978,21 @@ impl Workbench for AssemblyWorkbench {
         }
         let pal = ctx.sketch_palette;
         let open: usize = free.iter().map(|(_, m)| m.len()).sum();
+        let extra = self.redundant_now(ctx).len();
+        let extra = match extra {
+            0 => String::new(),
+            1 => ", 1 joint redundant".to_string(),
+            n => format!(", {n} joints redundant"),
+        };
         let state = if open == 0 {
-            (pal.fully_constrained, "Fully placed".to_string())
+            (pal.fully_constrained, format!("Fully placed{extra}"))
         } else {
             (
                 pal.constraint,
-                format!("{open} motion{} free", if open == 1 { "" } else { "s" }),
+                format!(
+                    "{open} motion{} free{extra}",
+                    if open == 1 { "" } else { "s" }
+                ),
             )
         };
         let selection = Self::body_to_move(ctx).and_then(|body| {

@@ -419,6 +419,14 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.redundant",
+            "The joints that hold nothing a body's other joints do not",
+        )
+        .returns("a list of {joint, name}")
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.motion_clashes",
             "Step a hinge's or a slider's drive through a range and find where bodies collide",
         )
@@ -1056,6 +1064,12 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             ctx.document.clear_feature_dirty(id);
             solved(ctx, json!(id.0.to_string()))
         }
+        "asm.redundant" => Ok(Value::Array(
+            crate::redundant(ctx.document)
+                .into_iter()
+                .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
+                .collect(),
+        )),
         "asm.motion_clashes" => {
             let kernel = ctx
                 .kernel
@@ -2000,6 +2014,41 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// A parallel joint added to a mate holds nothing new: it is reported
+    /// redundant; the mate alone is not.
+    #[test]
+    fn a_joint_holding_nothing_new_is_redundant() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        let under = json!({"point": [0, 0, 0], "normal": [0, 0, -1]});
+        call(
+            &mut doc,
+            "asm.mate",
+            json!({"body": a.0.to_string(), "face": under, "other": b.0.to_string(), "other_face": top}),
+        )
+        .unwrap();
+        assert_eq!(
+            call(&mut doc, "asm.redundant", json!({})).unwrap(),
+            json!([])
+        );
+        call(
+            &mut doc,
+            "asm.parallel",
+            json!({"body": a.0.to_string(), "face": under, "other": b.0.to_string(), "other_face": top,
+                   "name": "Extra"}),
+        )
+        .unwrap();
+        let found = call(&mut doc, "asm.redundant", json!({})).unwrap();
+        let names: Vec<&str> = found
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"Extra"), "{names:?}");
     }
 
     /// A tab centred in a slot: its middle on the slot's middle.

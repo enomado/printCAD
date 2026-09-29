@@ -283,7 +283,7 @@ and noted on its item, and the rest of the item is built around it.
 
 - [ ] **Move handles** (missing, M). Arrows and rings on a body, where
   today an unjointed body moves by numbers.
-- [ ] **Redundant joints reported** (partial, M). Consistent but
+- [x] **Redundant joints reported** (partial, M). Consistent but
   overdefined joints flagged.
 
 ### Motion
