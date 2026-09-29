@@ -140,6 +140,10 @@ pub enum JointKind {
     /// A follower on a cam: the moving point stays `radius` off the other
     /// body's face (a roller's radius; 0 for a point), on its outer side.
     Cam { radius: f32 },
+    /// A tab centred in a slot: the moving body's two faces (`moving` and
+    /// the first of `second`) centred between the other's two, all four
+    /// parallel. The tab slides along the slot and turns in it.
+    Width,
 }
 
 /// What is done with the one motion a hinge or a slider leaves: held at
@@ -252,6 +256,7 @@ impl JointKind {
             JointKind::Slot => "Slot",
             JointKind::Path => "Path",
             JointKind::Cam { .. } => "Cam",
+            JointKind::Width => "Width",
         }
     }
 
@@ -273,6 +278,7 @@ impl JointKind {
             JointKind::Slot => "constraint-point-on-object",
             JointKind::Path => "additive-pipe",
             JointKind::Cam { .. } => "constraint-tangent",
+            JointKind::Width => "constraint-symmetric",
         }
     }
 }
@@ -474,6 +480,9 @@ pub struct JointFeature {
     /// as a polyline, or the face as triangles, three corners each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shape: Vec<[f32; 3]>,
+    /// A width's second face on each body (`moving`, `fixed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second: Option<[Anchor; 2]>,
 }
 
 fn unnamed(names: &[kernel_api::TopoName; 2]) -> bool {
@@ -572,7 +581,8 @@ impl JointFeature {
             | JointKind::Universal
             | JointKind::Slot
             | JointKind::Path
-            | JointKind::Cam { .. } => {}
+            | JointKind::Cam { .. }
+            | JointKind::Width => {}
         }
     }
 
@@ -720,6 +730,14 @@ impl JointFeature {
                     None => out.push(0.0),
                 }
             }
+            JointKind::Width => {
+                out.extend(dm.cross(df).to_array().map(|c| c * ARM_MM));
+                if let Some([m2, f2]) = self.second {
+                    let (qm, _) = m2.placed(moving);
+                    let (qf, _) = f2.placed(fixed);
+                    out.push(((pm + qm) * 0.5 - (pf + qf) * 0.5).dot(df));
+                }
+            }
             JointKind::Tangent { radius } => {
                 // Whichever end is the flat face.
                 let (plane_point, normal, axis_point, axis) = match self.moving {
@@ -801,10 +819,11 @@ pub enum JointTool {
     Slot,
     Path,
     Cam,
+    Width,
 }
 
 impl JointTool {
-    pub const ALL: [JointTool; 15] = [
+    pub const ALL: [JointTool; 16] = [
         JointTool::Mate,
         JointTool::Align,
         JointTool::Angle,
@@ -820,6 +839,7 @@ impl JointTool {
         JointTool::Slot,
         JointTool::Path,
         JointTool::Cam,
+        JointTool::Width,
     ];
 
     /// Its tool and command id.
@@ -840,6 +860,7 @@ impl JointTool {
             JointTool::Slot => "asm.slot",
             JointTool::Path => "asm.path",
             JointTool::Cam => "asm.cam",
+            JointTool::Width => "asm.width",
         }
     }
 
@@ -901,6 +922,7 @@ impl JointTool {
             JointKind::Slot => JointTool::Slot,
             JointKind::Path => JointTool::Path,
             JointKind::Cam { .. } => JointTool::Cam,
+            JointKind::Width => JointTool::Width,
         })
     }
 
@@ -921,6 +943,7 @@ impl JointTool {
             JointTool::Slot => "Pin in a slot",
             JointTool::Path => "Along a path",
             JointTool::Cam => "Cam and follower",
+            JointTool::Width => "Centred in a slot",
         }
     }
 
@@ -941,6 +964,7 @@ impl JointTool {
             JointTool::Slot => "constraint-point-on-object",
             JointTool::Path => "additive-pipe",
             JointTool::Cam => "constraint-tangent",
+            JointTool::Width => "constraint-symmetric",
         }
     }
 
@@ -961,6 +985,7 @@ impl JointTool {
             JointTool::Slot => "Shift+S",
             JointTool::Path => "Shift+P",
             JointTool::Cam => "Shift+C",
+            JointTool::Width => "Shift+W",
         }
     }
 
@@ -990,6 +1015,7 @@ impl JointTool {
             JointTool::Slot => "Keep a point on a line: a pin sliding in a slot",
             JointTool::Path => "Keep a point on an edge of any shape: it runs along it",
             JointTool::Cam => "Keep a follower on a cam's face, a roller's radius off it",
+            JointTool::Width => "Centre a tab's two faces between a slot's two walls",
         }
     }
 
@@ -1006,7 +1032,13 @@ impl JointTool {
             JointTool::Slot => Takes::PointAndLine,
             JointTool::Path => Takes::PointAndEdge,
             JointTool::Cam => Takes::PointAndFace,
+            JointTool::Width => Takes::Flat,
         }
+    }
+
+    /// How many faces it takes on each body: two for a width.
+    pub fn picks_each(self) -> usize {
+        if self == JointTool::Width { 2 } else { 1 }
     }
 
     /// What to click next.
@@ -1100,6 +1132,7 @@ impl JointTool {
             JointTool::Perpendicular => JointKind::Perpendicular,
             JointTool::Distance => {
                 let probe = JointFeature {
+                    second: None,
                     shape: Vec::new(),
                     ends: [0.0; 2],
                     kind: JointKind::Distance { offset: 0.0 },
@@ -1118,6 +1151,7 @@ impl JointTool {
             JointTool::Slot => JointKind::Slot,
             JointTool::Path => JointKind::Path,
             JointTool::Cam => JointKind::Cam { radius },
+            JointTool::Width => JointKind::Width,
         }
     }
 }

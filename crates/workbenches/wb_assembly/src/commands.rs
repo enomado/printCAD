@@ -104,6 +104,7 @@ pub(crate) fn rejoined(
     }
     let at = |b: BodyId| -> Rigid { ctx.document.body_placement(b).into() };
     Ok(JointFeature {
+        second: None,
         shape: Vec::new(),
         ends: [0.0; 2],
         names: [0; 2],
@@ -301,6 +302,9 @@ pub fn register(context: &mut WorkbenchContext) {
                 ParamKind::Number,
                 "The follower's roller radius, mm; 0 for a point follower",
             ),
+            JointTool::Width => spec
+                .param("face2", ParamKind::Any, "The tab's other flat face")
+                .param("other_face2", ParamKind::Any, "The slot's other wall"),
             _ => spec,
         };
         context.register_command(spec.returns("the joint's id"));
@@ -730,7 +734,8 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 | JointKind::Ball
                 | JointKind::Universal
                 | JointKind::Slot
-                | JointKind::Path => {}
+                | JointKind::Path
+                | JointKind::Width => {}
                 JointKind::Cam { radius } => {
                     if let Some(v) = a.opt_number("radius")? {
                         *radius = v as f32;
@@ -1222,6 +1227,7 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
             .unwrap_or(0)
     };
     let joint = JointFeature {
+        second: None,
         shape: Vec::new(),
         ends: [0.0; 2],
         names: [name_of("face"), name_of("other_face")],
@@ -1231,6 +1237,11 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
         fixed,
     };
     let mut joint = joint;
+    if tool == JointTool::Width {
+        let second = anchor("face2", moving_body)?;
+        let other_second = anchor("other_face2", other)?;
+        joint.second = Some([second, other_second]);
+    }
     crate::shapes::take_shape(ctx.document, &mut joint);
     if matches!(joint.kind, JointKind::Path | JointKind::Cam { .. }) && joint.shape.is_empty() {
         return Err(CommandError::bad(
@@ -1292,7 +1303,8 @@ pub(crate) fn record_joint(
         | JointKind::Ball
         | JointKind::Universal
         | JointKind::Slot
-        | JointKind::Path => json!({}),
+        | JointKind::Path
+        | JointKind::Width => json!({}),
         JointKind::Cam { radius } => json!({"radius": radius}),
     };
     match before {
@@ -1339,6 +1351,10 @@ pub(crate) fn record_joint(
                 "name": node.name,
             }));
             args.extend(object(settings(&joint.kind)));
+            if let Some([tab, wall]) = joint.second {
+                args.insert("face2".into(), face(&tab, body, 0));
+                args.insert("other_face2".into(), face(&wall, joint.other_body, 0));
+            }
             ctx.record(command, args, json!(id.0.to_string()));
             if joint.ends != [0.0, 0.0] {
                 ctx.record(
@@ -1726,6 +1742,7 @@ pub(crate) fn set_grounded(
     ctx.document
         .add_feature_in_body(
             JointFeature {
+                second: None,
                 shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
@@ -1983,6 +2000,24 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// A tab centred in a slot: its middle on the slot's middle.
+    #[test]
+    fn a_tab_is_centred_in_its_slot() {
+        let mut doc = Document::new("t");
+        let (tab, slot) = (doc.create_body(None), doc.create_body(None));
+        let face = |x: f32, n: f32| json!({"point": [x, 0, 0], "normal": [n, 0, 0]});
+        call(
+            &mut doc,
+            "asm.width",
+            json!({"body": tab.0.to_string(), "face": face(0.0, -1.0), "face2": face(4.0, 1.0),
+                   "other": slot.0.to_string(), "other_face": face(10.0, 1.0),
+                   "other_face2": face(20.0, -1.0)}),
+        )
+        .unwrap();
+        let middle = doc.body_placement(tab).point([2.0, 0.0, 0.0]);
+        assert!((middle[0] - 15.0).abs() < 1e-3, "{middle:?}");
     }
 
     /// A point on a path runs along the edge it was put on; a follower on

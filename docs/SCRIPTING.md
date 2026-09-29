@@ -1286,6 +1286,17 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `radius` (number, optional): The follower's roller radius, mm; 0 for a point follower
 - Returns the joint's id
 
+`pc.asm.width`: Centre a tab's two faces between a slot's two walls.
+
+- `body` (id): The body that moves
+- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
+- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `name` (string, optional): Its name in the tree
+- `face2` (any): The tab's other flat face
+- `other_face2` (any): The slot's other wall
+- Returns the joint's id
+
 `pc.asm.couple`: Tie two joints' motions together: gears or a belt between two hinges, a rack and pinion or a screw between a hinge and a slider.
 
 - `driver` (id): The hinge or slider that leads

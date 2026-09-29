@@ -27,6 +27,7 @@ body it goes against. The first body moves; the second stays where it is.
 | Pin in a slot (Shift+S) | a point, then a line | sliding along the line, turning every way |
 | Along a path (Shift+P) | a point, then an edge of any shape | running along the edge, turning every way |
 | Cam and follower (Shift+C) | a point or a roller, then the cam's face | everything but staying on the face |
+| Centred in a slot (Shift+W) | a tab's two faces, then the slot's two walls | sliding along the slot, turning in it |
 
 An axis is a round face (a hole, a pin, a boss) or an edge: a circular
 edge gives its circle's axis, so a hole's rim works, and a straight edge

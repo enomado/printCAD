@@ -63,7 +63,7 @@ impl AssemblyWorkbench {
             header(ui, picking.kind.icon(), picking.kind.label());
             ui.add_space(SPACE_2);
             ui.label(
-                RichText::new(picking.kind.prompt(picking.first.is_some()))
+                RichText::new(picking.prompt())
                     .font(sans(FONT_SM))
                     .color(TEXT1),
             );
@@ -1435,6 +1435,11 @@ impl AssemblyWorkbench {
                 JointKind::Slot => note(
                     ui,
                     "The pin stays on the slot's line: it slides along it and turns every way.",
+                ),
+                JointKind::Width => note(
+                    ui,
+                    "The tab's two faces stay centred between the slot's two walls: it \
+                     slides along the slot and turns in it.",
                 ),
                 JointKind::Path => note(
                     ui,

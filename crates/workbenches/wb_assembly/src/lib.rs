@@ -53,6 +53,35 @@ struct Picking {
     first: Option<(BodyId, Anchor, Option<f32>, kernel_api::TopoName)>,
     /// The joint whose faces are picked again, when it is not a new one.
     repick: Option<FeatureId>,
+    /// A width's second face on the moving body, then its first on the
+    /// other, once picked.
+    tab: Option<Anchor>,
+    slot: Option<(BodyId, Anchor)>,
+}
+
+impl Picking {
+    fn new(kind: JointTool, repick: Option<FeatureId>) -> Self {
+        Self {
+            kind,
+            first: None,
+            repick,
+            tab: None,
+            slot: None,
+        }
+    }
+
+    /// What to click next.
+    fn prompt(&self) -> &'static str {
+        if self.kind.picks_each() == 2 {
+            return match (&self.first, &self.tab, &self.slot) {
+                (None, ..) => "Click one face of the tab, on the body to move",
+                (Some(_), None, _) => "Click the tab's other face",
+                (_, Some(_), None) => "Click one wall of the slot, on another body",
+                _ => "Click the slot's other wall",
+            };
+        }
+        self.kind.prompt(self.first.is_some())
+    }
 }
 
 /// An axis copies are turned about: a point on it, its direction, and
@@ -1300,6 +1329,58 @@ impl AssemblyWorkbench {
         let Some(picking) = self.picking.clone() else {
             return;
         };
+        if picking.kind.picks_each() == 2
+            && let Some((first_body, first_anchor, _, first_name)) = picking.first
+        {
+            match (picking.tab, picking.slot) {
+                (None, _) if body != first_body => {
+                    ctx.log_warn("Click the tab's other face, on the same body");
+                }
+                (None, _) => {
+                    self.picking = Some(Picking {
+                        tab: Some(anchor),
+                        ..picking
+                    });
+                }
+                (Some(_), None) if body == first_body || body == WORLD => {
+                    ctx.log_warn("Click a wall of the slot, on another body");
+                }
+                (Some(_), None) => {
+                    self.picking = Some(Picking {
+                        slot: Some((body, anchor)),
+                        ..picking
+                    });
+                }
+                (Some(_), Some((slot_body, _))) if body != slot_body => {
+                    ctx.log_warn("Click the slot's other wall, on the same body");
+                }
+                (Some(tab), Some((slot_body, wall))) => {
+                    self.picking = None;
+                    let kind = picking.kind.joint(
+                        &first_anchor,
+                        &ctx.document.body_placement(first_body).into(),
+                        &wall,
+                        &ctx.document.body_placement(slot_body).into(),
+                        0.0,
+                    );
+                    self.make_joint(
+                        ctx,
+                        first_body,
+                        JointFeature {
+                            names: [first_name, 0],
+                            kind,
+                            moving: first_anchor,
+                            other_body: slot_body,
+                            fixed: wall,
+                            ends: [0.0; 2],
+                            shape: Vec::new(),
+                            second: Some([tab, anchor]),
+                        },
+                    );
+                }
+            }
+            return;
+        }
         match picking.first {
             None if body == WORLD => {
                 ctx.log_warn("Pick the body to move first; the origin stays where it is");
@@ -1342,6 +1423,7 @@ impl AssemblyWorkbench {
                     ctx,
                     first_body,
                     JointFeature {
+                        second: None,
                         shape: Vec::new(),
                         ends: [0.0; 2],
                         names: [first_name, name],
@@ -1426,11 +1508,7 @@ impl AssemblyWorkbench {
     pub(crate) fn start_repick(&mut self, joint: FeatureId, tool: JointTool) {
         self.task = None;
         self.seen = None;
-        self.picking = Some(Picking {
-            kind: tool,
-            first: None,
-            repick: Some(joint),
-        });
+        self.picking = Some(Picking::new(tool, Some(joint)));
     }
 
     /// Add a joint, solve, and open its settings.
@@ -1973,11 +2051,7 @@ impl Workbench for AssemblyWorkbench {
                 let kind = JointTool::of_command(id).unwrap_or(JointTool::Mate);
                 self.task = None;
                 self.seen = None;
-                self.picking = Some(Picking {
-                    kind,
-                    first: None,
-                    repick: None,
-                });
+                self.picking = Some(Picking::new(kind, None));
                 // A face already selected is the first pick.
                 self.take_pick(ctx);
             }
@@ -2411,7 +2485,7 @@ impl Workbench for AssemblyWorkbench {
             tool: Some(ToolHint {
                 icon: picking.kind.icon(),
                 name: picking.kind.label().to_string(),
-                prompt: picking.kind.prompt(picking.first.is_some()).to_string(),
+                prompt: picking.prompt().to_string(),
                 keys: vec![("Esc".to_string(), "cancel")],
             }),
             ..ViewportHud::default()
@@ -2619,6 +2693,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                second: None,
                 shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
@@ -2659,6 +2734,7 @@ mod tests {
             &mut ctx,
             part,
             JointFeature {
+                second: None,
                 shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
@@ -2697,6 +2773,8 @@ mod tests {
             kind: JointTool::Mate,
             first: None,
             repick: None,
+            tab: None,
+            slot: None,
         });
         ctx.hovered_body_id = Some(base.0);
         let mut faded = wb.faded_bodies(&ctx);
@@ -2716,6 +2794,8 @@ mod tests {
                 0,
             )),
             repick: None,
+            tab: None,
+            slot: None,
         });
         assert_eq!(wb.faded_bodies(&ctx), vec![third]);
     }
@@ -2936,6 +3016,7 @@ mod tests {
         };
         doc.add_feature_in_body(
             JointFeature {
+                second: None,
                 shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
@@ -3340,6 +3421,7 @@ mod tests {
         let slider = doc
             .add_feature_in_body(
                 JointFeature {
+                    second: None,
                     shape: Vec::new(),
                     ends: [0.0; 2],
                     names: [0; 2],
@@ -3423,6 +3505,7 @@ mod tests {
         let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
         doc.add_feature_in_body(
             JointFeature {
+                second: None,
                 shape: Vec::new(),
                 ends: [0.0; 2],
                 names: [0; 2],
@@ -3524,6 +3607,7 @@ mod tests {
         let hinge = doc
             .add_feature_in_body(
                 JointFeature {
+                    second: None,
                     shape: Vec::new(),
                     ends: [0.0; 2],
                     names: [0; 2],

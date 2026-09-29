@@ -127,6 +127,7 @@ pub fn holds(document: &Document) -> Vec<Joint> {
                     name: name.clone(),
                     body: m.body,
                     feature: JointFeature {
+                        second: None,
                         shape: Vec::new(),
                         ends: [0.0; 2],
                         names: [0; 2],
