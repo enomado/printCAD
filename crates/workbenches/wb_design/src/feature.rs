@@ -1084,7 +1084,7 @@ pub struct BorrowedRef {
 
 /// A solid-modeling feature in a body's linear history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum PartFeature {
+pub enum DesignFeature {
     /// Start the body from a copy of another body's solid, as that body
     /// is built now.
     Clone { source: BodyId },
@@ -1533,16 +1533,16 @@ fn default_true() -> bool {
     true
 }
 
-impl PartFeature {
+impl DesignFeature {
     /// The sketch this feature consumes, when it is sketch-based.
     pub fn sketch(&self) -> Option<FeatureId> {
         match self {
-            PartFeature::Pad { sketch, .. } | PartFeature::Pocket { sketch, .. } => *sketch,
-            PartFeature::Revolution { sketch, .. }
-            | PartFeature::Groove { sketch, .. }
-            | PartFeature::Helix { sketch, .. }
-            | PartFeature::Hole { sketch, .. } => Some(*sketch),
-            PartFeature::Pipe { profile, .. } => Some(*profile),
+            DesignFeature::Pad { sketch, .. } | DesignFeature::Pocket { sketch, .. } => *sketch,
+            DesignFeature::Revolution { sketch, .. }
+            | DesignFeature::Groove { sketch, .. }
+            | DesignFeature::Helix { sketch, .. }
+            | DesignFeature::Hole { sketch, .. } => Some(*sketch),
+            DesignFeature::Pipe { profile, .. } => Some(*profile),
             _ => None,
         }
     }
@@ -1550,10 +1550,10 @@ impl PartFeature {
     /// Every sketch referenced by this feature.
     pub fn sketches(&self) -> Vec<FeatureId> {
         match self {
-            PartFeature::Loft { sections, .. } => {
+            DesignFeature::Loft { sections, .. } => {
                 sections.iter().filter_map(LoftSection::feature).collect()
             }
-            PartFeature::Pipe {
+            DesignFeature::Pipe {
                 profile,
                 spine,
                 orientation,
@@ -1574,13 +1574,13 @@ impl PartFeature {
     pub fn borrows(&self) -> Vec<FeatureId> {
         let mut borrows = Vec::new();
         match self {
-            PartFeature::Pad {
+            DesignFeature::Pad {
                 mode,
                 mode2,
                 direction,
                 ..
             }
-            | PartFeature::Pocket {
+            | DesignFeature::Pocket {
                 mode,
                 mode2,
                 direction,
@@ -1595,9 +1595,9 @@ impl PartFeature {
                     borrows.push(r.borrow);
                 }
             }
-            PartFeature::Revolution { axis, .. }
-            | PartFeature::Groove { axis, .. }
-            | PartFeature::Helix { axis, .. } => {
+            DesignFeature::Revolution { axis, .. }
+            | DesignFeature::Groove { axis, .. }
+            | DesignFeature::Helix { axis, .. } => {
                 if let RevolveAxis::Borrowed(r) = axis {
                     borrows.push(r.borrow);
                 }
@@ -1611,60 +1611,60 @@ impl PartFeature {
     /// Earlier part features this feature re-applies (patterns/mirror).
     pub fn originals(&self) -> Option<&[FeatureId]> {
         match self {
-            PartFeature::Mirrored { originals, .. }
-            | PartFeature::LinearPattern { originals, .. }
-            | PartFeature::PolarPattern { originals, .. }
-            | PartFeature::MultiTransform { originals, .. } => Some(originals),
+            DesignFeature::Mirrored { originals, .. }
+            | DesignFeature::LinearPattern { originals, .. }
+            | DesignFeature::PolarPattern { originals, .. }
+            | DesignFeature::MultiTransform { originals, .. } => Some(originals),
             _ => None,
         }
     }
 
     pub fn kind_label(&self) -> &'static str {
         match self {
-            PartFeature::Pad { .. } => "Pad",
-            PartFeature::Pocket { .. } => "Pocket",
-            PartFeature::Revolution { .. } => "Revolution",
-            PartFeature::Groove { .. } => "Groove",
-            PartFeature::Loft { subtractive, .. } => {
+            DesignFeature::Pad { .. } => "Pad",
+            DesignFeature::Pocket { .. } => "Pocket",
+            DesignFeature::Revolution { .. } => "Revolution",
+            DesignFeature::Groove { .. } => "Groove",
+            DesignFeature::Loft { subtractive, .. } => {
                 if *subtractive {
                     "Subtractive Loft"
                 } else {
                     "Additive Loft"
                 }
             }
-            PartFeature::Pipe { subtractive, .. } => {
+            DesignFeature::Pipe { subtractive, .. } => {
                 if *subtractive {
                     "Subtractive Pipe"
                 } else {
                     "Additive Pipe"
                 }
             }
-            PartFeature::Helix { subtractive, .. } => {
+            DesignFeature::Helix { subtractive, .. } => {
                 if *subtractive {
                     "Subtractive Helix"
                 } else {
                     "Additive Helix"
                 }
             }
-            PartFeature::Primitive { subtractive, .. } => {
+            DesignFeature::Primitive { subtractive, .. } => {
                 if *subtractive {
                     "Subtractive Primitive"
                 } else {
                     "Primitive"
                 }
             }
-            PartFeature::Hole { .. } => "Hole",
-            PartFeature::Fillet { .. } => "Fillet",
-            PartFeature::Chamfer { .. } => "Chamfer",
-            PartFeature::Draft { .. } => "Draft",
-            PartFeature::Thickness { .. } => "Thickness",
-            PartFeature::Mirrored { .. } => "Mirrored",
-            PartFeature::LinearPattern { .. } => "Linear Pattern",
-            PartFeature::PolarPattern { .. } => "Polar Pattern",
-            PartFeature::MultiTransform { .. } => "Multi Transform",
-            PartFeature::BodyBoolean { .. } => "Boolean",
-            PartFeature::Borrow { .. } => "Borrowed geometry",
-            PartFeature::Clone { .. } => "Clone",
+            DesignFeature::Hole { .. } => "Hole",
+            DesignFeature::Fillet { .. } => "Fillet",
+            DesignFeature::Chamfer { .. } => "Chamfer",
+            DesignFeature::Draft { .. } => "Draft",
+            DesignFeature::Thickness { .. } => "Thickness",
+            DesignFeature::Mirrored { .. } => "Mirrored",
+            DesignFeature::LinearPattern { .. } => "Linear Pattern",
+            DesignFeature::PolarPattern { .. } => "Polar Pattern",
+            DesignFeature::MultiTransform { .. } => "Multi Transform",
+            DesignFeature::BodyBoolean { .. } => "Boolean",
+            DesignFeature::Borrow { .. } => "Borrowed geometry",
+            DesignFeature::Clone { .. } => "Clone",
         }
     }
 
@@ -1672,32 +1672,32 @@ impl PartFeature {
     pub fn icon(&self) -> &'static str {
         use kernel_api::PrimitiveKind as P;
         match self {
-            PartFeature::Pad { .. } => "pad",
-            PartFeature::Pocket { .. } => "pocket",
-            PartFeature::Revolution { .. } => "revolution",
-            PartFeature::Groove { .. } => "groove",
-            PartFeature::Loft { subtractive, .. } => {
+            DesignFeature::Pad { .. } => "pad",
+            DesignFeature::Pocket { .. } => "pocket",
+            DesignFeature::Revolution { .. } => "revolution",
+            DesignFeature::Groove { .. } => "groove",
+            DesignFeature::Loft { subtractive, .. } => {
                 if *subtractive {
                     "subtractive-loft"
                 } else {
                     "additive-loft"
                 }
             }
-            PartFeature::Pipe { subtractive, .. } => {
+            DesignFeature::Pipe { subtractive, .. } => {
                 if *subtractive {
                     "subtractive-pipe"
                 } else {
                     "additive-pipe"
                 }
             }
-            PartFeature::Helix { subtractive, .. } => {
+            DesignFeature::Helix { subtractive, .. } => {
                 if *subtractive {
                     "subtractive-helix"
                 } else {
                     "additive-helix"
                 }
             }
-            PartFeature::Primitive {
+            DesignFeature::Primitive {
                 kind, subtractive, ..
             } => {
                 let shape = match kind {
@@ -1712,18 +1712,18 @@ impl PartFeature {
                 };
                 primitive_icon(shape, *subtractive)
             }
-            PartFeature::Hole { .. } => "hole",
-            PartFeature::Fillet { .. } => "fillet",
-            PartFeature::Chamfer { .. } => "chamfer",
-            PartFeature::Draft { .. } => "draft",
-            PartFeature::Thickness { .. } => "thickness",
-            PartFeature::Mirrored { .. } => "mirrored",
-            PartFeature::LinearPattern { .. } => "linear-pattern",
-            PartFeature::PolarPattern { .. } => "polar-pattern",
-            PartFeature::MultiTransform { .. } => "multi-transform",
-            PartFeature::BodyBoolean { .. } => "boolean",
-            PartFeature::Borrow { .. } => "clone-geometry",
-            PartFeature::Clone { .. } => "clone",
+            DesignFeature::Hole { .. } => "hole",
+            DesignFeature::Fillet { .. } => "fillet",
+            DesignFeature::Chamfer { .. } => "chamfer",
+            DesignFeature::Draft { .. } => "draft",
+            DesignFeature::Thickness { .. } => "thickness",
+            DesignFeature::Mirrored { .. } => "mirrored",
+            DesignFeature::LinearPattern { .. } => "linear-pattern",
+            DesignFeature::PolarPattern { .. } => "polar-pattern",
+            DesignFeature::MultiTransform { .. } => "multi-transform",
+            DesignFeature::BodyBoolean { .. } => "boolean",
+            DesignFeature::Borrow { .. } => "clone-geometry",
+            DesignFeature::Clone { .. } => "clone",
         }
     }
 
@@ -1731,20 +1731,20 @@ impl PartFeature {
     /// leaves behind.
     pub fn refine(&self) -> bool {
         match self {
-            PartFeature::Pad { refine, .. }
-            | PartFeature::Pocket { refine, .. }
-            | PartFeature::Revolution { refine, .. }
-            | PartFeature::Groove { refine, .. }
-            | PartFeature::Loft { refine, .. }
-            | PartFeature::Pipe { refine, .. }
-            | PartFeature::Helix { refine, .. }
-            | PartFeature::Primitive { refine, .. }
-            | PartFeature::Hole { refine, .. }
-            | PartFeature::Mirrored { refine, .. }
-            | PartFeature::LinearPattern { refine, .. }
-            | PartFeature::PolarPattern { refine, .. }
-            | PartFeature::MultiTransform { refine, .. }
-            | PartFeature::BodyBoolean { refine, .. } => *refine,
+            DesignFeature::Pad { refine, .. }
+            | DesignFeature::Pocket { refine, .. }
+            | DesignFeature::Revolution { refine, .. }
+            | DesignFeature::Groove { refine, .. }
+            | DesignFeature::Loft { refine, .. }
+            | DesignFeature::Pipe { refine, .. }
+            | DesignFeature::Helix { refine, .. }
+            | DesignFeature::Primitive { refine, .. }
+            | DesignFeature::Hole { refine, .. }
+            | DesignFeature::Mirrored { refine, .. }
+            | DesignFeature::LinearPattern { refine, .. }
+            | DesignFeature::PolarPattern { refine, .. }
+            | DesignFeature::MultiTransform { refine, .. }
+            | DesignFeature::BodyBoolean { refine, .. } => *refine,
             _ => false,
         }
     }
@@ -1753,20 +1753,20 @@ impl PartFeature {
     /// fuses nor cuts has nothing to refine and is left as it is.
     pub fn set_refine(&mut self, on: bool) {
         match self {
-            PartFeature::Pad { refine, .. }
-            | PartFeature::Pocket { refine, .. }
-            | PartFeature::Revolution { refine, .. }
-            | PartFeature::Groove { refine, .. }
-            | PartFeature::Loft { refine, .. }
-            | PartFeature::Pipe { refine, .. }
-            | PartFeature::Helix { refine, .. }
-            | PartFeature::Primitive { refine, .. }
-            | PartFeature::Hole { refine, .. }
-            | PartFeature::Mirrored { refine, .. }
-            | PartFeature::LinearPattern { refine, .. }
-            | PartFeature::PolarPattern { refine, .. }
-            | PartFeature::MultiTransform { refine, .. }
-            | PartFeature::BodyBoolean { refine, .. } => *refine = on,
+            DesignFeature::Pad { refine, .. }
+            | DesignFeature::Pocket { refine, .. }
+            | DesignFeature::Revolution { refine, .. }
+            | DesignFeature::Groove { refine, .. }
+            | DesignFeature::Loft { refine, .. }
+            | DesignFeature::Pipe { refine, .. }
+            | DesignFeature::Helix { refine, .. }
+            | DesignFeature::Primitive { refine, .. }
+            | DesignFeature::Hole { refine, .. }
+            | DesignFeature::Mirrored { refine, .. }
+            | DesignFeature::LinearPattern { refine, .. }
+            | DesignFeature::PolarPattern { refine, .. }
+            | DesignFeature::MultiTransform { refine, .. }
+            | DesignFeature::BodyBoolean { refine, .. } => *refine = on,
             _ => {}
         }
     }
@@ -1781,13 +1781,13 @@ impl PartFeature {
     /// True when this feature removes material (must not be a body's first).
     pub fn is_subtractive(&self) -> bool {
         match self {
-            PartFeature::Pocket { .. } | PartFeature::Groove { .. } | PartFeature::Hole { .. } => {
-                true
-            }
-            PartFeature::Loft { subtractive, .. }
-            | PartFeature::Pipe { subtractive, .. }
-            | PartFeature::Helix { subtractive, .. }
-            | PartFeature::Primitive { subtractive, .. } => *subtractive,
+            DesignFeature::Pocket { .. }
+            | DesignFeature::Groove { .. }
+            | DesignFeature::Hole { .. } => true,
+            DesignFeature::Loft { subtractive, .. }
+            | DesignFeature::Pipe { subtractive, .. }
+            | DesignFeature::Helix { subtractive, .. }
+            | DesignFeature::Primitive { subtractive, .. } => *subtractive,
             _ => false,
         }
     }
@@ -1797,20 +1797,20 @@ impl PartFeature {
     pub fn is_modifier(&self) -> bool {
         matches!(
             self,
-            PartFeature::Fillet { .. }
-                | PartFeature::Chamfer { .. }
-                | PartFeature::Draft { .. }
-                | PartFeature::Thickness { .. }
-                | PartFeature::Mirrored { .. }
-                | PartFeature::LinearPattern { .. }
-                | PartFeature::PolarPattern { .. }
-                | PartFeature::MultiTransform { .. }
-                | PartFeature::BodyBoolean { .. }
+            DesignFeature::Fillet { .. }
+                | DesignFeature::Chamfer { .. }
+                | DesignFeature::Draft { .. }
+                | DesignFeature::Thickness { .. }
+                | DesignFeature::Mirrored { .. }
+                | DesignFeature::LinearPattern { .. }
+                | DesignFeature::PolarPattern { .. }
+                | DesignFeature::MultiTransform { .. }
+                | DesignFeature::BodyBoolean { .. }
         )
     }
 }
 
-impl WorkbenchFeature for PartFeature {
+impl WorkbenchFeature for DesignFeature {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from("wb.design")
     }
@@ -1830,15 +1830,15 @@ impl WorkbenchFeature for PartFeature {
         if let Some(originals) = self.originals() {
             deps.extend_from_slice(originals);
         }
-        if let PartFeature::Revolution {
+        if let DesignFeature::Revolution {
             axis: RevolveAxis::Datum(datum),
             ..
         }
-        | PartFeature::Groove {
+        | DesignFeature::Groove {
             axis: RevolveAxis::Datum(datum),
             ..
         }
-        | PartFeature::Helix {
+        | DesignFeature::Helix {
             axis: RevolveAxis::Datum(datum),
             ..
         } = self
@@ -1846,10 +1846,11 @@ impl WorkbenchFeature for PartFeature {
             deps.push(*datum);
         }
         let axes: Vec<&PatternAxis> = match self {
-            PartFeature::LinearPattern { axis, .. } | PartFeature::PolarPattern { axis, .. } => {
+            DesignFeature::LinearPattern { axis, .. }
+            | DesignFeature::PolarPattern { axis, .. } => {
                 vec![axis]
             }
-            PartFeature::MultiTransform { steps, .. } => steps
+            DesignFeature::MultiTransform { steps, .. } => steps
                 .iter()
                 .filter_map(|step| match step {
                     TransformStep::Linear { axis, .. } | TransformStep::Polar { axis, .. } => {
@@ -1865,13 +1866,13 @@ impl WorkbenchFeature for PartFeature {
                 deps.push(reference);
             }
         }
-        if let PartFeature::Pad {
+        if let DesignFeature::Pad {
             mode,
             mode2,
             direction,
             ..
         }
-        | PartFeature::Pocket {
+        | DesignFeature::Pocket {
             mode,
             mode2,
             direction,
@@ -1891,7 +1892,7 @@ impl WorkbenchFeature for PartFeature {
                 }
             }
         }
-        if let PartFeature::Draft {
+        if let DesignFeature::Draft {
             neutral_plane,
             pull,
             ..
@@ -1912,8 +1913,8 @@ impl WorkbenchFeature for PartFeature {
             }
         }
         let mirrors: Vec<&MirrorPlane> = match self {
-            PartFeature::Mirrored { plane, .. } => vec![plane],
-            PartFeature::MultiTransform { steps, .. } => steps
+            DesignFeature::Mirrored { plane, .. } => vec![plane],
+            DesignFeature::MultiTransform { steps, .. } => steps
                 .iter()
                 .filter_map(|step| match step {
                     TransformStep::Mirror { plane } => Some(plane),
@@ -1927,7 +1928,7 @@ impl WorkbenchFeature for PartFeature {
                 deps.push(reference);
             }
         }
-        if let PartFeature::Primitive {
+        if let DesignFeature::Primitive {
             attached: Some(attached),
             ..
         } = self
@@ -1944,7 +1945,7 @@ impl WorkbenchFeature for PartFeature {
             }
         }
         // A borrowed sketch that follows its source changes with it.
-        if let PartFeature::Borrow {
+        if let DesignFeature::Borrow {
             source: BorrowSource::Sketch(sketch),
             frozen: None,
             ..
@@ -2058,10 +2059,10 @@ mod tests {
         let old = serde_json::json!({
             "Pad": { "sketch": FeatureId::new(), "length": 5.0, "reversed": false }
         });
-        let feature = PartFeature::from_json(&old).unwrap();
+        let feature = DesignFeature::from_json(&old).unwrap();
         assert!(matches!(
             feature,
-            PartFeature::Pad {
+            DesignFeature::Pad {
                 symmetric: false,
                 mode: ExtrudeMode::Dimension,
                 taper_deg: t,
@@ -2081,10 +2082,10 @@ mod tests {
                 "through_all": true
             }
         });
-        let feature = PartFeature::from_json(&old).unwrap();
+        let feature = DesignFeature::from_json(&old).unwrap();
         assert!(matches!(
             feature,
-            PartFeature::Pocket {
+            DesignFeature::Pocket {
                 symmetric: false,
                 through_all: true,
                 mode: ExtrudeMode::Dimension,
@@ -2099,9 +2100,9 @@ mod tests {
         let old = serde_json::json!({
             "Pad": { "sketch": sketch, "length": 5.0, "reversed": false, "mode": "TwoLengths" }
         });
-        let feature = PartFeature::from_json(&old).unwrap();
+        let feature = DesignFeature::from_json(&old).unwrap();
         assert_eq!(feature.sketch(), Some(sketch));
-        let PartFeature::Pad {
+        let DesignFeature::Pad {
             profile_face,
             direction,
             up_to_shape,
@@ -2136,7 +2137,7 @@ mod tests {
         let old = serde_json::json!({
             "Revolution": { "sketch": sketch, "angle_deg": 180.0, "axis": {"Datum": datum} }
         });
-        let feature = PartFeature::from_json(&old).unwrap();
+        let feature = DesignFeature::from_json(&old).unwrap();
         assert_eq!(feature.dependencies(), vec![sketch, datum]);
     }
 
@@ -2145,10 +2146,10 @@ mod tests {
         let old = serde_json::json!({
             "Revolution": { "sketch": FeatureId::new(), "angle_deg": 180.0 }
         });
-        let feature = PartFeature::from_json(&old).unwrap();
+        let feature = DesignFeature::from_json(&old).unwrap();
         assert!(matches!(
             feature,
-            PartFeature::Revolution {
+            DesignFeature::Revolution {
                 axis: RevolveAxis::SketchY,
                 midplane: false,
                 second_angle_deg: None,
@@ -2173,8 +2174,8 @@ mod tests {
             (true, PipeOrientation::Frenet),
             (false, PipeOrientation::Standard),
         ] {
-            let feature = PartFeature::from_json(&old(frenet)).unwrap();
-            let PartFeature::Pipe {
+            let feature = DesignFeature::from_json(&old(frenet)).unwrap();
+            let DesignFeature::Pipe {
                 orientation: read,
                 corner,
                 sections,
@@ -2187,14 +2188,14 @@ mod tests {
             assert_eq!(*corner, PipeCorner::Transformed);
             assert!(sections.is_empty());
             // Written again, it carries the orientation and reads back.
-            let again = PartFeature::from_json(&feature.to_json()).unwrap();
+            let again = DesignFeature::from_json(&feature.to_json()).unwrap();
             assert_eq!(again, feature);
         }
     }
 
     #[test]
     fn a_pipe_orientation_round_trips() {
-        let feature = PartFeature::Pipe {
+        let feature = DesignFeature::Pipe {
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
@@ -2210,7 +2211,10 @@ mod tests {
             sections: vec![FeatureId::new()],
             subtractive: true,
         };
-        assert_eq!(PartFeature::from_json(&feature.to_json()).unwrap(), feature);
+        assert_eq!(
+            DesignFeature::from_json(&feature.to_json()).unwrap(),
+            feature
+        );
     }
 
     #[test]
@@ -2222,10 +2226,10 @@ mod tests {
                 "cone_angle_deg": 0.0, "reversed": false, "subtractive": true
             }
         });
-        let feature = PartFeature::from_json(&old).unwrap();
+        let feature = DesignFeature::from_json(&old).unwrap();
         assert!(matches!(
             feature,
-            PartFeature::Helix {
+            DesignFeature::Helix {
                 keep_inside: false,
                 growth,
                 ..
@@ -2237,7 +2241,7 @@ mod tests {
     fn dependencies_cover_sketches_and_originals() {
         let a = FeatureId::new();
         let b = FeatureId::new();
-        let pipe = PartFeature::Pipe {
+        let pipe = DesignFeature::Pipe {
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
@@ -2252,7 +2256,7 @@ mod tests {
         assert_eq!(pipe.dependencies(), vec![a, b]);
 
         let (c, d) = (FeatureId::new(), FeatureId::new());
-        let guided = PartFeature::Pipe {
+        let guided = DesignFeature::Pipe {
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
@@ -2266,7 +2270,7 @@ mod tests {
         };
         assert_eq!(guided.dependencies(), vec![a, b, c, d]);
 
-        let pattern = PartFeature::LinearPattern {
+        let pattern = DesignFeature::LinearPattern {
             refine: false,
             originals: vec![a],
             axis: PatternAxis::X,
@@ -2283,16 +2287,16 @@ mod tests {
     fn an_old_fillet_or_chamfer_takes_its_edges_alone() {
         let fillet = serde_json::json!({ "Fillet": { "radius": 1.0 } });
         assert!(matches!(
-            PartFeature::from_json(&fillet).unwrap(),
-            PartFeature::Fillet {
+            DesignFeature::from_json(&fillet).unwrap(),
+            DesignFeature::Fillet {
                 follow_tangent: false,
                 ..
             }
         ));
         let chamfer = serde_json::json!({ "Chamfer": { "size": 1.0 } });
         assert!(matches!(
-            PartFeature::from_json(&chamfer).unwrap(),
-            PartFeature::Chamfer {
+            DesignFeature::from_json(&chamfer).unwrap(),
+            DesignFeature::Chamfer {
                 follow_tangent: false,
                 ..
             }
@@ -2308,7 +2312,7 @@ mod tests {
                 "length": 10.0, "occurrences": 3
             }
         });
-        let linear = PartFeature::from_json(&linear).unwrap();
+        let linear = DesignFeature::from_json(&linear).unwrap();
         assert_eq!(linear.dependencies(), vec![original, datum]);
         let polar = serde_json::json!({
             "PolarPattern": {
@@ -2317,11 +2321,11 @@ mod tests {
                 "angle_deg": 90.0, "occurrences": 3
             }
         });
-        let polar = PartFeature::from_json(&polar).unwrap();
+        let polar = DesignFeature::from_json(&polar).unwrap();
         assert_eq!(polar.dependencies(), vec![original, sketch]);
         assert!(matches!(
             polar,
-            PartFeature::PolarPattern { step_mode: false, ref angles, .. } if angles.is_empty()
+            DesignFeature::PolarPattern { step_mode: false, ref angles, .. } if angles.is_empty()
         ));
     }
 }

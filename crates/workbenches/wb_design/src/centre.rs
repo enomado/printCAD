@@ -15,7 +15,7 @@ use core_document::{
 use kernel_api::{CentreLine, FaceProbe};
 use serde_json::{Value, json};
 
-use crate::PartDesignWorkbench;
+use crate::DesignWorkbench;
 
 /// What the path is held to, in millimetres, unless the command says.
 pub(crate) const TOLERANCE_MM: f64 = 0.02;
@@ -114,7 +114,7 @@ fn length_text(line: &CentreLine) -> String {
     format!("{:.2} mm", line.length)
 }
 
-impl PartDesignWorkbench {
+impl DesignWorkbench {
     /// Start the tool; a face already selected is its first pick.
     pub(crate) fn start_centre_line(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.centre = Some(CentreTask::default());

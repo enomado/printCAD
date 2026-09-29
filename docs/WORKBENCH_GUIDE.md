@@ -5,7 +5,7 @@ application never refers to a workbench by name. Everything a workbench
 shows, draws, picks, rebuilds or asks for goes through this trait and the
 workbench registry (`DocumentService`).
 
-Design (`crates/workbenches/wb_part`) and the Sketcher
+Design (`crates/workbenches/wb_design`) and the Sketcher
 (`crates/workbenches/wb_sketch`) are complete examples.
 
 ## 1. Create the crate
@@ -33,7 +33,7 @@ sizes from `ui_kit::tokens`, never as literal values.
 Register the workbench in `crates/workbenches/src/lib.rs`:
 
 ```rust
-core_document::define_workbenches!(SketchWorkbench, PartDesignWorkbench, MyWorkbench);
+core_document::define_workbenches!(SketchWorkbench, DesignWorkbench, MyWorkbench);
 ```
 
 The order matters. A new document opens in the first workbench that is not

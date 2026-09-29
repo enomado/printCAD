@@ -1,5 +1,5 @@
 [package]
-name = "wb_part"
+name = "wb_design"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true

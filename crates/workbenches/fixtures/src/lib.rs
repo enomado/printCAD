@@ -3,7 +3,7 @@
 //! this crate composes them on its behalf.
 
 use core_document::{BodyId, Document, FeatureId};
-use wb_part::{ExtrudeMode, PartFeature};
+use wb_design::{DesignFeature, ExtrudeMode};
 use wb_sketch::SketchFeature;
 use wb_sketch::sketch::{
     Circle, Constraint, ConstraintKind, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
@@ -86,7 +86,7 @@ pub fn open_sketch_scene(
         return Ok(SceneHandles { feature: sketch_id });
     }
 
-    let pad = PartFeature::Pad {
+    let pad = DesignFeature::Pad {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -124,7 +124,7 @@ pub fn open_sketch_scene(
     let top_id = document
         .add_feature_in_body(SketchFeature::new(top, plane), "sketch_1".into(), body)
         .map_err(|err| format!("face sketch: {err}"))?;
-    let pocket = PartFeature::Pocket {
+    let pocket = DesignFeature::Pocket {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,

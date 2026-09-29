@@ -41,7 +41,7 @@ fn benches() -> Benches {
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
         .unwrap();
     registry
-        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
         .unwrap();
     Benches {
         registry,
@@ -110,7 +110,7 @@ fn padded_tube(host: &mut Benches) -> core_document::BodyId {
         &[],
     );
     let body = host.document.bodies()[0].id;
-    let ops = wb_part::body_build_ops(&host.document, body).unwrap().ops;
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
     let built = kernel_ogeom::OgeomKernel::new()
         .execute_solid_chain(&ops, &kernel_api::TessellationSettings::default())
         .unwrap();
@@ -147,7 +147,7 @@ fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
 
     let mut host = benches();
     let body = padded_tube(&mut host);
-    let mut bench = wb_part::PartDesignWorkbench::default();
+    let mut bench = wb_design::DesignWorkbench::default();
     // Looking down Z from above, a millimetre a fiftieth of the viewport.
     let view_proj = [
         [0.02, 0.0, 0.0, 0.0],

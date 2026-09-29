@@ -8,35 +8,35 @@ use core_document::{
 };
 use serde_json::{Map, Value, json};
 
-use crate::feature::{FacePick, PartFeature};
+use crate::feature::{DesignFeature, FacePick};
 
 /// The key of a feature's profile.
 pub(crate) const PROFILE: &str = "profile";
 
 /// Where a feature's profile is kept: the data fields that hold it, and
 /// whether a flat face of the solid can stand in for its sketch.
-fn profile_fields(feature: &PartFeature) -> Option<(&'static [&'static str], bool)> {
+fn profile_fields(feature: &DesignFeature) -> Option<(&'static [&'static str], bool)> {
     match feature {
-        PartFeature::Pad { .. } | PartFeature::Pocket { .. } => {
+        DesignFeature::Pad { .. } | DesignFeature::Pocket { .. } => {
             Some((&["sketch", "profile_face"], true))
         }
-        PartFeature::Revolution { .. } | PartFeature::Groove { .. } | PartFeature::Helix { .. } => {
-            Some((&["sketch"], false))
-        }
-        PartFeature::Pipe { .. } => Some((&["profile"], false)),
+        DesignFeature::Revolution { .. }
+        | DesignFeature::Groove { .. }
+        | DesignFeature::Helix { .. } => Some((&["sketch"], false)),
+        DesignFeature::Pipe { .. } => Some((&["profile"], false)),
         _ => None,
     }
 }
 
 /// The profile of `feature`: the sketch it reads, or the face standing in.
-fn profile_of(feature: &PartFeature) -> (Option<FeatureId>, Option<FacePick>) {
+fn profile_of(feature: &DesignFeature) -> (Option<FeatureId>, Option<FacePick>) {
     match feature {
-        PartFeature::Pad {
+        DesignFeature::Pad {
             sketch,
             profile_face,
             ..
         }
-        | PartFeature::Pocket {
+        | DesignFeature::Pocket {
             sketch,
             profile_face,
             ..
@@ -46,15 +46,15 @@ fn profile_of(feature: &PartFeature) -> (Option<FeatureId>, Option<FacePick>) {
 }
 
 /// Point `feature`'s profile at `sketch`, or at `face` in its place.
-fn set_profile(feature: &mut PartFeature, to: Result<FeatureId, FacePick>) -> Result<(), String> {
+fn set_profile(feature: &mut DesignFeature, to: Result<FeatureId, FacePick>) -> Result<(), String> {
     match (feature, to) {
         (
-            PartFeature::Pad {
+            DesignFeature::Pad {
                 sketch,
                 profile_face,
                 ..
             }
-            | PartFeature::Pocket {
+            | DesignFeature::Pocket {
                 sketch,
                 profile_face,
                 ..
@@ -67,12 +67,12 @@ fn set_profile(feature: &mut PartFeature, to: Result<FeatureId, FacePick>) -> Re
             };
         }
         (
-            PartFeature::Revolution { sketch, .. }
-            | PartFeature::Groove { sketch, .. }
-            | PartFeature::Helix { sketch, .. },
+            DesignFeature::Revolution { sketch, .. }
+            | DesignFeature::Groove { sketch, .. }
+            | DesignFeature::Helix { sketch, .. },
             Ok(id),
         ) => *sketch = id,
-        (PartFeature::Pipe { profile, .. }, Ok(id)) => *profile = id,
+        (DesignFeature::Pipe { profile, .. }, Ok(id)) => *profile = id,
         (_, Err(_)) => return Err("only a pad or a pocket takes a face as its profile".into()),
         _ => return Err("this feature has no profile to change".into()),
     }
@@ -85,7 +85,7 @@ pub(crate) fn references(
     id: FeatureId,
     node: &FeatureNode,
 ) -> Vec<FeatureReference> {
-    let (Ok(feature), Some(body)) = (PartFeature::from_json(&node.data), node.body) else {
+    let (Ok(feature), Some(body)) = (DesignFeature::from_json(&node.data), node.body) else {
         return Vec::new();
     };
     let Some((fields, takes_face)) = profile_fields(&feature) else {
@@ -133,7 +133,7 @@ pub(crate) fn set_reference(
         .cloned()
         .ok_or("the feature is gone")?;
     let body = node.body.ok_or("the feature belongs to no body")?;
-    let mut feature = PartFeature::from_json(&node.data).map_err(|e| e.to_string())?;
+    let mut feature = DesignFeature::from_json(&node.data).map_err(|e| e.to_string())?;
     let sketch_before = feature.sketch();
     let deps_before = feature.dependencies();
     let target = match to {
@@ -190,8 +190,8 @@ mod tests {
     use super::*;
     use core_document::Document;
 
-    fn pad(sketch: FeatureId) -> PartFeature {
-        PartFeature::Pad {
+    fn pad(sketch: FeatureId) -> DesignFeature {
+        DesignFeature::Pad {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -239,7 +239,7 @@ mod tests {
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         set_reference(&mut ctx, pad_id, PROFILE, ReferenceChoice::Feature(b)).unwrap();
         let recorded = core_document::HookOutcome::take(&mut ctx).recorded;
-        let data = PartFeature::from_json(&doc.get_feature_meta(pad_id).unwrap().data).unwrap();
+        let data = DesignFeature::from_json(&doc.get_feature_meta(pad_id).unwrap().data).unwrap();
         assert_eq!(data.sketch(), Some(b));
         assert!(doc.feature_tree().dependencies(pad_id).contains(&b));
         assert_eq!(recorded.len(), 1);

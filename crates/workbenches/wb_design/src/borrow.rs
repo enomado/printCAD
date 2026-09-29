@@ -1,4 +1,4 @@
-//! Geometry one body borrows from another (`PartFeature::Borrow`): a
+//! Geometry one body borrows from another (`DesignFeature::Borrow`): a
 //! sketch, or faces and edges of a solid, placed in the borrowing body's
 //! frame where the two bodies sit. A live borrow follows its source (the
 //! sketch as it is solved now, the solid as it is built now, the bodies as
@@ -16,8 +16,8 @@ use kernel_api::{FaceSurface, KernelQueries, TriMesh};
 use wb_sketch::SketchFeature;
 
 use crate::feature::{
-    BorrowOptions, BorrowSource, BorrowedRef, EdgePick, FacePick, FrozenBorrow, FrozenEdge,
-    FrozenFace, PartFeature,
+    BorrowOptions, BorrowSource, BorrowedRef, DesignFeature, EdgePick, FacePick, FrozenBorrow,
+    FrozenEdge, FrozenFace,
 };
 
 /// A borrow feature as the build reads it.
@@ -62,8 +62,8 @@ pub(crate) fn borrow_of(document: &Document, id: FeatureId) -> Option<Borrow> {
     if node.workbench_id.as_str() != "wb.design" {
         return None;
     }
-    match PartFeature::from_json(document.feature_values(id)?).ok()? {
-        PartFeature::Borrow {
+    match DesignFeature::from_json(document.feature_values(id)?).ok()? {
+        DesignFeature::Borrow {
             source,
             frozen,
             options,
@@ -729,10 +729,10 @@ pub(crate) fn inputs(document: &Document, using: BodyId, source: &BorrowSource) 
 
 /// The borrows of `body`, each with its data, in history order.
 pub(crate) fn borrows_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, Borrow)> {
-    crate::build::part_features_of_body(document, body)
+    crate::build::design_features_of_body(document, body)
         .into_iter()
         .filter_map(|(id, feature)| match feature {
-            PartFeature::Borrow {
+            DesignFeature::Borrow {
                 source,
                 frozen,
                 options,
@@ -1270,13 +1270,13 @@ mod tests {
         assert_eq!(placed.plane, placed.sketch.plane);
     }
 
-    use crate::PartDesignWorkbench;
+    use crate::DesignWorkbench;
     use crate::feature::{ExtrudeDirection, ExtrudeMode};
     use core_document::{CommandResult, Workbench, WorkbenchRuntimeContext};
     use serde_json::{Value, json};
 
     fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         bench.run_command(id, args.as_object().unwrap(), &mut ctx)
     }
@@ -1302,8 +1302,8 @@ mod tests {
         (a, sketch, b)
     }
 
-    fn data(doc: &Document, id: FeatureId) -> PartFeature {
-        PartFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap()
+    fn data(doc: &Document, id: FeatureId) -> DesignFeature {
+        DesignFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap()
     }
 
     /// Live, a borrowed sketch depends on its source, so an edit of the
@@ -1339,7 +1339,7 @@ mod tests {
             json!({"feature": borrowed.0.to_string()}),
         )
         .unwrap();
-        let PartFeature::Borrow {
+        let DesignFeature::Borrow {
             frozen: Some(frozen),
             ..
         } = data(&doc, borrowed)
@@ -1364,7 +1364,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             data(&doc, borrowed),
-            PartFeature::Borrow { frozen: None, .. }
+            DesignFeature::Borrow { frozen: None, .. }
         ));
         assert_eq!(doc.feature_tree().dependencies(borrowed), vec![sketch]);
     }
@@ -1412,7 +1412,7 @@ mod tests {
                 "edges": [{"point": {"x": 1.0, "y": 2.0, "z": 0.0}, "direction": [1.0, 0.0, 0.0]}]}),
         )
         .unwrap();
-        let PartFeature::Borrow {
+        let DesignFeature::Borrow {
             source: BorrowSource::Solid { body, faces, edges },
             frozen: None,
             ..
@@ -1438,7 +1438,7 @@ mod tests {
             index: 1,
         };
         let sketch = FeatureId::new();
-        let pad = PartFeature::from_json(&json!({"Pad": {
+        let pad = DesignFeature::from_json(&json!({"Pad": {
             "sketch": sketch.0.to_string(), "length": 10.0, "reversed": false,
             "mode2": {"UpToBorrowed": face},
             "direction": {"Borrowed": edge},
@@ -1446,7 +1446,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             pad,
-            PartFeature::Pad {
+            DesignFeature::Pad {
                 mode: ExtrudeMode::Dimension,
                 direction: ExtrudeDirection::Borrowed(_),
                 ..
@@ -1463,7 +1463,7 @@ mod tests {
         let mut doc = Document::new("t");
         let (_, sketch, b) = two_bodies(&mut doc);
         let before = doc.clone();
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let made = {
             let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
             ctx.selected_body_id = Some(b.0);
@@ -1479,7 +1479,7 @@ mod tests {
         assert_eq!(doc.get_feature_meta(made).unwrap().body, Some(b));
         assert!(matches!(
             data(&doc, made),
-            PartFeature::Borrow { source: BorrowSource::Sketch(s), frozen: None, .. } if s == sketch
+            DesignFeature::Borrow { source: BorrowSource::Sketch(s), frozen: None, .. } if s == sketch
         ));
         let egui_ctx = egui::Context::default();
         ui_kit::apply_theme(&egui_ctx);

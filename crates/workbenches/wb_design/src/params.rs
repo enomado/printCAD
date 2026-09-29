@@ -333,15 +333,15 @@ fn label_of(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feature::PartFeature;
+    use crate::feature::DesignFeature;
     use core_document::WorkbenchFeature;
 
-    fn node(feature: &PartFeature) -> FeatureNode {
+    fn node(feature: &DesignFeature) -> FeatureNode {
         FeatureNode::new(core_document::FeatureId::new(), feature)
     }
 
     /// Every parameter a feature lists points at a number in its JSON.
-    fn all_resolve(feature: &PartFeature) -> Vec<String> {
+    fn all_resolve(feature: &DesignFeature) -> Vec<String> {
         let n = node(feature);
         let params = feature_parameters(&n);
         for p in &params {
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn every_listed_number_is_where_it_says() {
-        let feature = |json: Value| PartFeature::from_json(&json).expect("a feature");
+        let feature = |json: Value| DesignFeature::from_json(&json).expect("a feature");
         let pad = feature(
             serde_json::json!({"Pad": {"sketch": SKETCH, "length": 10.0, "reversed": false}}),
         );
@@ -407,7 +407,7 @@ mod tests {
 
     /// The listed numbers the feature has: a counterbore hole has no
     /// countersink.
-    fn all_resolve_present(feature: &PartFeature) -> Vec<String> {
+    fn all_resolve_present(feature: &DesignFeature) -> Vec<String> {
         let n = node(feature);
         feature_parameters(&n)
             .into_iter()
@@ -423,7 +423,7 @@ mod tests {
             "placement": {"origin": [0.0, 0.0, 0.0], "x_axis": [1.0, 0.0, 0.0], "z_axis": [0.0, 0.0, 1.0]},
             "subtractive": false,
         }});
-        let feature = PartFeature::from_json(&json).unwrap();
+        let feature = DesignFeature::from_json(&json).unwrap();
         let params = feature_parameters(&node(&feature));
         let names: Vec<(String, Dim)> = params
             .iter()

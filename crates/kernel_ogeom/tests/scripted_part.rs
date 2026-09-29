@@ -49,7 +49,7 @@ fn old_command_names_and_feature_kinds_still_work() {
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
         .unwrap();
     registry
-        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
         .unwrap();
     let mut host = Benches {
         registry,
@@ -81,7 +81,7 @@ fn old_command_names_and_feature_kinds_still_work() {
     assert!(kinds.contains(&"wb.design"), "{kinds:?}");
     assert!(!kinds.contains(&"wb.part"));
     let body = old.bodies()[0].id;
-    let ops = wb_part::body_build_ops(&old, body).unwrap().ops;
+    let ops = wb_design::body_build_ops(&old, body).unwrap().ops;
     let result = OgeomKernel::new()
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
@@ -96,7 +96,7 @@ fn a_script_draws_and_pads_a_block() {
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
         .unwrap();
     registry
-        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
         .unwrap();
     let mut host = Benches {
         registry,
@@ -115,7 +115,7 @@ fn a_script_draws_and_pads_a_block() {
     assert_eq!(out.error, None);
 
     let body = host.document.bodies()[0].id;
-    let ops = wb_part::body_build_ops(&host.document, body).unwrap().ops;
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
     let result = OgeomKernel::new()
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
@@ -132,7 +132,7 @@ fn a_script_draws_and_pads_a_block() {
         &mut host,
     );
     assert_eq!(out.error, None);
-    let ops = wb_part::body_build_ops(&host.document, body).unwrap().ops;
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
     let result = OgeomKernel::new()
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
@@ -147,7 +147,7 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
         .unwrap();
     registry
-        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
         .unwrap();
     let mut host = Benches {
         registry,
@@ -172,7 +172,7 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
     );
     assert_eq!(out.error, None);
     let build = |doc: &Document| {
-        let ops = wb_part::body_build_ops(doc, body).unwrap().ops;
+        let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
         OgeomKernel::new()
             .execute_solid_chain(&ops, &TessellationSettings::default())
             .unwrap()
@@ -216,7 +216,7 @@ fn a_script_drills_a_standard_hole() {
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
         .unwrap();
     registry
-        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
         .unwrap();
     let mut host = Benches {
         registry,
@@ -263,16 +263,16 @@ fn a_script_drills_a_standard_hole() {
             data.get("Hole").map(|_| (*id, data.clone()))
         })
         .expect("a hole");
-    let feature: wb_part::PartFeature = serde_json::from_value(hole.1).unwrap();
-    let wb_part::PartFeature::Hole { thread, .. } = &feature else {
+    let feature: wb_design::DesignFeature = serde_json::from_value(hole.1).unwrap();
+    let wb_design::DesignFeature::Hole { thread, .. } = &feature else {
         panic!("a hole");
     };
     let thread = thread.as_ref().expect("a thread");
     assert_eq!(thread.designation(), "1/4-20 UNC-3B");
     // The tap drill of 1/4-20, #7.
-    assert!((wb_part::hole_diameter(&feature) - 5.1054).abs() < 1e-4);
+    assert!((wb_design::hole_diameter(&feature) - 5.1054).abs() < 1e-4);
 
-    let ops = wb_part::body_build_ops(&host.document, body).unwrap().ops;
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
     let mut kernel = OgeomKernel::new();
     let result = kernel
         .execute_solid_chain(&ops, &TessellationSettings::default())

@@ -7,7 +7,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{check_row, mono_label};
 
 use super::{Formulas, deg_drag, label_cell, mm_drag, sketch_combo};
-use crate::feature::{DrillPoint, HoleCut, HoleFit, PartFeature, ThreadSpec};
+use crate::feature::{DesignFeature, DrillPoint, HoleCut, HoleFit, ThreadSpec};
 use crate::hole_tables::{ScrewSeat, ThreadStandard, user_cut_profiles};
 
 /// The drill points the panel offers by name, included angle in degrees.
@@ -37,11 +37,11 @@ pub(super) fn hole_editor(
     fx: &mut Formulas,
     body: BodyId,
     feature_id: FeatureId,
-    feature: &mut PartFeature,
+    feature: &mut DesignFeature,
 ) -> bool {
     // What the hole drills as it stands, before this frame's edits.
     let drilled = crate::build::hole_diameter(feature);
-    let PartFeature::Hole {
+    let DesignFeature::Hole {
         refine: _,
         sketch,
         diameter,

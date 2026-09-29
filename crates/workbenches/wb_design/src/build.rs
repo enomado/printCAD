@@ -16,20 +16,23 @@ use wb_sketch::profile;
 use wb_sketch::sketch::{GeometryElement, Sketch};
 
 use crate::feature::{
-    BorrowSource, DrillPoint, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode, HoleCut,
-    PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode, ThreadSpec,
+    BorrowSource, DesignFeature, DrillPoint, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
+    HoleCut, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode, ThreadSpec,
     TransformStep,
 };
 
 /// This body's part features in creation order (the build history).
-pub fn part_features_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, PartFeature)> {
-    let mut features: Vec<(u64, FeatureId, PartFeature)> = document
+pub fn design_features_of_body(
+    document: &Document,
+    body: BodyId,
+) -> Vec<(FeatureId, DesignFeature)> {
+    let mut features: Vec<(u64, FeatureId, DesignFeature)> = document
         .feature_tree()
         .all_nodes()
         .filter(|(_, node)| node.workbench_id.as_str() == "wb.design" && node.body == Some(body))
         .filter_map(|(id, node)| {
             // As it builds: with every formula's current value in.
-            PartFeature::from_json(document.feature_values(*id)?)
+            DesignFeature::from_json(document.feature_values(*id)?)
                 .ok()
                 .map(|f| (node.seq, *id, f))
         })
@@ -56,8 +59,8 @@ pub fn pending_body_rebuilds(document: &Document) -> Vec<BodyId> {
 }
 
 /// Feature ids of this body's part features (for dirty-flag bookkeeping).
-pub fn part_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
-    part_features_of_body(document, body)
+pub fn design_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
+    design_features_of_body(document, body)
         .into_iter()
         .map(|(id, _)| id)
         .collect()
@@ -88,7 +91,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
         let asked_anew = following_datums(document, *body)
             .into_iter()
             .any(|(datum, asks)| document.built_against(datum) != Some(asks));
-        if asked_anew && let Some(first) = part_feature_ids(document, *body).first() {
+        if asked_anew && let Some(first) = design_feature_ids(document, *body).first() {
             document.mark_feature_stale(*first);
         }
         for (feature, inputs) in borrow_inputs(document, *body) {
@@ -110,7 +113,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
     ready
         .into_iter()
         .map(|body| {
-            let features = part_feature_ids(document, body);
+            let features = design_feature_ids(document, body);
             let inputs: Vec<FeatureId> = features
                 .iter()
                 .flat_map(|id| document.feature_tree().dependencies(*id))
@@ -212,8 +215,8 @@ fn datums_asking(
                 // `answer_lent_faces` finds it, not this body's build.
                 // A primitive attached by a mode asks what the attachment
                 // asks.
-                "wb.design" => match PartFeature::from_json(&n.data).ok()? {
-                    PartFeature::Primitive {
+                "wb.design" => match DesignFeature::from_json(&n.data).ok()? {
+                    DesignFeature::Primitive {
                         attached: Some(attached),
                         ..
                     } => attached.probes(),
@@ -270,11 +273,11 @@ pub fn datum_probes(
 /// The Booleans of `body`'s history that are not suppressed, each with
 /// the body it takes as its tool.
 fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> {
-    part_features_of_body(document, body)
+    design_features_of_body(document, body)
         .into_iter()
         .filter(|(id, _)| !document.get_feature_meta(*id).is_some_and(|n| n.suppressed))
         .flat_map(|(id, feature)| match feature {
-            PartFeature::BodyBoolean {
+            DesignFeature::BodyBoolean {
                 tool_body,
                 more_tools,
                 ..
@@ -405,7 +408,7 @@ pub fn delete_feature(document: &mut Document, id: FeatureId) -> bool {
     let body = document.get_feature_meta(id).and_then(|n| n.body);
     let sketches = document
         .get_feature_data(id)
-        .and_then(|d| PartFeature::from_json(d).ok())
+        .and_then(|d| DesignFeature::from_json(d).ok())
         .map(|f| f.sketches())
         .unwrap_or_default();
     if document.remove_feature(id).is_err() {
@@ -424,7 +427,7 @@ pub fn delete_feature(document: &mut Document, id: FeatureId) -> bool {
 /// or, with no history left, drop the solid the history produced. An
 /// imported solid is not the history's to drop.
 pub fn invalidate_body(document: &mut Document, body: BodyId) {
-    match part_feature_ids(document, body).first() {
+    match design_feature_ids(document, body).first() {
         Some(first) => document.mark_feature_dirty(*first),
         None if !document.body_solid_is_imported(body) => document.remove_imported_geometry(body),
         None => {}
@@ -481,7 +484,7 @@ fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
 /// empty plan when the body has no part features (the caller should clear
 /// its solid).
 pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, BuildError> {
-    let features = part_features_of_body(document, body);
+    let features = design_features_of_body(document, body);
     // A body whose shape came from an import has no history to rebuild
     // from: running the features alone would replace the imported solid
     // with whatever they make on their own.
@@ -557,14 +560,15 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
 
         let start_index = plan.ops.len();
         match &feature {
-            PartFeature::Pad { profile_face, .. } | PartFeature::Pocket { profile_face, .. } => {
+            DesignFeature::Pad { profile_face, .. }
+            | DesignFeature::Pocket { profile_face, .. } => {
                 if profile_face.is_some() && plan.ops.is_empty() {
                     return Err(fail(
                         "extruding a face needs a solid to take it from; add a feature first"
                             .into(),
                     ));
                 }
-                let boolean = if matches!(feature, PartFeature::Pocket { .. }) {
+                let boolean = if matches!(feature, DesignFeature::Pocket { .. }) {
                     BooleanOp::Cut
                 } else {
                     additive_boolean
@@ -572,7 +576,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 plan.ops
                     .extend(extrude_op(document, &feature, boolean).map_err(&fail)?);
             }
-            PartFeature::Revolution {
+            DesignFeature::Revolution {
                 sketch,
                 angle_deg,
                 axis,
@@ -583,7 +587,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 up_to_face,
                 ..
             }
-            | PartFeature::Groove {
+            | DesignFeature::Groove {
                 sketch,
                 angle_deg,
                 axis,
@@ -622,14 +626,14 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     termination,
                 )
                 .map_err(&fail)?;
-                let op = if matches!(feature, PartFeature::Groove { .. }) {
+                let op = if matches!(feature, DesignFeature::Groove { .. }) {
                     BooleanOp::Cut
                 } else {
                     additive_boolean
                 };
                 plan.ops.push(SolidOp::Sweep { profile, kind, op });
             }
-            PartFeature::Loft {
+            DesignFeature::Loft {
                 refine: _,
                 sections,
                 ruled,
@@ -667,7 +671,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     },
                 });
             }
-            PartFeature::Pipe {
+            DesignFeature::Pipe {
                 refine: _,
                 profile,
                 spine,
@@ -746,7 +750,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     });
                 }
             }
-            PartFeature::Helix {
+            DesignFeature::Helix {
                 refine: _,
                 sketch,
                 axis,
@@ -801,7 +805,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     },
                 });
             }
-            PartFeature::Primitive {
+            DesignFeature::Primitive {
                 refine: _,
                 kind,
                 placement,
@@ -814,11 +818,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     op: shape_boolean(*subtractive),
                 });
             }
-            PartFeature::Hole { .. } => {
+            DesignFeature::Hole { .. } => {
                 let hole_ops = hole_ops(document, &feature).map_err(&fail)?;
                 plan.ops.extend(hole_ops);
             }
-            PartFeature::Fillet {
+            DesignFeature::Fillet {
                 radius,
                 edges,
                 follow_tangent,
@@ -832,7 +836,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     follow_tangent: *follow_tangent,
                 });
             }
-            PartFeature::Chamfer {
+            DesignFeature::Chamfer {
                 size,
                 mode,
                 size2,
@@ -870,7 +874,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     follow_tangent: *follow_tangent,
                 });
             }
-            PartFeature::Draft {
+            DesignFeature::Draft {
                 angle_deg,
                 neutral,
                 faces,
@@ -917,7 +921,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     face_names: face_names(faces),
                 });
             }
-            PartFeature::Thickness {
+            DesignFeature::Thickness {
                 value,
                 faces,
                 inward,
@@ -936,7 +940,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     both_sides: *both_sides,
                 });
             }
-            PartFeature::Mirrored {
+            DesignFeature::Mirrored {
                 originals,
                 plane,
                 refine: _,
@@ -948,7 +952,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     originals,
                 });
             }
-            PartFeature::LinearPattern {
+            DesignFeature::LinearPattern {
                 refine: _,
                 originals,
                 axis,
@@ -976,7 +980,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     });
                 }
             }
-            PartFeature::PolarPattern {
+            DesignFeature::PolarPattern {
                 refine: _,
                 originals,
                 axis,
@@ -1004,7 +1008,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     });
                 }
             }
-            PartFeature::MultiTransform {
+            DesignFeature::MultiTransform {
                 originals,
                 steps,
                 refine: _,
@@ -1019,8 +1023,8 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 }
             }
             // Lent geometry builds nothing; the features that take it do.
-            PartFeature::Borrow { .. } => {}
-            PartFeature::Clone { source } => {
+            DesignFeature::Borrow { .. } => {}
+            DesignFeature::Clone { source } => {
                 if !plan.ops.is_empty() {
                     return Err(fail("a clone can only be a body's first feature".into()));
                 }
@@ -1032,7 +1036,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     .to_vec();
                 plan.ops.push(SolidOp::Shape { brep });
             }
-            PartFeature::BodyBoolean {
+            DesignFeature::BodyBoolean {
                 tool_body,
                 kind,
                 more_tools,
@@ -1277,12 +1281,12 @@ fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
 /// the second side takes its own taper: each side swept on its own.
 fn extrude_op(
     document: &Document,
-    feature: &PartFeature,
+    feature: &DesignFeature,
     boolean: BooleanOp,
 ) -> Result<Vec<SolidOp>, String> {
     let (sketch, profile_face, reversed, symmetric, taper_deg, direction, mode, mode2) =
         match feature {
-            PartFeature::Pad {
+            DesignFeature::Pad {
                 sketch,
                 profile_face,
                 reversed,
@@ -1302,7 +1306,7 @@ fn extrude_op(
                 *mode,
                 *mode2,
             ),
-            PartFeature::Pocket {
+            DesignFeature::Pocket {
                 sketch,
                 profile_face,
                 reversed,
@@ -1330,16 +1334,16 @@ fn extrude_op(
             _ => return Err("not a pad or a pocket".into()),
         };
     let borrowed = match feature {
-        PartFeature::Pad {
+        DesignFeature::Pad {
             profile_borrowed, ..
         }
-        | PartFeature::Pocket {
+        | DesignFeature::Pocket {
             profile_borrowed, ..
         } => *profile_borrowed,
         _ => None,
     };
     let (first, second) = match feature {
-        PartFeature::Pad {
+        DesignFeature::Pad {
             length,
             length2,
             up_to_face,
@@ -1350,7 +1354,7 @@ fn extrude_op(
             up_to_shape2,
             ..
         }
-        | PartFeature::Pocket {
+        | DesignFeature::Pocket {
             depth: length,
             depth2: length2,
             up_to_face,
@@ -1377,7 +1381,7 @@ fn extrude_op(
         _ => return Err("not a pad or a pocket".into()),
     };
     let extras = match feature {
-        PartFeature::Pad { extras, .. } | PartFeature::Pocket { extras, .. } => *extras,
+        DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => *extras,
         _ => Default::default(),
     };
     let (first_mode, second_mode) = mode.sides(mode2);
@@ -1751,8 +1755,8 @@ fn helix_extent(
 /// tapered thread's minor diameter at the face, which its taper narrows
 /// from), or else the clearance of its fit (the major diameter where the
 /// standard names no clearance).
-pub fn hole_diameter(feature: &PartFeature) -> f32 {
-    let PartFeature::Hole {
+pub fn hole_diameter(feature: &DesignFeature) -> f32 {
+    let DesignFeature::Hole {
         diameter,
         thread,
         threaded,
@@ -1783,8 +1787,8 @@ pub fn hole_diameter(feature: &PartFeature) -> f32 {
 
 /// The angle a hole's wall leans in by toward its bottom, degrees: a
 /// tapped tapered thread's own, else the hole's.
-pub fn hole_taper_deg(feature: &PartFeature) -> f64 {
-    let PartFeature::Hole {
+pub fn hole_taper_deg(feature: &DesignFeature) -> f64 {
+    let DesignFeature::Hole {
         thread,
         threaded,
         taper_deg,
@@ -1830,8 +1834,8 @@ fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
 
 /// Translate a hole feature into cut ops: the drill (and its point), then
 /// what the hole cut makes of its mouth, then a modeled thread's groove.
-fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, String> {
-    let PartFeature::Hole {
+fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>, String> {
+    let DesignFeature::Hole {
         sketch,
         depth,
         through_all,
@@ -2840,7 +2844,7 @@ pub fn retarget_feature_sketch(
     let data = document
         .get_feature_data(feature_id)
         .ok_or("feature not found")?;
-    let mut feature = PartFeature::from_json(data).map_err(|e| e.to_string())?;
+    let mut feature = DesignFeature::from_json(data).map_err(|e| e.to_string())?;
     let Some(old_sketch) = feature.sketch() else {
         return Err("this feature is not sketch-based".into());
     };
@@ -2848,14 +2852,14 @@ pub fn retarget_feature_sketch(
         return Ok(());
     }
     match &mut feature {
-        PartFeature::Pad { sketch, .. } | PartFeature::Pocket { sketch, .. } => {
+        DesignFeature::Pad { sketch, .. } | DesignFeature::Pocket { sketch, .. } => {
             *sketch = Some(new_sketch)
         }
-        PartFeature::Revolution { sketch, .. }
-        | PartFeature::Groove { sketch, .. }
-        | PartFeature::Helix { sketch, .. }
-        | PartFeature::Hole { sketch, .. } => *sketch = new_sketch,
-        PartFeature::Pipe { profile, .. } => *profile = new_sketch,
+        DesignFeature::Revolution { sketch, .. }
+        | DesignFeature::Groove { sketch, .. }
+        | DesignFeature::Helix { sketch, .. }
+        | DesignFeature::Hole { sketch, .. } => *sketch = new_sketch,
+        DesignFeature::Pipe { profile, .. } => *profile = new_sketch,
         _ => return Err("this feature is not sketch-based".into()),
     }
     document
@@ -2894,7 +2898,7 @@ pub fn swap_consumed_sketch(
         .feature_tree()
         .all_nodes()
         .filter(|(id, n)| n.workbench_id.as_str() == "wb.design" && **id != feature_id)
-        .filter_map(|(_, n)| PartFeature::from_json(&n.data).ok())
+        .filter_map(|(_, n)| DesignFeature::from_json(&n.data).ok())
         .any(|f| f.sketches().contains(&old_sketch));
     if !still_consumed {
         set(document, old_sketch, true);
@@ -2944,7 +2948,7 @@ pub fn sketch_plane_description(document: &Document, sketch: FeatureId) -> Strin
 
 /// Mark every part feature dirty (used after undo/redo jumps, where the
 /// applied solid geometry may no longer match the restored feature state).
-pub fn mark_all_part_features_dirty(document: &mut Document) {
+pub fn mark_all_design_features_dirty(document: &mut Document) {
     let ids: Vec<FeatureId> = document
         .feature_tree()
         .all_nodes()
@@ -2976,8 +2980,8 @@ mod tests {
         SketchFeature::new(sketch, plane)
     }
 
-    fn pad(sketch: FeatureId, length: f32) -> PartFeature {
-        PartFeature::Pad {
+    fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
+        DesignFeature::Pad {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -3000,8 +3004,8 @@ mod tests {
         }
     }
 
-    fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> PartFeature {
-        PartFeature::Pocket {
+    fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> DesignFeature {
+        DesignFeature::Pocket {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -3191,7 +3195,7 @@ mod tests {
             .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
             .unwrap();
         let before = body_build_ops(&doc, body).unwrap().ops.len();
-        let pattern = |occurrences| PartFeature::LinearPattern {
+        let pattern = |occurrences| DesignFeature::LinearPattern {
             refine: false,
             originals: vec![pad_id],
             axis: PatternAxis::X,
@@ -3225,7 +3229,7 @@ mod tests {
         assert_eq!(plain.op_features.last(), Some(&pad_id));
         assert_eq!(plain.ops.len(), plain.op_features.len());
 
-        let pattern = PartFeature::LinearPattern {
+        let pattern = DesignFeature::LinearPattern {
             refine: false,
             originals: vec![pad_id],
             axis: PatternAxis::X,
@@ -3250,7 +3254,7 @@ mod tests {
         assert!(!unrefined.refine());
         assert!(unrefined.can_refine());
         assert!(
-            !PartFeature::Fillet {
+            !DesignFeature::Fillet {
                 radius: 1.0,
                 edges: crate::feature::EdgeSel::All,
                 follow_tangent: false,
@@ -3380,7 +3384,7 @@ mod tests {
     fn revolution_and_groove_map_to_revolve_kind() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         doc.add_feature_in_body(
-            PartFeature::Revolution {
+            DesignFeature::Revolution {
                 refine: false,
                 sketch: sketch_id,
                 angle_deg: 270.0,
@@ -3396,7 +3400,7 @@ mod tests {
         )
         .unwrap();
         doc.add_feature_in_body(
-            PartFeature::Groove {
+            DesignFeature::Groove {
                 refine: false,
                 sketch: sketch_id,
                 angle_deg: 90.0,
@@ -3462,7 +3466,7 @@ mod tests {
         doc.add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
             .unwrap();
         let mut centred = pocket(sketch_id, 1.0, false, true);
-        if let PartFeature::Pocket { symmetric, .. } = &mut centred {
+        if let DesignFeature::Pocket { symmetric, .. } = &mut centred {
             *symmetric = true;
         }
         doc.add_feature_in_body(centred, "Pocket".into(), Some(body))
@@ -3502,7 +3506,7 @@ mod tests {
             )
             .unwrap();
         doc.add_feature_in_body(
-            PartFeature::Hole {
+            DesignFeature::Hole {
                 clearance: None,
                 thread_length: Default::default(),
                 refine: false,
@@ -3550,7 +3554,7 @@ mod tests {
         doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
             .unwrap();
         doc.add_feature_in_body(
-            PartFeature::BodyBoolean {
+            DesignFeature::BodyBoolean {
                 more_tools: Vec::new(),
                 refine: false,
                 tool_body: body,
@@ -3590,7 +3594,7 @@ mod tests {
             })
             .collect();
         doc.add_feature_in_body(
-            PartFeature::BodyBoolean {
+            DesignFeature::BodyBoolean {
                 more_tools: vec![tools[1]],
                 refine: false,
                 tool_body: tools[0],
@@ -3615,7 +3619,7 @@ mod tests {
         threaded: bool,
         length: crate::feature::ThreadLength,
         clearance: Option<f32>,
-    ) -> (PartFeature, Vec<SolidOp>) {
+    ) -> (DesignFeature, Vec<SolidOp>) {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
         doc.add_feature_in_body(pad(base_sketch, 20.0), "Pad".into(), Some(body))
             .unwrap();
@@ -3629,7 +3633,7 @@ mod tests {
                 Some(body),
             )
             .unwrap();
-        let hole = PartFeature::Hole {
+        let hole = DesignFeature::Hole {
             clearance,
             thread_length: length,
             refine: false,
@@ -3732,7 +3736,7 @@ mod tests {
             )
             .unwrap();
         doc.add_feature_in_body(
-            PartFeature::Draft {
+            DesignFeature::Draft {
                 angle_deg: 5.0,
                 neutral: FacePick {
                     point: [0.0; 3],
@@ -3809,7 +3813,7 @@ mod tests {
                 )
                 .unwrap();
             doc.add_feature_in_body(
-                PartFeature::Hole {
+                DesignFeature::Hole {
                     clearance: None,
                     thread_length: Default::default(),
                     refine: false,
@@ -3846,7 +3850,7 @@ mod tests {
 
     /// A padded body with one hole position and `hole` drilled there: the
     /// hole's ops, or its build error.
-    fn hole_plan(edit: impl FnOnce(&mut PartFeature)) -> Result<Vec<SolidOp>, String> {
+    fn hole_plan(edit: impl FnOnce(&mut DesignFeature)) -> Result<Vec<SolidOp>, String> {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
         doc.add_feature_in_body(pad(base_sketch, 10.0), "Pad".into(), Some(body))
             .unwrap();
@@ -3860,7 +3864,7 @@ mod tests {
                 Some(body),
             )
             .unwrap();
-        let mut hole = PartFeature::Hole {
+        let mut hole = DesignFeature::Hole {
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -3887,8 +3891,8 @@ mod tests {
             .map_err(|e| e.message)
     }
 
-    fn set_hole(f: &mut PartFeature, edit: impl FnOnce(&mut HoleFields)) {
-        let PartFeature::Hole {
+    fn set_hole(f: &mut DesignFeature, edit: impl FnOnce(&mut HoleFields)) {
+        let DesignFeature::Hole {
             thread,
             threaded,
             modeled_thread,
@@ -4002,7 +4006,7 @@ mod tests {
     #[test]
     fn a_point_deeper_than_the_hole_is_an_error() {
         let error = hole_plan(|f| {
-            if let PartFeature::Hole { depth, .. } = f {
+            if let DesignFeature::Hole { depth, .. } = f {
                 *depth = 0.5;
             }
             set_hole(f, |h| {
@@ -4204,7 +4208,7 @@ mod tests {
 
     #[test]
     fn metric_hole_diameter_uses_the_table() {
-        let feature = PartFeature::Hole {
+        let feature = DesignFeature::Hole {
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4227,7 +4231,7 @@ mod tests {
             reversed: false,
         };
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
-        let clearance = PartFeature::Hole {
+        let clearance = DesignFeature::Hole {
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4262,7 +4266,7 @@ mod tests {
             .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
             .unwrap();
         doc.add_feature_in_body(
-            PartFeature::LinearPattern {
+            DesignFeature::LinearPattern {
                 refine: false,
                 originals: vec![pad_id],
                 axis: PatternAxis::X,
@@ -4420,7 +4424,7 @@ mod tests {
         doc.add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
             .unwrap();
         doc.add_feature_in_body(
-            PartFeature::Mirrored {
+            DesignFeature::Mirrored {
                 refine: false,
                 originals: vec![ghost],
                 plane: MirrorPlane::YZ,
@@ -4557,7 +4561,7 @@ mod tests {
         // A pattern must not move before its original.
         let pattern = doc
             .add_feature_in_body(
-                PartFeature::Mirrored {
+                DesignFeature::Mirrored {
                     refine: false,
                     originals: vec![pad_a],
                     plane: MirrorPlane::YZ,
@@ -4588,7 +4592,7 @@ mod tests {
             .unwrap();
         let pocket = doc
             .add_feature_in_body(
-                PartFeature::Pocket {
+                DesignFeature::Pocket {
                     profile_borrowed: None,
                     extras: Default::default(),
                     refine: false,
@@ -4663,14 +4667,14 @@ mod tests {
     /// left with it on in another mode builds as that mode does.
     #[test]
     fn symmetric_centres_only_a_dimension_extrusion() {
-        let symmetric_of = |feature: PartFeature| {
+        let symmetric_of = |feature: DesignFeature| {
             let (mut doc, body, sketch) = doc_with_body_sketch();
             // Material first, for the modes that cut through it.
             doc.add_feature_in_body(pad(sketch, 5.0), "Base".into(), Some(body))
                 .unwrap();
             let mut feature = feature;
             match &mut feature {
-                PartFeature::Pad { sketch: s, .. } | PartFeature::Pocket { sketch: s, .. } => {
+                DesignFeature::Pad { sketch: s, .. } | DesignFeature::Pocket { sketch: s, .. } => {
                     *s = Some(sketch)
                 }
                 _ => unreachable!(),
@@ -4698,7 +4702,7 @@ mod tests {
             let mut pocketed = pocket(placeholder, 2.0, false, false);
             for feature in [&mut padded, &mut pocketed] {
                 match feature {
-                    PartFeature::Pad {
+                    DesignFeature::Pad {
                         symmetric,
                         mode: m,
                         length2,
@@ -4706,7 +4710,7 @@ mod tests {
                     } => {
                         (*symmetric, *m, *length2) = (true, mode, 3.0);
                     }
-                    PartFeature::Pocket {
+                    DesignFeature::Pocket {
                         symmetric,
                         mode: m,
                         depth2,
@@ -4723,7 +4727,7 @@ mod tests {
         }
         // A pocket's legacy through-all flag is the ThroughAll mode.
         let mut legacy = pocket(placeholder, 2.0, false, true);
-        if let PartFeature::Pocket { symmetric, .. } = &mut legacy {
+        if let DesignFeature::Pocket { symmetric, .. } = &mut legacy {
             *symmetric = true;
         }
         assert!(!symmetric_of(legacy));
@@ -4787,14 +4791,16 @@ mod tests {
     /// The one extrude op a pad or pocket, `edit`ed from its defaults,
     /// builds on a pad of the rectangle.
     fn extrude_of(
-        feature: PartFeature,
-        edit: impl FnOnce(&mut PartFeature),
+        feature: DesignFeature,
+        edit: impl FnOnce(&mut DesignFeature),
     ) -> Result<SolidOp, String> {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         doc.add_feature_in_body(pad(sketch_id, 5.0), "Base".into(), Some(body))
             .unwrap();
         let mut feature = feature;
-        if let PartFeature::Pad { sketch, .. } | PartFeature::Pocket { sketch, .. } = &mut feature {
+        if let DesignFeature::Pad { sketch, .. } | DesignFeature::Pocket { sketch, .. } =
+            &mut feature
+        {
             *sketch = Some(sketch_id);
         }
         edit(&mut feature);
@@ -4819,8 +4825,8 @@ mod tests {
         let sketch = FeatureId::new();
         for feature in [pad(sketch, 5.0), pocket(sketch, 5.0, false, false)] {
             let op = extrude_of(feature.clone(), |f| {
-                if let PartFeature::Pad { direction, .. } | PartFeature::Pocket { direction, .. } =
-                    f
+                if let DesignFeature::Pad { direction, .. }
+                | DesignFeature::Pocket { direction, .. } = f
                 {
                     *direction = crate::ExtrudeDirection::Custom([0.0, 1.0, 1.0]);
                 }
@@ -4835,8 +4841,8 @@ mod tests {
                 } if *x == 0.0 && *y == 1.0 && *z == 1.0
             ));
             let edge = extrude_of(feature.clone(), |f| {
-                if let PartFeature::Pad { direction, .. } | PartFeature::Pocket { direction, .. } =
-                    f
+                if let DesignFeature::Pad { direction, .. }
+                | DesignFeature::Pocket { direction, .. } = f
                 {
                     *direction = crate::ExtrudeDirection::Edge(crate::EdgePick {
                         faces: [0, 0],
@@ -4851,8 +4857,8 @@ mod tests {
                 SweepKind::Extrude { direction: Some([x, _, z]), .. } if *x == 1.0 && *z == 1.0
             ));
             let flat = extrude_of(feature, |f| {
-                if let PartFeature::Pad { direction, .. } | PartFeature::Pocket { direction, .. } =
-                    f
+                if let DesignFeature::Pad { direction, .. }
+                | DesignFeature::Pocket { direction, .. } = f
                 {
                     *direction = crate::ExtrudeDirection::Custom([1.0, 1.0, 0.0]);
                 }
@@ -4872,7 +4878,7 @@ mod tests {
             normal: [0.0, 0.0, 1.0],
         };
         let op = extrude_of(pad(sketch, 5.0), |f| {
-            if let PartFeature::Pad {
+            if let DesignFeature::Pad {
                 mode2,
                 up_to_face2,
                 up_to_offset2,
@@ -4894,7 +4900,7 @@ mod tests {
             } if *distance == 5.0 && point[2] == 3.0 && *offset == 1.5
         ));
         let op = extrude_of(pad(sketch, 5.0), |f| {
-            if let PartFeature::Pad {
+            if let DesignFeature::Pad {
                 mode,
                 length2,
                 up_to_shape,
@@ -4915,7 +4921,7 @@ mod tests {
             } if *distance == 2.0
         ));
         let op = extrude_of(pad(sketch, 5.0), |f| {
-            if let PartFeature::Pad {
+            if let DesignFeature::Pad {
                 mode, up_to_shape, ..
             } = f
             {
@@ -4934,7 +4940,7 @@ mod tests {
             } if faces.len() == 2
         ));
         let none = extrude_of(pad(sketch, 5.0), |f| {
-            if let PartFeature::Pad { mode, .. } = f {
+            if let DesignFeature::Pad { mode, .. } = f {
                 *mode = ExtrudeMode::UpToShape;
             }
         });
@@ -4952,7 +4958,7 @@ mod tests {
         };
         let sketch = FeatureId::new();
         let op = extrude_of(pocket(sketch, 2.0, false, false), |f| {
-            if let PartFeature::Pocket {
+            if let DesignFeature::Pocket {
                 sketch,
                 profile_face,
                 ..
@@ -4972,7 +4978,7 @@ mod tests {
             } if point[2] == 5.0
         ));
         let nothing = extrude_of(pad(sketch, 2.0), |f| {
-            if let PartFeature::Pad { sketch, .. } = f {
+            if let DesignFeature::Pad { sketch, .. } = f {
                 *sketch = None;
             }
         });
@@ -4981,7 +4987,7 @@ mod tests {
         // A face needs a solid to come from.
         let (mut doc, body, _) = doc_with_body_sketch();
         let mut first = pad(sketch, 2.0);
-        if let PartFeature::Pad {
+        if let DesignFeature::Pad {
             sketch,
             profile_face,
             ..
@@ -5000,7 +5006,7 @@ mod tests {
     #[test]
     fn a_revolution_takes_its_end_mode() {
         let revolution =
-            |mode: RevolveMode, up_to_face: Option<FacePick>, sketch| PartFeature::Revolution {
+            |mode: RevolveMode, up_to_face: Option<FacePick>, sketch| DesignFeature::Revolution {
                 refine: false,
                 sketch,
                 angle_deg: 360.0,
@@ -5124,8 +5130,8 @@ mod tests {
         assert!(missing.is_err());
     }
 
-    fn helix(sketch: FeatureId, mode: HelixMode, height: f32, growth: f32) -> PartFeature {
-        PartFeature::Helix {
+    fn helix(sketch: FeatureId, mode: HelixMode, height: f32, growth: f32) -> DesignFeature {
+        DesignFeature::Helix {
             refine: false,
             sketch,
             axis: RevolveAxis::SketchY,
@@ -5207,7 +5213,7 @@ mod tests {
         doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
             .unwrap();
         let mut cut = helix(sketch_id, HelixMode::PitchHeight, 8.0, 0.0);
-        if let PartFeature::Helix {
+        if let DesignFeature::Helix {
             subtractive,
             keep_inside,
             ..
@@ -5225,7 +5231,7 @@ mod tests {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
             .unwrap();
-        if let PartFeature::Helix {
+        if let DesignFeature::Helix {
             sketch,
             subtractive,
             ..
@@ -5252,7 +5258,7 @@ mod tests {
         let section = doc
             .add_feature_in_body(rect_sketch(), "section".into(), Some(body))
             .unwrap();
-        let pipe = |orientation: PipeOrientation| PartFeature::Pipe {
+        let pipe = |orientation: PipeOrientation| DesignFeature::Pipe {
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
@@ -5264,7 +5270,7 @@ mod tests {
             sections: vec![section],
             subtractive: false,
         };
-        let op_of = |feature: PartFeature| {
+        let op_of = |feature: DesignFeature| {
             let mut doc = doc.clone();
             doc.add_feature_in_body(feature, "Pipe".into(), Some(body))
                 .unwrap();

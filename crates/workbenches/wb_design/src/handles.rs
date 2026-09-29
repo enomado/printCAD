@@ -8,7 +8,7 @@ use core_document::{
 };
 use glam::Vec3;
 
-use crate::feature::{EdgeSel, ExtrudeDirection, ExtrudeMode, PartFeature};
+use crate::feature::{DesignFeature, EdgeSel, ExtrudeDirection, ExtrudeMode};
 
 /// How close to a handle, in pixels, a press takes hold of it.
 const REACH_PX: f32 = 10.0;
@@ -53,7 +53,7 @@ impl Handle {
 pub(crate) fn handle_of(document: &Document, feature: FeatureId, eye: Vec3) -> Option<Handle> {
     let node = document.get_feature_meta(feature)?;
     let body = node.body?;
-    let part = PartFeature::from_json(&node.data).ok()?;
+    let part = DesignFeature::from_json(&node.data).ok()?;
     let placement = document.body_placement(body);
     let world = |p: [f32; 3]| Vec3::from_array(placement.point(p));
     let world_dir = |d: [f32; 3]| Vec3::from_array(placement.direction(d)).normalize_or_zero();
@@ -96,7 +96,7 @@ pub(crate) fn handle_of(document: &Document, feature: FeatureId, eye: Vec3) -> O
         })
     };
     match &part {
-        PartFeature::Pad {
+        DesignFeature::Pad {
             sketch,
             length,
             reversed,
@@ -107,7 +107,7 @@ pub(crate) fn handle_of(document: &Document, feature: FeatureId, eye: Vec3) -> O
         } if free("length") => extrude(
             *sketch, *length, *reversed, *symmetric, mode, direction, false,
         ),
-        PartFeature::Pocket {
+        DesignFeature::Pocket {
             sketch,
             depth,
             reversed,
@@ -118,19 +118,21 @@ pub(crate) fn handle_of(document: &Document, feature: FeatureId, eye: Vec3) -> O
         } if free("depth") => extrude(
             *sketch, *depth, *reversed, *symmetric, mode, direction, true,
         ),
-        PartFeature::Fillet { radius, edges, .. } if free("radius") => edge_handle(edges, *radius),
-        PartFeature::Chamfer { size, edges, .. } if free("size") => edge_handle(edges, *size),
+        DesignFeature::Fillet { radius, edges, .. } if free("radius") => {
+            edge_handle(edges, *radius)
+        }
+        DesignFeature::Chamfer { size, edges, .. } if free("size") => edge_handle(edges, *size),
         _ => None,
     }
 }
 
 /// Write `value` into the number the handle stands for.
-pub(crate) fn set_value(feature: &mut PartFeature, value: f32) -> bool {
+pub(crate) fn set_value(feature: &mut DesignFeature, value: f32) -> bool {
     match feature {
-        PartFeature::Pad { length, .. } => *length = value,
-        PartFeature::Pocket { depth, .. } => *depth = value,
-        PartFeature::Fillet { radius, .. } => *radius = value,
-        PartFeature::Chamfer { size, .. } => *size = value,
+        DesignFeature::Pad { length, .. } => *length = value,
+        DesignFeature::Pocket { depth, .. } => *depth = value,
+        DesignFeature::Fillet { radius, .. } => *radius = value,
+        DesignFeature::Chamfer { size, .. } => *size = value,
         _ => return false,
     }
     true

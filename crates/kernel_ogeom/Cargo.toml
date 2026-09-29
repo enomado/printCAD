@@ -15,7 +15,7 @@ tracing = { workspace = true }
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 core_document = { path = "../core_document" }
-wb_part = { path = "../workbenches/wb_part" }
+wb_design = { path = "../workbenches/wb_design" }
 wb_sketch = { path = "../workbenches/wb_sketch" }
 scripting = { path = "../scripting" }
 serde_json.workspace = true

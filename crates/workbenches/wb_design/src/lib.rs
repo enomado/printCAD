@@ -24,14 +24,15 @@ mod task;
 
 pub use borrow::freeze;
 pub use build::{
-    BuildError, BuildPlan, body_build_ops, delete_feature, hole_diameter, invalidate_body,
-    mark_all_part_features_dirty, part_feature_ids, part_features_of_body, pending_body_rebuilds,
-    rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
+    BuildError, BuildPlan, body_build_ops, delete_feature, design_feature_ids,
+    design_features_of_body, hole_diameter, invalidate_body, mark_all_design_features_dirty,
+    pending_body_rebuilds, rebuild_jobs, retarget_feature_sketch, sketch_plane_description,
+    sketches_of_body,
 };
 pub use feature::{
-    Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DrillPoint,
-    EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick, FrozenBorrow,
-    FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane, PartFeature,
+    Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DesignFeature,
+    DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick,
+    FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane,
     PatternAxis, PipeCorner, PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis,
     ThreadSpec, TransformStep, primitive_icon, primitive_preset,
 };
@@ -72,7 +73,7 @@ fn duplicate_recorded(ctx: &mut WorkbenchRuntimeContext, feature: FeatureId, bod
 /// The switches on the Design Preferences page.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct PartOptions {
+pub struct DesignOptions {
     /// The preview rebuilds on every field change in the task panel; off,
     /// it rebuilds when the task is accepted.
     pub update_while_editing: bool,
@@ -82,7 +83,7 @@ pub struct PartOptions {
     pub refine_result: bool,
 }
 
-impl Default for PartOptions {
+impl Default for DesignOptions {
     fn default() -> Self {
         Self {
             update_while_editing: true,
@@ -94,9 +95,9 @@ impl Default for PartOptions {
 
 /// Design workbench: feature-based solid modeling.
 #[derive(Default)]
-pub struct PartDesignWorkbench {
+pub struct DesignWorkbench {
     /// The Preferences page's switches.
-    pub options: PartOptions,
+    pub options: DesignOptions,
     /// The feature open in the task panel.
     #[cfg(feature = "egui")]
     task: Option<task::TaskState>,
@@ -145,7 +146,7 @@ fn primitive_variants(subtractive: bool) -> Vec<ToolVariant> {
         .collect()
 }
 
-impl PartDesignWorkbench {
+impl DesignWorkbench {
     /// The sketch feature currently selected in the tree, if any: a sketch
     /// of the body, or one another body lends it.
     fn selected_sketch(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
@@ -172,7 +173,7 @@ impl PartDesignWorkbench {
     }
 
     /// The part feature currently selected in the tree, if any.
-    fn selected_part_feature(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
+    fn selected_design_feature(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
         let id = ctx.active_document_object?;
         let node = ctx.document.get_feature_meta(id)?;
         (node.workbench_id.as_str() == "wb.design").then_some(id)
@@ -181,9 +182,9 @@ impl PartDesignWorkbench {
     /// Whether the body's history builds anything: borrowed geometry
     /// alone does not.
     fn body_has_solid(ctx: &WorkbenchRuntimeContext, body: BodyId) -> bool {
-        part_features_of_body(ctx.document, body)
+        design_features_of_body(ctx.document, body)
             .iter()
-            .any(|(_, f)| !matches!(f, PartFeature::Borrow { .. }))
+            .any(|(_, f)| !matches!(f, DesignFeature::Borrow { .. }))
     }
 
     /// `base` when no feature has that name, else `base_n` one past the
@@ -200,7 +201,7 @@ impl PartDesignWorkbench {
 
     /// The last non-modifier feature of a body (default pattern original).
     fn last_shape_feature(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FeatureId> {
-        part_features_of_body(ctx.document, body)
+        design_features_of_body(ctx.document, body)
             .into_iter()
             .rev()
             .find(|(_, f)| !f.is_modifier())
@@ -256,9 +257,9 @@ impl PartDesignWorkbench {
         variant: Option<&str>,
         ctx: &WorkbenchRuntimeContext,
         body: BodyId,
-    ) -> Result<(PartFeature, &'static str), String> {
+    ) -> Result<(DesignFeature, &'static str), String> {
         let sketch = Self::selected_sketch(ctx);
-        let primitive = |subtractive: bool| PartFeature::Primitive {
+        let primitive = |subtractive: bool| DesignFeature::Primitive {
             attached: None,
             refine: false,
             kind: variant
@@ -318,7 +319,7 @@ impl PartDesignWorkbench {
             "design.pad" => {
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
-                    PartFeature::Pad {
+                    DesignFeature::Pad {
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
@@ -346,7 +347,7 @@ impl PartDesignWorkbench {
                 need_material(has_solid)?;
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
-                    PartFeature::Pocket {
+                    DesignFeature::Pocket {
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
@@ -372,7 +373,7 @@ impl PartDesignWorkbench {
                 )
             }
             "design.revolve" => (
-                PartFeature::Revolution {
+                DesignFeature::Revolution {
                     refine: false,
                     sketch: need_sketch(sketch)?,
                     angle_deg: 360.0,
@@ -388,7 +389,7 @@ impl PartDesignWorkbench {
             "design.groove" => {
                 need_material(has_solid)?;
                 (
-                    PartFeature::Groove {
+                    DesignFeature::Groove {
                         refine: false,
                         sketch: need_sketch(sketch)?,
                         angle_deg: 360.0,
@@ -408,7 +409,7 @@ impl PartDesignWorkbench {
                     need_material(has_solid)?;
                 }
                 (
-                    PartFeature::Loft {
+                    DesignFeature::Loft {
                         refine: false,
                         sections: vec![crate::feature::LoftSection::Feature(need_sketch(sketch)?)],
                         ruled: false,
@@ -439,7 +440,7 @@ impl PartDesignWorkbench {
                     .map(|(id, _)| *id)
                     .ok_or("A pipe needs a second sketch for its path; draw one first")?;
                 (
-                    PartFeature::Pipe {
+                    DesignFeature::Pipe {
                         path_borrowed: Vec::new(),
                         path_edges: Vec::new(),
                         profile_face: None,
@@ -460,7 +461,7 @@ impl PartDesignWorkbench {
                     need_material(has_solid)?;
                 }
                 (
-                    PartFeature::Helix {
+                    DesignFeature::Helix {
                         refine: false,
                         sketch: need_sketch(sketch)?,
                         axis: RevolveAxis::default(),
@@ -486,7 +487,7 @@ impl PartDesignWorkbench {
             "design.hole" => {
                 need_material(has_solid)?;
                 (
-                    PartFeature::Hole {
+                    DesignFeature::Hole {
                         clearance: None,
                         thread_length: Default::default(),
                         refine: false,
@@ -512,7 +513,7 @@ impl PartDesignWorkbench {
                 need_material(has_solid)?;
                 let edges = Self::selected_edges(ctx, body);
                 (
-                    PartFeature::Fillet {
+                    DesignFeature::Fillet {
                         radius: 1.0,
                         edges,
                         follow_tangent: true,
@@ -524,7 +525,7 @@ impl PartDesignWorkbench {
                 need_material(has_solid)?;
                 let edges = Self::selected_edges(ctx, body);
                 (
-                    PartFeature::Chamfer {
+                    DesignFeature::Chamfer {
                         size: 1.0,
                         mode: ChamferMode::EqualDistance,
                         size2: 1.0,
@@ -541,7 +542,7 @@ impl PartDesignWorkbench {
                 let pick = Self::selected_face_pick(ctx, body)
                     .ok_or("Click a face in the viewport first (the neutral plane)")?;
                 (
-                    PartFeature::Draft {
+                    DesignFeature::Draft {
                         neutral_plane: None,
                         pull: None,
                         angle_deg: 1.5,
@@ -557,7 +558,7 @@ impl PartDesignWorkbench {
                 let pick = Self::selected_face_pick(ctx, body)
                     .ok_or("Click the face to open in the viewport first")?;
                 (
-                    PartFeature::Thickness {
+                    DesignFeature::Thickness {
                         both_sides: false,
                         value: 1.0,
                         faces: vec![pick],
@@ -569,10 +570,10 @@ impl PartDesignWorkbench {
             }
             "design.mirror" => {
                 need_material(has_solid)?;
-                let original = Self::selected_part_feature(ctx)
+                let original = Self::selected_design_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
-                    PartFeature::Mirrored {
+                    DesignFeature::Mirrored {
                         refine: false,
                         originals: original.into_iter().collect(),
                         plane: Self::selected_mirror_face(ctx, body).unwrap_or(MirrorPlane::YZ),
@@ -582,10 +583,10 @@ impl PartDesignWorkbench {
             }
             "design.linear_pattern" => {
                 need_material(has_solid)?;
-                let original = Self::selected_part_feature(ctx)
+                let original = Self::selected_design_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
-                    PartFeature::LinearPattern {
+                    DesignFeature::LinearPattern {
                         refine: false,
                         originals: original.into_iter().collect(),
                         axis: PatternAxis::X,
@@ -600,10 +601,10 @@ impl PartDesignWorkbench {
             }
             "design.polar_pattern" => {
                 need_material(has_solid)?;
-                let original = Self::selected_part_feature(ctx)
+                let original = Self::selected_design_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
-                    PartFeature::PolarPattern {
+                    DesignFeature::PolarPattern {
                         refine: false,
                         originals: original.into_iter().collect(),
                         axis: PatternAxis::Z,
@@ -618,11 +619,11 @@ impl PartDesignWorkbench {
             }
             "design.multi_transform" => {
                 need_material(has_solid)?;
-                let original = Self::selected_part_feature(ctx)
+                let original = Self::selected_design_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     // One step to start from, so it builds as it opens.
-                    PartFeature::MultiTransform {
+                    DesignFeature::MultiTransform {
                         refine: false,
                         originals: original.into_iter().collect(),
                         steps: vec![TransformStep::Linear {
@@ -645,14 +646,14 @@ impl PartDesignWorkbench {
                     .find(|b| b.id != body && ctx.document.imported_brep_blob(b.id).is_some())
                     .map(|b| b.id)
                     .ok_or("Build another body first; the clone copies its solid")?;
-                (PartFeature::Clone { source: other }, "Clone")
+                (DesignFeature::Clone { source: other }, "Clone")
             }
             "design.scaled" => {
                 need_material(has_solid)?;
-                let original = Self::selected_part_feature(ctx)
+                let original = Self::selected_design_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
-                    PartFeature::MultiTransform {
+                    DesignFeature::MultiTransform {
                         refine: false,
                         originals: original.into_iter().collect(),
                         steps: vec![TransformStep::Scale {
@@ -676,7 +677,7 @@ impl PartDesignWorkbench {
                     .map(|b| b.id)
                     .ok_or("Create a second body to combine with first")?;
                 (
-                    PartFeature::BodyBoolean {
+                    DesignFeature::BodyBoolean {
                         more_tools: Vec::new(),
                         refine: false,
                         tool_body: other,
@@ -696,7 +697,7 @@ impl PartDesignWorkbench {
     fn borrow_from_selection(
         ctx: &WorkbenchRuntimeContext,
         body: BodyId,
-    ) -> Result<PartFeature, String> {
+    ) -> Result<DesignFeature, String> {
         let face_body = ctx
             .selected_body_id
             .map(BodyId)
@@ -719,7 +720,7 @@ impl PartDesignWorkbench {
                 .filter(|e| BodyId(e.body) == from)
                 .map(EdgePick::of)
                 .collect();
-            return Ok(PartFeature::Borrow {
+            return Ok(DesignFeature::Borrow {
                 source: BorrowSource::Solid {
                     body: from,
                     faces,
@@ -739,7 +740,7 @@ impl PartDesignWorkbench {
             .ok_or(
                 "Pick a face or an edge of another body, or draw a sketch in another body, first",
             )?;
-        Ok(PartFeature::Borrow {
+        Ok(DesignFeature::Borrow {
             source: BorrowSource::Sketch(sketch),
             frozen: None,
             options: Default::default(),
@@ -841,7 +842,7 @@ impl PartDesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         tool: &str,
         body: BodyId,
-        edit: impl FnOnce(&mut PartFeature) -> Result<(), String>,
+        edit: impl FnOnce(&mut DesignFeature) -> Result<(), String>,
     ) -> Result<CreatedFeature, String> {
         let body = if ctx.document.body_solid_is_imported(body) {
             let imported = ctx
@@ -919,7 +920,7 @@ fn register(context: &mut WorkbenchContext, tool: ToolDescriptor) {
     });
 }
 
-impl PartDesignWorkbench {
+impl DesignWorkbench {
     /// The feature whose task is open.
     fn task_feature(&self) -> Option<FeatureId> {
         #[cfg(feature = "egui")]
@@ -971,7 +972,7 @@ impl PartDesignWorkbench {
                     if let Some(mut part) = ctx
                         .document
                         .get_feature_data(feature)
-                        .and_then(|d| PartFeature::from_json(d).ok())
+                        .and_then(|d| DesignFeature::from_json(d).ok())
                         && handles::set_value(&mut part, value)
                         && ctx
                             .document
@@ -1041,7 +1042,7 @@ impl PartDesignWorkbench {
     }
 }
 
-impl Workbench for PartDesignWorkbench {
+impl Workbench for DesignWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             "wb.design",
@@ -1061,7 +1062,7 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn invalidate_all(&self, document: &mut Document) {
-        build::mark_all_part_features_dirty(document);
+        build::mark_all_design_features_dirty(document);
     }
 
     fn editing_feature(&self) -> Option<FeatureId> {
@@ -1106,7 +1107,7 @@ impl Workbench for PartDesignWorkbench {
                 builds_solid: false,
             };
         }
-        let feature = PartFeature::from_json(&node.data).ok();
+        let feature = DesignFeature::from_json(&node.data).ok();
         FeatureInfo {
             icon: feature.as_ref().map(|f| f.icon()).unwrap_or("tree-feature"),
             kind_label: feature
@@ -1114,7 +1115,7 @@ impl Workbench for PartDesignWorkbench {
                 .map(|f| f.kind_label().to_string())
                 .unwrap_or_else(|| "Design feature".to_string()),
             family_label: "Design feature".to_string(),
-            builds_solid: !matches!(feature, Some(PartFeature::Borrow { .. })),
+            builds_solid: !matches!(feature, Some(DesignFeature::Borrow { .. })),
         }
     }
 
@@ -1850,10 +1851,10 @@ impl Workbench for PartDesignWorkbench {
         if node.workbench_id.as_str() != "wb.design" {
             return false;
         }
-        let Ok(mut feature) = PartFeature::from_json(values) else {
+        let Ok(mut feature) = DesignFeature::from_json(values) else {
             return false;
         };
-        let PartFeature::Primitive {
+        let DesignFeature::Primitive {
             attached: Some(attached),
             ..
         } = &mut feature
@@ -1885,10 +1886,10 @@ impl Workbench for PartDesignWorkbench {
     ) -> bool {
         use core_document::{LineAnchor, PointAnchor, WorkbenchFeature};
         if node.workbench_id.as_str() == "wb.design" {
-            let Ok(mut feature) = PartFeature::from_json(values) else {
+            let Ok(mut feature) = DesignFeature::from_json(values) else {
                 return false;
             };
-            let PartFeature::Primitive {
+            let DesignFeature::Primitive {
                 attached: Some(attached),
                 ..
             } = &mut feature
@@ -2170,7 +2171,7 @@ mod body_tool {
 
     #[test]
     fn the_body_tool_creates_a_body_and_asks_the_host_to_select_and_label_it() {
-        let mut wb = PartDesignWorkbench::default();
+        let mut wb = DesignWorkbench::default();
         let mut doc = Document::new("t");
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         let result = wb.on_input(
@@ -2195,12 +2196,12 @@ mod body_tool {
     #[test]
     fn a_picked_flat_face_is_the_plane_a_new_mirror_starts_with() {
         let mirror_with = |surface: Option<kernel_api::FaceSurface>| {
-            let mut wb = PartDesignWorkbench::default();
+            let mut wb = DesignWorkbench::default();
             let mut doc = Document::new("t");
             let body = doc.create_body(None);
             let pad = doc
                 .add_feature_in_body(
-                    PartFeature::Primitive {
+                    DesignFeature::Primitive {
                         attached: None,
                         refine: false,
                         kind: primitive_preset("box").unwrap(),
@@ -2228,8 +2229,8 @@ mod body_tool {
             let mirrored = doc
                 .feature_tree()
                 .all_nodes()
-                .find_map(|(_, n)| match PartFeature::from_json(&n.data).ok()? {
-                    PartFeature::Mirrored {
+                .find_map(|(_, n)| match DesignFeature::from_json(&n.data).ok()? {
+                    DesignFeature::Mirrored {
                         plane, originals, ..
                     } => Some((plane, originals)),
                     _ => None,
@@ -2264,7 +2265,7 @@ mod body_tool {
 
     #[test]
     fn the_coordinate_system_tool_places_a_frame_on_the_body() {
-        let mut wb = PartDesignWorkbench::default();
+        let mut wb = DesignWorkbench::default();
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
@@ -2302,7 +2303,7 @@ mod icon_coverage {
 
     #[test]
     fn the_bench_and_every_feature_family_name_an_icon_in_the_set() {
-        let wb = PartDesignWorkbench::default();
+        let wb = DesignWorkbench::default();
         assert!(ui_kit::icon::exists(wb.descriptor().icon));
         use core_document::{DatumAttachment, DatumFeature, DatumShape};
         for shape in [
@@ -2321,7 +2322,7 @@ mod icon_coverage {
         }
         let node = core_document::FeatureNode::new(
             FeatureId(uuid::Uuid::new_v4()),
-            &PartFeature::Pad {
+            &DesignFeature::Pad {
                 profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,
@@ -2356,7 +2357,7 @@ mod icon_coverage {
     #[test]
     fn every_default_key_lands_on_a_tool_and_no_two_share_one() {
         let mut ctx = WorkbenchContext::default();
-        PartDesignWorkbench::default().configure(&mut ctx);
+        DesignWorkbench::default().configure(&mut ctx);
         for (id, _) in TOOL_KEYS {
             assert!(ctx.tools().iter().any(|t| t.id == *id), "no tool {id}");
         }
@@ -2378,7 +2379,7 @@ mod icon_coverage {
     #[test]
     fn every_tool_names_an_icon_in_the_set() {
         let mut ctx = WorkbenchContext::default();
-        PartDesignWorkbench::default().configure(&mut ctx);
+        DesignWorkbench::default().configure(&mut ctx);
         for tool in ctx.tools() {
             let icon = tool
                 .icon

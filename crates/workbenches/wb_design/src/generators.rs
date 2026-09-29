@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use wb_sketch::generator::{Generator, new_sketch};
 use wb_sketch::sketch::SketchPlane;
 
-use crate::PartDesignWorkbench;
+use crate::DesignWorkbench;
 
 /// The generators, by variant: (variant, label, icon, command).
 const GENERATORS: &[(&str, &str, &str, &str)] = &[
@@ -122,7 +122,7 @@ fn add(
 ) -> Result<FeatureId, String> {
     let name = match name {
         Some(name) => name.to_string(),
-        None => PartDesignWorkbench::next_feature_name(ctx, generator.base_name()),
+        None => DesignWorkbench::next_feature_name(ctx, generator.base_name()),
     };
     let feature = new_sketch(generator, plane, &name)?;
     ctx.document
@@ -140,7 +140,7 @@ pub(crate) fn insert(ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResu
     let Some(generator) = Generator::named(variant) else {
         return InputResult::consumed();
     };
-    let Some(body) = PartDesignWorkbench::target_body(ctx) else {
+    let Some(body) = DesignWorkbench::target_body(ctx) else {
         ctx.log_warn("Select a body (or one of its features) first");
         return InputResult::consumed();
     };

@@ -14,8 +14,8 @@ use serde_json::{Map, Value, json};
 
 use core_document::{AttachmentOffset, DatumFeature, DatumShape};
 
-use crate::PartDesignWorkbench;
-use crate::feature::PartFeature;
+use crate::DesignWorkbench;
+use crate::feature::DesignFeature;
 
 /// The features a command makes, by tool id, and what each is.
 const FEATURES: &[(&str, &str)] = &[
@@ -318,7 +318,7 @@ pub fn register(context: &mut WorkbenchContext) {
 
 /// Run command `id` with `bench` making the features.
 pub fn run(
-    bench: &PartDesignWorkbench,
+    bench: &DesignWorkbench,
     id: &str,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
@@ -459,7 +459,7 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
         .filter(|(k, _)| k.as_str() != "feature")
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    let data = if let Ok(mut feature) = PartFeature::from_json(data) {
+    let data = if let Ok(mut feature) = DesignFeature::from_json(data) {
         apply_fields(&mut feature, &fields).map_err(CommandError::failed)?;
         feature.to_json()
     } else if let Ok(datum) = DatumFeature::from_json(data) {
@@ -567,7 +567,7 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let name = a
         .opt_string("name")?
         .map(str::to_string)
-        .unwrap_or_else(|| PartDesignWorkbench::next_feature_name(ctx, shape.label()));
+        .unwrap_or_else(|| DesignWorkbench::next_feature_name(ctx, shape.label()));
     let mut datum = DatumFeature {
         shape,
         attachment,
@@ -668,8 +668,8 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let name = a
         .opt_string("name")?
         .map(str::to_string)
-        .unwrap_or_else(|| PartDesignWorkbench::next_feature_name(ctx, "Borrowed"));
-    let feature = PartFeature::Borrow {
+        .unwrap_or_else(|| DesignWorkbench::next_feature_name(ctx, "Borrowed"));
+    let feature = DesignFeature::Borrow {
         source,
         frozen,
         options,
@@ -693,12 +693,12 @@ fn freeze(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .get_feature_meta(id)
         .and_then(|n| n.body)
         .ok_or_else(not_a_borrow)?;
-    let Some(PartFeature::Borrow {
+    let Some(DesignFeature::Borrow {
         source, options, ..
     }) = ctx
         .document
         .get_feature_data(id)
-        .and_then(|d| PartFeature::from_json(d).ok())
+        .and_then(|d| DesignFeature::from_json(d).ok())
     else {
         return Err(not_a_borrow());
     };
@@ -710,7 +710,7 @@ fn freeze(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     } else {
         None
     };
-    let feature = PartFeature::Borrow {
+    let feature = DesignFeature::Borrow {
         source,
         frozen,
         options,
@@ -789,7 +789,7 @@ pub(crate) fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], Com
 /// of an existing one as `design.set` with the fields it changed.
 #[cfg(feature = "egui")]
 pub(crate) fn record_task(
-    bench: &PartDesignWorkbench,
+    bench: &DesignWorkbench,
     ctx: &mut WorkbenchRuntimeContext,
     task: &crate::task::TaskState,
 ) {
@@ -797,11 +797,11 @@ pub(crate) fn record_task(
         return;
     };
     let id = json!(task.feature.0.to_string());
-    if let Ok(PartFeature::Borrow {
+    if let Ok(DesignFeature::Borrow {
         source,
         frozen,
         options,
-    }) = PartFeature::from_json(&node.data)
+    }) = DesignFeature::from_json(&node.data)
     {
         record_borrow(ctx, task, &node.name, source, frozen.is_some(), options);
         return;
@@ -940,11 +940,11 @@ fn record_borrow(
         ctx.record("design.borrow", args, id);
         return;
     }
-    let Ok(PartFeature::Borrow {
+    let Ok(DesignFeature::Borrow {
         source: source_before,
         frozen: frozen_before,
         options: options_before,
-    }) = PartFeature::from_json(&task.snapshot)
+    }) = DesignFeature::from_json(&task.snapshot)
     else {
         return;
     };
@@ -959,13 +959,12 @@ fn record_borrow(
         }
         ctx.record("design.set", args, Value::Null);
     }
-    let now =
-        ctx.document.get_feature_data(task.feature).and_then(|d| {
-            match PartFeature::from_json(d).ok()? {
-                PartFeature::Borrow { frozen, .. } => Some(frozen),
-                _ => None,
-            }
-        });
+    let now = ctx.document.get_feature_data(task.feature).and_then(|d| {
+        match DesignFeature::from_json(d).ok()? {
+            DesignFeature::Borrow { frozen, .. } => Some(frozen),
+            _ => None,
+        }
+    });
     if now.is_some_and(|now| now != frozen_before) {
         let mut args = Map::new();
         args.insert("feature".into(), id);
@@ -998,7 +997,7 @@ pub(crate) fn object(value: Value) -> Map<String, Value> {
 /// before any field is named.
 #[cfg(feature = "egui")]
 fn default_feature(
-    bench: &PartDesignWorkbench,
+    bench: &DesignWorkbench,
     ctx: &mut WorkbenchRuntimeContext,
     tool: &str,
     body: BodyId,
@@ -1012,7 +1011,7 @@ fn default_feature(
         ctx.selected_body_id.take(),
     );
     ctx.active_document_object = sketch;
-    let made = PartDesignWorkbench::feature_for_tool(
+    let made = DesignWorkbench::feature_for_tool(
         core_document::base_tool_id(tool),
         core_document::tool_variant(tool),
         ctx,
@@ -1062,7 +1061,7 @@ fn as_field(current: &Value, given: &Value) -> Value {
 /// wanted, and a datum is `{Datum = id}` or `{Datum = {datum = id}}`
 /// wherever a feature takes one. Each way is tried; the first error is the
 /// one told.
-fn read_fields(value: Value) -> Result<PartFeature, serde_json::Error> {
+fn read_fields(value: Value) -> Result<DesignFeature, serde_json::Error> {
     let first = match serde_json::from_value(value.clone()) {
         Ok(read) => return Ok(read),
         Err(first) => first,
@@ -1113,7 +1112,7 @@ fn datum_forms(value: &mut Value, to_table: bool) {
 
 /// Replace fields of `feature` with `fields`, refusing a name the feature
 /// does not have or a value of the wrong kind.
-fn apply_fields(feature: &mut PartFeature, fields: &Map<String, Value>) -> Result<(), String> {
+fn apply_fields(feature: &mut DesignFeature, fields: &Map<String, Value>) -> Result<(), String> {
     if fields.is_empty() {
         return Ok(());
     }
@@ -1139,7 +1138,7 @@ fn apply_fields(feature: &mut PartFeature, fields: &Map<String, Value>) -> Resul
     // A Pocket's flag and its ThroughAll mode are one setting: a flag given
     // moves the mode (true to ThroughAll, false back to a plain depth), and
     // the flag then reads what the mode is.
-    if let PartFeature::Pocket {
+    if let DesignFeature::Pocket {
         through_all, mode, ..
     } = feature
     {
@@ -1160,7 +1159,7 @@ mod tests {
     use core_document::{Document, Workbench};
 
     fn call(
-        bench: &mut PartDesignWorkbench,
+        bench: &mut DesignWorkbench,
         doc: &mut Document,
         id: &str,
         args: Value,
@@ -1201,7 +1200,7 @@ mod tests {
                 Some(body),
             )
             .unwrap();
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let id = |f: FeatureId| json!(f.0.to_string());
         for args in [
             json!({"sketch": id(a), "sections": [id(b)]}),
@@ -1220,7 +1219,7 @@ mod tests {
     fn fields_read_whichever_way_a_script_writes_them() {
         let datum = FeatureId::new();
         let id = datum.0.to_string();
-        let mut revolve = PartFeature::Revolution {
+        let mut revolve = DesignFeature::Revolution {
             sketch: FeatureId::new(),
             angle_deg: 360.0,
             axis: crate::feature::RevolveAxis::default(),
@@ -1235,7 +1234,7 @@ mod tests {
             apply_fields(&mut revolve, json!({"axis": axis}).as_object().unwrap()).unwrap();
             assert!(matches!(
                 &revolve,
-                PartFeature::Revolution { axis: crate::feature::RevolveAxis::Datum(d), .. } if *d == datum
+                DesignFeature::Revolution { axis: crate::feature::RevolveAxis::Datum(d), .. } if *d == datum
             ));
         }
         // A mirror's plane is a table: a bare id reads as one too.
@@ -1281,7 +1280,7 @@ mod tests {
     fn a_pad_takes_its_sketch_and_the_fields_named() {
         let mut doc = Document::new("t");
         let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let pad = call(
             &mut bench,
             &mut doc,
@@ -1315,7 +1314,7 @@ mod tests {
     fn a_pad_moves_to_another_body_with_its_sketch() {
         let mut doc = Document::new("t");
         let (from, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let pad = call(
             &mut bench,
             &mut doc,
@@ -1339,7 +1338,7 @@ mod tests {
         assert_eq!(moved, json!([sketch.0.to_string(), pad]));
         assert_eq!(doc.get_feature_meta(pad_id).unwrap().body, Some(to));
         assert_eq!(doc.get_feature_meta(sketch).unwrap().body, Some(to));
-        assert!(crate::part_feature_ids(&doc, from).is_empty());
+        assert!(crate::design_feature_ids(&doc, from).is_empty());
     }
 
     /// A duplicate reads a copy of its sketch, named as a new feature is,
@@ -1348,7 +1347,7 @@ mod tests {
     fn a_duplicated_pad_reads_its_own_copy_of_the_sketch() {
         let mut doc = Document::new("t");
         let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let pad = call(
             &mut bench,
             &mut doc,
@@ -1409,7 +1408,7 @@ mod tests {
     fn a_boolean_starts_on_the_latest_other_body() {
         let mut doc = Document::new("t");
         let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         call(
             &mut bench,
             &mut doc,
@@ -1438,7 +1437,7 @@ mod tests {
     fn a_datum_is_set_by_the_offset_it_was_made_with() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let datum = call(
             &mut bench,
             &mut doc,
@@ -1476,7 +1475,7 @@ mod tests {
     fn an_empty_table_empties_a_list_field() {
         let mut doc = Document::new("t");
         let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         call(
             &mut bench,
             &mut doc,
@@ -1500,7 +1499,7 @@ mod tests {
     fn a_pocket_through_all_reads_back_as_its_mode() {
         let mut doc = Document::new("t");
         let (_, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         call(
             &mut bench,
             &mut doc,
@@ -1564,7 +1563,7 @@ mod tests {
                 rotation: [0.0, 0.0, 0.35f32.sin(), 0.35f32.cos()],
             },
         );
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         call(
             &mut bench,
             &mut doc,
@@ -1614,7 +1613,7 @@ mod tests {
     /// and the active object it left.
     #[cfg(feature = "egui")]
     fn task_frame(
-        bench: &mut PartDesignWorkbench,
+        bench: &mut DesignWorkbench,
         doc: &mut Document,
         active: FeatureId,
         request: core_document::TaskRequest,
@@ -1638,7 +1637,7 @@ mod tests {
         let mut doc = Document::new("t");
         let (_, sketch) = sketch_in(&mut doc);
         let before = doc.clone();
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let pad = {
             let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
             ctx.active_document_object = Some(sketch);
@@ -1719,7 +1718,7 @@ mod tests {
     }
 
     fn call_on(doc: &mut Document, id: &str, args: Value) -> CommandResult {
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         call(&mut bench, doc, id, args)
     }
 
@@ -1730,7 +1729,7 @@ mod tests {
     fn a_face_profile_pad_is_made_and_recorded_with_its_face() {
         let mut doc = Document::new("t");
         let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         call(
             &mut bench,
             &mut doc,
@@ -1797,7 +1796,7 @@ mod tests {
     fn an_unknown_field_or_a_wrong_kind_is_refused_and_says_what_there_is() {
         let mut doc = Document::new("t");
         let (_, sketch) = sketch_in(&mut doc);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let err = call(
             &mut bench,
             &mut doc,

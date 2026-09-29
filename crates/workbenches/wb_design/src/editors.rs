@@ -14,10 +14,10 @@ use ui_kit::widgets::{
     small_secondary_button,
 };
 
-use crate::build::part_features_of_body;
+use crate::build::design_features_of_body;
 use crate::feature::{
-    ChamferMode, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
-    MirrorPlane, PartFeature, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
+    ChamferMode, DesignFeature, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeMode, FacePick,
+    HelixMode, MirrorPlane, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
     SketchAxis, TransformStep,
 };
 
@@ -1694,7 +1694,7 @@ fn originals_editor(
 ) -> bool {
     let mut changed = false;
     label_cell(ui, "Originals (empty = whole body)");
-    let features = part_features_of_body(ctx.document, body);
+    let features = design_features_of_body(ctx.document, body);
     for (id, feature) in &features {
         if *id == this_feature {
             break;
@@ -2039,18 +2039,18 @@ pub fn feature_editor(
     fx: &mut Formulas,
     body: BodyId,
     feature_id: FeatureId,
-    feature: &mut PartFeature,
+    feature: &mut DesignFeature,
 ) -> bool {
     let mut changed = false;
     // No feature before this one: nothing yet for a mode that needs
     // material to cut through or stop at.
-    let first_feature = crate::build::part_features_of_body(ctx.document, body)
+    let first_feature = crate::build::design_features_of_body(ctx.document, body)
         .iter()
         .take_while(|(id, _)| *id != feature_id)
         .next()
         .is_none();
     match feature {
-        PartFeature::Pad {
+        DesignFeature::Pad {
             refine: _,
             sketch: _,
             length,
@@ -2116,7 +2116,7 @@ pub fn feature_editor(
             let two_sided = mode.sides(*mode2).1.is_some();
             changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
         }
-        PartFeature::Pocket {
+        DesignFeature::Pocket {
             refine: _,
             sketch: _,
             depth,
@@ -2199,7 +2199,7 @@ pub fn feature_editor(
             let two_sided = mode.sides(*mode2).1.is_some();
             changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
         }
-        PartFeature::Revolution {
+        DesignFeature::Revolution {
             refine: _,
             sketch,
             angle_deg,
@@ -2210,7 +2210,7 @@ pub fn feature_editor(
             mode,
             up_to_face,
         }
-        | PartFeature::Groove {
+        | DesignFeature::Groove {
             refine: _,
             sketch,
             angle_deg,
@@ -2273,7 +2273,7 @@ pub fn feature_editor(
             }
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
-        PartFeature::Loft {
+        DesignFeature::Loft {
             refine: _,
             sections,
             ruled,
@@ -2363,7 +2363,7 @@ pub fn feature_editor(
             changed |= check_row(ui, closed, "Closed (loop back)").changed();
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
-        PartFeature::Pipe {
+        DesignFeature::Pipe {
             refine: _,
             profile,
             spine,
@@ -2461,7 +2461,7 @@ pub fn feature_editor(
             }
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
-        PartFeature::Helix {
+        DesignFeature::Helix {
             refine: _,
             sketch,
             axis,
@@ -2537,7 +2537,7 @@ pub fn feature_editor(
                     .changed();
             }
         }
-        PartFeature::Primitive {
+        DesignFeature::Primitive {
             refine: _,
             kind,
             placement,
@@ -2586,10 +2586,10 @@ pub fn feature_editor(
             }
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
-        PartFeature::Hole { .. } => {
+        DesignFeature::Hole { .. } => {
             changed |= hole::hole_editor(ui, ctx, fx, body, feature_id, feature);
         }
-        PartFeature::Fillet {
+        DesignFeature::Fillet {
             radius,
             edges,
             follow_tangent,
@@ -2598,7 +2598,7 @@ pub fn feature_editor(
             changed |= edge_sel_editor(ui, ctx, edges, ("fillet_edges", feature_id));
             changed |= tangent_row(ui, follow_tangent);
         }
-        PartFeature::Chamfer {
+        DesignFeature::Chamfer {
             size,
             mode,
             size2,
@@ -2639,7 +2639,7 @@ pub fn feature_editor(
             changed |= edge_sel_editor(ui, ctx, edges, ("chamfer_edges", feature_id));
             changed |= tangent_row(ui, follow_tangent);
         }
-        PartFeature::Draft {
+        DesignFeature::Draft {
             angle_deg,
             neutral,
             faces,
@@ -2653,7 +2653,7 @@ pub fn feature_editor(
             changed |= face_list_editor(ui, ctx, faces, "Faces to draft:");
             changed |= check_row(ui, reversed, "Reversed pull").changed();
         }
-        PartFeature::Thickness {
+        DesignFeature::Thickness {
             value,
             faces,
             inward,
@@ -2686,7 +2686,7 @@ pub fn feature_editor(
                     });
             });
         }
-        PartFeature::Mirrored {
+        DesignFeature::Mirrored {
             originals,
             plane,
             refine: _,
@@ -2694,7 +2694,7 @@ pub fn feature_editor(
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= mirror_plane_editor(ui, ctx, plane, ("mirror_plane", feature_id));
         }
-        PartFeature::LinearPattern {
+        DesignFeature::LinearPattern {
             refine: _,
             originals,
             axis,
@@ -2736,7 +2736,7 @@ pub fn feature_editor(
             );
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
-        PartFeature::PolarPattern {
+        DesignFeature::PolarPattern {
             refine: _,
             originals,
             axis,
@@ -2783,7 +2783,7 @@ pub fn feature_editor(
             );
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
-        PartFeature::MultiTransform {
+        DesignFeature::MultiTransform {
             originals,
             steps,
             refine: _,
@@ -2951,7 +2951,7 @@ pub fn feature_editor(
                 }
             });
         }
-        PartFeature::Clone { source } => {
+        DesignFeature::Clone { source } => {
             let bodies: Vec<(BodyId, String)> = ctx
                 .document
                 .bodies()
@@ -2978,14 +2978,14 @@ pub fn feature_editor(
                     });
             });
         }
-        PartFeature::Borrow {
+        DesignFeature::Borrow {
             source,
             frozen,
             options,
         } => {
             changed |= borrow::borrow_editor(ui, ctx, body, feature_id, source, frozen, options);
         }
-        PartFeature::BodyBoolean {
+        DesignFeature::BodyBoolean {
             tool_body,
             kind,
             more_tools,
@@ -3122,7 +3122,7 @@ mod formula_fields {
     use super::LABEL_PARAMETERS;
 
     #[test]
-    fn every_field_label_names_a_parameter_part_design_lists() {
+    fn every_field_label_names_a_parameter_design_lists() {
         let listed = crate::params::every_name();
         for (label, name) in LABEL_PARAMETERS {
             assert!(
@@ -3231,7 +3231,7 @@ mod panel_width {
                 "subtractive": false}}),
         ];
         for data in features {
-            let feature = PartFeature::from_json(&data).unwrap();
+            let feature = DesignFeature::from_json(&data).unwrap();
             let id = doc
                 .add_feature_in_body(feature.clone(), "Feature".into(), Some(body))
                 .unwrap();

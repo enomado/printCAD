@@ -284,7 +284,7 @@ name = "bench_fixtures"
 version = "0.1.0"
 dependencies = [
  "core_document",
- "wb_part",
+ "wb_design",
  "wb_sketch",
 ]
 
@@ -2052,7 +2052,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
- "wb_part",
+ "wb_design",
  "wb_sketch",
 ]
 
@@ -5327,7 +5327,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wb_part"
+name = "wb_design"
 version = "0.1.0"
 dependencies = [
  "core_document",
@@ -5840,7 +5840,7 @@ dependencies = [
  "core_document",
  "tracing",
  "wb_assembly",
- "wb_part",
+ "wb_design",
  "wb_sketch",
  "wb_wasm",
 ]

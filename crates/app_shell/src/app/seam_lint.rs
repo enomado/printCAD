@@ -8,11 +8,11 @@ use std::path::Path;
 /// What a bypass looks like: a bench crate, a bench id string, a bench
 /// feature type, or the datum kind Design claims.
 const BYPASSES: &[&str] = &[
-    "wb_part",
+    "wb_design",
     "wb_sketch",
     "\"wb.design\"",
     "\"wb.sketch\"",
-    "PartFeature",
+    "DesignFeature",
     "SketchFeature",
     "core.datum",
 ];

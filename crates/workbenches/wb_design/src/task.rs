@@ -10,8 +10,8 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, destructive_button, note_card};
 use ui_kit::{sans, sans_semibold};
 
-use crate::feature::PartFeature;
-use crate::{PartDesignWorkbench, editors};
+use crate::feature::DesignFeature;
+use crate::{DesignWorkbench, editors};
 
 /// What the open task edits.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,7 +47,7 @@ pub(crate) struct TaskState {
 
 /// The Name field of the task for `feature`.
 fn name_field_id(feature: FeatureId) -> egui::Id {
-    egui::Id::new(("part_task_name", feature))
+    egui::Id::new(("design_task_name", feature))
 }
 
 /// The kind of task node `id` is, if it is one this workbench edits.
@@ -60,7 +60,7 @@ pub(crate) fn task_kind(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<
     }
 }
 
-impl PartDesignWorkbench {
+impl DesignWorkbench {
     /// The feature the task panel is for: the open task's, else one the
     /// user asked to edit, else one a tool just made. Selecting a feature
     /// alone opens nothing.
@@ -80,7 +80,7 @@ impl PartDesignWorkbench {
         let (id, kind) = self.task_target(ctx)?;
         let node = ctx.document.get_feature_meta(id)?;
         let icon = match kind {
-            TaskKind::Part => PartFeature::from_json(&node.data)
+            TaskKind::Part => DesignFeature::from_json(&node.data)
                 .map(|f| f.icon())
                 .unwrap_or("tree-feature"),
             TaskKind::Datum => core_document::DatumFeature::from_json(&node.data)
@@ -253,7 +253,7 @@ impl PartDesignWorkbench {
             // The restored payload's references become the dependencies
             // again.
             let deps = match task.kind {
-                TaskKind::Part => PartFeature::from_json(&task.snapshot)
+                TaskKind::Part => DesignFeature::from_json(&task.snapshot)
                     .map(|f| f.dependencies())
                     .unwrap_or_default(),
                 TaskKind::Datum => core_document::DatumFeature::from_json(&task.snapshot)
@@ -370,7 +370,7 @@ impl PartDesignWorkbench {
         feature_id: FeatureId,
         node: &core_document::FeatureNode,
     ) {
-        let Some(mut feature) = PartFeature::from_json(&node.data).ok() else {
+        let Some(mut feature) = DesignFeature::from_json(&node.data).ok() else {
             note_card(
                 ui,
                 Note::Error,
@@ -436,7 +436,7 @@ impl PartDesignWorkbench {
         feature_id: FeatureId,
         deps_before: &[FeatureId],
         sketch_before: Option<FeatureId>,
-        feature: &PartFeature,
+        feature: &DesignFeature,
     ) {
         let deps_after = feature.dependencies();
         if ctx
@@ -543,8 +543,8 @@ mod tests {
         SketchFeature::new(sketch, plane)
     }
 
-    fn pad(sketch: FeatureId, length: f32) -> PartFeature {
-        PartFeature::Pad {
+    fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
+        DesignFeature::Pad {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -612,7 +612,7 @@ mod tests {
 
     /// One frame of the task panel with `active` selected.
     fn frame(
-        wb: &mut PartDesignWorkbench,
+        wb: &mut DesignWorkbench,
         panel: &egui::Context,
         doc: &mut Document,
         active: Option<FeatureId>,
@@ -636,7 +636,7 @@ mod tests {
     /// A double click on `id`'s row: the bench is asked to edit it, and
     /// the panel draws with it selected.
     fn open(
-        wb: &mut PartDesignWorkbench,
+        wb: &mut DesignWorkbench,
         panel: &egui::Context,
         doc: &mut Document,
         id: FeatureId,
@@ -656,7 +656,7 @@ mod tests {
         let Scene {
             mut doc, pad: id, ..
         } = scene();
-        let mut wb = PartDesignWorkbench::default();
+        let mut wb = DesignWorkbench::default();
         let panel = panel();
         {
             let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
@@ -707,8 +707,8 @@ mod tests {
     }
 
     /// An edit the panel makes, written as its fields write it.
-    fn edit(wb: &mut PartDesignWorkbench, doc: &mut Document, id: FeatureId, to: PartFeature) {
-        let before = PartFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+    fn edit(wb: &mut DesignWorkbench, doc: &mut Document, id: FeatureId, to: DesignFeature) {
+        let before = DesignFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         wb.apply_part_edit(&mut ctx, id, &before.dependencies(), before.sketch(), &to);
     }
@@ -720,7 +720,7 @@ mod tests {
         let Scene {
             mut doc, pad: id, ..
         } = scene();
-        let mut wb = PartDesignWorkbench::default();
+        let mut wb = DesignWorkbench::default();
         let panel = panel();
         open(&mut wb, &panel, &mut doc, id);
 
@@ -764,8 +764,8 @@ mod tests {
         };
         assert!(wb.on_input(&release, None, &mut ctx).consumed);
         assert!(wb.held.is_none());
-        let data = PartFeature::from_json(ctx.document.get_feature_data(id).unwrap()).unwrap();
-        let PartFeature::Pad { length, .. } = data else {
+        let data = DesignFeature::from_json(ctx.document.get_feature_data(id).unwrap()).unwrap();
+        let DesignFeature::Pad { length, .. } = data else {
             panic!()
         };
         assert!((length - 17.0).abs() < 0.051, "{length}");
@@ -785,7 +785,7 @@ mod tests {
         doc.set_feature_visible(second, true);
         doc.set_feature_formula(id, "/Pad/length", Some("4 mm".into()))
             .unwrap();
-        let mut wb = PartDesignWorkbench::default();
+        let mut wb = DesignWorkbench::default();
         let panel = panel();
         open(&mut wb, &panel, &mut doc, id);
 
@@ -806,7 +806,7 @@ mod tests {
             vec![("/Pad/length".to_string(), "4 mm".to_string())]
         );
         assert_eq!(
-            PartFeature::from_json(&node.data).unwrap().sketch(),
+            DesignFeature::from_json(&node.data).unwrap().sketch(),
             Some(first)
         );
         assert_eq!(doc.feature_tree().dependencies(id), vec![first]);
@@ -826,7 +826,7 @@ mod tests {
                 other_pad,
                 ..
             } = scene();
-            let mut wb = PartDesignWorkbench::default();
+            let mut wb = DesignWorkbench::default();
             wb.options.update_while_editing = false;
             let panel = panel();
             open(&mut wb, &panel, &mut doc, id);
@@ -855,7 +855,7 @@ mod tests {
             let Scene {
                 mut doc, pad: id, ..
             } = scene();
-            let mut wb = PartDesignWorkbench::default();
+            let mut wb = DesignWorkbench::default();
             let panel = panel();
             open(&mut wb, &panel, &mut doc, id);
             panel.memory_mut(|m| m.request_focus(name_field_id(id)));

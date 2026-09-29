@@ -8,7 +8,7 @@ use core_document::{
 };
 use kernel_api::{Placement, PrimitiveKind, TessellationSettings};
 use kernel_ogeom::OgeomKernel;
-use wb_part::PartFeature;
+use wb_design::DesignFeature;
 use wb_sketch::SketchFeature;
 use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
 
@@ -18,13 +18,13 @@ fn registry() -> DocumentService {
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
         .unwrap();
     registry
-        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
         .unwrap();
     registry
 }
 
-fn cylinder(radius: f64, height: f64) -> PartFeature {
-    PartFeature::Primitive {
+fn cylinder(radius: f64, height: f64) -> DesignFeature {
+    DesignFeature::Primitive {
         attached: None,
         kind: PrimitiveKind::Cylinder {
             radius,
@@ -162,7 +162,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
         .add_feature_in_body(sketch, "Sketch".into(), Some(body))
         .unwrap();
     doc.add_feature_in_body(
-        PartFeature::Pad {
+        DesignFeature::Pad {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -170,7 +170,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
             length: 3.0,
             reversed: false,
             symmetric: false,
-            mode: wb_part::ExtrudeMode::Dimension,
+            mode: wb_design::ExtrudeMode::Dimension,
             length2: 0.0,
             taper_deg: 0.0,
             up_to_face: None,
@@ -353,15 +353,15 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
         .add_feature_in_body(ring, "Ring".into(), Some(body))
         .unwrap();
     doc.add_feature_in_body(
-        PartFeature::Revolution {
+        DesignFeature::Revolution {
             refine: false,
             sketch: ring,
             angle_deg: 360.0,
-            axis: wb_part::RevolveAxis::Datum(axis),
+            axis: wb_design::RevolveAxis::Datum(axis),
             reversed: false,
             midplane: false,
             second_angle_deg: None,
-            mode: wb_part::RevolveMode::Angle,
+            mode: wb_design::RevolveMode::Angle,
             up_to_face: None,
         },
         "Revolution".into(),
@@ -379,7 +379,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
 
     // Moved 1 along x: the ring turns about x = 1, from 4 to 7 out.
     let mut moved = cylinder(2.0, 10.0);
-    if let PartFeature::Primitive { placement, .. } = &mut moved {
+    if let DesignFeature::Primitive { placement, .. } = &mut moved {
         placement.origin = [1.0, 0.0, 0.0];
     }
     doc.update_feature_data(base, moved.to_json()).unwrap();
@@ -397,8 +397,8 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
     assert!((got - want).abs() < want * 1e-4, "{got} against {want}");
 }
 
-fn pad(sketch: FeatureId, length: f32) -> PartFeature {
-    PartFeature::Pad {
+fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
+    DesignFeature::Pad {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -406,7 +406,7 @@ fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         length,
         reversed: false,
         symmetric: false,
-        mode: wb_part::ExtrudeMode::Dimension,
+        mode: wb_design::ExtrudeMode::Dimension,
         length2: 0.0,
         taper_deg: 0.0,
         up_to_face: None,
@@ -421,8 +421,8 @@ fn pad(sketch: FeatureId, length: f32) -> PartFeature {
     }
 }
 
-fn pocket(sketch: FeatureId, depth: f32) -> PartFeature {
-    PartFeature::Pocket {
+fn pocket(sketch: FeatureId, depth: f32) -> DesignFeature {
+    DesignFeature::Pocket {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -431,7 +431,7 @@ fn pocket(sketch: FeatureId, depth: f32) -> PartFeature {
         reversed: false,
         symmetric: false,
         through_all: false,
-        mode: wb_part::ExtrudeMode::Dimension,
+        mode: wb_design::ExtrudeMode::Dimension,
         depth2: 0.0,
         taper_deg: 0.0,
         up_to_face: None,
@@ -562,11 +562,11 @@ fn a_sketch_on_a_lent_face_follows_the_lender() {
     let a = doc.create_body(Some("A".into()));
     let lent = doc
         .add_feature_in_body(
-            PartFeature::Borrow {
+            DesignFeature::Borrow {
                 options: Default::default(),
-                source: wb_part::BorrowSource::Solid {
+                source: wb_design::BorrowSource::Solid {
                     body: b,
-                    faces: vec![wb_part::FacePick {
+                    faces: vec![wb_design::FacePick {
                         point: [10.0, 10.0, 10.0],
                         normal: [0.0, 0.0, 1.0],
                         name: mesh.face_names[top_id],
@@ -727,7 +727,7 @@ fn a_primitive_attached_by_a_mode_follows_what_it_stands_on() {
         surface: None,
         name: mesh.face_names[top_id],
     };
-    let cube = PartFeature::Primitive {
+    let cube = DesignFeature::Primitive {
         kind: kernel_api::PrimitiveKind::Box {
             length: 4.0,
             width: 4.0,
@@ -736,7 +736,7 @@ fn a_primitive_attached_by_a_mode_follows_what_it_stands_on() {
         placement: kernel_api::Placement::default(),
         subtractive: false,
         refine: false,
-        attached: Some(Box::new(wb_part::Attached {
+        attached: Some(Box::new(wb_design::Attached {
             attachment: core_document::DatumAttachment::Face {
                 face: core_document::attach::face_anchor(&top, true),
             },

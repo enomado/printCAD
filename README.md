@@ -241,7 +241,7 @@ Preferences (Ctrl+,).
 | `ui_kit` | Colours, widgets, icons and fonts |
 | `axes` | Axis presets, so no code assumes which way is up |
 | `workbenches/wb_sketch` | Sketcher |
-| `workbenches/wb_part` | Design |
+| `workbenches/wb_design` | Design |
 | `workbenches/wb_assembly` | Assembly: joints between bodies |
 | `workbenches/wb_wasm` | Workbench packages, run sandboxed |
 | `workbenches/fixtures` | Ready-made scenes for tests and demos |

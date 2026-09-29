@@ -5,15 +5,15 @@
 use core_document::{BodyId, Document, FeatureId, WorkbenchFeature};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
-use wb_part::PartFeature;
+use wb_design::DesignFeature;
 use wb_sketch::SketchFeature;
 use wb_sketch::generator::{
     GearSpec, Generator, ShaftSection, ShaftSpec, SprocketSpec, new_sketch,
 };
 use wb_sketch::sketch::SketchPlane;
 
-fn pad(sketch: FeatureId, length: f32) -> PartFeature {
-    PartFeature::Pad {
+fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
+    DesignFeature::Pad {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -21,7 +21,7 @@ fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         length,
         reversed: false,
         symmetric: false,
-        mode: wb_part::ExtrudeMode::Dimension,
+        mode: wb_design::ExtrudeMode::Dimension,
         length2: 0.0,
         taper_deg: 0.0,
         up_to_face: None,
@@ -36,12 +36,12 @@ fn pad(sketch: FeatureId, length: f32) -> PartFeature {
     }
 }
 
-fn revolve(sketch: FeatureId) -> PartFeature {
-    PartFeature::Revolution {
+fn revolve(sketch: FeatureId) -> DesignFeature {
+    DesignFeature::Revolution {
         refine: false,
         sketch,
         angle_deg: 360.0,
-        axis: wb_part::RevolveAxis::SketchY,
+        axis: wb_design::RevolveAxis::SketchY,
         reversed: false,
         midplane: false,
         second_angle_deg: None,
@@ -55,7 +55,7 @@ fn revolve(sketch: FeatureId) -> PartFeature {
 fn scene(
     generator: Generator,
     plane: SketchPlane,
-    make: impl FnOnce(FeatureId) -> PartFeature,
+    make: impl FnOnce(FeatureId) -> DesignFeature,
 ) -> (Document, BodyId, FeatureId) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
@@ -70,7 +70,7 @@ fn scene(
 
 /// The solid the body builds, its volume and its mesh.
 fn build(doc: &Document, body: BodyId) -> (f64, kernel_api::TriMesh) {
-    let ops = wb_part::body_build_ops(doc, body).unwrap().ops;
+    let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
     let mut kernel = OgeomKernel::new();
     let result = kernel
         .execute_solid_chain(&ops, &TessellationSettings::default())
@@ -250,7 +250,7 @@ fn a_variable_sets_the_teeth_and_the_padded_gear_follows() {
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
         .unwrap();
     registry
-        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
         .unwrap();
     let generator = Generator::Gear(GearSpec {
         module: 1.0,

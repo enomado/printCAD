@@ -6,7 +6,7 @@
 use core_document::{BodyId, BodyPlacement, Document, FeatureId, WorkbenchFeature};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
-use wb_part::{BorrowSource, BorrowedRef, EdgePick, FacePick, PartFeature};
+use wb_design::{BorrowSource, BorrowedRef, DesignFeature, EdgePick, FacePick};
 use wb_sketch::SketchFeature;
 use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 
@@ -37,7 +37,7 @@ fn circle(cx: f32, cy: f32, r: f32) -> SketchFeature {
 
 /// A pad or a pocket of `sketch` with every other field at its default,
 /// then `fields` set the way `design.set` sets them.
-fn extrude(kind: &str, sketch: FeatureId, fields: serde_json::Value) -> PartFeature {
+fn extrude(kind: &str, sketch: FeatureId, fields: serde_json::Value) -> DesignFeature {
     let length = if kind == "Pad" { "length" } else { "depth" };
     let mut value = serde_json::json!({ kind: {
         "sketch": sketch.0.to_string(),
@@ -48,7 +48,7 @@ fn extrude(kind: &str, sketch: FeatureId, fields: serde_json::Value) -> PartFeat
     for (k, v) in fields.as_object().unwrap() {
         inner.insert(k.clone(), v.clone());
     }
-    PartFeature::from_json(&value).unwrap()
+    DesignFeature::from_json(&value).unwrap()
 }
 
 /// A body holding a `w` × `h` block `t` thick from its XY plane up.
@@ -70,7 +70,7 @@ fn block(doc: &mut Document, name: &str, w: f32, h: f32, t: f32) -> BodyId {
 /// rebuild; a failed build fails the test.
 fn settle(doc: &mut Document, kernel: &mut OgeomKernel) {
     for _ in 0..16 {
-        let jobs = wb_part::rebuild_jobs(doc);
+        let jobs = wb_design::rebuild_jobs(doc);
         if jobs.is_empty() {
             return;
         }
@@ -121,7 +121,7 @@ fn assert_close(got: f64, want: f64, what: &str) {
 /// A borrow of `source` in `body`.
 fn borrow(doc: &mut Document, body: BodyId, source: BorrowSource) -> FeatureId {
     doc.add_feature_in_body(
-        PartFeature::Borrow {
+        DesignFeature::Borrow {
             options: Default::default(),
             source,
             frozen: None,
@@ -135,12 +135,12 @@ fn borrow(doc: &mut Document, body: BodyId, source: BorrowSource) -> FeatureId {
 /// Freeze the borrow `id` as it is now, the way `design.freeze` does.
 fn freeze(doc: &mut Document, id: FeatureId) {
     let body = doc.get_feature_meta(id).unwrap().body.unwrap();
-    let Ok(PartFeature::Borrow { source, .. }) =
-        PartFeature::from_json(doc.get_feature_data(id).unwrap())
+    let Ok(DesignFeature::Borrow { source, .. }) =
+        DesignFeature::from_json(doc.get_feature_data(id).unwrap())
     else {
         panic!("not a borrow");
     };
-    let frozen = wb_part::freeze(
+    let frozen = wb_design::freeze(
         doc,
         Some(&kernel_ogeom::QUERIES),
         body,
@@ -148,7 +148,7 @@ fn freeze(doc: &mut Document, id: FeatureId) {
         &Default::default(),
     )
     .unwrap();
-    let feature = PartFeature::Borrow {
+    let feature = DesignFeature::Borrow {
         options: Default::default(),
         source,
         frozen: Some(frozen),
@@ -211,7 +211,7 @@ fn a_borrowed_sketch_drives_a_pocket_in_another_body_live_or_frozen() {
     )
     .unwrap();
 
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
     let drilled = |r: f64| 4000.0 - PI * r * r * 10.0;
@@ -221,7 +221,7 @@ fn a_borrowed_sketch_drives_a_pocket_in_another_body_live_or_frozen() {
     // Live: a smaller circle drills both.
     replace_sketch(&mut doc, hole, circle(10.0, 10.0, 2.0));
     assert!(
-        wb_part::pending_body_rebuilds(&doc).contains(&b),
+        wb_design::pending_body_rebuilds(&doc).contains(&b),
         "the sketch's change reaches the body that borrows it"
     );
     settle(&mut doc, &mut kernel);
@@ -258,7 +258,7 @@ fn a_borrowed_sketch_lies_where_the_bodies_sit() {
         Some(b),
     )
     .unwrap();
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
     let full = 4000.0 - PI * 90.0;
@@ -362,7 +362,7 @@ fn a_borrowed_face_is_the_face_a_pad_in_another_body_stops_on() {
     )
     .unwrap();
 
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
     // From B's z = 0 (world 2) up to world 30.
@@ -376,7 +376,7 @@ fn a_borrowed_face_is_the_face_a_pad_in_another_body_stops_on() {
             ..BodyPlacement::IDENTITY
         },
     );
-    let jobs = wb_part::rebuild_jobs(&mut doc);
+    let jobs = wb_design::rebuild_jobs(&mut doc);
     assert!(
         jobs.iter().any(|job| job.body == b),
         "moving the source rebuilds the body that borrows from it"
@@ -412,7 +412,7 @@ fn a_pad_stops_on_a_curved_borrowed_face() {
     let mut doc = Document::new("t");
     let a = doc.create_body(Some("A".into()));
     doc.add_feature_in_body(
-        PartFeature::Primitive {
+        DesignFeature::Primitive {
             attached: None,
             kind: kernel_api::PrimitiveKind::Cylinder {
                 radius: 10.0,
@@ -467,7 +467,7 @@ fn a_pad_stops_on_a_curved_borrowed_face() {
         Some(b),
     )
     .unwrap();
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
     // Height at y: from B's z = 0 (world -5) up to 30 - sqrt(100 - y²).
@@ -534,7 +534,7 @@ fn a_pad_runs_along_a_borrowed_edge_where_its_body_turns_it() {
         Some(b),
     )
     .unwrap();
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
     let want = 100.0 * 10.0 * std::f64::consts::FRAC_1_SQRT_2;
@@ -553,7 +553,7 @@ fn a_borrowed_sketch_is_a_profile_of_the_borrowing_body() {
         .unwrap();
     let b = block(&mut doc, "B", 20.0, 20.0, 10.0);
     let borrowed = borrow(&mut doc, b, BorrowSource::Sketch(hole));
-    let listed = wb_part::sketches_of_body(&doc, b);
+    let listed = wb_design::sketches_of_body(&doc, b);
     assert!(listed.iter().any(|(id, _)| *id == borrowed), "{listed:?}");
     assert!(
         !listed.iter().any(|(id, _)| *id == hole),
@@ -580,7 +580,7 @@ fn bodies_that_borrow_from_each_other_settle_and_say_so() {
     };
     let from_a = borrow(&mut doc, b, top(a));
     borrow(&mut doc, a, top(b));
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
 
@@ -603,12 +603,12 @@ fn bodies_that_borrow_from_each_other_settle_and_say_so() {
         )
         .unwrap();
     doc.mark_feature_dirty(post);
-    let jobs = wb_part::rebuild_jobs(&mut doc);
+    let jobs = wb_design::rebuild_jobs(&mut doc);
     let job = jobs.iter().find(|job| job.body == b).expect("B rebuilds");
     let error = job.plan.as_ref().unwrap_err();
     assert!(error.message.contains("in turn"), "{}", error.message);
     assert!(
-        wb_part::rebuild_jobs(&mut doc).is_empty(),
+        wb_design::rebuild_jobs(&mut doc).is_empty(),
         "nothing comes back"
     );
 }
@@ -623,7 +623,7 @@ fn an_offset_moves_what_a_borrow_lends() {
         .add_feature_in_body(circle(10.0, 10.0, 3.0), "Hole sketch".into(), Some(a))
         .unwrap();
     let b = block(&mut doc, "B", 20.0, 20.0, 10.0);
-    let options = wb_part::BorrowOptions {
+    let options = wb_design::BorrowOptions {
         offset: core_document::AttachmentOffset {
             translation: [8.0, 0.0, 0.0],
             ..Default::default()
@@ -632,7 +632,7 @@ fn an_offset_moves_what_a_borrow_lends() {
     };
     let borrowed = doc
         .add_feature_in_body(
-            PartFeature::Borrow {
+            DesignFeature::Borrow {
                 source: BorrowSource::Sketch(hole),
                 frozen: None,
                 options,
@@ -651,7 +651,7 @@ fn an_offset_moves_what_a_borrow_lends() {
         Some(b),
     )
     .unwrap();
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
     // Centred at x = 18, the circle runs 1 mm past the block's side.
@@ -686,14 +686,14 @@ fn closed_borrowed_edges_fill_to_a_face_a_pad_takes() {
         .collect();
     let borrowed = doc
         .add_feature_in_body(
-            PartFeature::Borrow {
+            DesignFeature::Borrow {
                 source: BorrowSource::Solid {
                     body: a,
                     faces: Vec::new(),
                     edges,
                 },
                 frozen: None,
-                options: wb_part::BorrowOptions {
+                options: wb_design::BorrowOptions {
                     fill: true,
                     ..Default::default()
                 },
@@ -708,7 +708,7 @@ fn closed_borrowed_edges_fill_to_a_face_a_pad_takes() {
         Some(b),
     )
     .unwrap();
-    wb_part::mark_all_part_features_dirty(&mut doc);
+    wb_design::mark_all_design_features_dirty(&mut doc);
     let mut kernel = OgeomKernel::new();
     settle(&mut doc, &mut kernel);
     assert_close(volume(&doc, &mut kernel, b), 2000.0, "the top padded");
@@ -723,7 +723,7 @@ fn a_borrowed_face_is_a_pad_s_profile() {
         let mut doc = Document::new("t");
         let a = block(&mut doc, "A", 20.0, 20.0, 10.0);
         let b = doc.create_body(Some("B".into()));
-        wb_part::mark_all_part_features_dirty(&mut doc);
+        wb_design::mark_all_design_features_dirty(&mut doc);
         settle(&mut doc, &mut kernel);
         let top = borrow(
             &mut doc,
@@ -747,9 +747,13 @@ fn a_borrowed_face_is_a_pad_s_profile() {
             "reversed": false,
             "profile_borrowed": { "borrow": top.0.to_string(), "index": 0 },
         }});
-        doc.add_feature_in_body(PartFeature::from_json(&pad).unwrap(), "Pad".into(), Some(b))
-            .unwrap();
-        wb_part::mark_all_part_features_dirty(&mut doc);
+        doc.add_feature_in_body(
+            DesignFeature::from_json(&pad).unwrap(),
+            "Pad".into(),
+            Some(b),
+        )
+        .unwrap();
+        wb_design::mark_all_design_features_dirty(&mut doc);
         settle(&mut doc, &mut kernel);
         assert_close(
             volume(&doc, &mut kernel, b),

@@ -226,7 +226,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   benches only through it, never by naming them. `app/seam_lint.rs` fails
   when a bench crate, id or feature type appears in `app_shell/src`, and CI
   greps for the same.
-- `workbenches/wb_part`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
+- `workbenches/wb_design`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
   Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean features
   (`feature.rs`; every one that fuses or cuts carries `refine`, which the
   build follows with a `SolidOp::Refine` merging coplanar faces; the
@@ -933,7 +933,7 @@ on the start page (`Screen::Start`); the recent list lives in
 - Sketcher end-to-end tests drive `on_input` with real viewport-pixel clicks:
   `wb_sketch/tests/interaction.rs` (reuse its `Harness`).
 - Full-stack sketch→feature→solid pipelines:
-  `kernel_ogeom/tests/part_design_stack.rs` (dev-deps on wb_part/wb_sketch).
+  `kernel_ogeom/tests/design_stack.rs` (dev-deps on wb_design/wb_sketch).
 - Solver/geometry math is unit-tested next to the code. Assert geometric
   properties (bounds, tangency, closure), not implementation details.
 - Before committing: fmt, clippy (zero warnings), full test suite, and a
@@ -1010,7 +1010,7 @@ on the start page (`Screen::Start`); the recent list lives in
   section where it stands. A revolution up to a face whose plane holds its
   axis stops at one angle; any other face goes to `make_revolution_until`.
   A thickness's arc join is the kernel's `Join::Arc`.
-- Hole threads: `wb_part/src/hole_tables.rs` holds the thread standards
+- Hole threads: `wb_design/src/hole_tables.rs` holds the thread standards
   (ISO metric coarse and fine, UNC/UNF/UNEF, BSW/BSF, BSP G and Rc, NPT),
   their classes, the ISO 4762/10642 seats and the user's `hole_cuts.json`
   profiles (read once at start, copied into a hole when picked, so geometry
@@ -1020,6 +1020,6 @@ on the start page (`Screen::Start`); the recent list lives in
   (a taper thread its minor diameter at the face, narrowing 1:16),
   clearances otherwise; "Modeled thread" also cuts the standard's groove
   (60° or 55°) along a helix out to the major diameter, along a cone for a
-  taper (`thread_cut` in `wb_part/src/build.rs`). Drill points and
+  taper (`thread_cut` in `wb_design/src/build.rs`). Drill points and
   counterdrill cones are kernel cone primitives cut at each centre.
   `docs/HOLES.md` is the user guide.

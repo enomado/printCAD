@@ -9,7 +9,7 @@ and macOS and is written in Rust.
 | --- | --- | --- |
 | Application | `app_shell` | Window, frame loop, input, UI, tabs |
 | Design system | `ui_kit` | Colours, sizes, widgets, icons, fonts |
-| Workbenches | `wb_sketch`, `wb_part`, `wb_assembly` | Tools and features, behind the `Workbench` trait |
+| Workbenches | `wb_sketch`, `wb_design`, `wb_assembly` | Tools and features, behind the `Workbench` trait |
 | Document | `core_document` | Feature tree, bodies, undo, `.prtcad` files |
 | Document server | `doc_server` | Owns the file on disk, one process per document |
 | Geometry interface | `kernel_api` | Meshes, profiles and solid operations as plain data |

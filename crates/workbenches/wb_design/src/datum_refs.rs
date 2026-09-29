@@ -602,7 +602,7 @@ mod tests {
     use core_document::{Document, Workbench};
     use kernel_api::{KernelQueries, KernelResult, ProbeAnswer, ProbedCircle, ShapeProbe};
 
-    use crate::PartDesignWorkbench;
+    use crate::DesignWorkbench;
 
     /// A kernel that knows one solid: a cylinder of radius 5 on the XY
     /// plane, 12 high, its rim at the top, and a straight edge from the
@@ -689,7 +689,7 @@ mod tests {
         kernel: bool,
         args: Value,
     ) -> Result<(FeatureId, DatumFeature), core_document::CommandError> {
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let mut args = args.as_object().unwrap().clone();
         args.insert("body".into(), json!(body.0.to_string()));
         let made = {
@@ -986,7 +986,7 @@ mod tests {
     fn a_build_asks_each_datum_s_questions_where_it_stands() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let mut bench = PartDesignWorkbench::default();
+        let mut bench = DesignWorkbench::default();
         let early = datum(
             &mut doc,
             body,
