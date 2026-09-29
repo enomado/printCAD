@@ -14,18 +14,23 @@ body it goes against. The first body moves; the second stays where it is.
 | --- | --- | --- |
 | Mate (M) | two flat faces | sliding on the face, turning about its normal |
 | Align (A) | two axes | turning about the axis, sliding along it |
-| Angle (N) | two flat faces | everything but the angle |
+| Angle (N) | two faces or axes | everything but the angle |
 | Hinge (H) | two axes | turning about the axis |
 | Slider (L) | two axes | sliding along the axis |
 | Fix together (X) | any face on each | nothing: the body moves with the other |
-| Parallel (R) | two flat faces | everything but the two tilts |
-| Perpendicular (Shift+R) | two flat faces | everything but one tilt |
-| Distance (D) | two flat faces | everything but the distance |
+| Parallel (R) | two faces or axes | everything but the two tilts |
+| Perpendicular (Shift+R) | two faces or axes | everything but one tilt |
+| Distance (D) | a face, an axis or a point on each | everything but the distance |
 | Tangent (T) | a flat face and a round one | rolling and sliding on the flat face |
+| Ball joint (Shift+B) | two points | turning every way about the point |
 
 An axis is a round face (a hole, a pin, a boss) or an edge: a circular
 edge gives its circle's axis, so a hole's rim works, and a straight edge
-gives its own line. Settings a tool does not ask for start at what the
+gives its own line. A point is a ball's centre, a circular edge's centre,
+or where a face was clicked. A distance is along a flat face's normal
+when one end is a flat face, from a point to an axis, between two
+parallel axes (a centre distance, for gear spacing), or between two
+points. Settings a tool does not ask for start at what the
 bodies make now (an angle, a distance), so making the joint moves nothing
 it need not.
 

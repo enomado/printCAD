@@ -1160,12 +1160,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `slide_limits` (any, optional): {low, high}: the range an alignment's slide stays in, mm; false takes it away
 - Returns the joint's id
 
-`pc.asm.angle`: Hold two flat faces at an angle.
+`pc.asm.angle`: Hold two faces or axes at an angle.
 
 - `body` (id): The body that moves
-- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `face` (any): A flat face {point, normal} or a round face or edge {axis = {point, direction}}
 - `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
-- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other_face` (any): A flat face {point, normal} or a round face or edge {axis = {point, direction}}
 - `name` (string, optional): Its name in the tree
 - `degrees` (number, optional): Between their outward normals; the angle they make now when left out
 - Returns the joint's id
@@ -1202,30 +1202,30 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the joint's id
 
-`pc.asm.parallel`: Keep two flat faces parallel.
+`pc.asm.parallel`: Keep two faces or axes parallel.
 
 - `body` (id): The body that moves
-- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `face` (any): A flat face {point, normal} or a round face or edge {axis = {point, direction}}
 - `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
-- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other_face` (any): A flat face {point, normal} or a round face or edge {axis = {point, direction}}
 - `name` (string, optional): Its name in the tree
 - Returns the joint's id
 
-`pc.asm.perpendicular`: Keep two flat faces square to each other.
+`pc.asm.perpendicular`: Keep two faces or axes square to each other.
 
 - `body` (id): The body that moves
-- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `face` (any): A flat face {point, normal} or a round face or edge {axis = {point, direction}}
 - `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
-- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other_face` (any): A flat face {point, normal} or a round face or edge {axis = {point, direction}}
 - `name` (string, optional): Its name in the tree
 - Returns the joint's id
 
-`pc.asm.distance`: Keep two flat faces a distance apart.
+`pc.asm.distance`: Keep two faces, axes or points a distance apart: along a face, from an axis, between axes or points.
 
 - `body` (id): The body that moves
-- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `face` (any): A flat face {point, normal}, a round face or edge {axis}, or a point ({centre} of a ball, or {point} alone)
 - `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
-- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other_face` (any): A flat face {point, normal}, a round face or edge {axis}, or a point ({centre} of a ball, or {point} alone)
 - `name` (string, optional): Its name in the tree
 - `offset` (number, optional): Along the second face's normal, mm; the distance they are now when left out
 - Returns the joint's id
@@ -1238,6 +1238,15 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `other_face` (any): A flat face {point, normal} on one body and a round face {axis, radius} on the other, either way round
 - `name` (string, optional): Its name in the tree
 - `radius` (number, optional): The round face's radius, mm; the face's own when left out
+- Returns the joint's id
+
+`pc.asm.ball`: Put two points together: the body can turn every way about them.
+
+- `body` (id): The body that moves
+- `face` (any): A point: a ball's {centre}, or {point} alone, as pc.doc.faces lists them
+- `other` (id): The body it is held against; the nil id (all zeros) for the world origin, its faces then in world space
+- `other_face` (any): A point: a ball's {centre}, or {point} alone, as pc.doc.faces lists them
+- `name` (string, optional): Its name in the tree
 - Returns the joint's id
 
 `pc.asm.couple`: Tie two joints' motions together: gears or a belt between two hinges, a rack and pinion or a screw between a hinge and a slider.

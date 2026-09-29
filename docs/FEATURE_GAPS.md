@@ -253,9 +253,9 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Joints that follow part edits** (missing, M). Anchors keep face
   and edge names (`FaceRef::name`, `EdgeRef::faces`) and are found again
   on rebuild.
-- [ ] **Point anchors and a ball joint** (missing, M). A vertex, a face
+- [x] **Point anchors and a ball joint** (missing, M). A vertex, a face
   centre, a sphere's centre; three turns free about it.
-- [ ] **Distance, parallel, perpendicular and angle on more than flat faces**
+- [x] **Distance, parallel, perpendicular and angle on more than flat faces**
   (partial, M). Point to point, point to plane, point to line,
   axis to axis (a centre distance, for gear spacing); edges and axes for
   parallel, perpendicular and angle.

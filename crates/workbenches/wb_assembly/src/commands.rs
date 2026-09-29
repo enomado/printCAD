@@ -225,6 +225,16 @@ pub fn register(context: &mut WorkbenchContext) {
                 "A flat face {point, normal} on one body and a round face {axis, radius} \
                  on the other, either way round"
             }
+            Takes::Point => {
+                "A point: a ball's {centre}, or {point} alone, as pc.doc.faces lists them"
+            }
+            Takes::Directed => {
+                "A flat face {point, normal} or a round face or edge {axis = {point, direction}}"
+            }
+            Takes::Anything => {
+                "A flat face {point, normal}, a round face or edge {axis}, or a point \
+                 ({centre} of a ball, or {point} alone)"
+            }
         };
         let spec = if tool == JointTool::Fixed {
             CommandSpec::new(tool.command(), tool.summary())
@@ -693,7 +703,8 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 JointKind::Ground
                 | JointKind::Fixed { .. }
                 | JointKind::Parallel
-                | JointKind::Perpendicular => {}
+                | JointKind::Perpendicular
+                | JointKind::Ball => {}
             }
             let data =
                 serde_json::to_value(&feature).map_err(|e| CommandError::failed(e.to_string()))?;
@@ -1236,7 +1247,8 @@ pub(crate) fn record_joint(
         JointKind::Ground
         | JointKind::Fixed { .. }
         | JointKind::Parallel
-        | JointKind::Perpendicular => json!({}),
+        | JointKind::Perpendicular
+        | JointKind::Ball => json!({}),
     };
     match before {
         None => {
@@ -1256,6 +1268,7 @@ pub(crate) fn record_joint(
                     Anchor::Axis { point, direction } => {
                         json!({"axis": {"point": point, "direction": direction}})
                     }
+                    Anchor::Point { point } => json!({"point": point}),
                 };
                 if name != 0 {
                     face["name"] = json!(name);
@@ -1550,11 +1563,24 @@ fn anchor_of(value: Option<&Value>, name: &str, takes: Takes) -> Result<Anchor, 
             direction: direction.normalize_or_zero().to_array(),
         })
     };
+    let point = || -> Result<Anchor, CommandError> {
+        let at = face
+            .get("centre")
+            .or_else(|| face.get("point"))
+            .unwrap_or(&Value::Null);
+        Ok(Anchor::Point {
+            point: vector(at, name)?.to_array(),
+        })
+    };
     match takes {
         Takes::Flat => flat(),
         Takes::Round => round(),
-        Takes::Any | Takes::FlatAndRound if face.contains_key("normal") => flat(),
-        Takes::Any | Takes::FlatAndRound => round(),
+        Takes::Point => point(),
+        Takes::Any | Takes::FlatAndRound | Takes::Directed if face.contains_key("normal") => flat(),
+        Takes::Any | Takes::FlatAndRound | Takes::Directed => round(),
+        Takes::Anything if face.contains_key("normal") => flat(),
+        Takes::Anything if face.contains_key("axis") => round(),
+        Takes::Anything => point(),
     }
 }
 
@@ -1889,6 +1915,70 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// A ball joint puts two points together and leaves three turns free;
+    /// a distance holds between points or parallel axes as it does between
+    /// faces, and parallel takes axes.
+    #[test]
+    fn points_and_axes_are_held_as_faces_are() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let ball = json!({"centre": [0, 0, 20], "point": [0, 0, 25]});
+        let socket = json!({"point": [5, 5, 5]});
+        call(
+            &mut doc,
+            "asm.ball",
+            json!({"body": a.0.to_string(), "face": ball, "other": b.0.to_string(), "other_face": socket}),
+        )
+        .unwrap();
+        let centre = doc.body_placement(a).point([0.0, 0.0, 20.0]);
+        assert!(
+            (centre[0] - 5.0).abs() < 1e-3
+                && (centre[1] - 5.0).abs() < 1e-3
+                && (centre[2] - 5.0).abs() < 1e-3,
+            "{centre:?}"
+        );
+        let free = crate::freedom(&doc);
+        let motions = &free.iter().find(|(body, _)| *body == a).unwrap().1;
+        assert_eq!(motions.len(), 3, "three turns: {motions:?}");
+
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let axis = |x: f32| json!({"axis": {"point": [x, 0, 0], "direction": [0, 0, 1]}});
+        call(
+            &mut doc,
+            "asm.parallel",
+            json!({"body": a.0.to_string(), "face": axis(0.0), "other": b.0.to_string(), "other_face": axis(0.0)}),
+        )
+        .unwrap();
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": a.0.to_string(), "face": axis(0.0), "other": b.0.to_string(),
+                   "other_face": axis(0.0), "offset": 30}),
+        )
+        .unwrap();
+        let at = doc.body_placement(a).point([0.0, 0.0, 0.0]);
+        assert!(
+            ((at[0] * at[0] + at[1] * at[1]).sqrt() - 30.0).abs() < 1e-3,
+            "{at:?}"
+        );
+
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": a.0.to_string(), "face": {"point": [0, 0, 0]}, "other": b.0.to_string(),
+                   "other_face": {"point": [0, 0, 0]}, "offset": 12}),
+        )
+        .unwrap();
+        let at = doc.body_placement(a).point([0.0, 0.0, 0.0]);
+        assert!(
+            (glam::Vec3::from_array(at).length() - 12.0).abs() < 1e-3,
+            "{at:?}"
+        );
     }
 
     /// A group moves as one: the body held to its first member follows it

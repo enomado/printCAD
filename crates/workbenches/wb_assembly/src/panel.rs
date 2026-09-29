@@ -1422,6 +1422,11 @@ impl AssemblyWorkbench {
                     "Only the turn is held, the faces square: pair it with other joints \
                      to say where the body sits.",
                 ),
+                JointKind::Ball => note(
+                    ui,
+                    "The two points are held as one; the body can still turn every way \
+                     about them.",
+                ),
             }
         });
         for (key, formula) in formula_edits {

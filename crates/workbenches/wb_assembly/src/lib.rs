@@ -536,6 +536,8 @@ impl AssemblyWorkbench {
                         line(p - d * reach * 1.5, p + d * reach * 1.5).map(|l| l.dashed(6.0, 4.0)),
                     );
                 }
+                // A point is its dot.
+                Anchor::Point { .. } => {}
             }
         }
         if let [a, b] = dots.as_slice() {
@@ -1192,6 +1194,14 @@ impl AssemblyWorkbench {
         let first_flat = picking
             .first
             .map(|(_, anchor, ..)| matches!(anchor, Anchor::Plane { .. }));
+        let pointed = || {
+            face.as_ref()
+                .map(|f| (Anchor::point_of(f), Anchor::radius_of(f)))
+                .or_else(|| edge.map(|e| (Anchor::point_of_edge(&e), e.circle.map(|c| c.radius))))
+        };
+        let sphere = face
+            .as_ref()
+            .is_some_and(|f| matches!(f.surface, Some(kernel_api::FaceSurface::Sphere { .. })));
         let name = face.as_ref().map_or(0, |f| f.name);
         let picked = match (picking.kind.takes(), first_flat) {
             (Takes::Flat, _) => flat().map(|a| (a, None)),
@@ -1200,6 +1210,11 @@ impl AssemblyWorkbench {
             (Takes::FlatAndRound, None) => flat().map(|a| (a, None)).or_else(round),
             (Takes::FlatAndRound, Some(true)) => round(),
             (Takes::FlatAndRound, Some(false)) => flat().map(|a| (a, None)),
+            (Takes::Point, _) => pointed(),
+            (Takes::Directed, _) => flat().map(|a| (a, None)).or_else(round),
+            // A ball is its centre; any other face its plane or axis.
+            (Takes::Anything, _) if sphere => pointed(),
+            (Takes::Anything, _) => flat().map(|a| (a, None)).or_else(round).or_else(pointed),
         };
         let Some((anchor, radius)) = picked else {
             ctx.log_warn(picking.kind.refusal());
@@ -1334,6 +1349,7 @@ impl AssemblyWorkbench {
                             "axis": {"point": point, "direction": direction},
                             "radius": radius,
                         }),
+                        Anchor::Point { point } => serde_json::json!({"point": point}),
                     };
                     if name != 0 {
                         face["name"] = serde_json::json!(name);
@@ -1625,6 +1641,7 @@ impl Workbench for AssemblyWorkbench {
                     point: origin,
                     normal,
                 },
+                kernel_api::FaceSurface::Sphere { center, .. } => Anchor::Point { point: center },
                 other => match other.axis() {
                     Some((point, direction)) => Anchor::Axis { point, direction },
                     None => continue,

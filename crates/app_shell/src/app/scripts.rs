@@ -1841,8 +1841,11 @@ fn faces_of(mesh: &kernel_api::TriMesh) -> Value {
             });
             match surface {
                 kernel_api::FaceSurface::Plane { normal, .. } => out["normal"] = json!(normal),
-                kernel_api::FaceSurface::Cylinder { radius, .. }
-                | kernel_api::FaceSurface::Sphere { radius, .. } => out["radius"] = json!(radius),
+                kernel_api::FaceSurface::Cylinder { radius, .. } => out["radius"] = json!(radius),
+                kernel_api::FaceSurface::Sphere { radius, center } => {
+                    out["radius"] = json!(radius);
+                    out["centre"] = json!(center);
+                }
                 _ => {}
             }
             if let Some((p, d)) = surface.axis() {

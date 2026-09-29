@@ -35,6 +35,7 @@ fn anchors_of(document: &Document, body: BodyId) -> Vec<Anchor> {
                 point: origin,
                 normal,
             }),
+            FaceSurface::Sphere { center, .. } => Some(Anchor::Point { point: center }),
             other => other
                 .axis()
                 .map(|(point, direction)| Anchor::Axis { point, direction }),
@@ -49,6 +50,18 @@ fn anchors_of(document: &Document, body: BodyId) -> Vec<Anchor> {
 pub(crate) fn nearest_like(old: &Anchor, candidates: &[Anchor]) -> Option<Anchor> {
     let (p, d) = old.parts();
     let (p, d) = (p.as_vec3(), d.as_vec3());
+    // A point is found again as the nearest point.
+    if let Anchor::Point { .. } = old {
+        return candidates
+            .iter()
+            .filter(|c| matches!(c, Anchor::Point { .. }))
+            .min_by(|a, b| {
+                let da = (a.parts().0.as_vec3() - p).length();
+                let db = (b.parts().0.as_vec3() - p).length();
+                da.total_cmp(&db)
+            })
+            .copied();
+    }
     candidates
         .iter()
         .filter_map(|c| {
