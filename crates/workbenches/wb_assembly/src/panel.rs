@@ -92,8 +92,8 @@ impl AssemblyWorkbench {
             Some(Task::Move { body, placements }) => {
                 self.move_panel(ui, ctx, request, body, &placements)
             }
-            Some(Task::Interference { found, seq }) => {
-                self.interference_panel(ui, ctx, request, found.as_ref(), seq)
+            Some(Task::Interference { found, seq, around }) => {
+                self.interference_panel(ui, ctx, request, found.as_ref(), seq, around)
             }
             Some(Task::Explode { placements, spread }) => {
                 self.explode_panel(ui, ctx, request, placements, spread)
@@ -124,6 +124,7 @@ impl AssemblyWorkbench {
         request: TaskRequest,
         found: Option<&crate::Interference>,
         seq: u64,
+        around: Option<core_document::BodyId>,
     ) -> TaskOutcome {
         if request.accept || request.cancel {
             self.checking = None;
@@ -223,9 +224,21 @@ impl AssemblyWorkbench {
                 "The assembly has changed since this check",
             );
         }
+        if let Some(body) = around {
+            ui.add_space(SPACE_1);
+            note_card(
+                ui,
+                Note::Info,
+                None,
+                &format!("{} against every other body", crate::body_name(ctx, body)),
+            );
+        }
         ui.add_space(SPACE_2);
         if ui_kit::widgets::secondary_button(ui, "Check again").clicked() {
-            self.check_interference(ctx);
+            self.check_interference(ctx, around);
+        }
+        if around.is_some() && ui_kit::widgets::secondary_button(ui, "Check every pair").clicked() {
+            self.check_interference(ctx, None);
         }
         TaskOutcome::Open
     }

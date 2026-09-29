@@ -90,6 +90,14 @@ pub fn plan(document: &Document, among: Option<&[BodyId]>) -> Check {
 }
 
 impl Check {
+    /// Only the pairs `body` is one of.
+    pub fn around(mut self, body: BodyId) -> Self {
+        let solids = &self.solids;
+        self.pairs
+            .retain(|(i, j)| solids[*i].body == body || solids[*j].body == body);
+        self
+    }
+
     /// How many pairs the kernel is asked about.
     pub fn pairs(&self) -> usize {
         self.pairs.len()

@@ -316,8 +316,9 @@ and noted on its item, and the rest of the item is built around it.
 - [ ] **Clearance check** (missing, M). Pairs closer than a given gap,
   and where. Needs a minimum distance query in `KernelQueries`, then a mode
   of `interference.rs`.
-- [ ] **Interference among the selected bodies from the toolbar** (partial,
-  medium, S). The command takes a list; the tool takes every visible body.
+- [x] **Interference among the selected bodies from the toolbar** (partial,
+  medium, S). The command takes a list; the tool takes the selected body
+  against every other, or every pair with nothing selected.
 - [ ] **Total mass and centre of mass** (partial, S). For tip-over checks.
 - [x] **Isolate, show only the selection** (missing, S). View › Isolate
   selection and Show all bodies, and the viewport menu's Isolate.

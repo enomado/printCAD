@@ -90,7 +90,9 @@ drawn in red over the whole scene, where the bodies would hide it, and
 marked with its volume. The check runs beside the window, which stays
 usable: the panel shows how many pairs are done, and Stop keeps what was
 found so far. Only pairs whose boxes meet are checked. Mesh bodies are
-left out; convert one to a solid to check it.
+left out; convert one to a solid to check it. With a body selected, the
+check takes that body against every other; Check every pair in the panel
+takes them all.
 
 ## Exploded view and parts list
 

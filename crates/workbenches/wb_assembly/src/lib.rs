@@ -64,10 +64,12 @@ enum Task {
         placements: Vec<(BodyId, BodyPlacement)>,
     },
     /// Where bodies clash, as found at edit `seq` of the document; `None`
-    /// while the check runs.
+    /// while the check runs. `around` is the one body checked against the
+    /// others, when the check is not of every pair.
     Interference {
         found: Option<Interference>,
         seq: u64,
+        around: Option<BodyId>,
     },
     /// The bodies spread apart to show how they go together; they go back
     /// to `placements` when it closes.
@@ -197,13 +199,21 @@ fn drive_parameters(
 }
 
 impl AssemblyWorkbench {
-    /// Look for clashes among the visible solid bodies and show them.
-    pub(crate) fn check_interference(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+    /// Look for clashes among the visible solid bodies, or between
+    /// `around` and the others, and show them.
+    pub(crate) fn check_interference(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        around: Option<BodyId>,
+    ) {
         let Some(kernel) = ctx.kernel else {
             ctx.log_warn("No kernel to check interference with");
             return;
         };
-        let check = interference::plan(ctx.document, None);
+        let mut check = interference::plan(ctx.document, None);
+        if let Some(body) = around {
+            check = check.around(body);
+        }
         let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (send, answer) = std::sync::mpsc::channel();
@@ -229,6 +239,7 @@ impl AssemblyWorkbench {
         self.task = Some(Task::Interference {
             found: None,
             seq: ctx.document.mutation_seq(),
+            around,
         });
     }
 
@@ -1073,7 +1084,9 @@ impl Workbench for AssemblyWorkbench {
             }
             Some("asm.interference") => {
                 self.picking = None;
-                self.check_interference(ctx);
+                // A selected body is checked against the rest.
+                let around = ctx.selected_body_id.map(BodyId);
+                self.check_interference(ctx, around);
             }
             Some("asm.couple") => self.make_coupling(ctx),
             Some("asm.explode") => {
@@ -1815,6 +1828,35 @@ mod tests {
         assert!(drawn[0].on_top && drawn[0].opacity < 1.0);
         wb.finish_editing(&mut ctx);
         assert!(wb.get_overlay_meshes(&ctx, None).is_empty());
+    }
+
+    /// With a body selected, the check asks only about the pairs it is in.
+    #[test]
+    fn a_selected_body_is_checked_against_the_others() {
+        let (mut doc, base, part) = scene();
+        let third = doc.create_body(Some("Third".into()));
+        let geometry = doc.imported_geometry(base).cloned().unwrap();
+        doc.set_imported_geometry(third, geometry);
+        for body in [base, part, third] {
+            doc.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
+        }
+        doc.set_body_placement(part, BodyPlacement::default());
+        assert_eq!(interference::plan(&doc, None).pairs(), 3);
+        assert_eq!(interference::plan(&doc, None).around(part).pairs(), 2);
+        let mut wb = AssemblyWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.kernel = Some(&ALWAYS_SHARED);
+        ctx.selected_body_id = Some(part.0);
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("asm.interference"),
+            &mut ctx,
+        );
+        assert!(matches!(
+            wb.task,
+            Some(Task::Interference { around: Some(b), .. }) if b == part
+        ));
+        assert_eq!(wb.interference_progress().map(|(_, total)| total), Some(2));
     }
 
     /// A kernel for 10 mm cubes that are never turned: what two share is
