@@ -121,6 +121,9 @@ struct TreeNode {
     icon: &'static str,
     /// Bodies and linked parts read their icon in accent.
     accent_icon: bool,
+    /// A feature of another body listed here because it acts on this one
+    /// (a joint holding that body to this): a link, with no eye of its own.
+    linked: bool,
 }
 
 impl DocumentTree {
@@ -213,6 +216,7 @@ impl DocumentTree {
             body_nodes.append(&mut nodes);
         }
 
+        attach_links(&mut body_nodes, document, registry);
         mark_shape_health(&mut body_nodes, document);
         mark_meshes(&mut body_nodes, document);
 
@@ -336,6 +340,54 @@ fn build_feature_node(
         body: None,
         icon: info.icon,
         accent_icon: false,
+        linked: false,
+    }
+}
+
+/// Under every row that stands for a body, a link to each feature of
+/// another body the benches say acts on it.
+fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &DocumentService) {
+    for node in nodes {
+        attach_links(&mut node.children, document, registry);
+        let Some(body) = node.body else {
+            continue;
+        };
+        for id in registry.linked_features(document, body) {
+            let Some(feature) = document.get_feature_meta(id) else {
+                continue;
+            };
+            let owner = feature
+                .body
+                .and_then(|b| document.bodies().iter().find(|x| x.id == b))
+                .map(|b| b.name.clone())
+                .unwrap_or_default();
+            let info = feature_info(registry, feature);
+            node.children.push(TreeNode {
+                id: TreeItemId::Feature(id),
+                label: format!("{} ({owner})", feature.name),
+                detail: Some(format!("{} of {owner}", info.family_label)),
+                tooltip: Some(format!("{}, kept with {owner}", feature.name)),
+                dirty: false,
+                visible: true,
+                suppressed: feature.suppressed,
+                error: None,
+                defect: false,
+                repairable: Vec::new(),
+                convertible: Vec::new(),
+                mesh: false,
+                needs_package: None,
+                is_tip: false,
+                after_tip: false,
+                feature_menu: Some(id),
+                seq: u64::MAX,
+                children: Vec::new(),
+                imported_object_id: None,
+                body: None,
+                icon: info.icon,
+                accent_icon: false,
+                linked: true,
+            });
+        }
     }
 }
 
@@ -371,6 +423,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         body: Some(body.id),
         icon: "tree-body",
         accent_icon: true,
+        linked: false,
     }
 }
 
@@ -575,6 +628,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
             }
         },
         accent_icon: imported.body_id.is_some(),
+        linked: false,
     })
 }
 
@@ -988,6 +1042,7 @@ fn draw_node(
     }
     let dimmed_by_edit = options.editing.is_some() && !editing_here;
     let eye = match node.id {
+        _ if node.linked => None,
         TreeItemId::ImportedObject(_) | TreeItemId::Feature(_) | TreeItemId::Body(_) => {
             Some(node.visible)
         }
@@ -1352,6 +1407,56 @@ mod tests {
         assert!(ids.contains(&TreeItemId::ImportedObject(root)));
         assert!(ids.contains(&TreeItemId::ImportedObject(leaf)));
         assert!(!ids.contains(&TreeItemId::Body(body_id)));
+    }
+
+    /// A feature a bench links to another body shows under that body too,
+    /// with the body it is kept with named, and no eye of its own.
+    #[test]
+    fn a_linked_feature_shows_under_the_body_it_acts_on() {
+        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        struct Bench;
+        impl Workbench for Bench {
+            fn descriptor(&self) -> WorkbenchDescriptor {
+                WorkbenchDescriptor::new("test.links", "Links", "")
+            }
+            fn configure(&self, _context: &mut WorkbenchContext) {}
+            fn linked_features(&self, document: &Document, body: BodyId) -> Vec<FeatureId> {
+                document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(_, n)| n.body.is_some_and(|b| b != body))
+                    .map(|(id, _)| *id)
+                    .collect()
+            }
+        }
+        let mut doc = Document::new("t");
+        let base = doc.create_body(Some("Base".into()));
+        let part = doc.create_body(Some("Part".into()));
+        let joint = doc.add_feature_of_kind(
+            core_document::WorkbenchId::new("test.joint"),
+            "Mate 1".into(),
+            Some(part),
+            Vec::new(),
+            serde_json::json!({}),
+            core_document::FeatureOrigin::default(),
+        );
+        let mut registry = DocumentService::default();
+        registry.register_workbench(Box::new(Bench)).unwrap();
+        let tree = DocumentTree::build(&doc, &registry);
+        let row = |body: BodyId| {
+            tree.nodes()
+                .iter()
+                .find(|n| n.id == TreeItemId::Body(body))
+                .expect("a body row")
+        };
+        let own = &row(part).children;
+        assert_eq!(own.len(), 1);
+        assert!(!own[0].linked);
+        let linked = &row(base).children;
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].id, TreeItemId::Feature(joint));
+        assert!(linked[0].linked);
+        assert_eq!(linked[0].label, "Mate 1 (Part)");
     }
 
     /// A part whose shape the checker calls broken is red and offers its

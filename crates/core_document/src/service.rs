@@ -541,6 +541,13 @@ impl DocumentService {
             .collect()
     }
 
+    /// The features every bench links to `body` from other bodies.
+    pub fn linked_features(&self, document: &Document, body: BodyId) -> Vec<FeatureId> {
+        self.benches()
+            .flat_map(|wb| wb.linked_features(document, body))
+            .collect()
+    }
+
     /// Every bench's property hints, merged.
     pub fn property_hints(&self) -> PropertyHints {
         let mut hints = PropertyHints::default();

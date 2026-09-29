@@ -185,6 +185,10 @@ fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -
 /// for the property panel.
 fn property_hints(&self) -> PropertyHints;
 
+/// Features of other bodies that act on `body` (a joint holding one
+/// body to another); the tree lists each under `body` too, as a link.
+fn linked_features(&self, doc: &Document, body: BodyId) -> Vec<FeatureId>;
+
 /// Inputs the property panel lets the user swap (a profile sketch), and
 /// how to swap one.
 fn references(&self, doc: &Document, id: FeatureId, node: &FeatureNode)

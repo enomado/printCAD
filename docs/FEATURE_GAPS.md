@@ -273,8 +273,9 @@ and noted on its item, and the rest of the item is built around it.
 - [ ] **A separate offset per end** (missing, M).
 - [ ] **More kinds** (missing, M). Cam and follower, slot, path, width,
   universal joint.
-- [ ] **Every joint touching a body listed** (partial, S). Joints where
-  the body is the other end are not shown under it.
+- [x] **Every joint touching a body listed** (partial, S). Joints where
+  the body is the other end are not shown under it. They are, as links
+  naming the body they are kept with (`Workbench::linked_features`).
 
 ### Solving and moving
 

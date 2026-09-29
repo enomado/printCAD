@@ -341,7 +341,9 @@ active. The UI surface: `configure` registers
 `ui_settings()` draws the bench's Preferences page (one rail entry per
 registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
 `delete_feature`/`property_hints` answer for the feature kinds a bench
-claims; `edit_feature` is the double click that opens a feature's task
+claims; `linked_features` names features of other bodies the tree lists
+under a body too (a joint under the body it holds to); `edit_feature` is
+the double click that opens a feature's task
 (selecting one never does, so a feature stays selected after its task
 closes); `references`/`set_reference` offer the inputs the property
 panel's Inputs group swaps (Part Design's profile, kept out of its task); `busy` keeps frames coming while a bench's work runs away from

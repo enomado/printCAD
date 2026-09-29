@@ -896,6 +896,19 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
+    /// The joints of other bodies that hold them to `body`.
+    fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
+        joints(document)
+            .into_iter()
+            .filter(|j| {
+                j.feature.kind != JointKind::Ground
+                    && j.feature.other_body == body
+                    && j.body != body
+            })
+            .map(|j| j.id)
+            .collect()
+    }
+
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             JOINT_KIND,
@@ -1407,6 +1420,39 @@ mod tests {
         ctx.selected_body_id = pick.map(|(b, _)| b.0);
         ctx.selected_face = pick.map(|(_, f)| f);
         wb.on_frame(0.016, &mut ctx);
+    }
+
+    /// A joint shows under the body it holds to as well as its own; the
+    /// ground it made does not.
+    #[test]
+    fn a_joint_is_linked_to_the_body_it_holds_to() {
+        let (mut doc, base, part) = scene();
+        let mut wb = AssemblyWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let anchor = Anchor::Plane {
+            point: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+        };
+        wb.make_joint(
+            &mut ctx,
+            part,
+            JointFeature {
+                kind: JointKind::Mate {
+                    flip: false,
+                    offset: 0.0,
+                },
+                moving: anchor,
+                other_body: base,
+                fixed: anchor,
+            },
+        );
+        drop(ctx);
+        let mate = joints(&doc)
+            .into_iter()
+            .find(|j| j.feature.kind != JointKind::Ground)
+            .unwrap();
+        assert_eq!(wb.linked_features(&doc, base), [mate.id]);
+        assert!(wb.linked_features(&doc, part).is_empty());
     }
 
     #[test]

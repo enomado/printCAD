@@ -867,6 +867,13 @@ pub trait Workbench: Send {
     /// nothing when `state` is `None` (a new tab).
     fn resume_session(&mut self, _state: Option<Box<dyn std::any::Any + Send>>) {}
 
+    /// Features of other bodies that act on `body` (a joint holding
+    /// another body to it): the tree lists each under `body` too, as a
+    /// link to the feature.
+    fn linked_features(&self, _document: &Document, _body: BodyId) -> Vec<FeatureId> {
+        Vec::new()
+    }
+
     /// Remove an owned feature and settle what depended on it: features
     /// it hid come back, its body rebuilds. `false` when nothing was
     /// removed.
