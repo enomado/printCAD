@@ -10,7 +10,7 @@ use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{Chamfer, chamfer_edges_with, fillet_edges};
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
-use ogeom::offset::{Join, apply_draft, make_thick_solid_with};
+use ogeom::offset::{Join, apply_draft, make_thick_solid_with, move_faces, offset_faces};
 use ogeom::topo::{EdgeRepr, Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
 
 use super::tol;
@@ -513,6 +513,67 @@ pub fn draft(
 /// Hollow `solid` into walls `value` thick, opened at the faces named,
 /// inward or outward (`side`), or both ways at once when `side` is `None`:
 /// the inward and outward walls fused along the solid's own faces.
+/// The faces at `points` of `solid`, by name first.
+fn faces_at(
+    model: &mut Model,
+    solid: &Shape,
+    points: &[[f64; 3]],
+    names: &[kernel_api::TopoName],
+    what: &str,
+) -> Result<Vec<Shape>, String> {
+    if points.is_empty() {
+        return Err(format!("pick at least one face to {what}"));
+    }
+    let mut faces = Vec::with_capacity(points.len());
+    for (i, p) in points.iter().enumerate() {
+        faces.push(face_named_or_nearest(
+            model,
+            solid,
+            names.get(i).copied(),
+            *p,
+        )?);
+    }
+    Ok(faces)
+}
+
+/// Offset the faces at `points` of `solid` along their outward normals,
+/// their neighbours following.
+pub fn offset_faces_of(
+    model: &mut Model,
+    solid: &Shape,
+    points: &[[f64; 3]],
+    names: &[kernel_api::TopoName],
+    distance: f64,
+) -> Result<Shape, String> {
+    let faces = faces_at(model, solid, points, names, "offset")?;
+    offset_faces(model, solid, &faces, distance, tol())
+        .map(|b| {
+            crate::naming::record(&b.history);
+            b.shape
+        })
+        .map_err(|e| format!("offsetting the faces failed: {e}"))
+}
+
+/// Move the faces at `points` of `solid` by the rigid row-major
+/// `transform`, their neighbours following.
+pub fn move_faces_of(
+    model: &mut Model,
+    solid: &Shape,
+    points: &[[f64; 3]],
+    names: &[kernel_api::TopoName],
+    transform: &[[f64; 4]; 4],
+) -> Result<Shape, String> {
+    let faces = faces_at(model, solid, points, names, "move")?;
+    let motion = crate::ops::pattern::rigid_of(transform)
+        .ok_or("faces move by a translation or a rotation")?;
+    move_faces(model, solid, &faces, &motion, tol())
+        .map(|b| {
+            crate::naming::record(&b.history);
+            b.shape
+        })
+        .map_err(|e| format!("moving the faces failed: {e}"))
+}
+
 /// Remove the faces at `points` (by name first) from `solid` and close
 /// the openings from the neighbours' own geometry.
 pub fn remove_faces(

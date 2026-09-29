@@ -1244,6 +1244,23 @@ pub enum SolidOp {
     /// a fuse or cut leaves where two pieces meet flush.
     Refine,
     /// Hollow the solid, removing the faces sampled by `open_faces`.
+    /// Offset faces of the running solid along their outward normals by
+    /// `distance` (negative into the material), the faces around them
+    /// following on their own surfaces.
+    OffsetFaces {
+        faces: Vec<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        face_names: Vec<TopoName>,
+        distance: f64,
+    },
+    /// Move faces of the running solid rigidly by `transform` (row-major,
+    /// a translation or a rotation), the faces around them following.
+    MoveFaces {
+        faces: Vec<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        face_names: Vec<TopoName>,
+        transform: [[f64; 4]; 4],
+    },
     /// Remove faces of the running solid and close the openings from the
     /// neighbouring faces' own geometry: a hole, a boss or a fillet taken
     /// away. Faces as points on them, named where they have names.

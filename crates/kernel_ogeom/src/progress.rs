@@ -87,6 +87,8 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::Draft { .. } => "Draft",
         SolidOp::Thickness { .. } => "Thickness",
         SolidOp::RemoveFaces { .. } => "Deleting faces",
+        SolidOp::OffsetFaces { .. } => "Offsetting faces",
+        SolidOp::MoveFaces { .. } => "Moving faces",
         SolidOp::Refine => "Refine",
         SolidOp::Transform { .. } => "Pattern",
         SolidOp::Boolean { .. } => "Boolean",

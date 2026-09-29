@@ -286,7 +286,6 @@ fn ply_and_vrml_scenes_import_as_mesh_bodies() {
 /// own size, curved regions recognised. The file is named by
 /// `PRINTCAD_TEST_RECOGNIZE_STL` (a printed part's mesh, not bundled).
 #[test]
-#[ignore = "kernel: recognised faces spill outside the mesh and come out reversed (ogeom-rs#97)"]
 fn a_filleted_mesh_converts_to_a_sound_solid_of_its_size() {
     let Some(path) = std::env::var_os("PRINTCAD_TEST_RECOGNIZE_STL") else {
         return;

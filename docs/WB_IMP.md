@@ -81,6 +81,12 @@ opening from the faces around it: a bore, a boss or a round taken away,
 on any solid, an imported one included. What the kernel does not close
 yet it refuses by name, on the feature.
 
+**Offset faces** pushes or pulls picked faces along their outward
+normals (negative into the material; a bore offset in widens), and
+**Move faces** shifts them, or turns them about an axis; in both the faces
+around them follow on their own surfaces. The distance, the move and the
+angle take formulas.
+
 **Recognize holes** reads the body's solid for round holes: full bores
 open at one end or both, ending flat or in a drill point. It deletes
 their faces (one Delete faces feature) and drills them again as Hole

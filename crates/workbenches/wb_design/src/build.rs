@@ -929,6 +929,42 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     face_names: face_names(faces),
                 });
             }
+            DesignFeature::OffsetFaces { faces, distance } => {
+                if faces.is_empty() {
+                    return Err(fail("select at least one face to offset".into()));
+                }
+                plan.ops.push(SolidOp::OffsetFaces {
+                    faces: face_points(faces),
+                    face_names: face_names(faces),
+                    distance: f64::from(*distance),
+                });
+            }
+            DesignFeature::MoveFaces {
+                faces,
+                translation,
+                angle_deg,
+                axis_point,
+                axis_dir,
+            } => {
+                if faces.is_empty() {
+                    return Err(fail("select at least one face to move".into()));
+                }
+                let mut transform = mat_translation(translation.map(f64::from));
+                if angle_deg.abs() > 1e-6 {
+                    let turn = mat_rotation(
+                        axis_point.map(f64::from),
+                        axis_dir.map(f64::from),
+                        f64::from(*angle_deg),
+                    )
+                    .map_err(&fail)?;
+                    transform = mat_mul(&transform, &turn);
+                }
+                plan.ops.push(SolidOp::MoveFaces {
+                    faces: face_points(faces),
+                    face_names: face_names(faces),
+                    transform,
+                });
+            }
             DesignFeature::DeleteFaces { faces } => {
                 if faces.is_empty() {
                     return Err(fail("select at least one face to delete".into()));

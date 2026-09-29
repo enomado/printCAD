@@ -571,6 +571,36 @@ impl DesignWorkbench {
                     "Draft",
                 )
             }
+            "design.offset_faces" => {
+                need_material(has_solid)?;
+                let pick = Self::selected_face_pick(ctx, body)
+                    .ok_or("Click the face to offset in the viewport first")?;
+                (
+                    DesignFeature::OffsetFaces {
+                        faces: vec![pick],
+                        distance: 1.0,
+                    },
+                    "OffsetFaces",
+                )
+            }
+            "design.move_faces" => {
+                need_material(has_solid)?;
+                let pick = Self::selected_face_pick(ctx, body)
+                    .ok_or("Click the face to move in the viewport first")?;
+                // Out along the face, as a first guess to change.
+                let translation = pick.normal;
+                let axis_point = pick.point;
+                (
+                    DesignFeature::MoveFaces {
+                        faces: vec![pick],
+                        translation,
+                        angle_deg: 0.0,
+                        axis_point,
+                        axis_dir: [0.0, 0.0, 1.0],
+                    },
+                    "MoveFaces",
+                )
+            }
             "design.delete_faces" => {
                 need_material(has_solid)?;
                 let pick = Self::selected_face_pick(ctx, body)
@@ -1416,6 +1446,24 @@ impl Workbench for DesignWorkbench {
         );
         register(
             context,
+            action(
+                "design.offset_faces",
+                "Offset faces",
+                "offset-geometry",
+                "dressup",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.move_faces",
+                "Move faces",
+                "move-geometry",
+                "dressup",
+            ),
+        );
+        register(
+            context,
             action("design.delete_faces", "Delete faces", "delete", "dressup"),
         );
         register(
@@ -1861,6 +1909,8 @@ impl Workbench for DesignWorkbench {
             | "design.draft"
             | "design.thickness"
             | "design.delete_faces"
+            | "design.offset_faces"
+            | "design.move_faces"
             | "design.recognize_holes"
             | "design.mirror"
             | "design.linear_pattern"

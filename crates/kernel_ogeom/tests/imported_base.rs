@@ -423,3 +423,73 @@ fn recognized_holes_rebuild_the_solid_and_take_new_sizes() {
         "{taken} against {expected}"
     );
 }
+
+/// Faces of an imported solid pushed, pulled and moved, the faces around
+/// them following.
+#[test]
+fn faces_offset_and_move_with_their_neighbours_following() {
+    let (document, body, lo, hi) = imported_box();
+    let mut host = benches(document);
+    let size = |i: usize| f64::from(hi[i] - lo[i]);
+    let (cx, cy) = ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0);
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            local s = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.circle{{sketch = s, x = {cx}, y = {cy}, radius = 2}}
+            pc.design.pocket{{sketch = s, through_all = true}}
+            top = pc.design.offset_faces{{body = "{body}", face_point = {{{fx}, {fy}, {top}}},
+                face_normal = {{0, 0, 1}}, distance = 2}}
+            bore = pc.design.offset_faces{{body = "{body}", face_point = {{{bx}, {cy}, {mz}}},
+                face_normal = {{-1, 0, 0}}, distance = -0.5}}
+            side = pc.design.move_faces{{body = "{body}", face_point = {{{right}, {cy}, {mz}}},
+                face_normal = {{1, 0, 0}}, translation = {{3, 0, 0}}}}
+            "#,
+            body = body.0,
+            top = hi[2],
+            cx = cx,
+            cy = cy,
+            fx = lo[0] + 1.0,
+            fy = lo[1] + 1.0,
+            bx = cx + 2.0,
+            mz = (lo[2] + hi[2]) / 2.0,
+            right = hi[0],
+        ),
+        "faces.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
+    let built = |n: usize| {
+        OgeomKernel::new()
+            .execute_solid_chain(&ops[..n], &TessellationSettings::default())
+            .unwrap()
+    };
+    let volume = |r: &kernel_api::SolidBuildResult| {
+        OgeomKernel::new()
+            .physical_properties(&r.brep_blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap()
+    };
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-2;
+    let n = ops.len();
+    let (bored, raised, widened, moved) = (built(n - 3), built(n - 2), built(n - 1), built(n));
+    let area = size(0) * size(1) - std::f64::consts::PI * 4.0;
+    assert!(
+        near(volume(&raised) - volume(&bored), area * 2.0),
+        "the top up 2 mm"
+    );
+    let height = size(2) + 2.0;
+    let wider = std::f64::consts::PI * (2.5f64.powi(2) - 2.0f64.powi(2)) * height;
+    assert!(
+        near(volume(&raised) - volume(&widened), wider),
+        "the bore Ø4 to Ø5"
+    );
+    let (mlo, mhi) = moved.mesh.bounds().unwrap();
+    assert!(
+        near(f64::from(mhi[0] - mlo[0]), size(0) + 3.0),
+        "the side out 3 mm"
+    );
+    assert!(near(f64::from(mhi[2] - mlo[2]), height));
+}

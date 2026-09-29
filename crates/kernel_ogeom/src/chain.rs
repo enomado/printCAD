@@ -413,6 +413,26 @@ pub fn execute_named(
                     })
                     .map_err(|e| err(format!("refine failed: {e}")))?
             }
+            SolidOp::OffsetFaces {
+                faces,
+                face_names,
+                distance,
+            } => {
+                let solid =
+                    base.ok_or_else(|| err("offsetting faces needs an existing solid".into()))?;
+                ops::dressup::offset_faces_of(&mut model, &solid, faces, face_names, *distance)
+                    .map_err(&err)?
+            }
+            SolidOp::MoveFaces {
+                faces,
+                face_names,
+                transform,
+            } => {
+                let solid =
+                    base.ok_or_else(|| err("moving faces needs an existing solid".into()))?;
+                ops::dressup::move_faces_of(&mut model, &solid, faces, face_names, transform)
+                    .map_err(&err)?
+            }
             SolidOp::RemoveFaces { faces, face_names } => {
                 let solid =
                     base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;

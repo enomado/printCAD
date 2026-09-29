@@ -482,8 +482,11 @@ history) is not yet from that asset, and the host's
 converted) into the base, invalidating the body, or into its shape.
 Design's Delete Faces (`DesignFeature::DeleteFaces`, `SolidOp::RemoveFaces`)
 takes picked faces away through the kernel's `remove_faces`, the
-neighbours closing the openings. Moving or offsetting faces waits on the
-kernel (ogeom-rs#98). Recognize holes (`design.recognize_holes`,
+neighbours closing the openings; Offset Faces and Move Faces
+(`SolidOp::OffsetFaces`/`MoveFaces`, a distance, or a translation and a
+turn about an axis as a rigid row-major matrix) go through its
+`offset_faces`/`move_faces`, the neighbours following on their own
+surfaces. Recognize holes (`design.recognize_holes`,
 `wb_design/src/recognize.rs`) asks `KernelQueries::recognize_holes`
 (`kernel_ogeom/src/holes.rs`: concave cylinder faces grouped by axis and
 radius into whole bores, each end an opening, a flat bottom or a coaxial

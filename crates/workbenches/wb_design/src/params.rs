@@ -140,6 +140,13 @@ fn fields(variant: &str) -> &'static [Field] {
         ],
         "Draft" => &[("angle_deg", "angle", "Angle", Some(ANGLE))],
         "Thickness" => &[("value", "thickness", "Thickness", Some(LENGTH))],
+        "OffsetFaces" => &[("distance", "distance", "Distance", Some(LENGTH))],
+        "MoveFaces" => &[
+            ("translation/0", "x", "X", Some(LENGTH)),
+            ("translation/1", "y", "Y", Some(LENGTH)),
+            ("translation/2", "z", "Z", Some(LENGTH)),
+            ("angle_deg", "angle", "Angle", Some(ANGLE)),
+        ],
         "LinearPattern" => &[
             ("length", "length", "Length", Some(LENGTH)),
             ("occurrences", "occurrences", "Occurrences", None),
@@ -274,6 +281,8 @@ pub(crate) fn every_name() -> Vec<&'static str> {
         "Chamfer",
         "Draft",
         "Thickness",
+        "OffsetFaces",
+        "MoveFaces",
         "LinearPattern",
         "PolarPattern",
     ]

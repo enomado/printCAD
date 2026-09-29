@@ -52,6 +52,14 @@ const FEATURES: &[(&str, &str)] = &[
         "design.delete_faces",
         "Delete faces and close the openings from their neighbours",
     ),
+    (
+        "design.offset_faces",
+        "Push or pull faces along their normals, their neighbours following",
+    ),
+    (
+        "design.move_faces",
+        "Move or turn faces, their neighbours following",
+    ),
     ("design.mirror", "Mirror the last feature"),
     (
         "design.linear_pattern",
@@ -448,7 +456,11 @@ pub fn run(
     // takes one away: in a script that face is an argument.
     if matches!(
         id,
-        "design.thickness" | "design.draft" | "design.delete_faces"
+        "design.thickness"
+            | "design.draft"
+            | "design.delete_faces"
+            | "design.offset_faces"
+            | "design.move_faces"
     ) && ctx.selected_face.is_none()
     {
         return Err(CommandError::bad(

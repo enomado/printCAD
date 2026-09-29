@@ -279,6 +279,15 @@ fn taper_note(ui: &mut Ui, text: &str) {
     );
 }
 
+/// A length that may be negative, its formula under `name` when it has one.
+fn signed_mm(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str, name: &str) -> bool {
+    if let Some((changed, v)) = fx.show_named(ui, label, name, f64::from(*value)) {
+        *value = v as f32;
+        return changed;
+    }
+    field(ui, label, |ui| QtyField::offset(value).show(ui))
+}
+
 fn deg_drag(
     ui: &mut Ui,
     fx: &mut Formulas,
@@ -2670,6 +2679,46 @@ pub fn feature_editor(
                 draft_references_editor(ui, ctx, body, feature_id, neutral, neutral_plane, pull);
             changed |= face_list_editor(ui, ctx, faces, "Faces to draft:");
             changed |= check_row(ui, reversed, "Reversed pull").changed();
+        }
+        DesignFeature::OffsetFaces { faces, distance } => {
+            changed |= face_list_editor(ui, ctx, faces, "Faces to offset:");
+            changed |= signed_mm(ui, fx, distance, "Distance", "distance");
+            taper_note(
+                ui,
+                "Along each face's outward normal; negative moves it into the material. A \
+                 bore's face offset in widens it.",
+            );
+        }
+        DesignFeature::MoveFaces {
+            faces,
+            translation,
+            angle_deg,
+            axis_point,
+            axis_dir,
+        } => {
+            changed |= face_list_editor(ui, ctx, faces, "Faces to move:");
+            for (i, (label, name)) in [("Move X", "x"), ("Move Y", "y"), ("Move Z", "z")]
+                .into_iter()
+                .enumerate()
+            {
+                changed |= signed_mm(ui, fx, &mut translation[i], label, name);
+            }
+            changed |= deg_drag(ui, fx, angle_deg, "Angle", -360.0..=360.0);
+            if angle_deg.abs() > 1e-6 {
+                for (i, label) in ["Axis point X", "Axis point Y", "Axis point Z"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    changed |= field(ui, label, |ui| {
+                        QtyField::offset(&mut axis_point[i]).show(ui)
+                    });
+                }
+                for (i, label) in ["Axis X", "Axis Y", "Axis Z"].into_iter().enumerate() {
+                    changed |= field(ui, label, |ui| {
+                        QtyField::new(&mut axis_dir[i]).speed(0.05).show(ui)
+                    });
+                }
+            }
         }
         DesignFeature::DeleteFaces { faces } => {
             changed |= face_list_editor(ui, ctx, faces, "Faces to delete:");

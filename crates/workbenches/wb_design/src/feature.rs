@@ -1010,6 +1010,10 @@ pub enum DrillPoint {
     },
 }
 
+fn z_axis() -> [f32; 3] {
+    [0.0, 0.0, 1.0]
+}
+
 fn drill_point_angle() -> f32 {
     118.0
 }
@@ -1408,6 +1412,26 @@ pub enum DesignFeature {
     /// Delete faces of the solid and close the openings from their
     /// neighbours: a hole, a boss or a round taken away.
     DeleteFaces { faces: Vec<FacePick> },
+    /// Push or pull faces of the solid along their outward normals, the
+    /// faces around them following: a wall thicker, a bore wider.
+    OffsetFaces {
+        faces: Vec<FacePick>,
+        /// mm along the outward normals; negative moves them in.
+        distance: f32,
+    },
+    /// Move faces of the solid, the faces around them following: shifted
+    /// by `translation`, and turned `angle_deg` about the axis through
+    /// `axis_point` along `axis_dir`.
+    MoveFaces {
+        faces: Vec<FacePick>,
+        translation: [f32; 3],
+        #[serde(default)]
+        angle_deg: f32,
+        #[serde(default)]
+        axis_point: [f32; 3],
+        #[serde(default = "z_axis")]
+        axis_dir: [f32; 3],
+    },
     Thickness {
         value: f32,
         faces: Vec<FacePick>,
@@ -1665,6 +1689,8 @@ impl DesignFeature {
             DesignFeature::Draft { .. } => "Draft",
             DesignFeature::Thickness { .. } => "Thickness",
             DesignFeature::DeleteFaces { .. } => "Delete Faces",
+            DesignFeature::OffsetFaces { .. } => "Offset Faces",
+            DesignFeature::MoveFaces { .. } => "Move Faces",
             DesignFeature::Mirrored { .. } => "Mirrored",
             DesignFeature::LinearPattern { .. } => "Linear Pattern",
             DesignFeature::PolarPattern { .. } => "Polar Pattern",
@@ -1726,6 +1752,8 @@ impl DesignFeature {
             DesignFeature::Draft { .. } => "draft",
             DesignFeature::Thickness { .. } => "thickness",
             DesignFeature::DeleteFaces { .. } => "delete",
+            DesignFeature::OffsetFaces { .. } => "offset-geometry",
+            DesignFeature::MoveFaces { .. } => "move-geometry",
             DesignFeature::Mirrored { .. } => "mirrored",
             DesignFeature::LinearPattern { .. } => "linear-pattern",
             DesignFeature::PolarPattern { .. } => "polar-pattern",
@@ -1812,6 +1840,8 @@ impl DesignFeature {
                 | DesignFeature::Draft { .. }
                 | DesignFeature::Thickness { .. }
                 | DesignFeature::DeleteFaces { .. }
+                | DesignFeature::OffsetFaces { .. }
+                | DesignFeature::MoveFaces { .. }
                 | DesignFeature::Mirrored { .. }
                 | DesignFeature::LinearPattern { .. }
                 | DesignFeature::PolarPattern { .. }
