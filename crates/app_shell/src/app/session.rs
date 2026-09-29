@@ -128,6 +128,8 @@ pub(crate) struct DocumentSession {
     /// Mirrored copies the kernel could not mirror, with the source
     /// snapshot it failed on: not asked again until that changes.
     pub mirrors_failed: std::collections::HashMap<Uuid, std::sync::Arc<Vec<u8>>>,
+    /// Linked parts' files being read, and when they were last looked at.
+    pub links: crate::app::links::Links,
     /// The feature an open task edits, which builds carry a preview of.
     pub preview_feature: Option<core_document::FeatureId>,
     /// Bodies showing that preview: the body without the feature stands in
@@ -218,6 +220,7 @@ impl DocumentSession {
             solids_in_flight: Default::default(),
             mirrors_in_flight: Default::default(),
             mirrors_failed: Default::default(),
+            links: Default::default(),
             preview_feature: None,
             previews: Default::default(),
             physical: Default::default(),
@@ -247,6 +250,7 @@ impl DocumentSession {
             || self.document_save_rx.is_some()
             || self.document_open_rx.is_some()
             || self.step_import_pending.is_some()
+            || self.links.busy()
     }
 }
 

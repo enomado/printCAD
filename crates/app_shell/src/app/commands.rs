@@ -166,6 +166,8 @@ impl PrintCadApp {
                         intents.persist_settings = true;
                     }
                 }
+                UiCommand::ReloadLink(body) => self.reload_link(body),
+                UiCommand::OpenLinkSource(body) => self.open_link_source(body),
                 UiCommand::Isolate(body) => {
                     let body = body.or_else(|| self.selected_body_for_isolate());
                     match body {

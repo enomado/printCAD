@@ -98,6 +98,20 @@ pub fn draw(
                     });
                     commands.push(UiCommand::CloseViewportMenu);
                 }
+                let linked = document
+                    .bodies()
+                    .iter()
+                    .any(|b| b.id == menu.body && b.link.is_some());
+                if linked {
+                    if item(ui, "Reload from file") {
+                        commands.push(UiCommand::ReloadLink(menu.body));
+                        commands.push(UiCommand::CloseViewportMenu);
+                    }
+                    if item(ui, "Open the file") {
+                        commands.push(UiCommand::OpenLinkSource(menu.body));
+                        commands.push(UiCommand::CloseViewportMenu);
+                    }
+                }
                 if item(ui, "Isolate") {
                     commands.push(UiCommand::Isolate(Some(menu.body)));
                     commands.push(UiCommand::CloseViewportMenu);

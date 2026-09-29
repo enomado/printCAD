@@ -302,7 +302,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`Workbench::suspend_session`/`resume_session` through the registry); a
   `with_tab` turn must not touch it. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
-  `recompute.rs` (parametric rebuild driver), `workbench_host.rs` (ctx
+  `recompute.rs` (parametric rebuild driver), `links.rs` (parts linked from other
+  `.prtcad` files: `Body.link` names the file and body, the shape is read
+  from it on a thread and never saved here, a changed modified time marks
+  the part stale until Reload), `workbench_host.rs` (ctx
   plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive; keeps
   the last few solids per body by what they were built from, so moving a
   body's tip back and forth through its history, or undo and redo, finds

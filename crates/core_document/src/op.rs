@@ -106,6 +106,18 @@ pub enum DocumentOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mirror: Option<crate::MirrorPlane>,
     },
+    /// A part linked from another printCAD file.
+    CreateLinkedBody {
+        id: BodyId,
+        name: String,
+        created_at: i64,
+        link: crate::FileLink,
+    },
+    /// A linked part read again from its file, now at `link.stamp`.
+    SetBodyLink {
+        id: BodyId,
+        link: crate::FileLink,
+    },
     RenameBody {
         id: BodyId,
         name: String,

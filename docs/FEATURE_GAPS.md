@@ -231,7 +231,7 @@ and noted on its item, and the rest of the item is built around it.
   sharing one definition: edit once, every copy follows, and the parts
   list counts them. A body kind in `core_document` referring to another
   body's solid, picked up by `parts.rs`, `solve.rs` and export.
-- [ ] **Parts from other printCAD files** (missing, L). Inserted linked,
+- [x] **Parts from other printCAD files** (missing, L). Inserted linked,
   with an out-of-date mark, reload and open source; today outside parts
   come in only as frozen STEP, IGES or mesh imports (File › Insert).
 - [ ] **Sub-assemblies** (missing, L). Bodies grouped into a component

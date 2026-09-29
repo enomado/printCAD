@@ -877,6 +877,7 @@ impl PrintCadApp {
             app.drive_shape_repairs();
             app.drive_mesh_solids();
             app.drive_mirrored_copies();
+            app.drive_links();
         });
         self.script_rebuild = Some(RebuildWait {
             reply,

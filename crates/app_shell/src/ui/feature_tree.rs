@@ -57,6 +57,8 @@ pub struct TreeUiResult {
     pub repair: Option<Vec<BodyId>>,
     /// "Convert to solid" was picked: the mesh bodies at or below the row.
     pub convert: Option<Vec<BodyId>>,
+    /// Commands a row's menu asked for.
+    pub commands: Vec<super::UiCommand>,
     /// A row's "!" was clicked: its label and the full message, to show
     /// where it can be read at length and copied.
     pub details: Option<(String, String)>,
@@ -124,6 +126,8 @@ struct TreeNode {
     /// A feature of another body listed here because it acts on this one
     /// (a joint holding that body to this): a link, with no eye of its own.
     linked: bool,
+    /// A body linked from another printCAD file.
+    linked_file: bool,
 }
 
 impl DocumentTree {
@@ -197,6 +201,21 @@ impl DocumentTree {
                 let mut node = build_body_node(body);
                 if let Some(children) = roots_by_body.remove(&Some(body.id)) {
                     node.children = children;
+                }
+                if let Some(link) = &body.link {
+                    let file = std::path::Path::new(&link.path)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    node.detail = Some(format!("Linked from {file}"));
+                    node.tooltip = Some(link.path.clone());
+                    node.linked_file = true;
+                    if document.link_stale(body.id) {
+                        node.error = Some(format!(
+                            "{file} has changed since this part was read: Reload from file \
+                             takes it as it is now"
+                        ));
+                    }
                 }
                 if let Some(source) = body
                     .copy_of
@@ -349,6 +368,7 @@ fn build_feature_node(
         icon: info.icon,
         accent_icon: false,
         linked: false,
+        linked_file: false,
     }
 }
 
@@ -394,6 +414,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 icon: info.icon,
                 accent_icon: false,
                 linked: true,
+                linked_file: false,
             });
         }
     }
@@ -432,6 +453,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         icon: "tree-body",
         accent_icon: true,
         linked: false,
+        linked_file: false,
     }
 }
 
@@ -637,6 +659,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         },
         accent_icon: imported.body_id.is_some(),
         linked: false,
+        linked_file: false,
     })
 }
 
@@ -1286,6 +1309,21 @@ fn attach_body_menu(
                 .clicked()
             {
                 repair = true;
+                ui.close();
+            }
+            ui.separator();
+        }
+        if let (true, Some(body)) = (node.linked_file, node.body) {
+            if ui
+                .button("Reload from file")
+                .on_hover_text("Read the part again from its file as it is now")
+                .clicked()
+            {
+                result.commands.push(super::UiCommand::ReloadLink(body));
+                ui.close();
+            }
+            if ui.button("Open the file").clicked() {
+                result.commands.push(super::UiCommand::OpenLinkSource(body));
                 ui.close();
             }
             ui.separator();

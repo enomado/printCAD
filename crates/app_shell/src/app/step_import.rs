@@ -40,6 +40,14 @@ impl PrintCadApp {
         if self.import_with_bench(path) {
             return;
         }
+        // A printCAD file's bodies come in linked to it.
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("prtcad"))
+        {
+            self.insert_linked(path.to_path_buf());
+            return;
+        }
         app_log::info(format!(
             "Importing {} `{}`...",
             format_of(path),

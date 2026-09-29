@@ -768,9 +768,15 @@ impl PrintCadApp {
             FileDialogKind::ImportStep => {
                 // A mesh file has no shapes to mesh, and a file a workbench
                 // imports is the workbench's to read, so the meshing options
-                // the import dialog asks for mean nothing to either.
+                // the import dialog asks for mean nothing to either. A
+                // printCAD file's bodies come in linked to it.
                 if let Some(path) = path {
-                    if kernel_ogeom::is_mesh_file(&path)
+                    if path
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("prtcad"))
+                    {
+                        self.insert_linked(path);
+                    } else if kernel_ogeom::is_mesh_file(&path)
                         || self.registry.file_import_for(&path).is_some()
                     {
                         self.import_step_at(&path, self.last_step_import_detail.clone());
@@ -844,7 +850,7 @@ impl PrintCadApp {
                 FileDialogKind::ImportStep => {
                     let mut any = vec![
                         "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb", "gltf",
-                        "wrl", "vrml",
+                        "wrl", "vrml", "prtcad",
                     ];
                     any.extend(
                         bench_imports

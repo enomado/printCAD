@@ -204,3 +204,49 @@ fn a_mirrored_copy_waits_for_its_snapshot() {
         "no mirror of a mirror"
     );
 }
+
+/// A part linked from another file keeps its link through a save, waits
+/// for its shape after a load, takes it from the file without the
+/// document counting as edited, and asks again when reloaded.
+#[test]
+fn a_linked_part_is_read_from_its_file() {
+    use core_document::FileLink;
+    let mut doc = Document::new("t");
+    let link = FileLink {
+        path: "/tmp/part.prtcad".into(),
+        body: core_document::BodyId::new(),
+        stamp: 7,
+    };
+    let part = doc.create_linked_body("Bracket".into(), link.clone());
+    assert_eq!(doc.links_awaiting_geometry(), [(part, link.clone())]);
+    doc.mark_clean();
+    doc.set_linked_geometry(
+        part,
+        geometry(triangle()),
+        Some(Arc::new(b"ogeom part".to_vec())),
+        None,
+    );
+    assert!(!doc.metadata().dirty(), "reading a link is no edit");
+    assert!(doc.links_awaiting_geometry().is_empty());
+    assert!(doc.body_solid_is_imported(part));
+
+    let bytes = doc.save_to_bytes(Compression::None).unwrap();
+    let mut loaded = Document::load_from_bytes(bytes).unwrap();
+    assert!(
+        loaded.imported_brep_blob(part).is_none(),
+        "its shape is its file's, read again"
+    );
+    assert_eq!(
+        loaded.bodies().iter().find(|b| b.id == part).unwrap().link,
+        Some(link)
+    );
+
+    let mut journal = OpJournal::new(10);
+    doc.set_link_stale(part, true);
+    assert!(doc.link_stale(part));
+    assert!(doc.reload_link(part, 9));
+    journal.note(&mut doc);
+    assert!(!doc.link_stale(part));
+    assert_eq!(doc.links_awaiting_geometry()[0].1.stamp, 9);
+    let _ = &mut loaded;
+}

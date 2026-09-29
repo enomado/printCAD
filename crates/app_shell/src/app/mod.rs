@@ -13,6 +13,7 @@ pub(crate) mod frame;
 pub(crate) mod gfx;
 pub(crate) mod import_report;
 pub(crate) mod input;
+pub(crate) mod links;
 pub(crate) mod mcp;
 pub(crate) mod measure;
 pub(crate) mod packages;

@@ -205,6 +205,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     result.repair = tree_ui.repair;
                     result.details = tree_ui.details;
                     result.convert = tree_ui.convert;
+                    result.commands.extend(tree_ui.commands);
                     if let Some(repo) = tree_ui.install_package {
                         result
                             .commands

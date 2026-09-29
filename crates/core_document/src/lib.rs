@@ -180,6 +180,9 @@ pub struct Document {
     /// table changes.
     #[serde(skip)]
     left_out: Vec<BodyId>,
+    /// Linked parts whose file changed since it was read.
+    #[serde(skip)]
+    link_stale: std::collections::HashSet<BodyId>,
     /// What each feature was last built against from outside its own
     /// history (another body's solid, where it sat), as its bench sums it
     /// up. Derived on each replica, never an op.
@@ -253,6 +256,20 @@ pub struct Body {
     /// source's own frame, it is mirrored across.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mirror: Option<MirrorPlane>,
+    /// A part linked from another printCAD file: its shape is that body's
+    /// there, read again when the file is reloaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<FileLink>,
+}
+
+/// Where a linked part's shape comes from: a body of another printCAD
+/// file, as that file stood when it was last read (`stamp`, its modified
+/// time in seconds).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileLink {
+    pub path: String,
+    pub body: BodyId,
+    pub stamp: u64,
 }
 
 /// A plane a shape is mirrored across: a point on it and its normal.
@@ -432,6 +449,7 @@ impl Document {
             evaluated: Evaluated::default(),
             next_geometry_revision: 0,
             left_out: Vec::new(),
+            link_stale: Default::default(),
             built_against: HashMap::new(),
             probed: HashMap::new(),
         }
@@ -538,6 +556,11 @@ impl Document {
             },
             Op::CreateBody { id, .. } => Op::RemoveBody { id: *id },
             Op::CreateLinkedCopy { id, .. } => Op::RemoveBody { id: *id },
+            Op::CreateLinkedBody { id, .. } => Op::RemoveBody { id: *id },
+            Op::SetBodyLink { id, .. } => Op::SetBodyLink {
+                id: *id,
+                link: self.bodies.iter().find(|b| b.id == *id)?.link.clone()?,
+            },
             Op::RemoveBody { .. } => return None,
             Op::RenameBody { id, .. } => Op::RenameBody {
                 id: *id,
@@ -708,6 +731,7 @@ impl Document {
                 created_at,
             } => {
                 self.bodies.push(Body {
+                    link: None,
                     mirror: None,
                     id: *id,
                     name: name.clone(),
@@ -740,8 +764,42 @@ impl Document {
                     placement: BodyPlacement::IDENTITY,
                     copy_of: Some(*source),
                     mirror: *mirror,
+                    link: None,
                 });
                 self.refresh_copy(*id);
+            }
+            Op::CreateLinkedBody {
+                id,
+                name,
+                created_at,
+                link,
+            } => {
+                self.bodies.push(Body {
+                    id: *id,
+                    name: name.clone(),
+                    created_at: *created_at,
+                    tip: None,
+                    display: None,
+                    repair_requested: false,
+                    solid_requested: false,
+                    hidden: false,
+                    placement: BodyPlacement::IDENTITY,
+                    copy_of: None,
+                    mirror: None,
+                    link: Some(link.clone()),
+                });
+            }
+            Op::SetBodyLink { id, link } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.link = Some(link.clone());
+                }
+                // Read again from the file as it stands now.
+                self.imported_meshes.remove(id);
+                self.local_meshes.remove(id);
+                self.imported_brep_blobs.remove(id);
+                self.imported_brep_face_colors.remove(id);
+                self.link_stale.remove(id);
+                self.refresh_copies_of(*id);
             }
             Op::RenameBody { id, name } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -939,6 +997,7 @@ impl Document {
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
                 for init in bodies {
                     self.bodies.push(Body {
+                        link: None,
                         mirror: None,
                         copy_of: None,
                         id: init.id,
@@ -1879,6 +1938,90 @@ impl Document {
         Some(id)
     }
 
+    /// A part linked from `link`'s file, placed at the origin.
+    pub fn create_linked_body(&mut self, name: String, link: FileLink) -> BodyId {
+        let id = BodyId::new();
+        self.record_and_apply(op::DocumentOp::CreateLinkedBody {
+            id,
+            name,
+            created_at: epoch_ms_now(),
+            link,
+        });
+        id
+    }
+
+    /// Read a linked part again from its file, now at `stamp`.
+    pub fn reload_link(&mut self, body: BodyId, stamp: u64) -> bool {
+        let Some(link) = self
+            .bodies
+            .iter()
+            .find(|b| b.id == body)
+            .and_then(|b| b.link.clone())
+        else {
+            return false;
+        };
+        self.record_and_apply(op::DocumentOp::SetBodyLink {
+            id: body,
+            link: FileLink { stamp, ..link },
+        });
+        true
+    }
+
+    /// Linked parts with no shape yet: each with its link.
+    pub fn links_awaiting_geometry(&self) -> Vec<(BodyId, FileLink)> {
+        self.bodies
+            .iter()
+            .filter(|b| !self.imported_meshes.contains_key(&b.id))
+            .filter_map(|b| Some((b.id, b.link.clone()?)))
+            .collect()
+    }
+
+    /// Give a linked part its shape as read from its file: the mesh in its
+    /// own frame, the snapshot and its face colours. Derived state: no op.
+    pub fn set_linked_geometry(
+        &mut self,
+        body: BodyId,
+        geometry: ImportedGeometry,
+        blob: Option<std::sync::Arc<Vec<u8>>>,
+        colors: Option<Vec<[f32; 3]>>,
+    ) {
+        match blob {
+            Some(blob) => {
+                self.imported_brep_blobs.insert(body, blob);
+            }
+            None => {
+                self.imported_brep_blobs.remove(&body);
+            }
+        }
+        match colors {
+            Some(colors) => {
+                self.imported_brep_face_colors.insert(body, colors);
+            }
+            None => {
+                self.imported_brep_face_colors.remove(&body);
+            }
+        }
+        let dirty = self.metadata.dirty;
+        self.set_imported_geometry(body, geometry);
+        // Reading a link is not an edit.
+        self.metadata.dirty = dirty;
+    }
+
+    /// Mark a linked part whose file changed since it was read. Derived
+    /// state: no op.
+    pub fn set_link_stale(&mut self, body: BodyId, stale: bool) {
+        if stale {
+            self.link_stale.insert(body);
+        } else {
+            self.link_stale.remove(&body);
+        }
+    }
+
+    /// Whether a linked part's file changed since it was read.
+    pub fn link_stale(&self, body: BodyId) -> bool {
+        self.link_stale.contains(&body)
+    }
+
     /// The body whose shape `body` takes, when it is a linked copy.
     pub fn copy_source(&self, body: BodyId) -> Option<BodyId> {
         self.bodies.iter().find(|b| b.id == body)?.copy_of
@@ -2228,6 +2371,7 @@ impl Document {
     /// rebuild's own result leaves it unset.
     pub fn body_solid_is_imported(&self, body: BodyId) -> bool {
         self.copy_source(body).is_some()
+            || self.bodies.iter().any(|b| b.id == body && b.link.is_some())
             || self
                 .imported_geometry(body)
                 .is_some_and(|geometry| geometry.source_asset.is_some())
@@ -2728,11 +2872,12 @@ impl Document {
         let copies: Vec<BodyId> = doc
             .bodies
             .iter()
-            .filter(|b| b.copy_of.is_some())
+            .filter(|b| b.copy_of.is_some() || b.link.is_some())
             .map(|b| b.id)
             .collect();
         for (body_id, geom) in doc.imported_meshes.iter_mut() {
-            // A linked copy's shape is its source's, derived again on load.
+            // A linked copy's shape is its source's, and a linked part's its
+            // file's, derived again on load.
             if copies.contains(body_id) {
                 geom.brep_blob_path = None;
                 geom.face_colors_path = None;

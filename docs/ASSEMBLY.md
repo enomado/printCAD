@@ -237,6 +237,16 @@ density you set (g/cm³), with each body's share, and marks the centre of
 mass in the view: what a tip-over check needs. `asm.mass` answers the
 same to a script.
 
+## Parts from other files
+
+File › Import of a printCAD file (`.prtcad`) brings in every visible body
+of that file as a part linked to it: its shape is read from the file each
+time the document opens, never stored in this one. When the file changes,
+its parts' tree rows show a mark; Reload from file (on the row or the body
+in the view) reads the file as it stands, and Open the file opens it in a
+tab of its own to edit. A linked part takes joints, placements and copies
+like any body.
+
 ## Export
 
 File › Export as STEP writes several bodies as an assembly: each shape

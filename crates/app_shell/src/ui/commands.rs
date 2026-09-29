@@ -129,6 +129,10 @@ pub enum UiCommand {
         degrees: f32,
         settled: bool,
     },
+    /// Read a part linked from another file again from it.
+    ReloadLink(core_document::BodyId),
+    /// Open the file a linked part comes from.
+    OpenLinkSource(core_document::BodyId),
     /// Hide every body but this one (the selected one when `None`).
     Isolate(Option<core_document::BodyId>),
     /// Show every hidden body.
