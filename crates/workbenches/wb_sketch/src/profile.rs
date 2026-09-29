@@ -80,6 +80,12 @@ pub fn plane_of(plane: &SketchPlane) -> ProfilePlane {
     }
 }
 
+/// How near two projected ends are one end, in sketch units (mm): a
+/// solid's edges meet at a vertex only within its tolerance, and a sketch
+/// keeps points in single precision, a few millionths of a millimetre
+/// apart at part sizes.
+const PROJECTED_JOIN: f64 = 1e-4;
+
 /// Extract every closed wire from the sketch. Standalone points are
 /// ignored; circles are closed wires by themselves; lines/arcs must form
 /// closed loops via shared endpoints.
@@ -268,7 +274,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
             };
             let found = same
                 .iter()
-                .find(|(_, p)| (p[0] - at[0]).hypot(p[1] - at[1]) < 1e-6)
+                .find(|(_, p)| (p[0] - at[0]).hypot(p[1] - at[1]) < PROJECTED_JOIN)
                 .map(|(id, _)| *id);
             match found {
                 Some(first) => {
@@ -438,9 +444,9 @@ pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
                     .copied()
                     .find(|other| {
                         sketch.is_external(*other)
-                            && at
-                                .zip(sketch.point_position(*other).map(v2))
-                                .is_some_and(|(a, b)| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-6)
+                            && at.zip(sketch.point_position(*other).map(v2)).is_some_and(
+                                |(a, b)| (a[0] - b[0]).hypot(a[1] - b[1]) < PROJECTED_JOIN,
+                            )
                     })
                     .unwrap_or(end)
             } else {
@@ -857,5 +863,38 @@ mod external_profile_tests {
         crate::commands::set_external_defining(&mut sketch, &[edge], true);
         let wires = super::extract_wires(&sketch).expect("closed by the edge");
         assert_eq!(wires[0].segments.len(), 3);
+    }
+
+    /// Projected edges of one solid meet within its tolerance, a few
+    /// single-precision steps apart at part sizes: they join there. Ends
+    /// a hundredth of a millimetre apart stay apart.
+    #[test]
+    fn projected_ends_a_rounding_apart_join() {
+        let triangle = |gap: f32| {
+            let mut sketch = Sketch::new("t");
+            let source = ExternalSource {
+                body: uuid::Uuid::new_v4(),
+                point: [0.0; 3],
+                direction: [1.0, 0.0, 0.0],
+                section: false,
+                defining: true,
+                reference: None,
+            };
+            let corners = [(104.5, 90.46158), (150.0, 90.46158), (120.0, 120.0)];
+            for i in 0..3 {
+                let (x0, y0) = corners[i];
+                let (x1, y1) = corners[(i + 1) % 3];
+                let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x0, y0))));
+                // Each edge ends a little off where the next one starts.
+                let b = sketch
+                    .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x1, y1 + gap))));
+                let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+                sketch.external.insert(line, source);
+            }
+            super::extract_wires(&sketch)
+        };
+        let near = triangle(1.5e-5);
+        assert_eq!(near.expect("the ends join")[0].segments.len(), 3);
+        assert!(triangle(0.01).is_err(), "a real gap stays open");
     }
 }
