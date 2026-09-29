@@ -46,6 +46,7 @@ fn staged(name: &str, bytes: &[u8]) -> PathBuf {
     path
 }
 
+/// Import a file `staged` wrote, and remove it: only for staged copies.
 fn import(path: &PathBuf) -> kernel_api::ImportedModel {
     let mut kernel = OgeomKernel::new();
     let model = kernel
@@ -279,4 +280,41 @@ fn ply_and_vrml_scenes_import_as_mesh_bodies() {
         ((lo[0] + hi[0]) / 2.0 - 100.0).abs() < 1e-3,
         "placed 0.1 m along x"
     );
+}
+
+/// A closed STL with fillets and bores converts to a sound solid of its
+/// own size, curved regions recognised. The file is named by
+/// `PRINTCAD_TEST_RECOGNIZE_STL` (a printed part's mesh, not bundled).
+#[test]
+#[ignore = "kernel: recognised faces spill outside the mesh and come out reversed (ogeom-rs#97)"]
+fn a_filleted_mesh_converts_to_a_sound_solid_of_its_size() {
+    let Some(path) = std::env::var_os("PRINTCAD_TEST_RECOGNIZE_STL") else {
+        return;
+    };
+    // Read in place: `import` removes the staged copies it is given, and
+    // this file is the user's.
+    let model = OgeomKernel::new()
+        .import_step(
+            std::path::Path::new(&path),
+            &TessellationSettings::default(),
+        )
+        .expect("the mesh file imports");
+    let mesh = &model.bodies[0].mesh;
+    let (lo, hi) = mesh.bounds().expect("the mesh has points");
+    let solid = OgeomKernel::new()
+        .mesh_to_solid(mesh, &TessellationSettings::default())
+        .unwrap();
+    assert!(solid.closed, "{:?}", solid.summary);
+    assert_eq!(solid.health.broken, 0, "{:?}", solid.health.findings);
+    let (slo, shi) = solid.mesh.bounds().expect("the solid meshes");
+    for axis in 0..3 {
+        assert!(
+            (slo[axis] - lo[axis]).abs() < 0.05 && (shi[axis] - hi[axis]).abs() < 0.05,
+            "axis {axis}: the solid spans {}..{}, the mesh {}..{}",
+            slo[axis],
+            shi[axis],
+            lo[axis],
+            hi[axis]
+        );
+    }
 }
