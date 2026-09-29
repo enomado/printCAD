@@ -11,6 +11,7 @@ const BYPASSES: &[&str] = &[
     "wb_design",
     "wb_sketch",
     "\"wb.design\"",
+    "\"wb.part\"",
     "\"wb.sketch\"",
     "DesignFeature",
     "SketchFeature",
