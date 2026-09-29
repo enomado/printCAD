@@ -364,12 +364,7 @@ fn pipe_from(
         PipeFrame::Auxiliary { .. } => PipeLaw::Auxiliary {
             guide: guide.as_ref().expect("built above"),
         },
-        PipeFrame::Fixed => {
-            return Err(
-                "the kernel cannot yet carry a pipe's section along its path without turning it"
-                    .into(),
-            );
-        }
+        PipeFrame::Fixed => PipeLaw::Fixed,
     };
     let corners = match corner {
         PipeCorner::Transformed => PipeCorners::Mitre,

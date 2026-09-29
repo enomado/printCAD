@@ -28,7 +28,6 @@ fn circles(model: &Model, solid: &ogeom::topo::Shape) -> Vec<ogeom::topo::Shape>
 }
 
 #[test]
-#[ignore = "kernel: a second closed edge of a fillet chain is reported consumed (ogeom-rs#94)"]
 fn both_rims_of_a_cylinder_round_in_one_chain() {
     let tol = Tolerances::default();
     let mut model = Model::new();
@@ -45,7 +44,6 @@ fn both_rims_of_a_cylinder_round_in_one_chain() {
 /// A blind hole's rim, the two half circles the cut leaves of it, rounded
 /// in one chain.
 #[test]
-#[ignore = "kernel: a rim in two halves blends as one loop and the second half is reported consumed (ogeom-rs#94)"]
 fn a_hole_rim_of_two_halves_rounds_in_one_chain() {
     let tol = Tolerances::default();
     let mut model = Model::new();

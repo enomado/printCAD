@@ -3914,7 +3914,6 @@ fn a_revolution_turns_about_the_bodys_axis() {
 }
 
 #[test]
-#[ignore = "kernel: make_helical_sweep refuses a profile whose plane does not hold the axis (ogeom-rs#89)"]
 fn a_helix_climbs_about_its_sketchs_normal_with_the_profile_level() {
     let disc = circle_sketch_on(wb_sketch::sketch::SketchPlane::xy(), 10.0, 0.0, 1.0);
     let ((lo, hi), volume) = build_one(disc, |sketch| {
@@ -3947,7 +3946,6 @@ fn a_helix_climbs_about_its_sketchs_normal_with_the_profile_level() {
 /// it: the square, upright in the XZ plane, stays so round the quarter arc,
 /// sweeping its 2 mm width across the path's 20 mm run in y, 2 mm tall.
 #[test]
-#[ignore = "kernel: no pipe law keeps the section's orientation in space (ogeom-rs#90)"]
 fn a_fixed_pipe_carries_its_section_without_turning_it() {
     use wb_part::{PipeCorner, PipeOrientation};
     let (doc, body) = pipe_body(square_section(), quarter_arc_sketch(), &[], |p, s, _| {
@@ -3961,22 +3959,6 @@ fn a_fixed_pipe_carries_its_section_without_turning_it() {
     });
     let (volume, ..) = built_body(&doc, body).unwrap();
     assert_near(volume, 2.0 * 2.0 * 20.0, 5e-3, "fixed");
-}
-
-/// Until the kernel keeps a section fixed, the pipe says so as its error.
-#[test]
-fn a_fixed_pipe_says_what_the_kernel_lacks() {
-    use wb_part::{PipeCorner, PipeOrientation};
-    let (doc, body) = pipe_body(square_section(), quarter_arc_sketch(), &[], |p, s, _| {
-        pipe_of(
-            p,
-            s,
-            PipeOrientation::Fixed,
-            PipeCorner::Transformed,
-            Vec::new(),
-        )
-    });
-    assert!(built_body(&doc, body).is_err());
 }
 
 fn loft_of(sections: Vec<wb_part::LoftSection>) -> PartFeature {
@@ -4077,7 +4059,6 @@ fn a_loft_starts_from_a_face_of_the_solid() {
 /// Through a middle section to a point: circles narrowing to an apex on
 /// their axis.
 #[test]
-#[ignore = "kernel: make_loft_skinned through several sections to a point misses its skin tolerance (ogeom-rs#91)"]
 fn a_loft_through_sections_closes_to_a_point() {
     use wb_part::LoftSection;
     let circles = |r: f32, z: f32| circle_sketch_on(raised(z), 0.0, 0.0, r);
@@ -4211,7 +4192,6 @@ fn a_pipe_sweeps_a_face_of_the_solid() {
 /// A square piped straight up to a datum point above its centre is the
 /// pyramid over it.
 #[test]
-#[ignore = "kernel: make_pipe_sections refuses a point as its last section (ogeom-rs#92)"]
 fn a_pipe_closes_to_a_point() {
     use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
     let mut doc = Document::new("t");

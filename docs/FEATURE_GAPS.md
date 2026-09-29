@@ -8,19 +8,6 @@ are listed; what is built is in the release notes. Sizes are rough effort
 A kernel capability that is missing is filed on the kernel's repository
 and noted on its item, and the rest of the item is built around it.
 
-## Waiting on the kernel release
-
-Fixed in the kernel, not yet released. Each has a test marked
-`#[ignore = "kernel: ..."]` that passes once the kernel is bumped.
-
-- **Helix about the sketch normal** (ogeom-rs#89).
-- **Fixed pipe orientation** (ogeom-rs#90): the section keeps its
-  orientation in space. Needs wiring to the kernel's new pipe law.
-- **Loft through more than two sections to a point** (ogeom-rs#91).
-- **Pipe closing to a point** (ogeom-rs#92).
-- **Cut ellipsoids** (ogeom-rs#93, ogeom-rs#96): refused until the kernel
-  scales a cut sphere on three axes correctly.
-
 ## Part Design
 
 - [ ] **Direction by formula** (S). A custom extrusion direction's

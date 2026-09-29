@@ -38,7 +38,6 @@ fn whole_turn(model: &mut Model, y0: f64, y1: f64, z0: f64, z1: f64, seam: f64) 
 /// 18..24), both whole turns with their seams at one angle: at 0 they
 /// fuse and cut; at 1 radian both fail.
 #[test]
-#[ignore = "kernel: booleans of whole revolutions whose seams share a half-plane off the profile plane do not close their shell (ogeom-rs#95)"]
 fn whole_revolutions_with_seams_together_fuse_and_cut() {
     let tol = Tolerances::default();
     for seam in [0.0, 1.0] {

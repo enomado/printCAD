@@ -25,7 +25,7 @@ version first.
 - Drag handles in the view set a pad's or pocket's length and a fillet's or chamfer's size.
 - Duplicate, copy and paste features, and move a feature to another body.
 - Pads and pockets stop on planes, run along a datum, a sketch line or the body's axes, start away from their profile, and take a borrowed face as their profile.
-- Lofts go to a point or from faces of the solid, pipes run along edges of the solid or from a face, and a ruled loft joins unlike shapes.
+- Lofts go to a point, through several sections to one, or from faces of the solid; pipes run along edges of the solid or from a face, close to a point, and can keep their section fixed in space; a ruled loft joins unlike shapes.
 - Revolutions turn about the body's own axes, and a helix about its sketch's normal.
 - Datums attach in more ways: on another datum, square to a face, along an edge, through a line and a point, where a line meets a plane; and tilt.
 - Borrowed geometry can be moved, fill closed edges into a face, or lend a whole solid.
@@ -33,6 +33,7 @@ version first.
 - Holes: a clearance of your own, more screw seats, and thread lengths.
 - Primitives attach like datums; ellipsoids can be cut; prisms can lean.
 - A through-all pocket centred on its sketch cuts both ways.
+- Fillets on closed rims, and full-turn revolutions and grooves that fuse or cut cleanly.
 
 ### Assembly
 - More joints: ball, universal, pin in a slot, along a path, cam and follower, and a tab centred in a slot, with point anchors and an offset on each end.

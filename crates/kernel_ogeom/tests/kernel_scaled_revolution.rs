@@ -50,7 +50,6 @@ fn quarter_disc(model: &mut Model, t: Tolerances) -> Shape {
 /// by three radii. Scaling multiplies every volume alike, so the quarter is
 /// a quarter wherever it starts.
 #[test]
-#[ignore = "kernel: a hemisphere scaled on all three axes does not mesh (ogeom-rs#96)"]
 fn a_scaled_hemisphere_measures_as_its_share_of_an_ellipsoid() {
     let t = Tolerances::millimetres();
     for radii in [[2.0, 1.0, 1.0], [8.0, 5.0, 3.0]] {

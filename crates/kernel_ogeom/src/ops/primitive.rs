@@ -185,28 +185,6 @@ pub fn build_tool(
             let scaled = general_transformed_shape(model, &unit, &scale, tol())
                 .map_err(|e| format!("ellipsoid scaling: {e}"))?
                 .shape;
-            // The scaled solid must hold the volume the scaling gives the
-            // cut sphere's, worked out exactly; a solid that does not is
-            // refused rather than drawn.
-            let (a1, a2) = (angle1_deg.to_radians(), angle2_deg.to_radians());
-            let (z1, z2) = (a1.sin(), a2.sin());
-            let unit_volume = angle_deg3_or_full(*angle3_deg).to_radians() / 2.0
-                * ((z2 - z2.powi(3) / 3.0) - (z1 - z1.powi(3) / 3.0));
-            let expected = unit_volume * radius1 * radius2 * radius3;
-            let measured = ogeom::algo::volume_properties(
-                model,
-                &scaled,
-                ogeom::mesh::Deflection::default(),
-                tol(),
-            )
-            .map(|p| p.mass.abs())
-            .map_err(|e| format!("measuring the ellipsoid: {e}"))?;
-            if (measured - expected).abs() > 0.05 * expected {
-                return Err(
-                    "the kernel cannot yet scale a cut sphere into an ellipsoid; make it whole"
-                        .into(),
-                );
-            }
             let place = Transform::from_frame(&frame);
             transformed(model, &scaled, place)
                 .map(|b| b.shape)

@@ -2838,7 +2838,6 @@ fn primitive_volume(kind: PrimitiveKind) -> Result<Measured, String> {
 /// An ellipsoid cut as a sphere is keeps the upper half of itself, and a
 /// quarter turn of that a quarter of it.
 #[test]
-#[ignore = "kernel: a cut sphere scaled on all three axes does not mesh (ogeom-rs#96)"]
 fn an_ellipsoid_takes_a_spheres_cut() {
     let whole = 4.0 / 3.0 * std::f64::consts::PI * 8.0 * 5.0 * 3.0;
     let cut = |sweep: f64| {
@@ -2865,22 +2864,9 @@ fn an_ellipsoid_takes_a_spheres_cut() {
     assert!((quarter - whole / 8.0).abs() < 1e-3 * whole, "{quarter}");
 }
 
-/// Until the kernel scales a cut sphere right, the ellipsoid refuses one
-/// rather than drawing a wrong solid; whole, it builds.
+/// A whole ellipsoid is the sphere scaled to its three radii.
 #[test]
-fn a_cut_ellipsoid_is_refused_not_wrong() {
-    let cut = primitive_volume(PrimitiveKind::Ellipsoid {
-        radius1: 2.0,
-        radius2: 1.0,
-        radius3: 1.0,
-        angle1_deg: 0.0,
-        angle2_deg: 90.0,
-        angle3_deg: 360.0,
-    });
-    if let Ok((volume, _)) = cut {
-        let expected = 2.0 / 3.0 * std::f64::consts::PI * 2.0;
-        assert!((volume - expected).abs() < 0.05 * expected, "{volume}");
-    }
+fn a_whole_ellipsoid_builds() {
     let (whole, _) = primitive_volume(PrimitiveKind::Ellipsoid {
         radius1: 2.0,
         radius2: 1.0,
@@ -3042,7 +3028,6 @@ fn revolve_on(plane: ProfilePlane, wire: ProfileWire, angle_deg: f64, op: Boolea
 /// A whole turn of a collar over the rim of a whole turned cylinder, both
 /// sketched on the plane holding their axis, fuses and cuts.
 #[test]
-#[ignore = "kernel: booleans of whole revolutions whose seams share a half-plane off the profile plane do not close their shell (ogeom-rs#95)"]
 fn a_whole_collar_fuses_with_and_cuts_a_turned_cylinder() {
     for plane in [yz_plane(), xz_plane()] {
         for op in [BooleanOp::Fuse, BooleanOp::Cut] {
@@ -3075,7 +3060,6 @@ fn a_whole_collar_fuses_with_and_cuts_a_turned_cylinder() {
 /// one through the skinned loft, which through two sections is the ruled
 /// surface.
 #[test]
-#[ignore = "kernel: the skinned loft between unlike sections misses its tolerance in 0.4.1; fixed on the kernel's main, waiting for its release"]
 fn a_loft_from_a_square_to_a_circle_builds() {
     for ruled in [false, true] {
         let mut kernel = new_kernel();
