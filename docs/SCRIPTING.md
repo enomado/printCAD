@@ -1354,6 +1354,16 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): A new group's name in the tree
 - Returns the group's id
 
+`pc.asm.save_state`: Save where every body sits, which are hidden and where drives hold, under a name.
+
+- `name` (string, optional): A new state's name in the tree
+- `state` (id, optional): A saved state to keep the assembly in instead
+- Returns the state's id
+
+`pc.asm.restore_state`: Put the assembly back as a saved state has it.
+
+- `state` (id): The saved state
+
 `pc.asm.redundant`: The joints that hold nothing a body's other joints do not.
 
 - Returns a list of {joint, name}

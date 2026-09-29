@@ -419,6 +419,26 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.save_state",
+            "Save where every body sits, which are hidden and where drives hold, under a name",
+        )
+        .optional("name", ParamKind::String, "A new state's name in the tree")
+        .optional(
+            "state",
+            ParamKind::Id,
+            "A saved state to keep the assembly in instead",
+        )
+        .returns("the state's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.restore_state",
+            "Put the assembly back as a saved state has it",
+        )
+        .param("state", ParamKind::Id, "The saved state"),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.redundant",
             "The joints that hold nothing a body's other joints do not",
         )
@@ -1063,6 +1083,36 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             };
             ctx.document.clear_feature_dirty(id);
             solved(ctx, json!(id.0.to_string()))
+        }
+        "asm.save_state" => {
+            if let Some(state) = a.opt_id("state")? {
+                let state = FeatureId(state);
+                let now = crate::states::capture(ctx.document);
+                ctx.document
+                    .update_feature_data(state, core_document::WorkbenchFeature::to_json(&now))
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                ctx.document.clear_feature_dirty(state);
+                return Ok(json!(state.0.to_string()));
+            }
+            let name = match a.opt_string("name")? {
+                Some(n) => n.to_string(),
+                None => next_name(ctx.document, "State"),
+            };
+            let id = crate::states::save(ctx.document, name)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            Ok(json!(id.0.to_string()))
+        }
+        "asm.restore_state" => {
+            let id = FeatureId(a.id("state")?);
+            let state = ctx
+                .document
+                .get_feature_data(id)
+                .and_then(|d| {
+                    <crate::AssemblyState as core_document::WorkbenchFeature>::from_json(d).ok()
+                })
+                .ok_or_else(|| CommandError::bad("state", "is not a saved assembly state"))?;
+            crate::states::restore(ctx.document, &state);
+            solved(ctx, Value::Null)
         }
         "asm.redundant" => Ok(Value::Array(
             crate::redundant(ctx.document)
@@ -2014,6 +2064,33 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// A saved state brings back a driven hinge's angle, where the bodies
+    /// sat and which were hidden.
+    #[test]
+    fn a_saved_state_is_returned_to() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+        let hinge = call(
+            &mut doc,
+            "asm.hinge",
+            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
+                   "drive": 0}),
+        )
+        .unwrap();
+        let folded = call(&mut doc, "asm.save_state", json!({"name": "Folded"})).unwrap();
+        call(&mut doc, "asm.set", json!({"joint": hinge, "drive": 90})).unwrap();
+        doc.set_body_visible(b, false);
+        let turned = |doc: &Document| {
+            let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+            x[1].atan2(x[0]).to_degrees()
+        };
+        assert!((turned(&doc) - 90.0).abs() < 1e-2);
+        call(&mut doc, "asm.restore_state", json!({"state": folded})).unwrap();
+        assert!(turned(&doc).abs() < 1e-2, "{}", turned(&doc));
+        assert!(doc.bodies().iter().all(|x| !x.hidden));
     }
 
     /// A parallel joint added to a mate holds nothing new: it is reported

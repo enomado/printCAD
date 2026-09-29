@@ -23,6 +23,7 @@ mod parts;
 mod replace;
 mod shapes;
 mod solve;
+mod states;
 mod sweep_check;
 
 use core_document::{
@@ -43,6 +44,7 @@ pub use solve::{
     HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints,
     redundant, solve,
 };
+pub use states::{AssemblyState, STATE_KIND};
 pub use sweep_check::MotionClash;
 
 /// A joint being made: the kind, and the first face once picked.
@@ -650,6 +652,26 @@ impl AssemblyWorkbench {
             }
             None => members.push(body),
         }
+    }
+
+    /// Put the assembly back as saved state `id` has it, solve, and record
+    /// it.
+    pub(crate) fn restore_state(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        let Some(state) = ctx
+            .document
+            .get_feature_data(id)
+            .and_then(|d| AssemblyState::from_json(d).ok())
+        else {
+            return;
+        };
+        states::restore(ctx.document, &state);
+        self.solve_and_apply(ctx);
+        ctx.record(
+            "asm.restore_state",
+            commands::object(serde_json::json!({"state": id.0.to_string()})),
+            serde_json::Value::Null,
+        );
+        ctx.request(HostRequest::JournalLabel("Restore assembly state".into()));
     }
 
     /// The group being picked made, or the one edited changed to the
@@ -1871,6 +1893,65 @@ impl Workbench for AssemblyWorkbench {
         parts::bought_bodies(document)
     }
 
+    fn menu_items(
+        &self,
+        scope: &core_document::MenuScope,
+        document: &core_document::Document,
+    ) -> Vec<core_document::MenuItem> {
+        let core_document::MenuScope::TreeFeature(id) = scope else {
+            return Vec::new();
+        };
+        let is_state = document
+            .get_feature_meta(*id)
+            .is_some_and(|n| n.workbench_id.as_str() == STATE_KIND);
+        if !is_state {
+            return Vec::new();
+        }
+        vec![
+            core_document::MenuItem::new("asm.restore_state", "Restore this state")
+                .icon("save")
+                .hint("Put every body back where it was, drives and visibility too")
+                .separator_before(),
+            core_document::MenuItem::new("asm.update_state", "Save the assembly into it")
+                .hint("Keep the assembly as it stands now under this state's name"),
+        ]
+    }
+
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &core_document::MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        let core_document::MenuScope::TreeFeature(state) = scope else {
+            return false;
+        };
+        match id {
+            "asm.restore_state" => {
+                self.restore_state(ctx, *state);
+                true
+            }
+            "asm.update_state" => {
+                let now = states::capture(ctx.document);
+                if ctx
+                    .document
+                    .update_feature_data(*state, now.to_json())
+                    .is_ok()
+                {
+                    ctx.document.clear_feature_dirty(*state);
+                    ctx.record(
+                        "asm.save_state",
+                        commands::object(serde_json::json!({"state": state.0.to_string()})),
+                        serde_json::json!(state.0.to_string()),
+                    );
+                    ctx.request(HostRequest::JournalLabel("Save assembly state".into()));
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The joints of other bodies that hold them to `body`.
     fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
         joints(document)
@@ -1891,7 +1972,13 @@ impl Workbench for AssemblyWorkbench {
             "Place bodies against each other with joints",
         )
         .icon("workbench-assembly")
-        .feature_kinds([JOINT_KIND, COUPLING_KIND, parts::PARTS_KIND, GROUP_KIND])
+        .feature_kinds([
+            JOINT_KIND,
+            COUPLING_KIND,
+            parts::PARTS_KIND,
+            GROUP_KIND,
+            STATE_KIND,
+        ])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -1935,6 +2022,14 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == STATE_KIND {
+            return FeatureInfo {
+                icon: "save",
+                kind_label: "Assembly state".to_string(),
+                family_label: "Saved assembly state".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == GROUP_KIND {
             return FeatureInfo {
                 icon: "tree-group",
@@ -2035,6 +2130,7 @@ impl Workbench for AssemblyWorkbench {
             "asm.interference" | "asm.explode" => ctx.document.bodies().len() >= 2,
             "asm.parts" | "asm.mass" => !ctx.document.bodies().is_empty(),
             "asm.group" => ctx.document.bodies().len() >= 2,
+            "asm.save_state" => !ctx.document.bodies().is_empty(),
             "asm.copy" => Self::body_to_move(ctx).is_some(),
             "asm.replace" => Self::body_to_move(ctx).is_some() && ctx.document.bodies().len() >= 2,
             "asm.collisions" => true,
@@ -2126,6 +2222,23 @@ impl Workbench for AssemblyWorkbench {
                 }
                 None => ctx.log_warn("Select a body to copy"),
             },
+            Some("asm.save_state") => {
+                let name = commands::next_name(ctx.document, "State");
+                match states::save(ctx.document, name.clone()) {
+                    Ok(id) => {
+                        ctx.record(
+                            "asm.save_state",
+                            commands::object(serde_json::json!({"name": name})),
+                            serde_json::json!(id.0.to_string()),
+                        );
+                        ctx.log_info(format!(
+                            "Saved {name}: double-click it in the tree to return to it"
+                        ));
+                        ctx.request(HostRequest::JournalLabel("Save assembly state".into()));
+                    }
+                    Err(why) => ctx.log_warn(format!("Could not save the state: {why}")),
+                }
+            }
             Some("asm.replace") => match Self::body_to_move(ctx) {
                 Some(old) => {
                     self.picking = None;
@@ -2236,6 +2349,10 @@ impl Workbench for AssemblyWorkbench {
         }
         if kind.as_deref() == Some(parts::PARTS_KIND) {
             self.task = Some(Task::Parts);
+            return;
+        }
+        if kind.as_deref() == Some(STATE_KIND) {
+            self.restore_state(ctx, id);
             return;
         }
         if kind.as_deref() == Some(GROUP_KIND) {

@@ -183,6 +183,15 @@ looks instead for pairs nearer to each other than that: each drawn as a
 line between the two nearest points, with the distance. `asm.interference`
 takes a `clearance` to do the same.
 
+## Saved states
+
+Save assembly state (Shift+E) keeps where every body sits, which are
+hidden and where each driven joint is held, as a row of the tree: a
+print-in-place hinge folded, and open. Double-click the row (or Restore
+this state in its menu) to return to it; Save the assembly into it keeps
+the assembly as it stands under that name. `asm.save_state` and
+`asm.restore_state` do the same from a script.
+
 ## Exploded view and parts list
 
 Exploded view (E) moves every body straight out from the middle of the

@@ -302,7 +302,7 @@ and noted on its item, and the rest of the item is built around it.
 - [ ] **Saved, stepped exploded views** (partial, M). Per-body moves and
   turns as ordered steps, several named views kept in the document,
   explode lines, animation. Today one radial spread, dropped on close.
-- [ ] **Saved assembly states** (missing, M). Placements and visibility to
+- [x] **Saved assembly states** (missing, M). Placements and visibility to
   return to: a print-in-place hinge folded and open.
 
 ### Parts list
