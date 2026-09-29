@@ -1127,7 +1127,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `name` (string, optional): Its name in the tree
-- Other arguments: sections = {{length, diameter, chamfer, fillet}, ...} and start_chamfer
+- Other arguments: sections = {{length, diameter, chamfer, fillet}, ...}, start_chamfer, and loads = {bearings = {a, b}, forces = {{at, force, angle_deg}, ...}, torque (N·m), torque_from, torque_to, modulus (GPa)} for its stresses and deflection
 - Returns the sketch's id
 
 ### asm

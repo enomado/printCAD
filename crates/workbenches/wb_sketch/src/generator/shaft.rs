@@ -41,6 +41,9 @@ pub struct ShaftSpec {
     pub sections: Vec<ShaftSection>,
     /// The chamfer on the outer edge of the shaft's first end, mm.
     pub start_chamfer: f32,
+    /// What the shaft carries, for its stresses and deflection; nothing
+    /// in its shape follows from them.
+    pub loads: super::loads::ShaftLoads,
 }
 
 impl Default for ShaftSpec {
@@ -58,6 +61,7 @@ impl Default for ShaftSpec {
                 section(20.0, 10.0, 0.5, 0.0),
             ],
             start_chamfer: 0.5,
+            loads: Default::default(),
         }
     }
 }
@@ -217,6 +221,7 @@ mod tests {
     #[test]
     fn a_plain_shaft_is_its_sections_side_by_side() {
         let spec = ShaftSpec {
+            loads: Default::default(),
             sections: vec![
                 ShaftSection {
                     length: 10.0,
@@ -250,6 +255,7 @@ mod tests {
     #[test]
     fn a_chamfer_takes_its_triangle_and_a_fillet_adds_its_corner() {
         let one = |chamfer, fillet| ShaftSpec {
+            loads: Default::default(),
             sections: vec![
                 ShaftSection {
                     length: 10.0,
@@ -280,6 +286,7 @@ mod tests {
     #[test]
     fn corners_bigger_than_their_sides_are_cut_to_fit() {
         let spec = ShaftSpec {
+            loads: Default::default(),
             sections: vec![ShaftSection {
                 length: 4.0,
                 diameter: 20.0,

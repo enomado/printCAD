@@ -56,7 +56,9 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
         (
             "part.shaft",
             "Make a stepped shaft's half section: a sketch to revolve about its vertical axis",
-            "sections = {{length, diameter, chamfer, fillet}, ...} and start_chamfer",
+            "sections = {{length, diameter, chamfer, fillet}, ...}, start_chamfer, and \
+             loads = {bearings = {a, b}, forces = {{at, force, angle_deg}, ...}, torque (N·m), \
+             torque_from, torque_to, modulus (GPa)} for its stresses and deflection",
         ),
     ];
     for (id, summary, extra) in fields {

@@ -200,6 +200,7 @@ fn a_revolved_shaft_is_its_sections_cylinders() {
         ..ShaftSection::default()
     };
     let plain = ShaftSpec {
+        loads: Default::default(),
         sections: vec![section(10.0, 8.0), section(25.0, 14.0), section(15.0, 10.0)],
         start_chamfer: 0.0,
     };

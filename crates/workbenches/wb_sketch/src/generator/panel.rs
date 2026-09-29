@@ -8,12 +8,15 @@ use egui::RichText;
 use serde_json::{Map, Value, json};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Card, FormulaEdit, FormulaField, Note, check_row, field_label, mono_label, note_card, overline,
-    secondary_button, select_field, small_secondary_button,
+    Card, FormulaEdit, FormulaField, Note, QtyField, check_row, field_label, mono_label, note_card,
+    overline, secondary_button, select_field, small_secondary_button,
 };
 use ui_kit::{icon, sans_semibold};
 
-use super::{Generator, SPROCKET_CHAINS, regenerate, summary};
+use super::{
+    Generator, SPROCKET_CHAINS, ShaftAnalysis, ShaftForce, ShaftLoads, ShaftSpec, analyse,
+    regenerate, summary,
+};
 use crate::feature::SketchFeature;
 
 /// The width of the label column.
@@ -145,6 +148,16 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
     });
 
     measured(ui, &generator);
+    if let Generator::Shaft(spec) = &generator
+        && let Some(loads) = loads_card(ui, spec)
+    {
+        set_value(
+            &mut data,
+            "/generator/Shaft/loads",
+            serde_json::to_value(&loads).unwrap_or_default(),
+        );
+        edited.push("loads".into());
+    }
 
     ui.add_space(SPACE_2);
     let detach = secondary_button(ui, "Detach into a plain sketch")
@@ -254,6 +267,129 @@ fn measured(ui: &mut egui::Ui, generator: &Generator) {
                 mono_label(ui, format!("{v:.3} mm"), FONT_SM, TEXT1);
             });
         }
+    });
+}
+
+/// The shaft's loads, each a field, and what they do to it; the loads
+/// as edited when a field changed.
+fn loads_card(ui: &mut egui::Ui, spec: &ShaftSpec) -> Option<ShaftLoads> {
+    let length: f32 = spec.sections.iter().map(|s| s.length).sum();
+    let mut loads = spec.loads.clone();
+    let mut changed = false;
+    ui.add_space(SPACE_2);
+    Card::new().show(ui, |ui| {
+        overline(ui, "Loads");
+        let mut row = |ui: &mut egui::Ui, label: &str, value: &mut f32, unit: &'static str| {
+            ui.horizontal(|ui| {
+                label_cell(ui, label);
+                changed |= QtyField::new(value).unit(unit).speed(0.5).show(ui);
+            });
+        };
+        let [mut first, mut second] = loads.bearings;
+        row(ui, "Bearing 1 at", &mut first, "mm");
+        row(ui, "Bearing 2 at", &mut second, "mm");
+        loads.bearings = [first, second];
+        row(ui, "Torque", &mut loads.torque, "N·m");
+        if loads.torque != 0.0 {
+            row(ui, "Torque from", &mut loads.torque_from, "mm");
+            row(ui, "Torque to", &mut loads.torque_to, "mm");
+        }
+        row(ui, "Modulus", &mut loads.modulus, "GPa");
+        let mut remove = None;
+        for (i, force) in loads.forces.iter_mut().enumerate() {
+            ui.add_space(SPACE_1);
+            ui.horizontal(|ui| {
+                overline(ui, &format!("Force {}", i + 1));
+                if small_secondary_button(ui, "Remove").clicked() {
+                    remove = Some(i);
+                }
+            });
+            row(ui, "At", &mut force.at, "mm");
+            row(ui, "Force", &mut force.force, "N");
+            row(ui, "Angle", &mut force.angle_deg, "°");
+        }
+        if let Some(i) = remove {
+            loads.forces.remove(i);
+            changed = true;
+        }
+        ui.add_space(SPACE_1);
+        if small_secondary_button(ui, "Add force").clicked() {
+            loads.forces.push(ShaftForce {
+                at: length / 2.0,
+                ..ShaftForce::default()
+            });
+            changed = true;
+        }
+        // Bearings standing together take the shaft's two ends.
+        if changed && loads.bearings[0] == loads.bearings[1] {
+            loads.bearings = [0.0, length];
+        }
+        if changed && loads.torque != 0.0 && loads.torque_from == loads.torque_to {
+            (loads.torque_from, loads.torque_to) = (0.0, length);
+        }
+    });
+    if loads.any() {
+        match analyse(spec, &loads) {
+            Ok(result) => analysis_card(ui, &result),
+            Err(why) => {
+                note_card(ui, Note::Error, Some("No analysis"), &why);
+            }
+        }
+    }
+    changed.then_some(loads)
+}
+
+/// Reactions, the worst moment, stress and deflection, and a plot of the
+/// stress and deflection along the shaft.
+fn analysis_card(ui: &mut egui::Ui, result: &ShaftAnalysis) {
+    ui.add_space(SPACE_2);
+    Card::new().show(ui, |ui| {
+        let line = |ui: &mut egui::Ui, label: &str, text: String| {
+            ui.horizontal(|ui| {
+                label_cell(ui, label);
+                mono_label(ui, text, FONT_SM, TEXT1);
+            });
+        };
+        line(ui, "Bearing 1", format!("{:.1} N", result.reactions[0]));
+        line(ui, "Bearing 2", format!("{:.1} N", result.reactions[1]));
+        let (m, m_at) = result.max_moment();
+        line(
+            ui,
+            "Max moment",
+            format!("{:.2} N·m at {m_at:.1} mm", m / 1e3),
+        );
+        let (s, s_at) = result.max_stress();
+        line(ui, "Max stress", format!("{s:.1} MPa at {s_at:.1} mm"));
+        let (d, d_at) = result.max_deflection();
+        line(ui, "Max deflection", format!("{d:.4} mm at {d_at:.1} mm"));
+
+        let width = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(width, 72.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 4.0, BG1);
+        let end = result.stations.last().map_or(1.0, |s| s.at).max(1e-9);
+        let curve = |of: &dyn Fn(&super::loads::Station) -> f64, peak: f64, color| {
+            if peak <= 0.0 {
+                return;
+            }
+            let points: Vec<egui::Pos2> = result
+                .stations
+                .iter()
+                .map(|st| {
+                    egui::pos2(
+                        rect.left() + rect.width() * (st.at / end) as f32,
+                        rect.bottom() - 4.0 - (rect.height() - 8.0) * (of(st) / peak) as f32,
+                    )
+                })
+                .collect();
+            painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, color)));
+        };
+        curve(&|st| st.stress, s, WARNING);
+        curve(&|st| st.deflection, d, ACCENT);
+        ui.horizontal(|ui| {
+            mono_label(ui, "stress", FONT_SM, WARNING);
+            mono_label(ui, "deflection", FONT_SM, ACCENT);
+        });
     });
 }
 

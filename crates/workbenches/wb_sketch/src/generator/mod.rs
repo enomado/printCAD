@@ -11,6 +11,7 @@
 
 mod fit;
 mod gear;
+mod loads;
 #[cfg(feature = "egui")]
 pub(crate) mod panel;
 mod shaft;
@@ -25,6 +26,7 @@ use crate::feature::SketchFeature;
 use crate::sketch::{Arc, BSpline, Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
 pub use gear::GearSpec;
+pub use loads::{ShaftAnalysis, ShaftForce, ShaftLoads, analyse};
 pub use shaft::{ShaftSection, ShaftSpec};
 pub use sprocket::{SPROCKET_CHAINS, SprocketSpec};
 
@@ -331,9 +333,31 @@ pub fn summary(generator: &Generator) -> serde_json::Value {
             }),
             Err(why) => json!({ "error": why }),
         },
-        Generator::Shaft(spec) => json!({
-            "length": spec.sections.iter().map(|s| f64::from(s.length)).sum::<f64>(),
-        }),
+        Generator::Shaft(spec) => {
+            let mut out = json!({
+                "length": spec.sections.iter().map(|s| f64::from(s.length)).sum::<f64>(),
+            });
+            if spec.loads.any() {
+                out["loads"] = match analyse(spec, &spec.loads) {
+                    Ok(a) => {
+                        let (moment, moment_at) = a.max_moment();
+                        let (stress, stress_at) = a.max_stress();
+                        let (sag, sag_at) = a.max_deflection();
+                        json!({
+                            "reactions_n": a.reactions,
+                            "max_moment_nm": moment / 1e3,
+                            "max_moment_at": moment_at,
+                            "max_stress_mpa": stress,
+                            "max_stress_at": stress_at,
+                            "max_deflection_mm": sag,
+                            "max_deflection_at": sag_at,
+                        })
+                    }
+                    Err(why) => json!({ "error": why }),
+                };
+            }
+            out
+        }
     }
 }
 
@@ -610,6 +634,23 @@ mod tests {
         let first = serde_json::to_value(&feature.sketch).unwrap();
         regenerate(&mut feature).unwrap();
         assert_eq!(serde_json::to_value(&feature.sketch).unwrap(), first);
+    }
+
+    /// Loads merged into a shaft come back in its summary as what they do.
+    #[test]
+    fn a_loaded_shaft_reports_its_stress() {
+        let mut shaft = Generator::named("shaft").unwrap();
+        assert!(summary(&shaft).get("loads").is_none(), "nothing loads it");
+        let fields = serde_json::json!({"loads": {
+            "bearings": [0.0, 65.0],
+            "forces": [{"at": 30.0, "force": 500.0}],
+        }});
+        shaft.merge(fields.as_object().unwrap()).unwrap();
+        let out = summary(&shaft);
+        let loads = &out["loads"];
+        assert!(loads["max_stress_mpa"].as_f64().unwrap() > 0.0, "{out}");
+        let reactions: Vec<f64> = serde_json::from_value(loads["reactions_n"].clone()).unwrap();
+        assert!((reactions.iter().sum::<f64>() - 500.0).abs() < 1e-6);
     }
 
     #[test]

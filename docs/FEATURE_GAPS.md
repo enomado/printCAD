@@ -213,7 +213,10 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Internal (ring) gear** (partial, S), and addendum and dedendum
   coefficients (`wb_sketch/src/generator/gear.rs`). A ring's roots are
   left sharp.
-- [ ] **Shaft loads and stresses** (partial, L).
+- [x] **Shaft loads and stresses** (partial, L). Two bearings, forces
+  at angles about the axis and a torque; reactions, bending moment, von
+  Mises stress and deflection along the shaft, in its panel and its
+  summary. Stress concentrations at the steps are not counted.
 - [ ] **Measure angles, radii and face areas** (partial, M). The tool
   measures distance only (`app_shell/src/app/input.rs::measure_click`).
 
