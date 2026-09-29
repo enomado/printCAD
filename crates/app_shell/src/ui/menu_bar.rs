@@ -262,6 +262,22 @@ pub fn draw_menu_bar(
                         ) {
                             commands.push(UiCommand::FitSelection);
                         }
+                        if item_needing_document(
+                            ui,
+                            "Isolate selection",
+                            key("view.isolate"),
+                            have_document,
+                        ) {
+                            commands.push(UiCommand::Isolate(None));
+                        }
+                        if item_needing_document(
+                            ui,
+                            "Show all bodies",
+                            key("view.show_all"),
+                            have_document,
+                        ) {
+                            commands.push(UiCommand::ShowAllBodies);
+                        }
                         ui.separator();
                         ui.menu_button(RichText::new("Standard views").font(sans(FONT_SM)), |ui| {
                             for (label, view, id) in [

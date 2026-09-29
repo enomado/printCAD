@@ -166,6 +166,44 @@ impl PrintCadApp {
                         intents.persist_settings = true;
                     }
                 }
+                UiCommand::Isolate(body) => {
+                    let body = body.or_else(|| self.selected_body_for_isolate());
+                    match body {
+                        Some(keep) => {
+                            let others: Vec<core_document::BodyId> = self
+                                .session
+                                .document
+                                .bodies()
+                                .iter()
+                                .map(|b| b.id)
+                                .filter(|b| *b != keep)
+                                .collect();
+                            for other in others {
+                                self.session.document.set_body_visible(other, false);
+                            }
+                            self.session.document.set_body_visible(keep, true);
+                            self.session.selected_edges.retain(|e| e.body == keep.0);
+                            self.session.journal.label_next("Isolate body");
+                            self.close_gesture();
+                        }
+                        None => app_log::warn("Select a body to isolate"),
+                    }
+                }
+                UiCommand::ShowAllBodies => {
+                    let hidden: Vec<core_document::BodyId> = self
+                        .session
+                        .document
+                        .bodies()
+                        .iter()
+                        .filter(|b| b.hidden)
+                        .map(|b| b.id)
+                        .collect();
+                    for body in hidden {
+                        self.session.document.set_body_visible(body, true);
+                    }
+                    self.session.journal.label_next("Show all bodies");
+                    self.close_gesture();
+                }
                 UiCommand::SetBodyVisible { body, visible } => {
                     self.session.viewport_menu = None;
                     self.session.document.set_body_visible(body, visible);
@@ -1171,6 +1209,21 @@ impl PrintCadApp {
 }
 
 impl PrintCadApp {
+    /// The body Isolate keeps: the one selected in the view, else the
+    /// body of the tree's selection.
+    fn selected_body_for_isolate(&self) -> Option<core_document::BodyId> {
+        use crate::ui::TreeItemId;
+        if let Some(body) = self.session.selected_body {
+            return Some(core_document::BodyId(body));
+        }
+        match self.session.tree_selection? {
+            TreeItemId::Body(body) => Some(body),
+            TreeItemId::Feature(f) => self.session.document.get_feature_meta(f)?.body,
+            TreeItemId::ImportedObject(id) => self.session.document.body_of_imported_object(id),
+            TreeItemId::DocumentRoot => None,
+        }
+    }
+
     /// Set one of a feature's numbers: a formula is kept as typed; a value
     /// takes any formula away and goes into the feature's data, settled
     /// by its bench (a sketch solves), with what depends on it marked.

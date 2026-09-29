@@ -129,6 +129,10 @@ pub enum UiCommand {
         degrees: f32,
         settled: bool,
     },
+    /// Hide every body but this one (the selected one when `None`).
+    Isolate(Option<core_document::BodyId>),
+    /// Show every hidden body.
+    ShowAllBodies,
     /// Show or hide a body, from its tree row, the property panel or the
     /// viewport's menu.
     SetBodyVisible {

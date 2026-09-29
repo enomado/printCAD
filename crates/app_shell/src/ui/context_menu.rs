@@ -98,6 +98,14 @@ pub fn draw(
                     });
                     commands.push(UiCommand::CloseViewportMenu);
                 }
+                if item(ui, "Isolate") {
+                    commands.push(UiCommand::Isolate(Some(menu.body)));
+                    commands.push(UiCommand::CloseViewportMenu);
+                }
+                if document.bodies().iter().any(|b| b.hidden) && item(ui, "Show all bodies") {
+                    commands.push(UiCommand::ShowAllBodies);
+                    commands.push(UiCommand::CloseViewportMenu);
+                }
                 // What the benches offer for this body, after the host's
                 // own entries.
                 let scope = core_document::MenuScope::ViewportBody(menu.body);

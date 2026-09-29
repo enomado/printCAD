@@ -432,6 +432,10 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 `pc.view.fit_selection`: Fit selection.
 
+`pc.view.isolate`: Show only the selected body.
+
+`pc.view.show_all`: Show every body.
+
 `pc.view.isometric`: Isometric view.
 
 `pc.view.front`: Front view.
