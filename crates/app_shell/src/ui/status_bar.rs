@@ -122,7 +122,12 @@ fn quiet_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 /// A panel's switch: its icon, lit while the panel shows. Whether it was
 /// clicked.
 fn panel_button(ui: &mut egui::Ui, icon: &str, name: &str, open: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+    let response = ui.interact(
+        rect,
+        egui::Id::new(("status_panel", icon)),
+        egui::Sense::click(),
+    );
     if open || response.hovered() {
         ui.painter()
             .rect_filled(rect, RADIUS_SM, if open { ACCENT_DIM } else { BG3 });
@@ -134,8 +139,10 @@ fn panel_button(ui: &mut egui::Ui, icon: &str, name: &str, open: bool) -> bool {
     } else {
         TEXT3
     };
-    let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(2.0)));
-    ui_kit::icon::draw(&mut slot, icon, 14.0, tint);
+    // Painted, not added: a widget over the button would take its clicks.
+    if let Some(image) = ui_kit::icon::image(ui.ctx(), icon, 14.0, tint) {
+        image.paint_at(ui, rect.shrink(2.0));
+    }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(if open {
@@ -182,6 +189,9 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
                     },
                 );
         });
+    result.toggle_log = right.toggle_log;
+    result.toggle_console = right.toggle_console;
+    result.toggle_assistant = right.toggle_assistant;
     result
 }
 
@@ -429,4 +439,91 @@ fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut b
             *cancel = true;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inputs(server: &ServerBadge) -> StatusBarInputs<'_> {
+        StatusBarInputs {
+            fps: Some(60.0),
+            scene_redraws_per_s: 0,
+            hovered_point: None,
+            axis_system: AxisSystem::default(),
+            display_unit: Unit::Mm,
+            pending_imports: 0,
+            pending_document_open: 0,
+            kernel_status: None,
+            kernel_cancellable: false,
+            kernel_progress: None,
+            server,
+            document_saving: false,
+            save_progress: None,
+            nav_style: "Gesture",
+            nav_device: None,
+            items: None,
+            preselect: None,
+            dimensions: None,
+            script_running: None,
+            recording: false,
+            panels: Panels::default(),
+        }
+    }
+
+    /// One frame of the bar alone in an 800 × 600 window; what it answered.
+    fn frame(ctx: &egui::Context, time: f64, events: Vec<egui::Event>) -> StatusBarResult {
+        let server = ServerBadge {
+            connected: true,
+            ..Default::default()
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(800.0, 600.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut result = StatusBarResult::default();
+        let mut out = ctx.run_ui(input, |ui| {
+            result = draw_status_bar(ui, &inputs(&server));
+        });
+        out.textures_delta.clear();
+        result
+    }
+
+    #[test]
+    fn the_panel_switches_answer_a_click() {
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        frame(&ctx, 0.0, vec![]);
+        // The switches sit at the bar's right end: the assistant last, the
+        // console before it, the log before that, each 18 wide.
+        let y = 600.0 - STATUS_BAR / 2.0;
+        for (x, which) in [
+            (800.0 - 10.0 - 9.0, 0),
+            (800.0 - 10.0 - 18.0 - SPACE_3 - 9.0, 1),
+            (800.0 - 10.0 - 2.0 * (18.0 + SPACE_3) - 9.0, 2),
+        ] {
+            let t = 1.0 + which as f64;
+            let at = egui::pos2(x, y);
+            let press = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            frame(&ctx, t, vec![egui::Event::PointerMoved(at)]);
+            frame(&ctx, t + 0.1, vec![press(true)]);
+            let result = frame(&ctx, t + 0.2, vec![press(false)]);
+            let clicked = [
+                result.toggle_assistant,
+                result.toggle_console,
+                result.toggle_log,
+            ][which];
+            assert!(clicked, "switch {which} at {at:?} answered {result:?}");
+        }
+    }
 }
