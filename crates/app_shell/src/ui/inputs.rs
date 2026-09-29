@@ -99,6 +99,8 @@ pub struct UiFrameInputs<'a> {
     pub reveal_body: Option<core_document::BodyId>,
     /// The context menu a right click asked for, if one is open.
     pub viewport_menu: Option<super::ViewportMenu>,
+    /// The face selected in the view: its body and index in the body's mesh.
+    pub picked_face: Option<(core_document::BodyId, u32)>,
     /// The 6-DoF mouse the reader thread has, if any.
     pub nav_device: Option<String>,
     /// How many buttons it has, so Preferences offers a row per button.

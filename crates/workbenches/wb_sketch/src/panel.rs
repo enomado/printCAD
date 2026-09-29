@@ -220,13 +220,13 @@ impl SketchWorkbench {
             .spacing([SPACE_2, SPACE_1])
             .show(ui, |ui| {
                 ui_kit::widgets::field_label(ui, "Along normal");
-                changed |= QtyField::mm(&mut offset).show(ui);
+                changed |= QtyField::offset(&mut offset).show(ui);
                 ui.end_row();
                 ui_kit::widgets::field_label(ui, "Across x");
-                changed |= QtyField::mm(&mut shift[0]).show(ui);
+                changed |= QtyField::offset(&mut shift[0]).show(ui);
                 ui.end_row();
                 ui_kit::widgets::field_label(ui, "Across y");
-                changed |= QtyField::mm(&mut shift[1]).show(ui);
+                changed |= QtyField::offset(&mut shift[1]).show(ui);
                 ui.end_row();
                 ui_kit::widgets::field_label(ui, "Turned");
                 changed |= QtyField::degrees(&mut turn).show(ui);
@@ -502,10 +502,10 @@ impl SketchWorkbench {
                     ui.end_row();
                 }
                 ui_kit::widgets::field_label(ui, "Column step");
-                QtyField::mm(&mut params.array_dx).show(ui);
+                QtyField::offset(&mut params.array_dx).show(ui);
                 ui.end_row();
                 ui_kit::widgets::field_label(ui, "Row step");
-                QtyField::mm(&mut params.array_dy).show(ui);
+                QtyField::offset(&mut params.array_dy).show(ui);
                 ui.end_row();
                 ui_kit::widgets::field_label(ui, "Linked");
                 check_row(ui, &mut params.copies_linked, "Follow the original").on_hover_text(

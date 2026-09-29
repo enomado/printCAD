@@ -167,8 +167,9 @@ impl PrintCadApp {
                     }
                 }
                 UiCommand::BodyEdit { body, edit } => self.apply_body_edit(body, edit),
-                UiCommand::MoveFeatureAfter { feature, after } => {
-                    self.move_feature_after(feature, after);
+                UiCommand::SetCustomColors(colors) => {
+                    self.user_settings.rendering.custom_colors = colors;
+                    intents.persist_settings = true;
                 }
                 UiCommand::PasteFormulas { feature, formulas } => {
                     self.paste_formulas(feature, formulas);
@@ -1010,10 +1011,6 @@ impl PrintCadApp {
                 }
                 "Body selectability"
             }
-            BodyEdit::Material(_) => "Body material",
-            BodyEdit::FaceColor { .. } => "Face colour",
-            BodyEdit::ClearFaceColors => "Clear face colours",
-            BodyEdit::Place(_) => "Place body",
             BodyEdit::LinkedCopy => {
                 if let Some(copy) = result.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
                     self.session.tree_selection =
@@ -1028,23 +1025,6 @@ impl PrintCadApp {
         };
         self.session.journal.label_next(label);
         self.close_gesture();
-    }
-
-    /// Move `feature` in its body's history to just after `after`.
-    fn move_feature_after(
-        &mut self,
-        feature: core_document::FeatureId,
-        after: core_document::FeatureId,
-    ) {
-        let before = self.session.document.mutation_seq();
-        match crate::app::scripts::move_after(&mut self.session.document, feature, after) {
-            Ok(()) if self.session.document.mutation_seq() != before => {
-                self.session.journal.label_next("Reorder history");
-                self.close_gesture();
-            }
-            Ok(()) => {}
-            Err(why) => app_log::warn(format!("Cannot move: {why}")),
-        }
     }
 
     /// Give `feature` the formulas of another, where it has the same

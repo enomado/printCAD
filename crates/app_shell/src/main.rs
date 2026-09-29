@@ -229,6 +229,8 @@ struct PrintCadApp {
     bench_open_fired: bool,
     /// Whether `PRINTCAD_BENCH_SELECT` has fired.
     bench_select_fired: bool,
+    /// `PRINTCAD_BENCH_TASK` has opened its task.
+    bench_task_fired: bool,
     bench_repair_fired: bool,
     bench_convert_fired: bool,
     /// Frames since the bench click hook saw geometry; drives its stages.
@@ -433,6 +435,7 @@ impl PrintCadApp {
             },
             bench_open_fired: false,
             bench_select_fired: false,
+            bench_task_fired: false,
             bench_repair_fired: false,
             bench_convert_fired: false,
             bench_click_frames: 0,

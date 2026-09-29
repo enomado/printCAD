@@ -86,17 +86,14 @@ pub enum UiCommand {
         body: core_document::BodyId,
         edit: BodyEdit,
     },
-    /// Move a feature in its body's history to just after `after`.
-    MoveFeatureAfter {
-        feature: core_document::FeatureId,
-        after: core_document::FeatureId,
-    },
     /// Give a feature these formulas, by parameter key, where it has the
     /// parameter.
     PasteFormulas {
         feature: core_document::FeatureId,
         formulas: std::collections::BTreeMap<String, String>,
     },
+    /// The colours kept under "Your colours".
+    SetCustomColors(Vec<[f32; 3]>),
     /// The tree opens its way to this body and scrolls to it.
     RevealInTree(core_document::BodyId),
     /// The whole body, as a double click would.
@@ -385,17 +382,6 @@ pub enum BodyEdit {
     Frozen(bool),
     /// Let clicks pick it, or pass through.
     Selectable(bool),
-    Material(Option<core_document::Material>),
-    /// One face's own colour, `None` for the body's.
-    FaceColor {
-        index: u32,
-        name: kernel_api::naming::TopoName,
-        color: Option<[f32; 3]>,
-    },
-    /// Every face back to the body's colour.
-    ClearFaceColors,
-    /// Where it sits; the bodies that move as one with it follow.
-    Place(core_document::BodyPlacement),
     /// A linked copy beside it.
     LinkedCopy,
     /// Build it again from its history.

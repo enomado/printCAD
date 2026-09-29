@@ -74,7 +74,7 @@ fn offset_editor(ui: &mut Ui, feature_id: FeatureId, options: &mut BorrowOptions
             for (label, value) in [("Along X", x), ("Along Y", y), ("Along Z", z)] {
                 ui.horizontal(|ui| {
                     label_cell(ui, label);
-                    changed |= QtyField::mm(value).show(ui);
+                    changed |= QtyField::offset(value).show(ui);
                 });
             }
             let [tilt_x, tilt_y] = &mut o.tilt;

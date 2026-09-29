@@ -1706,6 +1706,44 @@ impl Document {
         }
     }
 
+    /// Colour face `index` of `body`'s mesh as it stands (`None` gives it
+    /// the body's colour again), kept under the face's name so it follows
+    /// the face through a rebuild. Returns false for a face the body lacks.
+    pub fn color_face(&mut self, body: BodyId, index: u32, color: Option<[f32; 3]>) -> bool {
+        let Some(mesh) = self.imported_geometry(body).map(|g| Arc::clone(&g.mesh)) else {
+            return false;
+        };
+        if !mesh.faces.contains(&index) {
+            return false;
+        }
+        let name = mesh.face_names.get(index as usize).copied().unwrap_or(0);
+        // A colour kept for this face under an older index goes.
+        let stale: Vec<FaceColor> = self
+            .bodies
+            .iter()
+            .filter(|b| b.id == body)
+            .flat_map(|b| b.face_colors.iter().copied())
+            .filter(|c| c.is_face(&mesh, index) && (c.index, c.name) != (index, name))
+            .collect();
+        for c in stale {
+            self.set_face_color(body, c.index, c.name, None);
+        }
+        self.set_face_color(body, index, name, color);
+        true
+    }
+
+    /// The colour face `index` of `body` has of its own, if any.
+    pub fn face_color(&self, body: BodyId, index: u32) -> Option<[f32; 3]> {
+        let mesh = &self.imported_geometry(body)?.mesh;
+        self.bodies
+            .iter()
+            .find(|b| b.id == body)?
+            .face_colors
+            .iter()
+            .find(|c| c.is_face(mesh, index))
+            .map(|c| c.color)
+    }
+
     /// Give a body a look of its own, or `None` for the one it came with.
     pub fn set_body_display(&mut self, body: BodyId, display: Option<BodyDisplay>) {
         if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
@@ -1948,6 +1986,52 @@ impl Document {
             a: feature_id,
             b: neighbour_id,
         });
+        Ok(())
+    }
+
+    /// The features of `feature`'s body, in history order.
+    pub fn body_history_of(&self, feature: FeatureId) -> Vec<FeatureId> {
+        let Some(body) = self.feature_tree.get_node(feature).map(|n| n.body) else {
+            return Vec::new();
+        };
+        let mut peers: Vec<(u64, FeatureId)> = self
+            .feature_tree
+            .all_nodes()
+            .filter(|(_, n)| n.body == body)
+            .map(|(id, n)| (n.seq, *id))
+            .collect();
+        peers.sort_by_key(|(s, id)| (*s, *id));
+        peers.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// Move a feature along its body's history, a step at a time as
+    /// [`Self::try_move_feature_in_history`] goes, until it sits right
+    /// after `after`, or first for `None`. Stops at the step refused, with
+    /// the steps before it taken.
+    pub fn move_feature_after(
+        &mut self,
+        feature: FeatureId,
+        after: Option<FeatureId>,
+    ) -> Result<(), MoveRefused> {
+        let steps = self.body_history_of(feature).len();
+        for _ in 0..=steps {
+            let order = self.body_history_of(feature);
+            let Some(at) = order.iter().position(|f| *f == feature) else {
+                return Err(MoveRefused::NotFound);
+            };
+            let want = match after {
+                None => 0,
+                Some(after) => match order.iter().position(|f| *f == after) {
+                    Some(target) if target < at => target + 1,
+                    Some(target) => target,
+                    None => return Err(MoveRefused::NotFound),
+                },
+            };
+            if at == want {
+                return Ok(());
+            }
+            self.try_move_feature_in_history(feature, at > want)?;
+        }
         Ok(())
     }
 

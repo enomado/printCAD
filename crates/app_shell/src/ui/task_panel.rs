@@ -1,7 +1,7 @@
-//! The right "Task" panel: hosts the active workbench's edit session with
-//! a header, an OK/Cancel (or Close) strip, and the body the workbench
-//! draws. Workbenches that still expose the older right-panel hook are
-//! hosted the same way with a Close button.
+//! The right "Task" panel: hosts the active workbench's edit session, or
+//! while it has none the application's own task (placement, appearance, a
+//! feature's place in history), with a header, an OK/Cancel (or Close)
+//! strip, and the body the task draws.
 
 use core_document::{TaskInfo, TaskOutcome, TaskRequest};
 use egui::{Key, Modifiers, RichText, Vec2};
@@ -22,6 +22,10 @@ pub struct TaskPanelResult {
     /// A task that holds its edits as one undo step is open after this
     /// frame.
     pub open: bool,
+    /// The application's own task ended this frame.
+    pub host_end: Option<super::host_tasks::HostTaskEnd>,
+    /// What the application's own task asked of the host.
+    pub commands: Vec<super::UiCommand>,
 }
 
 pub struct TaskPanelInputs<'a> {
@@ -31,6 +35,11 @@ pub struct TaskPanelInputs<'a> {
     pub host: HostCtxParams,
     pub active_document_object: Option<core_document::FeatureId>,
     pub task: Option<&'a TaskInfo>,
+    /// The application's own task, shown while no bench has one open.
+    pub host_task: Option<&'a mut super::host_tasks::HostTask>,
+    /// The face selected in the view: its body and index.
+    pub picked_face: Option<(core_document::BodyId, u32)>,
+    pub custom_colors: &'a [[f32; 3]],
 }
 
 pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPanelResult {
@@ -41,20 +50,61 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         host,
         active_document_object,
         task,
+        host_task,
+        picked_face,
+        custom_colors,
     } = inputs;
     let mut result = TaskPanelResult::default();
+    let request = keyboard_request(ui);
 
-    let Ok(wb) = registry.workbench_mut(&active_workbench.0) else {
+    // A bench's task first; the application's own while none is open.
+    let Some(info) = task else {
+        let Some(host_task) = host_task else {
+            return result;
+        };
+        result.open = true;
+        let title = host_task.title(document);
+        panel(ui, &title, true, request, |ui, request| {
+            result.host_end = host_task.show(
+                ui,
+                super::host_tasks::HostTaskInputs {
+                    document,
+                    picked_face,
+                    custom_colors,
+                },
+                request.accept,
+                request.cancel,
+                &mut result.commands,
+            );
+        });
+        if result.host_end.is_some() {
+            result.open = false;
+        }
         return result;
     };
-    let Some(info) = task else {
+    let Ok(wb) = registry.workbench_mut(&active_workbench.0) else {
         return result;
     };
     // A stepwise task leaves each edit its own undo step.
     result.open = !info.stepwise;
+    panel(ui, &info.title, info.confirmable, request, |ui, request| {
+        let mut ctx = panel_ctx(document, &host, active_document_object);
+        match wb.ui_task_panel(ui, &mut ctx, request) {
+            TaskOutcome::Open => {}
+            outcome => {
+                result.outcome = Some(outcome);
+                result.open = false;
+            }
+        }
+        result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
+        flush_ctx_logs(&mut ctx);
+    });
+    result
+}
 
-    // Enter and Escape reach the task only when no text field owns them;
-    // a focused field keeps its own Enter/Esc and the next press arrives.
+/// Enter and Escape, when no text field owns them: a focused field keeps
+/// its own Enter/Esc and the next press arrives.
+fn keyboard_request(ui: &egui::Ui) -> TaskRequest {
     let no_focus = ui.ctx().memory(|m| m.focused()).is_none();
     let mut request = TaskRequest::default();
     if no_focus {
@@ -67,7 +117,18 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
             }
         });
     }
+    request
+}
 
+/// The panel: its header, the OK/Cancel (or Close) strip, and the task's
+/// body, which gets the request the keys and buttons made.
+fn panel(
+    ui: &mut egui::Ui,
+    title: &str,
+    confirmable: bool,
+    mut request: TaskRequest,
+    body: impl FnOnce(&mut egui::Ui, TaskRequest),
+) {
     egui::Panel::right("task_panel")
         .resizable(true)
         .default_size(TASK_PANEL_WIDTH)
@@ -106,7 +167,6 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
                     .font(sans_medium(FONT_SM))
                     .color(TEXT1),
             );
-            let title = task.map(|t| t.title.as_str()).unwrap_or("");
             mono_label(&mut h, title, FONT_XS, TEXT3);
             h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui_kit::icon::draw(ui, "close", 14.0, TEXT2)
@@ -119,7 +179,6 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
             });
 
             // Button strip.
-            let confirmable = task.is_some_and(|t| t.confirmable);
             egui::Frame::new()
                 .fill(BG2)
                 .inner_margin(egui::Margin::symmetric(12, 10))
@@ -176,20 +235,8 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
                         .inner_margin(egui::Margin::same(12))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            let mut ctx = panel_ctx(document, &host, active_document_object);
-                            match wb.ui_task_panel(ui, &mut ctx, request) {
-                                TaskOutcome::Open => {}
-                                outcome => {
-                                    result.outcome = Some(outcome);
-                                    result.open = false;
-                                }
-                            }
-                            result.writeback =
-                                PanelWriteback::take(&mut ctx, active_document_object);
-                            flush_ctx_logs(&mut ctx);
+                            body(ui, request);
                         });
                 });
         });
-
-    result
 }

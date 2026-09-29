@@ -520,15 +520,7 @@ impl PrintCadApp {
             .hovered_face
             .as_ref()
             .filter(|hover| Some(hover.body) == body)
-            .map(|hover| {
-                let name = self
-                    .session
-                    .document
-                    .imported_geometry(core_document::BodyId(hover.body))
-                    .and_then(|g| g.mesh.face_names.get(hover.face as usize).copied())
-                    .unwrap_or(0);
-                (hover.face, name)
-            });
+            .map(|hover| hover.face);
         self.session.viewport_menu = body.map(|body| crate::ui::ViewportMenu {
             body: core_document::BodyId(body),
             at: [(vp.0 + cx) / scale, (vp.1 + cy) / scale],

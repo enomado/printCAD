@@ -1271,7 +1271,8 @@ fn draw_node(
 }
 
 /// Right-click menu: history actions on feature rows, Delete on anything
-/// that can go.
+/// A feature row's menu: its own edits, its place in history, its body's
+/// look and placement, the clipboard, its formulas and the rest.
 fn attach_feature_menu(
     response: Response,
     node: &TreeNode,
@@ -1290,19 +1291,6 @@ fn attach_feature_menu(
         .and_then(|d| d.get_feature_meta(feature_id))
         .and_then(|n| n.body);
     response.context_menu(|ui| {
-        if node.needs_package.is_none()
-            && ui
-                .button(egui::RichText::new(format!("Edit {}", node.label)).strong())
-                .clicked()
-        {
-            result.activation = Some(node.id);
-            ui.close();
-        }
-        if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
-            result.local = Some(super::MenuLocal::Rename(node.id));
-            ui.close();
-        }
-        ui.separator();
         if let Some((id, repo)) = &node.needs_package {
             if ui
                 .button(format!("Install {id}"))
@@ -1313,7 +1301,39 @@ fn attach_feature_menu(
                 ui.close();
             }
             ui.separator();
+        } else if ui
+            .button(egui::RichText::new(format!("Edit {}", node.label)).strong())
+            .clicked()
+        {
+            result.activation = Some(node.id);
+            ui.close();
         }
+        if menu_entry(ui, "Rename", options.key("edit.rename")).clicked() {
+            result.local = Some(super::MenuLocal::Rename(node.id));
+            ui.close();
+        }
+        if let Some(body) = body {
+            ui.separator();
+            if ui
+                .button("Appearance…")
+                .on_hover_text("Its body's colour, see-through, face colours and material")
+                .clicked()
+            {
+                result.local = Some(super::MenuLocal::Task(super::OpenTask::Appearance(
+                    body, None,
+                )));
+                ui.close();
+            }
+            if ui
+                .button("Placement…")
+                .on_hover_text("Move or turn its body by numbers")
+                .clicked()
+            {
+                result.local = Some(super::MenuLocal::Task(super::OpenTask::Placement(body)));
+                ui.close();
+            }
+        }
+        ui.separator();
         let suppress_label = if node.suppressed {
             "Unsuppress"
         } else {
@@ -1326,23 +1346,6 @@ fn attach_feature_menu(
         let visible_label = if node.visible { "Hide" } else { "Show" };
         if menu_entry(ui, visible_label, options.key("view.toggle_visibility")).clicked() {
             command = Some(TreeFeatureCommand::SetVisible(!node.visible));
-            ui.close();
-        }
-        ui.separator();
-        if ui
-            .button("Move up")
-            .on_hover_text("Swap with the previous feature in the build history")
-            .clicked()
-        {
-            command = Some(TreeFeatureCommand::MoveUp);
-            ui.close();
-        }
-        if ui
-            .button("Move down")
-            .on_hover_text("Swap with the next feature in the build history")
-            .clicked()
-        {
-            command = Some(TreeFeatureCommand::MoveDown);
             ui.close();
         }
         if node.is_tip {
@@ -1362,8 +1365,30 @@ fn attach_feature_menu(
             command = Some(TreeFeatureCommand::SetTip);
             ui.close();
         }
-        if let Some(document) = document {
-            move_after_menu(ui, document, feature_id, result);
+        ui.separator();
+        if ui
+            .button("Move up")
+            .on_hover_text("Swap with the previous feature in the build history")
+            .clicked()
+        {
+            command = Some(TreeFeatureCommand::MoveUp);
+            ui.close();
+        }
+        if ui
+            .button("Move down")
+            .on_hover_text("Swap with the next feature in the build history")
+            .clicked()
+        {
+            command = Some(TreeFeatureCommand::MoveDown);
+            ui.close();
+        }
+        if ui
+            .button("Move after…")
+            .on_hover_text("Pick where it goes in its body's history, in the task panel")
+            .clicked()
+        {
+            result.local = Some(super::MenuLocal::Task(super::OpenTask::History(feature_id)));
+            ui.close();
         }
         if let (Some(document), Some(body)) = (document, body) {
             let frozen = document.body_frozen(body);
@@ -1386,10 +1411,10 @@ fn attach_feature_menu(
             delete = true;
             ui.close();
         }
-        ui.separator();
         if let Some(document) = document {
             formula_entries(ui, document, feature_id, result);
         }
+        ui.separator();
         if let Some(body) = body
             && ui
                 .button("Recompute")
@@ -1459,43 +1484,6 @@ fn clipboard_entries(
     }
 }
 
-/// "Move after", listing the other features of the feature's body.
-fn move_after_menu(
-    ui: &mut Ui,
-    document: &Document,
-    feature: FeatureId,
-    result: &mut TreeUiResult,
-) {
-    let Some(body) = document.get_feature_meta(feature).map(|n| n.body) else {
-        return;
-    };
-    let mut others: Vec<(u64, FeatureId, String)> = document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(id, n)| n.body == body && **id != feature)
-        .map(|(id, n)| (n.seq, *id, n.name.clone()))
-        .collect();
-    if others.is_empty() {
-        return;
-    }
-    others.sort();
-    ui.menu_button("Move after", |ui| {
-        egui::ScrollArea::vertical()
-            .max_height(320.0)
-            .show(ui, |ui| {
-                for (_, after, name) in &others {
-                    if ui.button(name).clicked() {
-                        result.commands.push(super::UiCommand::MoveFeatureAfter {
-                            feature,
-                            after: *after,
-                        });
-                        ui.close();
-                    }
-                }
-            });
-    });
-}
-
 /// The id egui keeps the copied formulas under.
 fn formula_clipboard() -> egui::Id {
     egui::Id::new("tree_formula_clipboard")
@@ -1513,40 +1501,33 @@ fn formula_entries(
     };
     let copied: Option<std::collections::BTreeMap<String, String>> =
         ui.data(|d| d.get_temp(formula_clipboard()));
-    if node.formulas.is_empty() && copied.is_none() {
-        return;
-    }
-    ui.menu_button("Formulas", |ui| {
-        if ui
-            .add_enabled(
-                !node.formulas.is_empty(),
-                egui::Button::new("Copy formulas"),
-            )
+    if !node.formulas.is_empty()
+        && ui
+            .button("Copy formulas")
             .on_hover_text("Keep this feature's formulas to paste on another")
             .clicked()
-        {
-            let formulas: std::collections::BTreeMap<String, String> = node
-                .formulas
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            ui.data_mut(|d| d.insert_temp(formula_clipboard(), formulas));
-            ui.close();
-        }
-        if let Some(formulas) = copied
-            && ui
-                .button(format!("Paste {} formula(s)", formulas.len()))
-                .on_hover_text(
-                    "Set the numbers this feature shares with the copied one by the same formulas",
-                )
-                .clicked()
-        {
-            result
-                .commands
-                .push(super::UiCommand::PasteFormulas { feature, formulas });
-            ui.close();
-        }
-    });
+    {
+        let formulas: std::collections::BTreeMap<String, String> = node
+            .formulas
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        ui.data_mut(|d| d.insert_temp(formula_clipboard(), formulas));
+        ui.close();
+    }
+    if let Some(formulas) = copied
+        && ui
+            .button("Paste formulas")
+            .on_hover_text(
+                "Set the numbers this feature shares with the copied one by the same formulas",
+            )
+            .clicked()
+    {
+        result
+            .commands
+            .push(super::UiCommand::PasteFormulas { feature, formulas });
+        ui.close();
+    }
 }
 
 /// A menu entry with its key, if it has one, beside it.

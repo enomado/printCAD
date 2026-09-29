@@ -326,6 +326,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (line/mark/label painters), `start_page`, `preferences` (modal on a
   draft `UserSettings`, committed by `CommitSettings`), `command_palette`
   (Ctrl+K), `step_import_modal`, `log_view`, `host_ctx`.
+  Row menus (`feature_tree.rs`, `context_menu.rs`, the shared
+  `body_menu.rs`) are flat; what needs numbers or choices is an
+  application task (`host_tasks.rs`: Placement, Appearance, History),
+  held on `UiLayer` for its tab and drawn in the task panel while no bench
+  task is open, editing the document live as a bench task does and
+  closing through `TaskClosed` plus the `Recorded` calls it would make.
 
 The `Workbench` trait is the only seam between the host and a bench; the
 host never names a bench: `app/seam_lint.rs` and a CI grep over
@@ -804,7 +810,8 @@ bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;
 `PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
 the way a click on its tree row would, so a capture shows the selection
-overlay; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
+overlay; `PRINTCAD_BENCH_TASK=appearance|placement|history` opens that
+application task on the first body; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with
 `PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a

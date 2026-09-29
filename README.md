@@ -121,20 +121,32 @@ View keys:
 ### Row and body menus
 
 Right click a row of the tree, or a body in the view, for what can be
-done to it:
+done to it. The menus are flat lists; anything that takes numbers or
+choices opens as a task in the right panel, where edits show in the view
+as they are made, OK keeps them as one undo step and Cancel puts back
+what was there.
 
-- A feature: Edit, Rename, Suppress, Hide, Move up, Move down, Move after
-  another, Set as tip, Freeze its body, Cut, Copy, Paste, Delete, copy its
-  formulas and paste them on another feature of the same kind, Recompute,
-  Send to console, Properties.
+- A feature: Edit, Rename, its body's Appearance and Placement, Suppress,
+  Hide, Set as tip, Move up, Move down, Move after (the task lists the
+  body's features to click), Freeze body, Cut, Copy, Paste, Delete, Copy
+  formulas and Paste formulas (onto a feature of the same kind),
+  Recompute, Send to console, Properties.
 - A body: Select, Rename, Hide, Show only this, Show all, Appearance,
-  Random colour, Transparent, Material (with its density, which gives the
-  mass in the Physical group), Placement by numbers, Freeze (its features
-  are not rebuilt until it thaws; the row shows FROZEN), Make unselectable
-  (clicks in the view pass through it), Linked copy, Select the original
-  of a copy, Recompute, Send to console, Properties.
-- In the view, the same body entries, and Face colour for the face under
-  the pointer: the colour follows the face through a rebuild.
+  Placement, Freeze (its features are not rebuilt until it thaws; the row
+  shows FROZEN), Make unselectable (clicks in the view pass through it),
+  Linked copy, Select the original of a copy, Cut, Copy, Paste, Delete,
+  Recompute, Send to console, Properties.
+- In the view, the body's entries, and Face colour for the face under the
+  pointer.
+
+The Appearance task holds the body's colour (a palette, your own colours,
+which you keep or forget from the custom colour picker and which every
+body offers, and the colour it came with), how much shows through, the
+colours of single faces (click a face in the view; a face's colour
+follows it through a rebuild) and its material, from a list or typed in
+with its density, which gives its mass in the Physical group. The
+Placement task moves and turns the body by numbers, negative ones too;
+the bodies of its rigid component move with it.
 
 `doc.set_body`, `doc.set_face_color`, `doc.linked_copy`, `doc.move_after`
 and `doc.recompute` do the same from a script.

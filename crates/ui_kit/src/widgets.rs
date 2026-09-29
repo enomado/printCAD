@@ -553,8 +553,14 @@ impl<'a> QtyField<'a> {
         }
     }
 
+    /// A length, above zero.
     pub fn mm(value: &'a mut f32) -> Self {
         Self::new(value).unit("mm").range(0.001..=1.0e6)
+    }
+
+    /// A position or a shift, mm: either way along its axis.
+    pub fn offset(value: &'a mut f32) -> Self {
+        Self::new(value).unit("mm").range(-1.0e6..=1.0e6)
     }
 
     pub fn degrees(value: &'a mut f32) -> Self {

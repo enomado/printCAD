@@ -137,7 +137,11 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "Move a feature in its body's history to just after another",
         )
         .param("id", ParamKind::Id, "The feature")
-        .param("after", ParamKind::Id, "The feature it goes after"),
+        .optional(
+            "after",
+            ParamKind::Id,
+            "The feature it goes after; first in its body when left out",
+        ),
         CommandSpec::new("doc.recompute", "Build a body again from its history").param(
             "body",
             ParamKind::Id,
@@ -1222,26 +1226,6 @@ pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'sta
             "doc.set_body",
             json!({"body": id, "selectable": selectable}),
         ),
-        BodyEdit::Material(material) => (
-            "doc.set_body",
-            json!({"body": id, "material": material.as_ref().map(|m| json!({
-                "name": m.name,
-                "density": m.density,
-            }))}),
-        ),
-        BodyEdit::FaceColor { index, color, .. } => (
-            "doc.set_face_color",
-            json!({"body": id, "face": index, "color": color}),
-        ),
-        BodyEdit::ClearFaceColors => ("doc.set_body", json!({"body": id, "face_colors": []})),
-        BodyEdit::Place(placement) => (
-            "doc.set_body",
-            json!({
-                "body": id,
-                "translation": placement.translation,
-                "rotation": placement.rotation,
-            }),
-        ),
         BodyEdit::LinkedCopy => ("doc.linked_copy", json!({"body": id})),
         BodyEdit::Recompute => ("doc.recompute", json!({"body": id})),
     }
@@ -1328,10 +1312,6 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
                 }),
                 None => json!({"body": body.0.to_string(), "color": Value::Null}),
             },
-        )),
-        UiCommand::MoveFeatureAfter { feature, after } => Some(call(
-            "doc.move_after",
-            json!({"id": feature.0.to_string(), "after": after.0.to_string()}),
         )),
         UiCommand::SetBodyVisible { body, visible } => Some(call(
             "doc.set_visible",
@@ -1568,24 +1548,11 @@ pub(crate) fn document_command(
                     format!("is not one of its {faces} faces"),
                 ));
             }
-            let index = index as u32;
-            let name = mesh.face_names.get(index as usize).copied().unwrap_or(0);
             let color = match a.0.get("color") {
                 None | Some(Value::Null) => None,
                 Some(v) => Some(color_arg(v, "color")?),
             };
-            // A colour kept for this face under an older index goes.
-            let stale: Vec<core_document::FaceColor> = document
-                .bodies()
-                .iter()
-                .filter(|b| b.id == body)
-                .flat_map(|b| b.face_colors.iter().copied())
-                .filter(|c| c.is_face(&mesh, index) && (c.index, c.name) != (index, name))
-                .collect();
-            for c in stale {
-                document.set_face_color(body, c.index, c.name, None);
-            }
-            document.set_face_color(body, index, name, color);
+            document.color_face(body, index as u32, color);
             Ok(Value::Null)
         }
         "doc.linked_copy" => {
@@ -1610,7 +1577,7 @@ pub(crate) fn document_command(
         }
         "doc.move_after" => {
             let feature = FeatureId(a.id("id")?);
-            let after = FeatureId(a.id("after")?);
+            let after = a.opt_id("after")?.map(FeatureId);
             move_after(document, feature, after).map_err(CommandError::failed)?;
             Ok(Value::Null)
         }
@@ -2055,38 +2022,31 @@ fn set_body(
     Ok(())
 }
 
-/// Move `feature` along its body's history, a step at a time as Move up
-/// and down go, until it sits right after `after`.
+/// Move `feature` in its body's history to just after `after`, or first
+/// for `None`, saying why a step is refused.
 pub(crate) fn move_after(
     document: &mut core_document::Document,
     feature: FeatureId,
-    after: FeatureId,
+    after: Option<FeatureId>,
 ) -> Result<(), String> {
-    let history = |document: &core_document::Document| {
-        let body = document.get_feature_meta(feature).map(|n| n.body);
-        let mut nodes: Vec<(u64, FeatureId)> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| Some(n.body) == body)
-            .map(|(id, n)| (n.seq, *id))
-            .collect();
-        nodes.sort();
-        nodes.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+    use core_document::MoveRefused;
+    let name = |document: &core_document::Document, id: FeatureId| {
+        document
+            .get_feature_meta(id)
+            .map(|n| n.name.clone())
+            .unwrap_or_default()
     };
-    let steps = history(document).len();
-    for _ in 0..steps {
-        let order = history(document);
-        let at = order.iter().position(|f| *f == feature);
-        let target = order.iter().position(|f| *f == after);
-        let (Some(at), Some(target)) = (at, target) else {
-            return Err("the two features are not in one body".into());
-        };
-        if at == target + 1 {
-            return Ok(());
-        }
-        move_in_history(document, feature, at > target)?;
-    }
-    Ok(())
+    document
+        .move_feature_after(feature, after)
+        .map_err(|refused| match refused {
+            MoveRefused::NotFound => "the two features are not in one body".to_string(),
+            MoveRefused::AtEnd => "it can go no further".to_string(),
+            MoveRefused::Dependency { neighbour } => format!(
+                "{} and {} depend on each other and keep their order",
+                name(document, feature),
+                name(document, neighbour)
+            ),
+        })
 }
 
 fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, CommandError> {
@@ -2572,9 +2532,6 @@ mod tests {
         for edit in [
             crate::ui::BodyEdit::Frozen(false),
             crate::ui::BodyEdit::Selectable(true),
-            crate::ui::BodyEdit::Material(None),
-            crate::ui::BodyEdit::ClearFaceColors,
-            crate::ui::BodyEdit::Place(core_document::BodyPlacement::IDENTITY),
             crate::ui::BodyEdit::Recompute,
         ] {
             let (id, args) = body_edit_call(body, &edit);
@@ -2612,10 +2569,12 @@ mod tests {
                 .map(|n| n.name.clone())
                 .collect()
         };
-        move_after(&mut doc, ids[0], ids[2]).unwrap();
+        move_after(&mut doc, ids[0], Some(ids[2])).unwrap();
         assert_eq!(order(&doc), ["b", "c", "a", "d"]);
-        move_after(&mut doc, ids[3], ids[1]).unwrap();
+        move_after(&mut doc, ids[3], Some(ids[1])).unwrap();
         assert_eq!(order(&doc), ["b", "d", "c", "a"]);
+        move_after(&mut doc, ids[0], None).unwrap();
+        assert_eq!(order(&doc), ["a", "b", "d", "c"]);
     }
 
     #[test]

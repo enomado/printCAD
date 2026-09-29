@@ -477,7 +477,7 @@ impl AssemblyWorkbench {
                     [90.0, INPUT],
                     egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
                 );
-                QtyField::mm(&mut next.shift[k]).show(ui);
+                QtyField::offset(&mut next.shift[k]).show(ui);
             });
         }
         if !next.picked.is_empty() && ui_kit::widgets::secondary_button(ui, "Add step").clicked() {
@@ -941,7 +941,7 @@ impl AssemblyWorkbench {
                         [90.0, INPUT],
                         egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
                     );
-                    mirror_changed |= QtyField::mm(&mut plane.0[k]).show(ui);
+                    mirror_changed |= QtyField::offset(&mut plane.0[k]).show(ui);
                 });
             }
         }
@@ -991,7 +991,7 @@ impl AssemblyWorkbench {
             {
                 ui.horizontal(|ui| {
                     label_row(ui, label);
-                    changed |= QtyField::mm(&mut pivot.0[k]).show(ui);
+                    changed |= QtyField::offset(&mut pivot.0[k]).show(ui);
                 });
             }
             ui.horizontal(|ui| {
@@ -1002,7 +1002,7 @@ impl AssemblyWorkbench {
             for (k, label) in ["Step x", "Step y", "Step z"].into_iter().enumerate() {
                 ui.horizontal(|ui| {
                     label_row(ui, label);
-                    changed |= QtyField::mm(&mut at[k]).show(ui);
+                    changed |= QtyField::offset(&mut at[k]).show(ui);
                 });
             }
         }
@@ -2460,7 +2460,7 @@ impl AssemblyWorkbench {
                                     .color(TEXT2),
                             ),
                         );
-                        changed |= QtyField::mm(value).show(ui);
+                        changed |= QtyField::offset(value).show(ui);
                     });
                 }
                 for (axis, value) in ["X", "Y", "Z"].iter().zip(angles.iter_mut()) {

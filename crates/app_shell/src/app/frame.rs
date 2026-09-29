@@ -410,6 +410,36 @@ impl PrintCadApp {
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_TASK=appearance|placement|history`
+        // opens that task of the application's on the first body (its first
+        // feature, for history) once it has geometry, as its menu entry
+        // would, so a capture shows the task panel.
+        if !self.bench_task_fired
+            && let Ok(which) = std::env::var("PRINTCAD_BENCH_TASK")
+            && let Some(body) = self.session.document.bodies().first().map(|b| b.id)
+            && self.session.document.imported_geometry(body).is_some()
+            && let Some(gfx) = self.gfx.as_mut()
+        {
+            self.bench_task_fired = true;
+            let first = self
+                .session
+                .document
+                .feature_tree()
+                .all_nodes()
+                .filter(|(_, n)| n.body == Some(body))
+                .min_by_key(|(id, n)| (n.seq, **id))
+                .map(|(id, _)| *id);
+            let open = match which.as_str() {
+                "placement" => Some(ui::OpenTask::Placement(body)),
+                "history" => first.map(ui::OpenTask::History),
+                _ => Some(ui::OpenTask::Appearance(body, None)),
+            };
+            if let Some(open) = open {
+                gfx.ui_layer
+                    .open_task(&self.session.document, open, self.session.tab);
+            }
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_REPAIR=1` asks for the repair of
         // every body the checker calls broken, once, as the tree's menu
         // would, so a run shows the repair land.
@@ -623,6 +653,20 @@ impl PrintCadApp {
                     .camera
                     .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
 
+                // The face selected in the view, as its body's mesh numbers
+                // it: what the Appearance task colours.
+                let picked_face = self
+                    .session
+                    .last_face_hit
+                    .filter(|(body, _)| {
+                        self.session.selected_body == Some(*body)
+                            && self.session.face_highlight.is_some()
+                    })
+                    .and_then(|(body, face)| {
+                        let body = core_document::BodyId(body);
+                        let mesh = &self.session.document.imported_geometry(body)?.mesh;
+                        Some((body, crate::app::input::face_id_at(mesh, face.point)?))
+                    });
                 let ui_started = Instant::now();
                 let ui_result = ui_layer.run(
                     window,
@@ -688,6 +732,7 @@ impl PrintCadApp {
                         measuring: self.session.measure.is_some(),
                         reveal_body: self.session.reveal_body.take(),
                         viewport_menu: self.session.viewport_menu.clone(),
+                        picked_face,
                         nav_device: self.nav_device.device_name(),
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.session.step_import_pending.as_mut(),

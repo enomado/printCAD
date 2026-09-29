@@ -28,7 +28,8 @@ pub(crate) mod toolbar;
 mod view_toolbar;
 
 mod body_menu;
-pub use body_menu::MenuLocal;
+mod host_tasks;
+pub use body_menu::{MenuLocal, OpenTask};
 pub use commands::{BodyEdit, ConfigEdit, EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
 pub use inputs::{HoverCard, Physical, UiFrameInputs};
@@ -113,11 +114,35 @@ pub struct UiLayer {
     variables: variables_view::VariablesState,
     /// The tree's share of the left column, as its divider was dragged.
     tree_share: f32,
-    /// The placement dialog, while open.
-    placement: Option<body_menu::PlacementDraft>,
+    /// The application's own task in the right panel, and the tab it was
+    /// opened in.
+    host_task: Option<(Option<uuid::Uuid>, host_tasks::HostTask)>,
+    /// A bench's task was open last frame, which an application task waits
+    /// behind.
+    bench_task_open: bool,
+    /// The tab on screen last frame.
+    active_tab: Option<uuid::Uuid>,
 }
 
 impl UiLayer {
+    /// Open one of the application's tasks in the right panel, for the
+    /// tab `tab`. A task already open is left as it stands.
+    pub fn open_task(
+        &mut self,
+        document: &core_document::Document,
+        open: OpenTask,
+        tab: impl Into<Option<uuid::Uuid>>,
+    ) {
+        let task = match open {
+            OpenTask::Placement(body) => host_tasks::HostTask::placement(document, body),
+            OpenTask::Appearance(body, face) => {
+                host_tasks::HostTask::appearance(document, body, face)
+            }
+            OpenTask::History(feature) => host_tasks::HostTask::history(document, feature),
+        };
+        self.host_task = Some((tab.into(), task));
+    }
+
     /// Act on a menu entry that changes the window: a page of the property
     /// panel, a rename, the console's input, the placement dialog.
     fn apply_local(
@@ -139,8 +164,12 @@ impl UiLayer {
                 ctx.data_mut(|d| d.insert_temp(egui::Id::new(property_panel::FOCUS_LABEL), true));
             }
             MenuLocal::Console(text) => self.console.insert(&text),
-            MenuLocal::Placement(body) => {
-                self.placement = Some(body_menu::PlacementDraft::of(document, body));
+            MenuLocal::Task(open) => {
+                if self.bench_task_open {
+                    crate::log_panel::warn("Finish the task that is open first");
+                    return;
+                }
+                self.open_task(document, open, self.active_tab);
             }
         }
     }
@@ -177,7 +206,9 @@ impl UiLayer {
             console: console_view::ConsoleState::load(),
             assistant: Default::default(),
             variables: Default::default(),
-            placement: None,
+            host_task: None,
+            bench_task_open: false,
+            active_tab: None,
             tree_share: combo_view::TREE_SHARE,
         }
     }
@@ -272,6 +303,7 @@ impl UiLayer {
             measuring,
             reveal_body,
             viewport_menu,
+            picked_face,
             nav_device,
             nav_buttons,
             document_saving,
@@ -342,6 +374,29 @@ impl UiLayer {
             self.workbench_keys = Some(workbench_keys);
         }
 
+        // An application task belongs to its tab and its subject; either
+        // gone, it is left as it stands.
+        let active_tab = tabs.iter().find(|t| t.active).map(|t| t.tab);
+        self.active_tab = active_tab;
+        self.bench_task_open = task.is_some();
+        if self
+            .host_task
+            .as_ref()
+            .is_some_and(|(tab, t)| *tab != active_tab || !t.still_there(document))
+        {
+            self.host_task = None;
+        }
+        // A bench's task taking the panel ends the application's, its
+        // edits kept.
+        if task.is_some()
+            && let Some((_, open)) = self.host_task.take()
+        {
+            commands.push(UiCommand::TaskClosed(
+                core_document::TaskOutcome::Accepted {
+                    label: open.title(document),
+                },
+            ));
+        }
         // Menu entries that change the window, acted on once the frame is
         // drawn.
         let mut locals: Vec<MenuLocal> = Vec::new();
@@ -713,11 +768,31 @@ impl UiLayer {
                     host: host.clone(),
                     active_document_object,
                     task: task.as_ref(),
+                    host_task: self.host_task.as_mut().map(|(_, t)| t),
+                    picked_face,
+                    custom_colors: &settings.rendering.custom_colors,
                 },
             );
             apply_writeback(&task_result.writeback, &mut commands, &mut tree_selection);
             if let Some(outcome) = task_result.outcome {
                 commands.push(UiCommand::TaskClosed(outcome));
+            }
+            commands.extend(task_result.commands);
+            match task_result.host_end {
+                Some(host_tasks::HostTaskEnd::Accepted(label, recorded)) => {
+                    self.host_task = None;
+                    commands.push(UiCommand::TaskClosed(
+                        core_document::TaskOutcome::Accepted { label },
+                    ));
+                    if !recorded.is_empty() {
+                        commands.push(UiCommand::Recorded(recorded));
+                    }
+                }
+                Some(host_tasks::HostTaskEnd::Cancelled) => {
+                    self.host_task = None;
+                    commands.push(UiCommand::TaskClosed(core_document::TaskOutcome::Cancelled));
+                }
+                None => {}
             }
             task_open = task_result.open;
 
@@ -778,7 +853,6 @@ impl UiLayer {
                     locals.push(local);
                 }
             }
-            body_menu::placement_window(ui.ctx(), &mut self.placement, document, &mut commands);
             if let Some(card) = &hover_card {
                 hud::draw_hover_card(
                     ui.ctx(),

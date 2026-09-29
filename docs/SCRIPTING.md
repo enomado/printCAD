@@ -243,7 +243,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.doc.move_after`: Move a feature in its body's history to just after another.
 
 - `id` (id): The feature
-- `after` (id): The feature it goes after
+- `after` (id, optional): The feature it goes after; first in its body when left out
 
 `pc.doc.recompute`: Build a body again from its history.
 

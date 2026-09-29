@@ -463,6 +463,9 @@ pub struct RenderingSettings {
     /// tolerances, datums, notes) are drawn over the scene.
     #[serde(default = "default_show_annotations")]
     pub show_annotations: bool,
+    /// Colours the user keeps to pick again, in the order added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_colors: Vec<[f32; 3]>,
 }
 
 fn default_show_annotations() -> bool {
@@ -546,6 +549,7 @@ impl Default for RenderingSettings {
             preview_opacity: default_preview_opacity(),
             draw_style: DrawStyle::default(),
             show_annotations: default_show_annotations(),
+            custom_colors: Vec::new(),
         }
     }
 }
