@@ -129,6 +129,7 @@ impl AssemblyWorkbench {
                 self.explode_panel(ui, ctx, request, placements, spread)
             }
             Some(Task::Parts) => self.parts_panel(ui, ctx, request),
+            Some(Task::Motion(studying)) => self.motion_panel(ui, ctx, request, *studying),
             Some(Task::Copies {
                 body,
                 count,
@@ -539,6 +540,208 @@ impl AssemblyWorkbench {
             .font(sans(FONT_XS))
             .color(TEXT3),
         );
+        TaskOutcome::Open
+    }
+
+    /// A motion over time: when it starts and ends, its step, and each
+    /// joint driven by a formula of `t`; worked out into frames to scrub,
+    /// play and record. The bodies go back when it closes.
+    fn motion_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        mut studying: crate::Studying,
+    ) -> TaskOutcome {
+        if request.accept || request.cancel {
+            self.put_back_motion(ctx);
+            return TaskOutcome::Cancelled;
+        }
+        header(ui, "polar-pattern", "Motion over time");
+        ui.add_space(SPACE_2);
+        let mut settings_changed = false;
+        for (label, value, unit) in [
+            ("Start", &mut studying.draft.start, " s"),
+            ("End", &mut studying.draft.end, " s"),
+            ("Step", &mut studying.draft.step, " s"),
+        ] {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [90.0, INPUT],
+                    egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+                );
+                settings_changed |= QtyField::new(value).unit(unit).speed(0.01).show(ui);
+            });
+        }
+        ui.add_space(SPACE_1);
+        overline(ui, "Drives");
+        let movable: Vec<crate::Joint> = crate::joints(ctx.document)
+            .into_iter()
+            .filter(|j| {
+                matches!(
+                    j.feature.kind,
+                    JointKind::Hinge { .. } | JointKind::Slider { .. }
+                )
+            })
+            .collect();
+        let name_of = |id: FeatureId| {
+            movable
+                .iter()
+                .find(|j| j.id == id)
+                .map_or("a removed joint".to_string(), |j| j.name.clone())
+        };
+        let mut remove = None;
+        for (i, drive) in studying.draft.drives.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(name_of(drive.joint))
+                        .font(sans(FONT_SM))
+                        .color(TEXT1),
+                );
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut drive.formula)
+                        .desired_width(140.0)
+                        .font(ui_kit::mono(FONT_SM)),
+                );
+                settings_changed |= edit.changed();
+                if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove {
+            studying.draft.drives.remove(i);
+            settings_changed = true;
+        }
+        let unused: Vec<&crate::Joint> = movable
+            .iter()
+            .filter(|j| !studying.draft.drives.iter().any(|d| d.joint == j.id))
+            .collect();
+        if !unused.is_empty() {
+            egui::ComboBox::from_id_salt("motion_add_drive")
+                .selected_text(RichText::new("Drive a joint…").font(sans(FONT_SM)))
+                .show_ui(ui, |ui| {
+                    for joint in unused {
+                        if ui
+                            .selectable_label(false, RichText::new(&joint.name).font(sans(FONT_SM)))
+                            .clicked()
+                        {
+                            let formula = match joint.feature.kind {
+                                JointKind::Hinge { .. } => "90 * t",
+                                _ => "10 * t",
+                            };
+                            studying.draft.drives.push(crate::TimedDrive {
+                                joint: joint.id,
+                                formula: formula.to_string(),
+                            });
+                            settings_changed = true;
+                        }
+                    }
+                });
+        }
+        ui.label(
+            RichText::new(
+                "Each formula gives the joint's drive at time t, in seconds: a hinge's angle \
+                 in degrees, a slider's position in millimetres (30 * sin(t * 180°)).",
+            )
+            .font(sans(FONT_XS))
+            .color(TEXT3),
+        );
+        if settings_changed {
+            studying.frames = None;
+            studying.playing = false;
+        }
+        ui.add_space(SPACE_2);
+        if studying.frames.is_none()
+            && !studying.draft.drives.is_empty()
+            && ui_kit::widgets::secondary_button(ui, "Work out the motion").clicked()
+        {
+            crate::restore_placements(ctx, &studying.placements);
+            match studying.draft.frames(ctx.document) {
+                Ok(frames) => {
+                    studying.frames = Some(frames);
+                    studying.frame = 0;
+                    let data = studying.draft.to_json();
+                    match studying.study {
+                        Some(id) => {
+                            if ctx.document.update_feature_data(id, data).is_ok() {
+                                ctx.document.clear_feature_dirty(id);
+                            }
+                        }
+                        None => {
+                            let name = crate::commands::next_name(ctx.document, "Motion");
+                            if let Ok(id) =
+                                ctx.document
+                                    .add_feature_in_body(studying.draft.clone(), name, None)
+                            {
+                                ctx.document.clear_feature_dirty(id);
+                                studying.study = Some(id);
+                            }
+                        }
+                    }
+                    if let Some(id) = studying.study {
+                        let mut args = serde_json::to_value(&studying.draft).unwrap_or_default();
+                        args["study"] = serde_json::json!(id.0.to_string());
+                        ctx.record(
+                            "asm.motion",
+                            crate::commands::object(args),
+                            serde_json::json!(id.0.to_string()),
+                        );
+                    }
+                }
+                Err(why) => ctx.log_warn(format!("The motion could not be worked out: {why}")),
+            }
+        }
+        let mut show = false;
+        if let Some(frames) = &studying.frames {
+            let last = frames.len().saturating_sub(1);
+            let mut frame = studying.frame as f32;
+            let time = frames.get(studying.frame).map_or(0.0, |(t, _)| *t);
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [90.0, INPUT],
+                    egui::Label::new(
+                        RichText::new(format!("t = {time:.2} s"))
+                            .font(ui_kit::mono(FONT_SM))
+                            .color(TEXT2),
+                    ),
+                );
+                if ui
+                    .add(
+                        egui::Slider::new(&mut frame, 0.0..=last as f32)
+                            .step_by(1.0)
+                            .show_value(false),
+                    )
+                    .changed()
+                {
+                    studying.frame = frame as usize;
+                    show = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                let label = if studying.playing { "Stop" } else { "Play" };
+                if ui_kit::widgets::secondary_button(ui, label).clicked() {
+                    studying.playing = !studying.playing;
+                }
+                if ui_kit::widgets::secondary_button(ui, "Record")
+                    .on_hover_text("Save the frames as an animation seen from the current view")
+                    .clicked()
+                {
+                    ctx.request(core_document::HostRequest::RecordAnimation {
+                        name: "motion".into(),
+                        frames: frames.iter().map(|(_, p)| p.clone()).collect(),
+                        frame_ms: (studying.draft.step.max(0.01) * 1000.0) as u32,
+                    });
+                }
+            });
+        }
+        self.task = Some(Task::Motion(Box::new(studying)));
+        if show {
+            self.show_frame(ctx);
+        }
+        if matches!(&self.task, Some(Task::Motion(s)) if s.playing) {
+            ui.ctx().request_repaint();
+        }
         TaskOutcome::Open
     }
 

@@ -288,7 +288,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Motion
 
-- [ ] **Motion over time** (partial, M). Several joints at once, each a
+- [x] **Motion over time** (partial, M). Several joints at once, each a
   formula of time, with start, end and step, a frame scrubber and step
   play; built on `sweep_frames`.
 - [x] **Collisions during a motion** (missing, S). The frames and pairs

@@ -18,6 +18,7 @@ mod group;
 mod interference;
 mod joint;
 mod mass;
+mod motion;
 #[cfg(feature = "egui")]
 mod panel;
 mod parts;
@@ -41,6 +42,7 @@ pub use joint::{
     Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, ORIGIN, Rigid, Takes, WORLD,
 };
 pub use mass::{BodyMass, MassReport};
+pub use motion::{MOTION_KIND, MotionStudy, TimedDrive};
 pub use parts::{Part, parts_csv, parts_list};
 pub use solve::{
     HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints,
@@ -88,6 +90,23 @@ impl Picking {
         self.kind.prompt(self.first.is_some())
     }
 }
+
+/// A motion study open: the study (once kept), its settings as edited,
+/// the frames worked out, the frame shown, whether it plays, and where the
+/// bodies sat, to go back to.
+#[derive(Debug, Clone)]
+pub(crate) struct Studying {
+    pub(crate) study: Option<FeatureId>,
+    pub(crate) draft: MotionStudy,
+    pub(crate) frames: Option<Frames>,
+    pub(crate) frame: usize,
+    pub(crate) playing: bool,
+    pub(crate) clock: f32,
+    pub(crate) placements: Vec<(BodyId, BodyPlacement)>,
+}
+
+/// A motion's frames: each time and every body's placement then.
+pub(crate) type Frames = Vec<(f32, Vec<(BodyId, BodyPlacement)>)>;
 
 /// An exploded view's steps being shown or made: the view (once it has a
 /// step), how far through them it stands, the bodies picked for the next
@@ -145,6 +164,8 @@ enum Task {
     },
     /// Every part and how many of it.
     Parts,
+    /// A motion over time being set up or played.
+    Motion(Box<Studying>),
     /// Linked copies of `body` to insert: how many, and how far apart, or
     /// turned about an axis (a point on it, its direction, the angle they
     /// spread over).
@@ -945,6 +966,27 @@ impl AssemblyWorkbench {
                 ))
             })
             .collect()
+    }
+
+    /// A motion study open: the bodies back where they were.
+    pub(crate) fn put_back_motion(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(Task::Motion(studying)) = &self.task {
+            restore_placements(ctx, &studying.placements);
+            self.task = None;
+        }
+    }
+
+    /// The motion study's bodies where frame `frame` has them.
+    pub(crate) fn show_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(Task::Motion(studying)) = &self.task else {
+            return;
+        };
+        let Some(frames) = &studying.frames else {
+            return;
+        };
+        if let Some((_, placements)) = frames.get(studying.frame) {
+            restore_placements(ctx, placements);
+        }
     }
 
     /// An exploded view open: the bodies back where they were.
@@ -2060,6 +2102,7 @@ impl Workbench for AssemblyWorkbench {
             GROUP_KIND,
             STATE_KIND,
             EXPLODED_KIND,
+            MOTION_KIND,
         ])
     }
 
@@ -2104,6 +2147,14 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == MOTION_KIND {
+            return FeatureInfo {
+                icon: "polar-pattern",
+                kind_label: "Motion".to_string(),
+                family_label: "Assembly motion over time".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == EXPLODED_KIND {
             return FeatureInfo {
                 icon: "scale-geometry",
@@ -2211,6 +2262,7 @@ impl Workbench for AssemblyWorkbench {
             || self.measuring.is_some()
             || self.sweeping.is_some()
             || matches!(&self.task, Some(Task::Explode { steps, .. }) if steps.playing)
+            || matches!(&self.task, Some(Task::Motion(studying)) if studying.playing)
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
@@ -2224,6 +2276,12 @@ impl Workbench for AssemblyWorkbench {
             "asm.parts" | "asm.mass" => !ctx.document.bodies().is_empty(),
             "asm.group" => ctx.document.bodies().len() >= 2,
             "asm.save_state" => !ctx.document.bodies().is_empty(),
+            "asm.motion" => joints(ctx.document).iter().any(|j| {
+                matches!(
+                    j.feature.kind,
+                    JointKind::Hinge { .. } | JointKind::Slider { .. }
+                )
+            }),
             "asm.copy" => Self::body_to_move(ctx).is_some(),
             "asm.replace" => Self::body_to_move(ctx).is_some() && ctx.document.bodies().len() >= 2,
             "asm.collisions" => true,
@@ -2319,6 +2377,18 @@ impl Workbench for AssemblyWorkbench {
                 }
                 None => ctx.log_warn("Select a body to copy"),
             },
+            Some("asm.motion") => {
+                self.picking = None;
+                self.task = Some(Task::Motion(Box::new(Studying {
+                    study: None,
+                    draft: MotionStudy::default(),
+                    frames: None,
+                    frame: 0,
+                    playing: false,
+                    clock: 0.0,
+                    placements: all_placements(ctx),
+                })));
+            }
             Some("asm.save_state") => {
                 let name = commands::next_name(ctx.document, "State");
                 match states::save(ctx.document, name.clone()) {
@@ -2416,6 +2486,23 @@ impl Workbench for AssemblyWorkbench {
         self.collect_interference(ctx);
         self.collect_mass(ctx);
         self.collect_sweep(ctx);
+        let mut advanced = false;
+        if let Some(Task::Motion(studying)) = &mut self.task
+            && studying.playing
+            && let Some(count) = studying.frames.as_ref().map(Vec::len).filter(|n| *n > 0)
+        {
+            // Frames at the study's own pace, round again at the end.
+            studying.clock += _dt.min(0.1);
+            let step = studying.draft.step.max(1e-3);
+            while studying.clock >= step {
+                studying.clock -= step;
+                studying.frame = (studying.frame + 1) % count;
+                advanced = true;
+            }
+        }
+        if advanced {
+            self.show_frame(ctx);
+        }
         if let Some(Task::Explode { steps, .. }) = &mut self.task
             && steps.playing
             && let Some(count) = steps
@@ -2465,6 +2552,24 @@ impl Workbench for AssemblyWorkbench {
         }
         if kind.as_deref() == Some(STATE_KIND) {
             self.restore_state(ctx, id);
+            return;
+        }
+        if kind.as_deref() == Some(MOTION_KIND) {
+            let draft = ctx
+                .document
+                .get_feature_data(id)
+                .and_then(|d| MotionStudy::from_json(d).ok())
+                .unwrap_or_default();
+            self.put_back_motion(ctx);
+            self.task = Some(Task::Motion(Box::new(Studying {
+                study: Some(id),
+                draft,
+                frames: None,
+                frame: 0,
+                playing: false,
+                clock: 0.0,
+                placements: all_placements(ctx),
+            })));
             return;
         }
         if kind.as_deref() == Some(EXPLODED_KIND) {
@@ -2592,6 +2697,12 @@ impl Workbench for AssemblyWorkbench {
                 title: "Rigid group".to_string(),
                 icon: "tree-group",
                 confirmable: true,
+                stepwise: false,
+            }),
+            Task::Motion(_) => Some(core_document::TaskInfo {
+                title: "Motion over time".to_string(),
+                icon: "polar-pattern",
+                confirmable: false,
                 stepwise: false,
             }),
             Task::Mass { .. } => Some(core_document::TaskInfo {
@@ -2782,6 +2893,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.put_back_motion(ctx);
         self.picking = None;
         self.checking = None;
         self.measuring = None;
@@ -2790,6 +2902,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.put_back_motion(ctx);
         self.picking = None;
         self.checking = None;
         self.measuring = None;

@@ -1354,6 +1354,21 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): A new group's name in the tree
 - Returns the group's id
 
+`pc.asm.motion`: Keep a motion over time: hinges and sliders each driven by a formula of t, seconds.
+
+- `drives` (list): {{joint = id, formula = "90 * t"}, ...}: a hinge's angle in degrees, a slider's position in mm
+- `start` (number, optional): When it starts, s (0 when left out)
+- `end` (number, optional): When it ends, s (2 when left out)
+- `step` (number, optional): The time between frames, s (0.05 when left out)
+- `study` (id, optional): A motion to change, rather than a new one
+- `name` (string, optional): A new motion's name in the tree
+- Returns the motion's id
+
+`pc.asm.motion_frames`: Every body's placement at each frame of a motion; nothing is moved.
+
+- `study` (id): The motion
+- Returns a list of {t, bodies = {{body, translation, rotation}, ...}}
+
 `pc.asm.exploded_view`: Keep an exploded view: steps, each moving some bodies by a shift, played in order.
 
 - `steps` (list): {{bodies = {ids}, shift = {x, y, z}}, ...}, in the order they play

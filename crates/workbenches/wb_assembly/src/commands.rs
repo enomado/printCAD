@@ -419,6 +419,49 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.motion",
+            "Keep a motion over time: hinges and sliders each driven by a formula of t, seconds",
+        )
+        .param(
+            "drives",
+            ParamKind::List,
+            "{{joint = id, formula = \"90 * t\"}, ...}: a hinge's angle in degrees, a slider's \
+             position in mm",
+        )
+        .optional(
+            "start",
+            ParamKind::Number,
+            "When it starts, s (0 when left out)",
+        )
+        .optional(
+            "end",
+            ParamKind::Number,
+            "When it ends, s (2 when left out)",
+        )
+        .optional(
+            "step",
+            ParamKind::Number,
+            "The time between frames, s (0.05 when left out)",
+        )
+        .optional(
+            "study",
+            ParamKind::Id,
+            "A motion to change, rather than a new one",
+        )
+        .optional("name", ParamKind::String, "A new motion's name in the tree")
+        .returns("the motion's id"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.motion_frames",
+            "Every body's placement at each frame of a motion; nothing is moved",
+        )
+        .param("study", ParamKind::Id, "The motion")
+        .returns("a list of {t, bodies = {{body, translation, rotation}, ...}}")
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.exploded_view",
             "Keep an exploded view: steps, each moving some bodies by a shift, played in order",
         )
@@ -1115,6 +1158,70 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             };
             ctx.document.clear_feature_dirty(id);
             solved(ctx, json!(id.0.to_string()))
+        }
+        "asm.motion" => {
+            let defaults = crate::MotionStudy::default();
+            let study = crate::MotionStudy {
+                start: a.opt_number("start")?.map_or(defaults.start, |v| v as f32),
+                end: a.opt_number("end")?.map_or(defaults.end, |v| v as f32),
+                step: a.opt_number("step")?.map_or(defaults.step, |v| v as f32),
+                drives: serde_json::from_value(a.0.get("drives").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| CommandError::bad("drives", e.to_string()))?,
+            };
+            for drive in &study.drives {
+                crate::motion::value_at(&drive.formula, 0.0)
+                    .map_err(|e| CommandError::bad("drives", e))?;
+            }
+            let data = core_document::WorkbenchFeature::to_json(&study);
+            let id = match a.opt_id("study")? {
+                Some(id) => {
+                    let id = FeatureId(id);
+                    ctx.document
+                        .update_feature_data(id, data)
+                        .map_err(|e| CommandError::failed(e.to_string()))?;
+                    id
+                }
+                None => {
+                    let name = match a.opt_string("name")? {
+                        Some(n) => n.to_string(),
+                        None => next_name(ctx.document, "Motion"),
+                    };
+                    ctx.document
+                        .add_feature_in_body(study, name, None)
+                        .map_err(|e| CommandError::failed(e.to_string()))?
+                }
+            };
+            ctx.document.clear_feature_dirty(id);
+            Ok(json!(id.0.to_string()))
+        }
+        "asm.motion_frames" => {
+            let id = FeatureId(a.id("study")?);
+            let study = ctx
+                .document
+                .get_feature_data(id)
+                .and_then(|d| {
+                    <crate::MotionStudy as core_document::WorkbenchFeature>::from_json(d).ok()
+                })
+                .ok_or_else(|| CommandError::bad("study", "is not a motion"))?;
+            let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
+            Ok(Value::Array(
+                frames
+                    .into_iter()
+                    .map(|(t, bodies)| {
+                        let bodies: Vec<Value> = bodies
+                            .into_iter()
+                            .map(|(body, p)| {
+                                json!({
+                                    "body": body.0.to_string(),
+                                    "translation": p.translation,
+                                    "rotation": p.rotation,
+                                })
+                            })
+                            .collect();
+                        json!({"t": t, "bodies": bodies})
+                    })
+                    .collect(),
+            ))
         }
         "asm.exploded_view" => {
             let steps: Vec<crate::ExplodeStep> =
@@ -2146,6 +2253,53 @@ mod tests {
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
         assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+    }
+
+    /// A motion drives a hinge by a formula of time, frame by frame, and
+    /// moves nothing in the document.
+    #[test]
+    fn a_motion_drives_its_joints_over_time() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+        let hinge = call(
+            &mut doc,
+            "asm.hinge",
+            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
+                   "drive": 0}),
+        )
+        .unwrap();
+        let study = call(
+            &mut doc,
+            "asm.motion",
+            json!({"drives": [{"joint": hinge, "formula": "90 * t"}], "start": 0, "end": 1, "step": 0.5}),
+        )
+        .unwrap();
+        let frames = call(&mut doc, "asm.motion_frames", json!({"study": study})).unwrap();
+        let frames = frames.as_array().unwrap();
+        assert_eq!(frames.len(), 3);
+        let turned = |frame: &Value| {
+            let row = frame["bodies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["body"] == json!(a.0.to_string()))
+                .unwrap()
+                .clone();
+            let q: [f32; 4] = serde_json::from_value(row["rotation"].clone()).unwrap();
+            let x = glam::Quat::from_array(q) * glam::Vec3::X;
+            x.y.atan2(x.x).to_degrees()
+        };
+        assert!((turned(&frames[1]) - 45.0).abs() < 1e-2);
+        assert!((turned(&frames[2]) - 90.0).abs() < 1e-2);
+        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+        assert!(x[1].abs() < 1e-4, "the document is not moved");
+        let bad = call(
+            &mut doc,
+            "asm.motion",
+            json!({"drives": [{"joint": hinge, "formula": "90 * "}]}),
+        );
+        assert!(bad.is_err());
     }
 
     /// An exploded view kept by a script plays its steps in order.
