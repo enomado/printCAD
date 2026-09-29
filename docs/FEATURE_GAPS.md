@@ -281,7 +281,7 @@ and noted on its item, and the rest of the item is built around it.
 
 ### Solving and moving
 
-- [ ] **Move handles** (missing, M). Arrows and rings on a body, where
+- [x] **Move handles** (missing, M). Arrows and rings on a body, where
   today an unjointed body moves by numbers.
 - [x] **Redundant joints reported** (partial, M). Consistent but
   overdefined joints flagged.

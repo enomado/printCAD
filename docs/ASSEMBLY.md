@@ -173,8 +173,13 @@ coupling counts its driver's whole turns: after one turn of a driver at
 
 Drag a jointed body with the left mouse button: it follows the mouse as
 far as its joints let it, so a door swings on its hinge rather than
-sliding off it. A grounded body, or one with no joints of its own, does
-not drag; use Move body (G) for those. A drag is one undo step.
+sliding off it. A body with no joints of its own drags straight across
+the view, what is joined to it following; a grounded body does not drag.
+A drag is one undo step.
+
+Move body (G) moves the selected body by numbers, or by its handles: an
+arrow along each axis slides it and a ring about each turns it about the
+middle of its box. OK keeps where it ends.
 
 A drag stops where the body would run into another: it comes to rest
 against it. Faces that only touch, as mated faces do, never stop it, and

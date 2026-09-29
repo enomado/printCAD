@@ -15,6 +15,7 @@ mod commands;
 mod coupling;
 mod exploded;
 mod group;
+mod handles;
 mod interference;
 mod joint;
 mod mass;
@@ -232,6 +233,8 @@ pub struct AssemblyWorkbench {
     /// The body last clicked while a group's bodies are picked, so a click
     /// counts once.
     group_seen: Option<uuid::Uuid>,
+    /// A move handle held by the mouse.
+    handle_held: Option<handles::Held>,
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
@@ -985,6 +988,58 @@ impl AssemblyWorkbench {
                 ))
             })
             .collect()
+    }
+
+    /// The body the Move task has open, when no joint places it: its move
+    /// handles show and drag.
+    fn handled_body(&self, ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
+        match &self.task {
+            Some(Task::Move { body, .. }) if !Self::held_by_joints(ctx, *body) => Some(*body),
+            _ => None,
+        }
+    }
+
+    /// A press on a move handle takes it; moves slide or turn the body; the
+    /// release lets go. The task's OK records where it ends.
+    fn handle_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> Option<InputResult> {
+        let body = self.handled_body(ctx)?;
+        match event {
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos,
+            } => {
+                let centre = handles::centre(ctx, body)?;
+                let handle = handles::under(ctx, centre, *viewport_pos)?;
+                let from = handles::on(ctx, handle, centre, *viewport_pos)?;
+                self.handle_held = Some(handles::Held {
+                    handle,
+                    start: ctx.document.body_placement(body),
+                    centre,
+                    from,
+                });
+                Some(InputResult::consumed())
+            }
+            WorkbenchInputEvent::MouseMove { viewport_pos } => {
+                let held = self.handle_held?;
+                if let Some(now) = handles::on(ctx, held.handle, held.centre, *viewport_pos) {
+                    ctx.document
+                        .set_body_placement(body, handles::dragged(&held, now));
+                }
+                Some(InputResult::consumed())
+            }
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Left,
+                ..
+            } => {
+                self.handle_held.take()?;
+                Some(InputResult::consumed())
+            }
+            _ => None,
+        }
     }
 
     /// A motion study open: the bodies back where they were.
@@ -2324,6 +2379,9 @@ impl Workbench for AssemblyWorkbench {
         tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let Some(result) = self.handle_input(event, ctx) {
+            return result;
+        }
         match event {
             WorkbenchInputEvent::ToolActivated => {}
             WorkbenchInputEvent::MousePress {
@@ -2778,6 +2836,19 @@ impl Workbench for AssemblyWorkbench {
             .collect();
         if let Some((joint, _, _)) = self.joint_drawing(ctx) {
             lines.extend(joint);
+        }
+        if let Some(body) = self.handled_body(ctx) {
+            let centre = self
+                .handle_held
+                .map(|h| h.centre)
+                .or_else(|| handles::centre(ctx, body));
+            if let Some(centre) = centre {
+                lines.extend(handles::overlays(
+                    ctx,
+                    centre,
+                    self.handle_held.map(|h| h.handle),
+                ));
+            }
         }
         if let Some(Task::Motion(studying)) = &self.task
             && let Some(frames) = &studying.frames
@@ -3620,6 +3691,123 @@ mod tests {
             "{t:?}"
         );
         assert_eq!(recorded.len(), 1);
+    }
+
+    /// The Move task's arrows slide the body along their axis and its rings
+    /// turn it about the middle of its box.
+    #[test]
+    fn move_handles_slide_and_turn_the_body() {
+        use glam::{Mat4, Vec3};
+        let (mut doc, _, part) = scene();
+        let eye = Vec3::new(60.0, -80.0, 140.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::new(30.0, 0.0, 40.0), Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
+        let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
+        let mut wb = AssemblyWorkbench {
+            task: Some(Task::Move {
+                body: part,
+                placements: Vec::new(),
+            }),
+            ..AssemblyWorkbench::default()
+        };
+        let send = |doc: &mut Document, wb: &mut AssemblyWorkbench, event: WorkbenchInputEvent| {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                doc,
+                eye.to_array(),
+                [30.0, 0.0, 40.0],
+                (0, 0, 800, 600),
+            );
+            ctx.view_proj = Some(vp);
+            wb.on_input(&event, None, &mut ctx).consumed
+        };
+        let screen = |p: Vec3| {
+            core_document::runtime::world_to_viewport(vp, (0, 0, 800, 600), p.to_array()).unwrap()
+        };
+        // The part's box is (0..10, 0..10, 0) placed at (30, 0, 40).
+        let centre = Vec3::new(35.0, 5.0, 40.0);
+        let arrow_tip = {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut doc,
+                eye.to_array(),
+                [30.0, 0.0, 40.0],
+                (0, 0, 800, 600),
+            );
+            ctx.view_proj = Some(vp);
+            let shapes = handles::shapes(&ctx, centre);
+            shapes
+                .iter()
+                .find(|(h, _)| *h == handles::Handle::Arrow(0))
+                .unwrap()
+                .1[1]
+        };
+        let press = |p: [f32; 2]| WorkbenchInputEvent::MousePress {
+            button: core_document::MouseButton::Left,
+            viewport_pos: (p[0], p[1]),
+        };
+        let release = WorkbenchInputEvent::MouseRelease {
+            button: core_document::MouseButton::Left,
+            viewport_pos: (0.0, 0.0),
+        };
+        assert!(send(&mut doc, &mut wb, press(arrow_tip)));
+        // Along X by 20: the arrow tip's point moved on the axis.
+        let from = {
+            let held = wb.handle_held.unwrap();
+            held.centre + held.from
+        };
+        let to = screen(from + Vec3::X * 20.0);
+        send(
+            &mut doc,
+            &mut wb,
+            WorkbenchInputEvent::MouseMove { viewport_pos: to },
+        );
+        send(&mut doc, &mut wb, release.clone());
+        let t = doc.body_placement(part).translation;
+        assert!((t[0] - 50.0).abs() < 0.05 && (t[1]).abs() < 0.05, "{t:?}");
+
+        // A quarter turn on the Z ring about the middle, now at (55, 5, 40).
+        let centre = Vec3::new(55.0, 5.0, 40.0);
+        let ring_at = {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut doc,
+                eye.to_array(),
+                [30.0, 0.0, 40.0],
+                (0, 0, 800, 600),
+            );
+            ctx.view_proj = Some(vp);
+            let shapes = handles::shapes(&ctx, centre);
+            let ring = shapes
+                .iter()
+                .find(|(h, _)| *h == handles::Handle::Ring(2))
+                .unwrap()
+                .1
+                .clone();
+            // A point of the ring clear of every other handle.
+            ring.into_iter()
+                .find(|p| {
+                    handles::under(&ctx, centre, (p[0], p[1])) == Some(handles::Handle::Ring(2))
+                })
+                .unwrap()
+        };
+        assert!(send(&mut doc, &mut wb, press(ring_at)));
+        let held = wb.handle_held.unwrap();
+        assert_eq!(held.handle, handles::Handle::Ring(2));
+        let quarter = held.centre
+            + glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * (held.from * 10.0);
+        send(
+            &mut doc,
+            &mut wb,
+            WorkbenchInputEvent::MouseMove {
+                viewport_pos: screen(quarter),
+            },
+        );
+        send(&mut doc, &mut wb, release);
+        let x = doc.body_placement(part).direction([1.0, 0.0, 0.0]);
+        assert!((x[1].atan2(x[0]).to_degrees() - 90.0).abs() < 0.5, "{x:?}");
+        let middle = doc.body_placement(part).point([5.0, 5.0, 0.0]);
+        assert!(
+            (glam::Vec3::from_array(middle) - centre).length() < 0.05,
+            "turned about its middle"
+        );
     }
 
     /// A kernel for which every pair shares a little.
