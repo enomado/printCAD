@@ -92,6 +92,8 @@ pub struct UiLayer {
     ctx: Context,
     state: State,
     preferences: preferences::PreferencesState,
+    /// `PRINTCAD_BENCH_PREFS=<page>` opened Preferences there once.
+    bench_prefs_opened: bool,
     palette: command_palette::PaletteState,
     orientation_cube_config: OrientationCubeConfig,
     /// Substring filter over the model tree; UI-local.
@@ -192,6 +194,7 @@ impl UiLayer {
             ctx,
             state,
             preferences: preferences::PreferencesState::default(),
+            bench_prefs_opened: false,
             palette: command_palette::PaletteState::default(),
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
@@ -500,6 +503,15 @@ impl UiLayer {
             if menu.show_preferences {
                 let (group, tab) = (self.preferences.group, self.preferences.tab);
                 self.preferences.open_at(settings, unit, group, tab);
+            }
+            // A capture of a Preferences page: open it once at start.
+            if !self.bench_prefs_opened
+                && let Ok(page) = std::env::var("PRINTCAD_BENCH_PREFS")
+            {
+                self.bench_prefs_opened = true;
+                if let Some(group) = preferences::PrefGroup::named(&page, registry) {
+                    self.preferences.open_at(settings, unit, group, 0);
+                }
             }
             let mut open_palette = menu.open_palette;
 

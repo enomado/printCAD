@@ -820,7 +820,8 @@ constrained sketch for editing and `=pad` pads it and opens the Pad task;
 `PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
 the way a click on its tree row would, so a capture shows the selection
 overlay; `PRINTCAD_BENCH_TASK=appearance|placement|history` opens that
-application task on the first body; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
+application task on the first body; `PRINTCAD_BENCH_PREFS=<page label>`
+opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with
 `PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a
