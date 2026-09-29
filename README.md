@@ -252,7 +252,7 @@ Preferences (Ctrl+,).
 
 More detail in [docs](docs/):
 
-- [Architecture and roadmap](docs/plan.md)
+- [Architecture](docs/plan.md)
 - [Editing workflow](docs/WB_IMP.md)
 - [Document model](docs/DOCUMENT_MODEL.md)
 - [Writing a workbench](docs/WORKBENCH_GUIDE.md)
@@ -264,7 +264,6 @@ More detail in [docs](docs/):
 - [AI agents](docs/AI.md)
 - [What is left to build](docs/FEATURE_GAPS.md)
 - [Camera](camera_system.md)
-- [Project status](PROJECT_STEPS.md)
 
 ## Roadmap
 
