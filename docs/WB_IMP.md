@@ -62,6 +62,14 @@ returns to the workbench you came from.
 
 Everything done in one task panel is one undo step.
 
+**Imported and converted solids take features too.** The first feature
+added to one (a pocket, a fillet) gives the body a **Base shape** feature
+first: the imported solid, kept as what the body's history starts from.
+The body stays one body; its history reads Base, then the feature. Cancel
+on that first feature, or deleting the Base once nothing follows it,
+makes the body the plain imported solid again. Repair shape on such a
+body mends its base, and the features build again on it.
+
 ## The tree
 
 - Double clicking a feature opens it for editing in the workbench that owns

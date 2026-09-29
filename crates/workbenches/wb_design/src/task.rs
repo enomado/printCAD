@@ -28,6 +28,8 @@ pub(crate) struct TaskState {
     pub snapshot: serde_json::Value,
     /// The tool created this feature just now: Cancel deletes it.
     pub created_by_tool: bool,
+    /// The base shape the tool gave the body for it: Cancel takes it away.
+    pub created_base: Option<FeatureId>,
     /// Sketches the tool hid; shown again when the feature is cancelled.
     pub hidden_sketches: Vec<FeatureId>,
     /// The tool that made it and the body it was made for, when a tool
@@ -109,6 +111,7 @@ impl DesignWorkbench {
             kind,
             snapshot: node.data.clone(),
             created_by_tool: created.is_some(),
+            created_base: created.as_ref().and_then(|m| m.base),
             hidden_sketches: created
                 .as_ref()
                 .map(|m| m.hidden.clone())
@@ -243,6 +246,12 @@ impl DesignWorkbench {
             if ctx.document.remove_feature(task.feature).is_ok() {
                 for sketch in task.hidden_sketches {
                     ctx.document.set_feature_visible(sketch, true);
+                }
+                // The body goes back to the imported solid it was.
+                if let (Some(base), Some(body)) = (task.created_base, body)
+                    && ctx.document.remove_feature(base).is_ok()
+                {
+                    ctx.document.set_body_base(body, false);
                 }
                 if let Some(body) = body {
                     crate::build::invalidate_body(ctx.document, body);

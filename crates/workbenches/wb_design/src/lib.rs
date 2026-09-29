@@ -125,6 +125,9 @@ pub(crate) struct ToolMade {
     pub tool: String,
     /// The body it was made for.
     pub body: BodyId,
+    /// The base shape the tool gave the body first, to make it take
+    /// features; Cancel takes it away again.
+    pub base: Option<FeatureId>,
 }
 
 /// Primitive shapes offered from the primitive tools' dropdowns.
@@ -185,6 +188,20 @@ impl DesignWorkbench {
         design_features_of_body(ctx.document, body)
             .iter()
             .any(|(_, f)| !matches!(f, DesignFeature::Borrow { .. }))
+            || Self::can_take_base(ctx, body)
+    }
+
+    /// An imported solid a feature can build on: it takes a base shape
+    /// first (`take_base`).
+    fn can_take_base(ctx: &WorkbenchRuntimeContext, body: BodyId) -> bool {
+        ctx.document.body_solid_is_imported(body)
+            && ctx.document.imported_brep_blob(body).is_some()
+            && ctx.document.copy_source(body).is_none()
+            && !ctx
+                .document
+                .bodies()
+                .iter()
+                .any(|b| b.id == body && b.link.is_some())
     }
 
     /// `base` when no feature has that name, else `base_n` one past the
@@ -802,6 +819,7 @@ impl DesignWorkbench {
                     hidden: Vec::new(),
                     tool: tool.to_string(),
                     body,
+                    base: None,
                 });
                 ctx.active_document_object = Some(feature_id);
                 ctx.log_info(format!("Created {name}"));
@@ -824,6 +842,7 @@ impl DesignWorkbench {
                     hidden: made.hidden,
                     tool: tool.to_string(),
                     body,
+                    base: made.base,
                 });
                 ctx.active_document_object = Some(made.id);
             }
@@ -844,7 +863,14 @@ impl DesignWorkbench {
         body: BodyId,
         edit: impl FnOnce(&mut DesignFeature) -> Result<(), String>,
     ) -> Result<CreatedFeature, String> {
-        let body = if ctx.document.body_solid_is_imported(body) {
+        let mut given_base = None;
+        let body = if ctx.document.body_solid_is_imported(body)
+            && let Some(taken) = take_base(ctx, body)
+        {
+            // Its imported solid becomes the start of its history.
+            given_base = Some(taken);
+            body
+        } else if ctx.document.body_solid_is_imported(body) {
             let imported = ctx
                 .document
                 .bodies()
@@ -882,14 +908,45 @@ impl DesignWorkbench {
             Vec::new()
         };
         ctx.log_info(format!("Created {name}"));
-        Ok(CreatedFeature { id, hidden })
+        Ok(CreatedFeature {
+            id,
+            hidden,
+            base: given_base,
+        })
     }
 }
 
-/// A feature `create_feature` added, and the sketches it hid.
+/// Give an imported body a history: its solid kept as its base, and a
+/// Base feature first to start from it. The Base feature, or `None` for a
+/// body that cannot take one (a mesh, a linked copy, a part linked from
+/// another file, whose shapes come from elsewhere).
+pub(crate) fn take_base(ctx: &mut WorkbenchRuntimeContext, body: BodyId) -> Option<FeatureId> {
+    let linked = ctx
+        .document
+        .bodies()
+        .iter()
+        .any(|b| b.id == body && b.link.is_some());
+    if linked || !ctx.document.set_body_base(body, true) {
+        return None;
+    }
+    let name = DesignWorkbench::next_feature_name(ctx, "Base");
+    let id = ctx
+        .document
+        .add_feature_in_body(DesignFeature::Base {}, name, Some(body))
+        .ok()?;
+    // First in the body's history, before any sketch already on it: the
+    // body's shape starts there.
+    let _ = ctx.document.move_feature_after(id, None);
+    ctx.document.mark_feature_dirty(id);
+    Some(id)
+}
+
+/// A feature `create_feature` added, the sketches it hid, and the base
+/// shape it gave its body first, if it did.
 pub(crate) struct CreatedFeature {
     pub id: FeatureId,
     pub hidden: Vec<FeatureId>,
+    pub base: Option<FeatureId>,
 }
 
 /// Default keys of the tools; the user can rebind them in Preferences.

@@ -459,6 +459,20 @@ which `drive_mirrored_copies` asks the kernel worker for
 (`copies_awaiting_shape`, kept by `set_mirrored_shape` only while the
 source still has the snapshot it was made from).
 
+**Base solids.** An imported, converted or repaired solid takes features
+by becoming its body's base: `Document::set_body_base` (op `SetBodyBase`,
+its own inverse with `on` flipped) copies the body's solid into
+`base_solids` (saved as `brep/<body>.base.bin`/`.colors`, the geometry in
+the body's own frame) and `body_solid_is_imported` turns false; dropping
+it puts the base back as the body's shape. Design's `DesignFeature::Base`
+builds as `SolidOp::Shape` of it and must be first. `take_base` (from
+`create_feature` and the borrow command) makes a body based on its first
+Design feature, putting the Base first in its history; that tool's Cancel
+undoes it, and the Base deletes only once nothing follows it. Repair on a
+based body mends the base (`set_base_solid`, derived) and invalidates the
+body; `Document::body_health` reads the base's findings where there is
+one. The tree puts an imported part's features under its row.
+
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,
 datums and kernel shape stay in the body's own frame; the document keeps

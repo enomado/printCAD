@@ -144,6 +144,18 @@ pub struct Document {
     /// Per-face RGB snapshot parallel to [`Self::imported_brep_blobs`] face order.
     #[serde(skip)]
     imported_brep_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
+    /// Bodies' base solids: the shape a body's feature history starts
+    /// from, kept from what an import, a mesh conversion or a repair made
+    /// of the body, apart from what its features build and draw. Set and
+    /// cleared by the `SetBodyBase` op.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    base_solids: HashMap<BodyId, ImportedGeometry>,
+    /// The base solids' snapshots, saved as `brep/<body>.base.bin`.
+    #[serde(skip)]
+    base_brep_blobs: HashMap<BodyId, std::sync::Arc<Vec<u8>>>,
+    /// The base solids' face colours, saved as `brep/<body>.base.colors`.
+    #[serde(skip)]
+    base_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
     /// The meshes of placed bodies in their own frame, beside the placed
     /// copies in `imported_meshes`, with their bounds. Derived: rebuilt from
     /// the placed copy on load.
@@ -536,6 +548,9 @@ impl Document {
             asset_blobs: HashMap::new(),
             imported_brep_blobs: HashMap::new(),
             imported_brep_face_colors: HashMap::new(),
+            base_solids: HashMap::new(),
+            base_brep_blobs: HashMap::new(),
+            base_face_colors: HashMap::new(),
             thumbnail: None,
             local_meshes: HashMap::new(),
             imported_body_to_object: HashMap::new(),
@@ -662,6 +677,10 @@ impl Document {
             Op::SetComponent { id, .. } => Op::SetComponent {
                 id: *id,
                 component: self.component(*id).cloned(),
+            },
+            Op::SetBodyBase { id, .. } => Op::SetBodyBase {
+                id: *id,
+                on: self.base_solids.contains_key(id),
             },
             Op::SetBodyFrozen { id, .. } => Op::SetBodyFrozen {
                 id: *id,
@@ -953,6 +972,7 @@ impl Document {
                     entry.frozen = *frozen;
                 }
             }
+            Op::SetBodyBase { id, on } => self.apply_set_body_base(*id, *on),
             Op::SetBodySelectable { id, selectable } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.unselectable = !selectable;
@@ -1027,6 +1047,9 @@ impl Document {
                 self.local_meshes.remove(id);
                 self.imported_brep_blobs.remove(id);
                 self.imported_brep_face_colors.remove(id);
+                self.base_solids.remove(id);
+                self.base_brep_blobs.remove(id);
+                self.base_face_colors.remove(id);
                 // Its copies have no shape to take any more.
                 self.refresh_copies_of(*id);
             }
@@ -1642,6 +1665,116 @@ impl Document {
         }
     }
 
+    /// Keep the body's solid as it stands (from an import, a mesh
+    /// conversion or a repair) as the base its feature history starts
+    /// from; `on` false puts the base back as the body's shape and drops
+    /// it. Whether anything changed: a body with no solid of its own has
+    /// nothing to keep, and one already based has nothing to add.
+    pub fn set_body_base(&mut self, body: BodyId, on: bool) -> bool {
+        let has = self.base_solids.contains_key(&body);
+        let possible = if on {
+            !has && self.imported_brep_blobs.contains_key(&body) && self.copy_source(body).is_none()
+        } else {
+            has
+        };
+        if possible {
+            self.record_and_apply(op::DocumentOp::SetBodyBase { id: body, on });
+        }
+        possible
+    }
+
+    /// What the checker found in the shape a body takes from outside its
+    /// features: its base solid, else its imported solid.
+    pub fn body_health(&self, body: BodyId) -> Option<&kernel_api::ShapeHealth> {
+        self.base_solids
+            .get(&body)
+            .or_else(|| self.imported_geometry(body))?
+            .health
+            .as_ref()
+    }
+
+    /// Replace the body's base solid with what a repair (or another
+    /// derivation of the same op) made of it: derived state, no op. The
+    /// geometry is in the body's own frame.
+    pub fn set_base_solid(
+        &mut self,
+        body: BodyId,
+        geometry: ImportedGeometry,
+        brep_blob: Vec<u8>,
+        face_colors: Vec<[f32; 3]>,
+    ) {
+        if !self.base_solids.contains_key(&body) {
+            return;
+        }
+        self.base_solids.insert(body, geometry);
+        self.base_brep_blobs
+            .insert(body, std::sync::Arc::new(brep_blob));
+        self.base_face_colors.insert(body, face_colors);
+        self.mark_dirty();
+    }
+
+    /// Whether the body's history starts from a base solid.
+    pub fn has_base_solid(&self, body: BodyId) -> bool {
+        self.base_solids.contains_key(&body)
+    }
+
+    /// The snapshot of the body's base solid, in its own frame.
+    pub fn base_brep_blob(&self, body: BodyId) -> Option<&[u8]> {
+        self.base_brep_blobs.get(&body).map(|b| b.as_slice())
+    }
+
+    /// The base solid's face colours, in its snapshot's face order.
+    pub fn base_face_colors(&self, body: BodyId) -> Option<&[[f32; 3]]> {
+        self.base_face_colors.get(&body).map(Vec::as_slice)
+    }
+
+    /// The base solid's geometry as it was kept: the checker's findings,
+    /// the asset it came from.
+    pub fn base_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
+        self.base_solids.get(&body)
+    }
+
+    fn apply_set_body_base(&mut self, body: BodyId, on: bool) {
+        if on {
+            let (Some(geometry), Some(blob)) = (
+                self.imported_meshes.get(&body).cloned(),
+                self.imported_brep_blobs.get(&body).cloned(),
+            ) else {
+                return;
+            };
+            let colors = self
+                .imported_brep_face_colors
+                .get(&body)
+                .cloned()
+                .unwrap_or_default();
+            // The base keeps the body's own frame: its mesh as the body
+            // sees it, not as it is placed.
+            let mut kept = geometry;
+            if let Some((mesh, bounds)) = self.local_geometry(body) {
+                kept.mesh = mesh;
+                kept.bounds_mm = bounds;
+            }
+            kept.brep_blob_path = None;
+            kept.face_colors_path = None;
+            self.base_solids.insert(body, kept);
+            self.base_brep_blobs.insert(body, blob);
+            self.base_face_colors.insert(body, colors);
+        } else {
+            let Some(geometry) = self.base_solids.remove(&body) else {
+                return;
+            };
+            let blob = self.base_brep_blobs.remove(&body);
+            let colors = self.base_face_colors.remove(&body).unwrap_or_default();
+            // The base is the body's shape again, as it was kept.
+            self.set_imported_geometry(body, geometry);
+            if let Some(blob) = blob {
+                self.imported_brep_blobs.insert(body, blob);
+                self.imported_brep_face_colors.insert(body, colors);
+            }
+        }
+        self.mark_dirty();
+    }
+
     /// Whether a body is frozen.
     pub fn body_frozen(&self, body: BodyId) -> bool {
         self.bodies.iter().any(|b| b.id == body && b.frozen)
@@ -1814,7 +1947,13 @@ impl Document {
             .iter()
             .filter(|b| b.repair_requested)
             .filter(|b| {
-                self.imported_geometry(b.id).is_some_and(|g| {
+                // A body with a base mends its base: the shape its features
+                // build on.
+                let shape = self
+                    .base_solids
+                    .get(&b.id)
+                    .or_else(|| self.imported_geometry(b.id));
+                shape.is_some_and(|g| {
                     g.source_asset.is_some() && !g.health.as_ref().is_some_and(|h| h.repaired)
                 })
             })
@@ -2716,6 +2855,11 @@ impl Document {
     /// feature history. Only the import path stamps the source asset; a
     /// rebuild's own result leaves it unset.
     pub fn body_solid_is_imported(&self, body: BodyId) -> bool {
+        // A body with a base solid builds its shape from its history, the
+        // base first.
+        if self.base_solids.contains_key(&body) {
+            return false;
+        }
         self.copy_source(body).is_some()
             || self.bodies.iter().any(|b| b.id == body && b.link.is_some())
             || self
@@ -2907,7 +3051,17 @@ impl Document {
             .values()
             .map(|colors| colors.len() as u64 * 4)
             .sum();
-        assets + breps + colors
+        let bases: u64 = self
+            .base_brep_blobs
+            .values()
+            .map(|bytes| bytes.len() as u64)
+            .sum::<u64>()
+            + self
+                .base_face_colors
+                .values()
+                .map(|colors| colors.len() as u64 * 4)
+                .sum::<u64>();
+        assets + breps + colors + bases
     }
 
     fn save_to_writer<W: Write>(
@@ -3111,6 +3265,21 @@ impl Document {
                 doc.imported_brep_face_colors.insert(*body_id, parsed);
             }
         }
+        for (body_id, geom) in &doc.base_solids {
+            if let Some(ref brep_path) = geom.brep_blob_path
+                && let Some(bytes) = blobs_by_path.remove(brep_path)
+                && bytes.starts_with(b"ogeom")
+            {
+                doc.base_brep_blobs
+                    .insert(*body_id, std::sync::Arc::new(bytes));
+            }
+            if let Some(ref col_path) = geom.face_colors_path
+                && let Some(bytes) = blobs_by_path.remove(col_path)
+                && let Some(parsed) = decode_face_colors_blob(&bytes)
+            {
+                doc.base_face_colors.insert(*body_id, parsed);
+            }
+        }
         let copies: Vec<BodyId> = doc
             .bodies
             .iter()
@@ -3210,6 +3379,35 @@ impl Document {
             packed += brep_bytes.len() as u64 + colors_bytes.len() as u64;
             report(packed);
         }
+        // Base solids: what bodies' histories start from.
+        for (body_id, geom) in &doc.base_solids {
+            let (Some(brep_path), Some(colors_path), Some(brep_bytes)) = (
+                geom.brep_blob_path.as_ref(),
+                geom.face_colors_path.as_ref(),
+                doc.base_brep_blobs.get(body_id),
+            ) else {
+                continue;
+            };
+            let colors = doc
+                .base_face_colors
+                .get(body_id)
+                .cloned()
+                .unwrap_or_default();
+            let colors_bytes = encode_face_colors_blob(&colors);
+            for (path, bytes) in [
+                (brep_path, brep_bytes.as_slice()),
+                (colors_path, &colors_bytes[..]),
+            ] {
+                let mut header = Header::new_gnu();
+                header.set_path(path)?;
+                header.set_size(bytes.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder.append(&header, bytes)?;
+                packed += bytes.len() as u64;
+            }
+            report(packed);
+        }
         report(total);
         Ok(())
     }
@@ -3232,6 +3430,12 @@ impl Document {
             if doc.imported_brep_blobs.contains_key(body_id) {
                 geom.brep_blob_path = Some(format!("brep/{}.bin", body_id.0));
                 geom.face_colors_path = Some(format!("brep/{}.colors", body_id.0));
+            }
+        }
+        for (body_id, geom) in doc.base_solids.iter_mut() {
+            if doc.base_brep_blobs.contains_key(body_id) {
+                geom.brep_blob_path = Some(format!("brep/{}.base.bin", body_id.0));
+                geom.face_colors_path = Some(format!("brep/{}.base.colors", body_id.0));
             }
         }
     }

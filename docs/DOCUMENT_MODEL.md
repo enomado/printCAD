@@ -48,7 +48,11 @@ A body is a name and a place in the tree. Its solid is not stored in the
 feature tree. It is derived:
 
 - A Design body is rebuilt from its features by the kernel.
-- An imported body keeps the kernel shape it was read with.
+- An imported body keeps the kernel shape it was read with. Given
+  features, that shape becomes the body's base solid (op `SetBodyBase`),
+  kept apart from what the features build and saved as
+  `brep/<body>.base.bin`; its history starts with a Base feature built
+  from it.
 - A mesh body (from STL, OBJ, 3MF, PLY, glTF or VRML) has triangles only, until it is
   converted to a solid.
 

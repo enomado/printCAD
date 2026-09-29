@@ -406,13 +406,21 @@ fn tool_inputs(document: &Document, body: BodyId, tool: BodyId) -> u64 {
 /// solid its history produced. `false` when nothing was removed.
 pub fn delete_feature(document: &mut Document, id: FeatureId) -> bool {
     let body = document.get_feature_meta(id).and_then(|n| n.body);
-    let sketches = document
+    let feature = document
         .get_feature_data(id)
-        .and_then(|d| DesignFeature::from_json(d).ok())
-        .map(|f| f.sketches())
-        .unwrap_or_default();
+        .and_then(|d| DesignFeature::from_json(d).ok());
+    let is_base = matches!(feature, Some(DesignFeature::Base {}));
+    // The base shape goes last: the features after it build on it.
+    if is_base && body.is_some_and(|body| design_feature_ids(document, body).len() > 1) {
+        return false;
+    }
+    let sketches = feature.map(|f| f.sketches()).unwrap_or_default();
     if document.remove_feature(id).is_err() {
         return false;
+    }
+    // Without its base feature the body is the imported solid again.
+    if is_base && let Some(body) = body {
+        document.set_body_base(body, false);
     }
     for sketch in sketches {
         document.set_feature_visible(sketch, true);
@@ -1024,6 +1032,18 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
             }
             // Lent geometry builds nothing; the features that take it do.
             DesignFeature::Borrow { .. } => {}
+            DesignFeature::Base {} => {
+                if !plan.ops.is_empty() {
+                    return Err(fail(
+                        "the base shape can only be a body's first feature".into(),
+                    ));
+                }
+                let brep = document
+                    .base_brep_blob(body)
+                    .ok_or_else(|| fail("this body has no base shape".into()))?
+                    .to_vec();
+                plan.ops.push(SolidOp::Shape { brep });
+            }
             DesignFeature::Clone { source } => {
                 if !plan.ops.is_empty() {
                     return Err(fail("a clone can only be a body's first feature".into()));

@@ -2050,6 +2050,24 @@ pub fn feature_editor(
         .next()
         .is_none();
     match feature {
+        DesignFeature::Base {} => {
+            let from = ctx.document.base_geometry(body);
+            let health = from.and_then(|g| g.health.as_ref());
+            taper_note(
+                ui,
+                "The shape this body starts from, as it was imported or converted. \
+                 The features after it change it.",
+            );
+            if let Some(health) = health.filter(|h| h.is_broken()) {
+                taper_note(
+                    ui,
+                    &format!(
+                        "The checker found {} problem(s) in it; Repair shape mends it.",
+                        health.broken
+                    ),
+                );
+            }
+        }
         DesignFeature::Pad {
             refine: _,
             sketch: _,

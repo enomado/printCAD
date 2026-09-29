@@ -141,15 +141,25 @@ impl PrintCadApp {
             if self.session.repairs_in_flight.contains(&body.0) {
                 continue;
             }
-            let Some(blob) = self.session.document.imported_brep_blob_arc(body) else {
+            // A body with a base mends its base, which its features build on.
+            let document = &self.session.document;
+            let (blob, face_colors) = if document.has_base_solid(body) {
+                (
+                    document
+                        .base_brep_blob(body)
+                        .map(|b| std::sync::Arc::new(b.to_vec())),
+                    document.base_face_colors(body).map(<[_]>::to_vec),
+                )
+            } else {
+                (
+                    document.imported_brep_blob_arc(body),
+                    document.imported_brep_face_colors(body).map(<[_]>::to_vec),
+                )
+            };
+            let Some(blob) = blob else {
                 continue;
             };
-            let face_colors = self
-                .session
-                .document
-                .imported_brep_face_colors(body)
-                .map(<[_]>::to_vec)
-                .unwrap_or_default();
+            let face_colors = face_colors.unwrap_or_default();
             self.session.repairs_in_flight.insert(body.0);
             app_log::info(format!("Repairing `{}`…", self.body_name(body)));
             self.kernel_worker.request_repair(
@@ -170,6 +180,34 @@ impl PrintCadApp {
         elapsed: std::time::Duration,
     ) {
         self.session.repairs_in_flight.remove(&body.0);
+        if let Some(previous) = self.session.document.base_geometry(body).cloned() {
+            let broken = result.health.broken;
+            self.session.document.set_base_solid(
+                body,
+                core_document::ImportedGeometry {
+                    mesh: std::sync::Arc::new(result.mesh),
+                    bounds_mm: result.bounds_mm.or(previous.bounds_mm),
+                    health: Some(result.health),
+                    ..previous
+                },
+                result.brep_blob,
+                result.face_colors,
+            );
+            // The features build again on the mended base.
+            self.registry
+                .invalidate_body(&mut self.session.document, body);
+            app_log::info(format!(
+                "Repaired the base of `{}` in {:.1} s{}",
+                self.body_name(body),
+                elapsed.as_secs_f32(),
+                if broken > 0 {
+                    format!(": {broken} defect(s) remain that the repair does not mend")
+                } else {
+                    String::new()
+                }
+            ));
+            return;
+        }
         let Some(previous) = self.session.document.imported_geometry(body).cloned() else {
             // The body left the document while the repair ran.
             return;

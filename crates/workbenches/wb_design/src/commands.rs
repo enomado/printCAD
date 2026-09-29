@@ -589,10 +589,12 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     if !ctx.document.bodies().iter().any(|b| b.id == body) {
         return Err(CommandError::bad("body", "is not a body of this document"));
     }
-    if ctx.document.body_solid_is_imported(body) {
+    // An imported solid takes a base shape first, and builds on it.
+    if ctx.document.body_solid_is_imported(body) && crate::take_base(ctx, body).is_none() {
         return Err(CommandError::bad(
             "body",
-            "came from an import and takes no features; borrow into a body of its own",
+            "takes its shape from elsewhere (a mesh, a copy or a linked part) and takes no \
+             features; borrow into a body of its own",
         ));
     }
     let source = match (a.opt_id("sketch")?, a.opt_id("from")?) {

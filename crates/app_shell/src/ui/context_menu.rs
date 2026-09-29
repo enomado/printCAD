@@ -77,8 +77,7 @@ pub fn draw(
                                 commands.push(UiCommand::SelectBody(menu.body));
                             }
                             let repairable = document
-                                .imported_geometry(menu.body)
-                                .and_then(|g| g.health.as_ref())
+                                .body_health(menu.body)
                                 .is_some_and(|h| h.is_broken())
                                 && document
                                     .bodies()

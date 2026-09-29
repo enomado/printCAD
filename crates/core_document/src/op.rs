@@ -123,6 +123,12 @@ pub enum DocumentOp {
         id: crate::ComponentId,
         component: Option<crate::Component>,
     },
+    /// A body's solid kept as the base its history starts from (`on`), or
+    /// the base put back as its shape.
+    SetBodyBase {
+        id: BodyId,
+        on: bool,
+    },
     /// A body kept as it stands, or let rebuild.
     SetBodyFrozen {
         id: BodyId,

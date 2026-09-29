@@ -237,7 +237,7 @@ impl DocumentTree {
         let mut body_nodes = nest_in_components(document, body_nodes);
 
         for &root in document.imported_object_roots() {
-            if let Some(node) = build_imported_node(document, root) {
+            if let Some(node) = build_imported_node(document, root, &mut roots_by_body) {
                 body_nodes.push(node);
             }
         }
@@ -596,7 +596,7 @@ fn mark_shape_health(nodes: &mut [TreeNode], document: &Document) -> usize {
     for node in nodes {
         let below = mark_shape_health(&mut node.children, document);
         let own = node.body.and_then(|body| {
-            let health = document.imported_geometry(body)?.health.as_ref()?;
+            let health = document.body_health(body)?;
             health.is_broken().then_some((body, health))
         });
         let mut repairable: Vec<BodyId> = node
@@ -698,7 +698,13 @@ fn annotation_icon(annotation: Option<&core_document::Annotation>) -> &'static s
     }
 }
 
-fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
+/// The row of imported object `id` and its children; a part's body's
+/// features (a history an edit gave it) go under the part's row.
+fn build_imported_node(
+    document: &Document,
+    id: Uuid,
+    features: &mut HashMap<Option<BodyId>, Vec<TreeNode>>,
+) -> Option<TreeNode> {
     let imported = document.imported_object(id)?;
 
     // An instance whose only child is the product it instances is one thing
@@ -710,7 +716,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         && let Some(target) = document.imported_object(imported.children[0])
         && target.kind != kernel_api::ImportedNodeKind::Instance
     {
-        let mut merged = build_imported_node(document, target.id)?;
+        let mut merged = build_imported_node(document, target.id, features)?;
         merged.id = TreeItemId::ImportedObject(imported.id);
         merged.imported_object_id = Some(imported.id);
         merged.visible = imported.visible && target.visible;
@@ -728,9 +734,14 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
 
     let mut children = Vec::new();
     for child_id in &imported.children {
-        if let Some(child) = build_imported_node(document, *child_id) {
+        if let Some(child) = build_imported_node(document, *child_id, features) {
             children.push(child);
         }
+    }
+    if let Some(body) = imported.body_id
+        && let Some(history) = features.remove(&Some(body))
+    {
+        children.extend(history);
     }
     let label = if imported.name.is_empty() {
         "Imported".to_string()

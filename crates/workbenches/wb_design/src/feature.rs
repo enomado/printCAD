@@ -1085,6 +1085,9 @@ pub struct BorrowedRef {
 /// A solid-modeling feature in a body's linear history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DesignFeature {
+    /// Start the body from its base solid: the shape an import, a mesh
+    /// conversion or a repair made of it, kept by the document.
+    Base {},
     /// Start the body from a copy of another body's solid, as that body
     /// is built now.
     Clone { source: BodyId },
@@ -1664,6 +1667,7 @@ impl DesignFeature {
             DesignFeature::MultiTransform { .. } => "Multi Transform",
             DesignFeature::BodyBoolean { .. } => "Boolean",
             DesignFeature::Borrow { .. } => "Borrowed geometry",
+            DesignFeature::Base { .. } => "Base shape",
             DesignFeature::Clone { .. } => "Clone",
         }
     }
@@ -1723,6 +1727,7 @@ impl DesignFeature {
             DesignFeature::MultiTransform { .. } => "multi-transform",
             DesignFeature::BodyBoolean { .. } => "boolean",
             DesignFeature::Borrow { .. } => "clone-geometry",
+            DesignFeature::Base { .. } => "file-document",
             DesignFeature::Clone { .. } => "clone",
         }
     }
