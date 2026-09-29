@@ -211,6 +211,15 @@ fn datums_asking(
                     .probes(),
                 // A face a borrow lends is on another body's solid:
                 // `answer_lent_faces` finds it, not this body's build.
+                // A primitive attached by a mode asks what the attachment
+                // asks.
+                "wb.part" => match PartFeature::from_json(&n.data).ok()? {
+                    PartFeature::Primitive {
+                        attached: Some(attached),
+                        ..
+                    } => attached.probes(),
+                    _ => return None,
+                },
                 "wb.sketch" => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
                     // Attached by a mode, it asks what the attachment asks.
@@ -772,10 +781,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 kind,
                 placement,
                 subtractive,
+                attached,
             } => {
                 plan.ops.push(SolidOp::Primitive {
                     kind: *kind,
-                    placement: *placement,
+                    placement: attached.as_ref().map_or(*placement, |a| a.placement()),
                     op: shape_boolean(*subtractive),
                 });
             }

@@ -27,11 +27,11 @@ pub use build::{
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DrillPoint, EdgePick, EdgeSel,
-    ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick, FrozenBorrow, FrozenEdge, FrozenFace,
-    HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane, PartFeature, PatternAxis, PipeCorner,
-    PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep,
-    primitive_icon, primitive_preset,
+    Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DrillPoint,
+    EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick, FrozenBorrow,
+    FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane, PartFeature,
+    PatternAxis, PipeCorner, PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis,
+    ThreadSpec, TransformStep, primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
@@ -227,6 +227,7 @@ impl PartDesignWorkbench {
     ) -> Result<(PartFeature, &'static str), String> {
         let sketch = Self::selected_sketch(ctx);
         let primitive = |subtractive: bool| PartFeature::Primitive {
+            attached: None,
             refine: false,
             kind: variant
                 .and_then(primitive_preset)
@@ -1535,8 +1536,45 @@ impl Workbench for PartDesignWorkbench {
         }
     }
 
+    /// A primitive attached by a mode takes what the last build found of
+    /// what it stands on.
+    fn derive_on_solid(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        probed: &core_document::rebuild::ProbedReferences,
+    ) -> bool {
+        use core_document::WorkbenchFeature;
+        if node.workbench_id.as_str() != "wb.part" {
+            return false;
+        }
+        let Ok(mut feature) = PartFeature::from_json(values) else {
+            return false;
+        };
+        let PartFeature::Primitive {
+            attached: Some(attached),
+            ..
+        } = &mut feature
+        else {
+            return false;
+        };
+        if probed.probes != attached.probes() {
+            return false;
+        }
+        let mut datum = attached.datum();
+        datum.take_answers(&probed.answers);
+        let followed = crate::feature::Attached::from_datum(&datum);
+        if followed == **attached {
+            return false;
+        }
+        **attached = followed;
+        *values = feature.to_json();
+        true
+    }
+
     /// A datum made from a sketch's points or lines takes where they stand
-    /// now.
+    /// now; so does a primitive attached by a mode, which follows the
+    /// datums it stands on too.
     fn derive(
         &self,
         node: &core_document::FeatureNode,
@@ -1544,6 +1582,50 @@ impl Workbench for PartDesignWorkbench {
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
     ) -> bool {
         use core_document::{LineAnchor, PointAnchor, WorkbenchFeature};
+        if node.workbench_id.as_str() == "wb.part" {
+            let Ok(mut feature) = PartFeature::from_json(values) else {
+                return false;
+            };
+            let PartFeature::Primitive {
+                attached: Some(attached),
+                ..
+            } = &mut feature
+            else {
+                return false;
+            };
+            let mut datum = attached.datum();
+            let mut datum_values = datum.to_json();
+            if !self.derive(
+                &core_document::FeatureNode {
+                    workbench_id: core_document::WorkbenchId::from(core_document::DATUM_KIND),
+                    ..node.clone()
+                },
+                &mut datum_values,
+                values_of,
+            ) {
+                datum.follow_datums(&|id| {
+                    let data = values_of(id)?;
+                    core_document::DatumFeature::from_json(&data)
+                        .ok()
+                        .map(|d| d.frame())
+                });
+            } else if let Ok(followed) = core_document::DatumFeature::from_json(&datum_values) {
+                datum = followed;
+                datum.follow_datums(&|id| {
+                    let data = values_of(id)?;
+                    core_document::DatumFeature::from_json(&data)
+                        .ok()
+                        .map(|d| d.frame())
+                });
+            }
+            let followed = crate::feature::Attached::from_datum(&datum);
+            if followed == **attached {
+                return false;
+            }
+            **attached = followed;
+            *values = feature.to_json();
+            return true;
+        }
         if node.workbench_id.as_str() != core_document::DATUM_KIND {
             return false;
         }
@@ -1817,6 +1899,7 @@ mod body_tool {
             let pad = doc
                 .add_feature_in_body(
                     PartFeature::Primitive {
+                        attached: None,
                         refine: false,
                         kind: primitive_preset("box").unwrap(),
                         placement: kernel_api::Placement::default(),

@@ -25,6 +25,7 @@ fn registry() -> DocumentService {
 
 fn cylinder(radius: f64, height: f64) -> PartFeature {
     PartFeature::Primitive {
+        attached: None,
         kind: PrimitiveKind::Cylinder {
             radius,
             height,
@@ -691,4 +692,65 @@ fn a_sketch_attached_by_a_mode_follows_what_it_stands_on() {
         [17.0, 20.0],
         "the attached sketch went up with the top"
     );
+}
+
+/// A box attached to the pad's top face sits on it, and goes up with the
+/// top when the pad grows.
+#[test]
+fn a_primitive_attached_by_a_mode_follows_what_it_stands_on() {
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let base = doc
+        .add_feature_in_body(rect_sketch(20.0, 20.0), "base".into(), Some(body))
+        .unwrap();
+    let pad_id = doc
+        .add_feature_in_body(pad(base, 10.0), "Pad".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+    let mesh = doc.imported_geometry(body).unwrap().mesh.clone();
+    let top_id = mesh
+        .face_surfaces
+        .iter()
+        .position(|s| {
+            matches!(s, kernel_api::FaceSurface::Plane { origin, normal }
+                if normal[2] > 0.99 && (origin[2] - 10.0).abs() < 1e-3)
+        })
+        .expect("a top face");
+    let top = core_document::FaceRef {
+        point: [10.0, 10.0, 10.0],
+        normal: [0.0, 0.0, 1.0],
+        surface: None,
+        name: mesh.face_names[top_id],
+    };
+    let cube = PartFeature::Primitive {
+        kind: kernel_api::PrimitiveKind::Box {
+            length: 4.0,
+            width: 4.0,
+            height: 4.0,
+        },
+        placement: kernel_api::Placement::default(),
+        subtractive: false,
+        refine: false,
+        attached: Some(Box::new(wb_part::Attached {
+            attachment: core_document::DatumAttachment::Face {
+                face: core_document::attach::face_anchor(&top, true),
+            },
+            offset: AttachmentOffset::default(),
+        })),
+    };
+    let cube_id = doc
+        .add_feature_in_body(cube, "Cube".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(cube_id);
+    let (_, hi) = settle(&registry, &mut doc, body);
+    assert!((hi[2] - 14.0).abs() < 1e-3, "on the top: {hi:?}");
+
+    let mut data = doc.get_feature_data(pad_id).unwrap().clone();
+    data["Pad"]["length"] = serde_json::json!(20.0);
+    doc.update_feature_data(pad_id, data).unwrap();
+    doc.mark_feature_dirty(pad_id);
+    let (_, hi) = settle(&registry, &mut doc, body);
+    assert!((hi[2] - 24.0).abs() < 1e-3, "went up with the top: {hi:?}");
 }

@@ -565,6 +565,9 @@ fn primitives_build_with_expected_bounds() {
                 radius1: 8.0,
                 radius2: 5.0,
                 radius3: 3.0,
+                angle1_deg: -90.0,
+                angle2_deg: 90.0,
+                angle3_deg: 360.0,
             },
             [16.0, 10.0, 6.0],
         ),
@@ -573,6 +576,8 @@ fn primitives_build_with_expected_bounds() {
                 sides: 6,
                 circumradius: 5.0,
                 height: 7.0,
+                skew_x_deg: 0.0,
+                skew_y_deg: 0.0,
             },
             [10.0, 8.66, 7.0],
         ),
@@ -2801,4 +2806,111 @@ fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
         .expect("the extruded bore threads");
     let got = volume_of(&[block, primitive_bore, groove]).expect("the primitive's bore threads");
     assert!((got - want).abs() < want * 1e-4, "{got} against {want}");
+}
+
+/// A solid's volume and bounds.
+type Measured = (f64, ([f32; 3], [f32; 3]));
+
+/// Build `kind` at the origin: its volume and bounds.
+fn primitive_volume(kind: PrimitiveKind) -> Result<Measured, String> {
+    let ops = [SolidOp::Primitive {
+        kind,
+        placement: Placement {
+            origin: [0.0; 3],
+            x_axis: [1.0, 0.0, 0.0],
+            z_axis: [0.0, 0.0, 1.0],
+        },
+        op: BooleanOp::NewSolid,
+    }];
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .map_err(|e| e.to_string())?;
+    let volume = kernel
+        .physical_properties(&built.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    Ok((volume, built.bounds_mm.unwrap()))
+}
+
+/// An ellipsoid cut as a sphere is keeps the upper half of itself, and a
+/// quarter turn of that a quarter of it.
+#[test]
+#[ignore = "kernel: an unevenly scaled cut sphere comes out the wrong solid (ogeom-rs#93)"]
+fn an_ellipsoid_takes_a_spheres_cut() {
+    let whole = 4.0 / 3.0 * std::f64::consts::PI * 8.0 * 5.0 * 3.0;
+    let cut = |sweep: f64| {
+        primitive_volume(PrimitiveKind::Ellipsoid {
+            radius1: 8.0,
+            radius2: 5.0,
+            radius3: 3.0,
+            angle1_deg: 0.0,
+            angle2_deg: 90.0,
+            angle3_deg: sweep,
+        })
+        .unwrap()
+    };
+    let (half, (lo, hi)) = cut(360.0);
+    assert!(
+        (half - whole / 2.0).abs() < 1e-3 * whole,
+        "{half} vs {whole}"
+    );
+    assert!(
+        lo[2].abs() < 1e-3 && (hi[2] - 3.0).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
+    );
+    let (quarter, _) = cut(90.0);
+    assert!((quarter - whole / 8.0).abs() < 1e-3 * whole, "{quarter}");
+}
+
+/// Until the kernel scales a cut sphere right, the ellipsoid refuses one
+/// rather than drawing a wrong solid; whole, it builds.
+#[test]
+fn a_cut_ellipsoid_is_refused_not_wrong() {
+    let cut = primitive_volume(PrimitiveKind::Ellipsoid {
+        radius1: 2.0,
+        radius2: 1.0,
+        radius3: 1.0,
+        angle1_deg: 0.0,
+        angle2_deg: 90.0,
+        angle3_deg: 360.0,
+    });
+    if let Ok((volume, _)) = cut {
+        let expected = 2.0 / 3.0 * std::f64::consts::PI * 2.0;
+        assert!((volume - expected).abs() < 0.05 * expected, "{volume}");
+    }
+    let (whole, _) = primitive_volume(PrimitiveKind::Ellipsoid {
+        radius1: 2.0,
+        radius2: 1.0,
+        radius3: 1.0,
+        angle1_deg: -90.0,
+        angle2_deg: 90.0,
+        angle3_deg: 360.0,
+    })
+    .unwrap();
+    assert!((whole - 4.0 / 3.0 * std::f64::consts::PI * 2.0).abs() < 1e-2);
+}
+
+/// A skewed prism leans without losing volume.
+#[test]
+fn a_skewed_prism_leans() {
+    let prism = |skew: f64| {
+        primitive_volume(PrimitiveKind::Prism {
+            sides: 6,
+            circumradius: 5.0,
+            height: 7.0,
+            skew_x_deg: skew,
+            skew_y_deg: 0.0,
+        })
+        .unwrap()
+    };
+    let (upright, _) = prism(0.0);
+    let (leaning, (lo, hi)) = prism(30.0);
+    assert!((leaning - upright).abs() < 1e-6 * upright);
+    let shift = 7.0 * 30f32.to_radians().tan();
+    assert!(
+        (hi[0] - lo[0] - (10.0 + shift)).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
+    );
 }

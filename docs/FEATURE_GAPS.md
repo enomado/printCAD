@@ -166,10 +166,11 @@ and noted on its item, and the rest of the item is built around it.
 - [x] **Fixed pipe orientation** (partial, S). The section keeps its
   orientation in space. Wired; waits on a fixed pipe law in the kernel
   (ogeom-rs#90).
-- [ ] **Attachable primitives** (partial, M). Placed on a face, datum
+- [x] **Attachable primitives** (partial, M). Placed on a face, datum
   or edge and following it (`DatumAttachment` on `PartFeature::Primitive`).
-- [ ] **Primitive parameters** (partial, S). The ellipsoid's angular
-  cut-outs and the prism's skew angles.
+- [x] **Primitive parameters** (partial, S). The ellipsoid's angular
+  cut-outs and the prism's skew angles. A cut ellipsoid is refused until
+  the kernel scales a cut sphere right (ogeom-rs#93).
 
 ### Hole
 

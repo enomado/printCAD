@@ -1580,6 +1580,9 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
                 radius1: 8.0,
                 radius2: 5.0,
                 radius3: 3.0,
+                angle1_deg: -90.0,
+                angle2_deg: 90.0,
+                angle3_deg: 360.0,
             },
         ),
         (
@@ -1588,6 +1591,8 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
                 sides: 6,
                 circumradius: 5.0,
                 height: 10.0,
+                skew_x_deg: 0.0,
+                skew_y_deg: 0.0,
             },
         ),
         (
@@ -1713,16 +1718,26 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             radius1,
             radius2,
             radius3,
+            angle1_deg,
+            angle2_deg,
+            angle3_deg,
         } => {
             changed |= num(ui, radius1, "Radius 1:", false, 0.01, 1.0e6);
             changed |= num(ui, radius2, "Radius 2:", false, 0.01, 1.0e6);
             changed |= num(ui, radius3, "Radius 3:", false, 0.01, 1.0e6);
+            changed |= num(ui, angle1_deg, "Angle 1:", true, -90.0, 90.0);
+            changed |= num(ui, angle2_deg, "Angle 2:", true, -90.0, 90.0);
+            changed |= num(ui, angle3_deg, "Angle 3:", true, 1.0, 360.0);
         }
         P::Prism {
             sides,
             circumradius,
             height,
+            skew_x_deg,
+            skew_y_deg,
         } => {
+            changed |= num(ui, skew_x_deg, "Skew X:", true, -85.0, 85.0);
+            changed |= num(ui, skew_y_deg, "Skew Y:", true, -85.0, 85.0);
             ui.horizontal(|ui| {
                 label_cell(ui, "Sides");
                 changed |= ui
@@ -2329,9 +2344,48 @@ pub fn feature_editor(
             kind,
             placement,
             subtractive,
+            attached,
         } => {
             changed |= primitive_editor(ui, fx, kind);
-            changed |= placement_editor(ui, fx, placement);
+            let mut attach = attached.is_some();
+            if check_row(ui, &mut attach, "Attached")
+                .on_hover_text(
+                    "Placed by a mode on what is picked, as a datum is, and following it",
+                )
+                .changed()
+            {
+                *attached = attach.then(|| {
+                    Box::new(crate::feature::Attached {
+                        attachment: core_document::DatumAttachment::BasePlane(
+                            core_document::BasePlane::XY,
+                        ),
+                        offset: core_document::AttachmentOffset::default(),
+                    })
+                });
+                changed = true;
+            }
+            match attached {
+                Some(a) => {
+                    let mut datum = a.datum();
+                    if crate::datum_panel::attachment_editor(ui, ctx, feature_id, &mut datum) {
+                        **a = crate::feature::Attached::from_datum(&datum);
+                        changed = true;
+                    }
+                    let [x, y, n] = &mut a.offset.translation;
+                    changed |= mm_drag(ui, fx, x, "Offset X:");
+                    changed |= mm_drag(ui, fx, y, "Offset Y:");
+                    changed |= mm_drag(ui, fx, n, "Normal offset:");
+                    changed |= deg_drag(
+                        ui,
+                        fx,
+                        &mut a.offset.rotation_deg,
+                        "Rotation:",
+                        -180.0..=180.0,
+                    );
+                    changed |= check_row(ui, &mut a.offset.flip, "Flip side").changed();
+                }
+                None => changed |= placement_editor(ui, fx, placement),
+            }
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Hole { .. } => {

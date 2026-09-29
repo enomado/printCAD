@@ -993,15 +993,29 @@ pub enum PrimitiveKind {
         angle2_deg: f64,
         angle3_deg: f64,
     },
+    /// An ellipsoid, cut as a sphere is: between two latitudes about its
+    /// third axis and through a sweep round it.
     Ellipsoid {
         radius1: f64,
         radius2: f64,
         radius3: f64,
+        #[serde(default = "south_pole")]
+        angle1_deg: f64,
+        #[serde(default = "north_pole")]
+        angle2_deg: f64,
+        #[serde(default = "full_turn")]
+        angle3_deg: f64,
     },
+    /// A regular prism, its top shifted by the skew angles: leaning that
+    /// far from its axis toward its x and its y.
     Prism {
         sides: u32,
         circumradius: f64,
         height: f64,
+        #[serde(default)]
+        skew_x_deg: f64,
+        #[serde(default)]
+        skew_y_deg: f64,
     },
     /// Box with an independently sized top rectangle (zero top spans give a
     /// pyramid). Spans are along local X (`x2*`) and Z (`z2*`) at height Y.
@@ -1017,6 +1031,18 @@ pub enum PrimitiveKind {
         z2min: f64,
         z2max: f64,
     },
+}
+
+fn south_pole() -> f64 {
+    -90.0
+}
+
+fn north_pole() -> f64 {
+    90.0
+}
+
+fn full_turn() -> f64 {
+    360.0
 }
 
 /// A right-handed placement frame in world coordinates (millimetres).

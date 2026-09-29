@@ -105,50 +105,14 @@ pub fn build_tool(
             angle1_deg,
             angle2_deg,
             angle3_deg,
-        } => {
-            let full_lat = *angle1_deg <= -90.0 + FULL_EPS && *angle2_deg >= 90.0 - FULL_EPS;
-            if full_lat && is_full(*angle3_deg) {
-                make_sphere(model, frame, *radius, tol())
-                    .map(|b| b.shape)
-                    .map_err(|e| format!("sphere: {e}"))
-            } else {
-                let (a1, a2) = (angle1_deg.to_radians(), angle2_deg.to_radians());
-                if a2 <= a1 {
-                    return Err("sphere latitude range is empty".into());
-                }
-                // The band between the two latitudes, capped flat: in from
-                // the axis at the lower latitude's height, round the
-                // meridian, and back to the axis at the upper one's. At a
-                // pole the cap shrinks to nothing and is left out.
-                let p = |a: f64| [radius * a.cos(), radius * a.sin()];
-                let (p1, p2) = (p(a1), p(a2));
-                let on_axis = |pt: [f64; 2]| pt[0].abs() <= 1e-9;
-                let (below, above) = ([0.0, p1[1]], [0.0, p2[1]]);
-                let mut wire = Vec::new();
-                if !on_axis(p1) {
-                    wire.push(ProfileSegment::Line {
-                        start: below,
-                        end: p1,
-                    });
-                }
-                wire.push(ProfileSegment::Arc {
-                    start: p1,
-                    mid: p((a1 + a2) * 0.5),
-                    end: p2,
-                });
-                if !on_axis(p2) {
-                    wire.push(ProfileSegment::Line {
-                        start: p2,
-                        end: above,
-                    });
-                }
-                wire.push(ProfileSegment::Line {
-                    start: above,
-                    end: below,
-                });
-                revolve_synthetic(model, placement, wire, angle_deg3_or_full(*angle3_deg))
-            }
-        }
+        } => sphere_tool(
+            model,
+            placement,
+            *radius,
+            *angle1_deg,
+            *angle2_deg,
+            *angle3_deg,
+        ),
 
         PrimitiveKind::Torus {
             radius1,
@@ -199,10 +163,17 @@ pub fn build_tool(
             radius1,
             radius2,
             radius3,
+            angle1_deg,
+            angle2_deg,
+            angle3_deg,
         } => {
-            let unit = make_sphere(model, Frame::WORLD, 1.0, tol())
-                .map_err(|e| format!("ellipsoid sphere: {e}"))?
-                .shape;
+            let world = Placement {
+                origin: [0.0; 3],
+                x_axis: [1.0, 0.0, 0.0],
+                z_axis: [0.0, 0.0, 1.0],
+            };
+            let unit = sphere_tool(model, &world, 1.0, *angle1_deg, *angle2_deg, *angle3_deg)
+                .map_err(|e| format!("ellipsoid: {e}"))?;
             let scale = GeneralTransform {
                 linear: Matrix3::from_columns(
                     Vector::new(*radius1, 0.0, 0.0),
@@ -214,6 +185,28 @@ pub fn build_tool(
             let scaled = general_transformed_shape(model, &unit, &scale, tol())
                 .map_err(|e| format!("ellipsoid scaling: {e}"))?
                 .shape;
+            // The scaled solid must hold the volume the scaling gives the
+            // cut sphere's, worked out exactly; a solid that does not is
+            // refused rather than drawn.
+            let (a1, a2) = (angle1_deg.to_radians(), angle2_deg.to_radians());
+            let (z1, z2) = (a1.sin(), a2.sin());
+            let unit_volume = angle_deg3_or_full(*angle3_deg).to_radians() / 2.0
+                * ((z2 - z2.powi(3) / 3.0) - (z1 - z1.powi(3) / 3.0));
+            let expected = unit_volume * radius1 * radius2 * radius3;
+            let measured = ogeom::algo::volume_properties(
+                model,
+                &scaled,
+                ogeom::mesh::Deflection::default(),
+                tol(),
+            )
+            .map(|p| p.mass.abs())
+            .map_err(|e| format!("measuring the ellipsoid: {e}"))?;
+            if (measured - expected).abs() > 0.05 * expected {
+                return Err(
+                    "the kernel cannot yet scale a cut sphere into an ellipsoid; make it whole"
+                        .into(),
+                );
+            }
             let place = Transform::from_frame(&frame);
             transformed(model, &scaled, place)
                 .map(|b| b.shape)
@@ -224,6 +217,8 @@ pub fn build_tool(
             sides,
             circumradius,
             height,
+            skew_x_deg,
+            skew_y_deg,
         } => {
             if *sides < 3 {
                 return Err("prism needs at least 3 sides".into());
@@ -252,7 +247,13 @@ pub fn build_tool(
             )
             .map_err(|e| format!("prism face: {e}"))?
             .shape;
-            make_prism(model, &face, frame.z().vector() * *height, tol())
+            if skew_x_deg.abs() >= 89.9 || skew_y_deg.abs() >= 89.9 {
+                return Err("a prism's skew must be below 90 degrees".into());
+            }
+            let rise = frame.z().vector() * *height
+                + frame.x().vector() * (*height * skew_x_deg.to_radians().tan())
+                + frame.y().vector() * (*height * skew_y_deg.to_radians().tan());
+            make_prism(model, &face, rise, tol())
                 .map(|b| b.shape)
                 .map_err(|e| format!("prism extrusion: {e}"))
         }
@@ -306,6 +307,61 @@ pub fn build_tool(
                     .map_err(|e| format!("wedge loft: {e}"))
             }
         }
+    }
+}
+
+/// A sphere of `radius` at `placement`, cut between latitudes `angle1_deg`
+/// and `angle2_deg` and swept `angle3_deg` round its axis.
+fn sphere_tool(
+    model: &mut Model,
+    placement: &Placement,
+    radius: f64,
+    angle1_deg: f64,
+    angle2_deg: f64,
+    angle3_deg: f64,
+) -> Result<Shape, String> {
+    let frame = placement_frame(placement)?;
+    let full_lat = angle1_deg <= -90.0 + FULL_EPS && angle2_deg >= 90.0 - FULL_EPS;
+    if full_lat && is_full(angle3_deg) {
+        make_sphere(model, frame, radius, tol())
+            .map(|b| b.shape)
+            .map_err(|e| format!("sphere: {e}"))
+    } else {
+        let (a1, a2) = (angle1_deg.to_radians(), angle2_deg.to_radians());
+        if a2 <= a1 {
+            return Err("sphere latitude range is empty".into());
+        }
+        // The band between the two latitudes, capped flat: in from
+        // the axis at the lower latitude's height, round the
+        // meridian, and back to the axis at the upper one's. At a
+        // pole the cap shrinks to nothing and is left out.
+        let p = |a: f64| [radius * a.cos(), radius * a.sin()];
+        let (p1, p2) = (p(a1), p(a2));
+        let on_axis = |pt: [f64; 2]| pt[0].abs() <= 1e-9;
+        let (below, above) = ([0.0, p1[1]], [0.0, p2[1]]);
+        let mut wire = Vec::new();
+        if !on_axis(p1) {
+            wire.push(ProfileSegment::Line {
+                start: below,
+                end: p1,
+            });
+        }
+        wire.push(ProfileSegment::Arc {
+            start: p1,
+            mid: p((a1 + a2) * 0.5),
+            end: p2,
+        });
+        if !on_axis(p2) {
+            wire.push(ProfileSegment::Line {
+                start: p2,
+                end: above,
+            });
+        }
+        wire.push(ProfileSegment::Line {
+            start: above,
+            end: below,
+        });
+        revolve_synthetic(model, placement, wire, angle_deg3_or_full(angle3_deg))
     }
 }
 

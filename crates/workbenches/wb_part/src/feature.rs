@@ -330,6 +330,49 @@ impl LoftSection {
     }
 }
 
+/// A feature placed by an attachment, as a datum is.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Attached {
+    pub attachment: core_document::DatumAttachment,
+    #[serde(default)]
+    pub offset: core_document::AttachmentOffset,
+}
+
+impl Attached {
+    /// The datum plane the attachment makes.
+    pub fn datum(&self) -> core_document::DatumFeature {
+        core_document::DatumFeature {
+            shape: core_document::DatumShape::Plane { size: 1.0 },
+            attachment: self.attachment,
+            offset: self.offset,
+        }
+    }
+
+    /// What the attachment asks of the body's solid to follow it.
+    pub fn probes(&self) -> Vec<kernel_api::ShapeProbe> {
+        self.datum().probes()
+    }
+
+    /// Where the attachment puts the feature: its frame as a placement.
+    pub fn placement(&self) -> kernel_api::Placement {
+        let frame = self.datum().frame();
+        kernel_api::Placement {
+            origin: frame.origin.map(f64::from),
+            x_axis: frame.x_axis.map(f64::from),
+            z_axis: frame.normal.map(f64::from),
+        }
+    }
+
+    /// The attachment as `datum` has it after following what it stands
+    /// on.
+    pub fn from_datum(datum: &core_document::DatumFeature) -> Self {
+        Self {
+            attachment: datum.attachment,
+            offset: datum.offset,
+        }
+    }
+}
+
 /// A pad's or pocket's less used settings.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -1175,6 +1218,10 @@ pub enum PartFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// Placed as a datum is, by a mode on what was picked, in place of
+        /// `placement`, and following what it stands on.
+        #[serde(default)]
+        attached: Option<Box<Attached>>,
     },
     /// Standards-aware drilled cuts at every circle center of a sketch.
     Hole {
@@ -1731,6 +1778,17 @@ impl WorkbenchFeature for PartFeature {
                 }
             }
         }
+        if let PartFeature::Primitive {
+            attached: Some(attached),
+            ..
+        } = self
+        {
+            for reference in attached.attachment.datums() {
+                if !deps.contains(&reference) {
+                    deps.push(reference);
+                }
+            }
+        }
         for borrow in self.borrows() {
             if !deps.contains(&borrow) {
                 deps.push(borrow);
@@ -1814,11 +1872,16 @@ pub fn primitive_preset(shape: &str) -> Option<kernel_api::PrimitiveKind> {
             radius1: 8.0,
             radius2: 5.0,
             radius3: 3.0,
+            angle1_deg: -90.0,
+            angle2_deg: 90.0,
+            angle3_deg: 360.0,
         },
         "prism" => P::Prism {
             sides: 6,
             circumradius: 5.0,
             height: 10.0,
+            skew_x_deg: 0.0,
+            skew_y_deg: 0.0,
         },
         "wedge" => P::Wedge {
             xmin: 0.0,
