@@ -30,6 +30,8 @@ const CONSTRUCTION_DASH: (f32, f32) = (5.0, 4.0);
 /// Dash pattern for guides: the selection box, transform anchors.
 const GUIDE_DASH: (f32, f32) = (6.0, 4.0);
 const CROSSHAIR_PX: f32 = 20.0;
+/// The ring round a loose end.
+const LOOSE_END_PX: f32 = 7.0;
 
 /// Everything the sketch draws in one frame: lines, and point or icon
 /// marks on top of them.
@@ -1414,6 +1416,29 @@ fn push_selection_box(
 /// `selection_box` is an in-progress box selection (anchor, current corner)
 /// in sketch coordinates; `active_tool`/`snap_tol` drive tool-specific
 /// hover feedback (the trim tool highlights the span a click would remove).
+/// A ring in the conflict colour round every loose end of the profile's
+/// curves: the points the profile leaves out with their curves.
+fn push_loose_ends(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    sketch: &Sketch,
+) {
+    let radius = LOOSE_END_PX * proj.units_per_px();
+    for id in crate::profile::loose_ends(sketch) {
+        if let Some(at) = sketch.point_position(id) {
+            push_polyline(
+                &mut out.lines,
+                proj,
+                circle_points(at, radius),
+                pal.conflict,
+                1.5,
+                false,
+            );
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_overlays(
     proj: &SketchProjector,
@@ -1461,6 +1486,12 @@ pub fn build_overlays(
             }
             push_element(&mut out, proj, pal, sketch, geom, style, &centers);
         }
+    }
+
+    // Where the profile stops: each loose end ringed, while no shape is
+    // being drawn (mid-shape, the end drawn from is always loose).
+    if tool_state.is_idle() {
+        push_loose_ends(&mut out, proj, pal, sketch);
     }
 
     if let Some((a, b)) = selection_box {

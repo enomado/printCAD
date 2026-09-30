@@ -274,6 +274,10 @@ struct GlyphHit {
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 /// The angle a drawn segment keeps to with Shift held.
 const ANGLE_STEP_DEG: f32 = 15.0;
+/// How far the shaded regions stand off the sketch plane, in mm.
+const REGION_LIFT_MM: f64 = 0.01;
+/// How much of the geometry colour the shaded regions take.
+const REGION_OPACITY: f32 = 0.12;
 
 /// Sketch workbench: 2D drawing with constraints.
 /// The switches on the sketcher's panel and Preferences page.
@@ -316,6 +320,8 @@ pub struct SketchOptions {
     /// Editing a sketch cuts the view at its plane unless the sketch was
     /// set otherwise; off, only a sketch switched on is cut.
     pub section_on_open: bool,
+    /// The regions the profile closes are shaded while editing.
+    pub shade_regions: bool,
 }
 
 impl Default for SketchOptions {
@@ -337,6 +343,7 @@ impl Default for SketchOptions {
             spline_comb: false,
             spline_knots: false,
             section_on_open: false,
+            shade_regions: true,
         }
     }
 }
@@ -363,6 +370,9 @@ pub(crate) struct SketchPicker {
 
 #[derive(Default)]
 pub struct SketchWorkbench {
+    /// The shaded regions of the sketch being edited, by the profile they
+    /// were meshed from.
+    regions: std::cell::RefCell<Option<(u64, kernel_api::TriMesh)>>,
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
     /// The first key of each of the workbench's tools and actions, as the
@@ -3395,6 +3405,8 @@ impl Workbench for SketchWorkbench {
                     .hint("Endpoints, midpoints and intersections attract the cursor"),
                 PrefRow::toggle("Section view on open", &mut self.options.section_on_open)
                     .hint("Editing a sketch cuts the view at its plane; Section view turns it off for one sketch"),
+                PrefRow::toggle("Shade closed regions", &mut self.options.shade_regions)
+                    .hint("While editing, what the profile closes is shaded: what a pad takes"),
             ],
             filter,
         );
@@ -3772,6 +3784,57 @@ impl Workbench for SketchWorkbench {
                 .map(|c| format!("X {:.2} · Y {:.2} mm", c.x, c.y)),
             mode: Some("Sketch edit mode".to_string()),
         })
+    }
+
+    /// The regions the edited sketch's profile closes, shaded on its
+    /// plane: what a feature swept from it takes, holes open.
+    fn get_overlay_meshes(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::OverlayMesh> {
+        if !self.options.shade_regions {
+            return Vec::new();
+        }
+        let (Some(feature), Some(kernel)) = (self.get_active_sketch(ctx), ctx.kernel) else {
+            return Vec::new();
+        };
+        let Ok(wires) = profile::extract_wires(&feature.sketch) else {
+            return Vec::new();
+        };
+        let mut plane = profile::plane_of(&feature.plane);
+        // A hair off the plane, toward its normal, so a face it is drawn
+        // on does not fight it.
+        for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
+            *o += n * REGION_LIFT_MM;
+        }
+        let profile = kernel_api::Profile { plane, wires };
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            serde_json::to_string(&profile)
+                .unwrap_or_default()
+                .hash(&mut hasher);
+            hasher.finish()
+        };
+        let mut cached = self.regions.borrow_mut();
+        if cached.as_ref().is_none_or(|(k, _)| *k != key) {
+            let mesh = kernel.profile_mesh(&profile).unwrap_or_default();
+            *cached = Some((key, mesh));
+        }
+        let Some((_, mesh)) = cached.as_ref() else {
+            return Vec::new();
+        };
+        if mesh.indices.is_empty() {
+            return Vec::new();
+        }
+        vec![core_document::OverlayMesh {
+            mesh: mesh.clone(),
+            color: ctx.sketch_palette.geometry,
+            wireframe: false,
+            opacity: REGION_OPACITY,
+            on_top: false,
+        }]
     }
 
     fn get_screen_space_overlays(

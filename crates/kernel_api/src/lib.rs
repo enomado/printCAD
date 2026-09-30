@@ -1753,6 +1753,12 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("reading DXF".into()))
     }
 
+    /// The regions `profile` encloses, meshed where they stand in its
+    /// plane: what a feature swept from it takes, holes left open.
+    fn profile_mesh(&self, _profile: &Profile) -> KernelResult<TriMesh> {
+        Err(KernelError::Unsupported("profile mesh".into()))
+    }
+
     /// The medial axis of each region of `profile`, held to `tolerance`
     /// (mm), in the profile plane's own 2D coordinates.
     fn medial_axis(&self, _profile: &Profile, _tolerance: f64) -> KernelResult<Vec<MedialRegion>> {

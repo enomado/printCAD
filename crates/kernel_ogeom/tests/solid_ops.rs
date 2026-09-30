@@ -1548,6 +1548,38 @@ fn a_spline_edge_projects_as_its_spline() {
     assert!(forward || backward, "{control_points:?}");
 }
 
+/// A profile's regions mesh where they stand, holes left open: a 10 × 10
+/// square with a 4 × 4 hole covers 84 mm², all of it in the plane.
+#[test]
+fn a_profile_meshes_to_its_regions() {
+    use kernel_api::KernelQueries;
+    let profile = kernel_api::Profile {
+        plane: ProfilePlane {
+            origin: [0.0, 0.0, 5.0],
+            ..xy_plane()
+        },
+        wires: vec![
+            rect_wire(0.0, 0.0, 10.0, 10.0),
+            rect_wire(3.0, 3.0, 7.0, 7.0),
+        ],
+    };
+    let mesh = kernel_ogeom::QUERIES
+        .profile_mesh(&profile)
+        .expect("the profile meshes");
+    let area: f64 = mesh
+        .indices
+        .chunks(3)
+        .map(|t| {
+            let p = |i: u32| mesh.positions[i as usize].map(f64::from);
+            let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+            let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - a[0], c[1] - a[1]]);
+            (u[0] * v[1] - u[1] * v[0]).abs() / 2.0
+        })
+        .sum();
+    assert!((area - 84.0).abs() < 1e-3, "area {area}");
+    assert!(mesh.positions.iter().all(|p| (p[2] - 5.0).abs() < 1e-5));
+}
+
 /// A half space bounded by a plane, the material on `inside`'s side.
 fn half_space_at(
     model: &mut ogeom::topo::Model,

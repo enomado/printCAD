@@ -611,6 +611,92 @@ fn overlays_are_generated_while_editing() {
     assert!(dots >= 4, "corner points drawn as dots, got {dots}");
 }
 
+/// Counts the profiles it is asked to mesh, and meshes each as one triangle.
+struct CountingRegions(std::sync::atomic::AtomicUsize);
+
+static REGIONS: CountingRegions = CountingRegions(std::sync::atomic::AtomicUsize::new(0));
+
+impl kernel_api::KernelQueries for CountingRegions {
+    fn project_edge(
+        &self,
+        _brep: &[u8],
+        _near: [f64; 3],
+        _plane: &kernel_api::ProfilePlane,
+    ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+        Err(kernel_api::KernelError::Unsupported("projection".into()))
+    }
+
+    fn profile_mesh(
+        &self,
+        _profile: &kernel_api::Profile,
+    ) -> kernel_api::KernelResult<kernel_api::TriMesh> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(kernel_api::TriMesh {
+            positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        })
+    }
+}
+
+/// A closed outline is shaded while it is edited, meshed once for as long
+/// as it stays the same; an open one is not.
+#[test]
+fn closed_regions_are_shaded_while_editing() {
+    let kernel = &REGIONS;
+    let shaded = |h: &mut Harness| {
+        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(h.vp);
+        ctx.active_document_object = h.active_object;
+        ctx.kernel = Some(kernel);
+        h.wb.get_overlay_meshes(&ctx, h.active_object).len()
+    };
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    assert_eq!(shaded(&mut h), 0, "nothing closes");
+    h.click(0.0, 5.0, "sketch.rect");
+    h.click(10.0, 12.0, "sketch.rect");
+    assert_eq!(shaded(&mut h), 1);
+    assert_eq!(shaded(&mut h), 1);
+    let asked = kernel.0.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(asked, 1, "meshed once while the profile stays");
+}
+
+/// A loose end is ringed in the conflict colour once no shape is being
+/// drawn; a closed outline has none.
+#[test]
+fn loose_ends_are_ringed_between_shapes() {
+    let rings = |h: &mut Harness| {
+        let conflict = core_document::SketchPalette::default().conflict;
+        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(h.vp);
+        ctx.active_document_object = h.active_object;
+        h.wb.get_screen_space_overlays(&ctx, h.active_object)
+            .iter()
+            .filter(|o| o.color == conflict)
+            .count()
+            // A ring is drawn in 48 segments.
+            / 48
+    };
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    assert_eq!(rings(&mut h), 0, "mid-shape, nothing is ringed");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    assert_eq!(rings(&mut h), 2, "the lone line's ends are ringed");
+
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.click(10.0, 8.0, "sketch.rect");
+    assert_eq!(rings(&mut h), 0, "a closed outline has no loose end");
+}
+
 #[test]
 fn construction_geometry_renders_dashed() {
     let mut h = Harness::new();

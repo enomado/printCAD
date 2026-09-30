@@ -4,7 +4,7 @@
 use kernel_api::{
     CentreLine, FaceProbe, KernelError, KernelQueries, KernelResult, MedialPath, MedialRegion,
     Narrowest, Overlap, ProbeAnswer, Profile, ProfilePlane, ProjectedEdge, ShapeProbe,
-    TessellationSettings,
+    TessellationSettings, TriMesh,
 };
 use ogeom::algo::{MedialGraph, linear_properties, medial_graph, volume_properties};
 use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_plane};
@@ -227,6 +227,24 @@ impl KernelQueries for OgeomQueries {
 
     fn read_dxf(&self, text: &str) -> KernelResult<kernel_api::Drawing2d> {
         crate::dxf::read_dxf(text)
+    }
+
+    fn profile_mesh(&self, profile: &Profile) -> KernelResult<TriMesh> {
+        let mut model = Model::new();
+        let built = crate::profile::build_profile(&mut model, profile).map_err(other)?;
+        let detail = TessellationSettings {
+            generate_boundary_edges: false,
+            ..TessellationSettings::default()
+        };
+        let mut out = TriMesh::default();
+        for face in &built.faces {
+            let mesh = tess::mesh_shape(&model, face, &[], &detail)?;
+            let base = out.positions.len() as u32;
+            out.positions.extend_from_slice(&mesh.positions);
+            out.normals.extend_from_slice(&mesh.normals);
+            out.indices.extend(mesh.indices.iter().map(|i| i + base));
+        }
+        Ok(out)
     }
 
     fn medial_axis(&self, profile: &Profile, tolerance: f64) -> KernelResult<Vec<MedialRegion>> {
