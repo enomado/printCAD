@@ -145,6 +145,9 @@ pub(crate) struct DocumentSession {
     /// changes a feature every frame, only the latest shape is built.
     pub builds_in_flight:
         std::collections::HashMap<Uuid, Option<crate::app::recompute::QueuedBuild>>,
+    /// Bodies whose build out on the kernel thread no longer stands for
+    /// their history (it emptied meanwhile): what lands is left unused.
+    pub stale_builds: std::collections::HashSet<Uuid>,
     /// Bodies whose new shape is being read, and the asset each failed to
     /// read from, which is not tried again.
     pub shapes_in_flight: std::collections::HashSet<Uuid>,
@@ -237,6 +240,7 @@ impl DocumentSession {
             pick_depths: None,
             repairs_in_flight: Default::default(),
             builds_in_flight: Default::default(),
+            stale_builds: Default::default(),
             shapes_in_flight: Default::default(),
             shapes_failed: Default::default(),
             solids_in_flight: Default::default(),

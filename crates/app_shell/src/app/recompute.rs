@@ -17,6 +17,7 @@ impl PrintCadApp {
         // building lost its answer (it left the tab while it built), and
         // what waits for it goes now.
         if self.kernel_worker.in_flight() == 0 && !self.session.builds_in_flight.is_empty() {
+            self.session.stale_builds.clear();
             let waiting: Vec<_> = self.session.builds_in_flight.drain().collect();
             for (body, next) in waiting {
                 if let Some(next) = next {
@@ -29,6 +30,11 @@ impl PrintCadApp {
             self.session.document.clear_body_feature_errors(body_id);
             match job.plan {
                 Ok(plan) if plan.ops.is_empty() => {
+                    // A build still out is of a history that is gone.
+                    if let Some(waiting) = self.session.builds_in_flight.get_mut(&body_id.0) {
+                        *waiting = None;
+                        self.session.stale_builds.insert(body_id.0);
+                    }
                     // Only geometry the features produced is cleared; an
                     // imported solid outlives an empty history.
                     if !self.session.document.body_solid_is_imported(body_id) {
@@ -139,13 +145,32 @@ impl PrintCadApp {
         }
     }
 
-    /// Put every body showing a preview back to its whole solid.
+    /// Put every body showing a preview back to its whole solid. When the
+    /// previewed feature is gone (its task was cancelled), that solid is
+    /// not the body's any more: the body is built again from its history.
     pub(crate) fn end_feature_previews(&mut self) {
+        let gone = self
+            .session
+            .preview_feature
+            .is_some_and(|f| self.session.document.get_feature_meta(f).is_none());
         for (body, preview) in std::mem::take(&mut self.session.previews) {
-            if self.session.document.bodies().iter().any(|b| b.id == body) {
+            if !self.session.document.bodies().iter().any(|b| b.id == body) {
+                continue;
+            }
+            if gone {
+                self.registry
+                    .invalidate_body(&mut self.session.document, body);
+            } else {
                 store_built_solid(&mut self.session.document, body, preview.full);
             }
         }
+    }
+
+    /// A body's build failed while it showed a preview: the tool drawn is
+    /// of an earlier build, so it goes, and the body keeps showing itself
+    /// without the feature.
+    pub(crate) fn drop_failed_preview(&mut self, body: core_document::BodyId) {
+        self.session.previews.remove(&body);
     }
 
     /// A build that came with the edited feature's preview: the body stands

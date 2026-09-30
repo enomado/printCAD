@@ -758,6 +758,11 @@ impl PrintCadApp {
     /// Design's "New Sketch"), jump back to it.
     pub(crate) fn finish_active_workbench_editing(&mut self) {
         let wb_id = self.session.active_workbench.0.clone();
+        let edited = self
+            .registry
+            .workbench(&wb_id)
+            .ok()
+            .and_then(|wb| wb.editing_feature());
         let params = self.interaction_ctx_params();
         if let Some(((), outcome)) =
             self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx))
@@ -771,6 +776,16 @@ impl PrintCadApp {
             && previous != self.session.active_workbench
         {
             self.switch_workbench_for_flow(previous.0);
+            // Back from an edit session, what was edited stays selected, so
+            // the next tool takes it without a click in the tree. The body's
+            // tip stays where it is.
+            if let Some(id) = edited
+                && self.session.document.get_feature_meta(id).is_some()
+            {
+                self.session.tree_selection = Some(TreeItemId::Feature(id));
+                self.session.active_document_object = Some(id);
+                self.session.last_select_click = None;
+            }
         }
     }
 

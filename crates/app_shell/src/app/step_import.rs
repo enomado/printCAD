@@ -110,7 +110,12 @@ impl PrintCadApp {
         if let KernelResponse::SolidBuilt { body_id, .. }
         | KernelResponse::SolidFailed { body_id, .. } = &response
         {
+            let stale = self.session.stale_builds.remove(body_id);
             self.build_landed(*body_id);
+            // Built from a history the body no longer has.
+            if stale {
+                return;
+            }
         }
         {
             match response {
@@ -285,6 +290,7 @@ impl PrintCadApp {
                         app_log::info(format!("Rebuild of `{name}` cancelled"));
                         return;
                     }
+                    self.drop_failed_preview(BodyId(body_id));
                     // Pin the failure on the culprit feature; the panel and
                     // tree surface it. Downstream keeps the last good solid.
                     if let Some(feature) = failed_feature {
