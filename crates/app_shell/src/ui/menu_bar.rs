@@ -226,6 +226,9 @@ pub fn draw_menu_bar(
                             {
                                 commands.push(UiCommand::CloseTab(active));
                             }
+                            if item(ui, "Reopen closed tab", key("tab.reopen")) {
+                                commands.push(UiCommand::ReopenTab);
+                            }
                             ui.separator();
                             if inputs.screen == Screen::Start {
                                 if item(ui, "Workspace", None) {

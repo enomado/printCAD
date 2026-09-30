@@ -123,6 +123,8 @@ pub enum UiCommand {
     ShowWorkspace,
     /// A blank tab, on the start page.
     NewTab,
+    /// Open again the file of the last tab closed.
+    ReopenTab,
     CloseTab(uuid::Uuid),
     SelectTab(uuid::Uuid),
     /// The next (`1`) or previous (`-1`) tab, wrapping.

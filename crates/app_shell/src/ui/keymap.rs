@@ -26,6 +26,7 @@ pub enum HostAction {
     SendToSlicer,
     Quit,
     NewTab,
+    ReopenTab,
     CloseTab,
     NextTab,
     PreviousTab,
@@ -271,6 +272,13 @@ const HOST: &[HostSpec] = {
             "Close tab",
             "Tabs",
             &["Ctrl+W"],
+        )),
+        anywhere(spec(
+            ReopenTab,
+            "tab.reopen",
+            "Reopen closed tab",
+            "Tabs",
+            &["Ctrl+Shift+T"],
         )),
         anywhere(spec(NextTab, "tab.next", "Next tab", "Tabs", &["Ctrl+Tab"])),
         anywhere(spec(
@@ -776,6 +784,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         SendToSlicer => C(UiCommand::File(FileCommand::SendToSlicer)),
         Quit => C(UiCommand::Quit),
         NewTab => C(UiCommand::NewTab),
+        ReopenTab => C(UiCommand::ReopenTab),
         CloseTab => match active_tab {
             Some(tab) => C(UiCommand::CloseTab(tab)),
             None => HostOutcome::Nothing,

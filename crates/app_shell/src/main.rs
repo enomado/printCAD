@@ -316,6 +316,9 @@ struct PrintCadApp {
     script_rebuild: Option<app::scripts::RebuildWait>,
     /// A recording of what is done through the UI, while one is on.
     recording: Option<scripting::Recorder>,
+    /// The files of the tabs closed, the latest last: what Reopen closed
+    /// tab opens again.
+    closed_files: Vec<PathBuf>,
     /// The MCP server agents reach the document through.
     mcp: Option<app::mcp::McpServer>,
     /// Changes agents asked for, waiting for the user's OK.
@@ -431,6 +434,7 @@ impl PrintCadApp {
             script_runs: Default::default(),
             script_rebuild: None,
             recording: None,
+            closed_files: Vec::new(),
             mcp: None,
             approvals: Vec::new(),
             assistant_attention: false,

@@ -472,8 +472,8 @@ fn for_agents(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
             "it closes a document's tab, and with it the chats working on that document; \
              only the user closes tabs",
         ),
-        New | Open | SaveAs | Import | Export | SendToSlicer | Undo | Redo | NewTab | NextTab
-        | PreviousTab => spec.agent_always_asks(),
+        New | Open | SaveAs | Import | Export | SendToSlicer | Undo | Redo | NewTab | ReopenTab
+        | NextTab | PreviousTab => spec.agent_always_asks(),
         _ => spec,
     }
 }

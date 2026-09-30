@@ -10,6 +10,9 @@ use crate::app::session::{DocumentSession, TabSlot};
 use crate::log_panel as app_log;
 use crate::ui::{Screen, TabInfo};
 
+/// How many closed tabs Reopen closed tab remembers.
+const CLOSED_KEPT: usize = 20;
+
 impl PrintCadApp {
     /// A fresh Untitled session, as a new tab would start.
     pub(crate) fn new_session(&self, screen: Screen) -> DocumentSession {
@@ -120,6 +123,24 @@ impl PrintCadApp {
     /// Close tab `index`, saving or discarding its edits as the user
     /// decides. `false` when they cancel. The last tab closing leaves a
     /// blank one behind.
+    /// Open again the file of the last tab closed that is not open now and
+    /// still there.
+    pub(crate) fn reopen_closed_tab(&mut self) {
+        while let Some(file) = self.closed_files.pop() {
+            let open = self.session.current_file.as_ref() == Some(&file)
+                || self.tabs.iter().any(|slot| {
+                    slot.parked
+                        .as_ref()
+                        .is_some_and(|s| s.current_file.as_ref() == Some(&file))
+                });
+            if !open && file.exists() {
+                self.open_document_at(file);
+                return;
+            }
+        }
+        app_log::info("No closed tab to reopen");
+    }
+
     pub(crate) fn close_tab_interactive(&mut self, index: usize) -> bool {
         if index >= self.tabs.len() {
             return false;
@@ -158,6 +179,13 @@ impl PrintCadApp {
         self.chats.retain(|c| c.tab != closing.tab);
         self.carry_viewport_from(&closing);
         app_log::info(format!("Closed `{}`", closing.document.name()));
+        if let Some(file) = &closing.current_file {
+            self.closed_files.retain(|f| f != file);
+            self.closed_files.push(file.clone());
+            if self.closed_files.len() > CLOSED_KEPT {
+                self.closed_files.remove(0);
+            }
+        }
         closing.server.flush();
         drop(closing);
         self.tabs.remove(index);

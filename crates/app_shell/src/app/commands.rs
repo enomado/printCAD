@@ -422,6 +422,7 @@ impl PrintCadApp {
                 UiCommand::ShowStartPage => intents.show_start_page = true,
                 UiCommand::ShowWorkspace => intents.show_workspace = true,
                 UiCommand::NewTab => intents.new_tab = true,
+                UiCommand::ReopenTab => self.reopen_closed_tab(),
                 UiCommand::CloseTab(tab) => intents.close_tab = Some(tab),
                 UiCommand::SelectTab(tab) => intents.select_tab = Some(tab),
                 UiCommand::CycleTab(delta) => intents.cycle_tab = Some(delta),
