@@ -1047,8 +1047,14 @@ impl UiLayer {
             active_tool = ActiveTool::default();
         }
 
-        self.state
-            .handle_platform_output(window, full_output.platform_output.clone());
+        // While work runs away from the window (what spins in the status
+        // bar), the pointer says so where nothing else sets it.
+        let mut platform_output = full_output.platform_output.clone();
+        platform_output.cursor_icon = working_cursor(
+            platform_output.cursor_icon,
+            pending_imports > 0 || pending_document_open > 0 || script_running.is_some(),
+        );
+        self.state.handle_platform_output(window, platform_output);
         let primitives = self
             .ctx
             .tessellate(full_output.shapes.clone(), full_output.pixels_per_point);
@@ -1119,6 +1125,17 @@ impl UiLayer {
     }
 }
 
+/// The pointer while work runs: the system's busy-in-the-background
+/// arrow over anything showing the plain arrow; a text field's caret, a
+/// grip's hand and the like stay.
+fn working_cursor(cursor: egui::CursorIcon, working: bool) -> egui::CursorIcon {
+    if working && cursor == egui::CursorIcon::Default {
+        egui::CursorIcon::Progress
+    } else {
+        cursor
+    }
+}
+
 /// Turn a panel hook's write-backs into commands. A feature the hook
 /// created becomes the tree selection so the host's active object follows;
 /// every request the hook made goes to the host as it is.
@@ -1141,3 +1158,26 @@ fn apply_writeback(
 }
 
 pub use feature_tree::{TreeFeatureCommand, TreeItemId};
+
+#[cfg(test)]
+mod working_cursor_tests {
+    use egui::CursorIcon;
+
+    /// While work runs the plain arrow becomes the busy arrow; a cursor a
+    /// widget chose stays; idle, nothing changes.
+    #[test]
+    fn the_pointer_shows_work_running() {
+        assert_eq!(
+            super::working_cursor(CursorIcon::Default, true),
+            CursorIcon::Progress
+        );
+        assert_eq!(
+            super::working_cursor(CursorIcon::Text, true),
+            CursorIcon::Text
+        );
+        assert_eq!(
+            super::working_cursor(CursorIcon::Default, false),
+            CursorIcon::Default
+        );
+    }
+}
