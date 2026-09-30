@@ -109,6 +109,7 @@ Every shortcut can be changed in Preferences › Keyboard. The defaults:
 | Cut, Copy, Paste sketch geometry or features | Ctrl+X, Ctrl+C, Ctrl+V |
 | Preferences | Ctrl+, |
 | Recompute all | Ctrl+R |
+| Repeat the last tool | Shift+Space |
 | Delete the selected tree row | Delete |
 | Show or hide the selected tree row | Space |
 | Rename the selected tree row | F2 |
@@ -133,7 +134,8 @@ what was there.
 
 - A feature: Edit, Rename, its body's Appearance and Placement, Suppress,
   Hide, Set as tip, Move up, Move down, Move after (the task lists the
-  body's features to click), Freeze body, Cut, Copy, Paste, Delete, Copy
+  body's features to click; a feature row also drags to its place: above
+  a row's middle it goes before it, below it after), Freeze body, Cut, Copy, Paste, Delete, Copy
   formulas and Paste formulas (onto a feature of the same kind),
   Recompute, Send to console, Properties.
 - A body: Select, Rename, Hide, Show only this, Show all, Appearance,
@@ -141,8 +143,13 @@ what was there.
   shows FROZEN), Make unselectable (clicks in the view pass through it),
   Linked copy, Select the original of a copy, Cut, Copy, Paste, Delete,
   Recompute, Send to console, Properties.
-- In the view, the body's entries, and Face colour for the face under the
-  pointer.
+- In the view, Repeat for the last tool started, Look at (turns the view
+  square to the face under the pointer), the body's entries, and Face
+  colour for that face.
+
+The pick button at the view toolbar's right end says what a click in the
+view takes: faces and edges (the default), faces only, edges only, or
+whole bodies.
 
 The Appearance task holds the body's colour (a palette, your own colours,
 which you keep or forget from the custom colour picker and which every
@@ -173,6 +180,13 @@ A plain letter picks a tool; Shift and a letter picks its partner.
 | Horizontal, vertical distance | Shift+L, Shift+I |
 
 While a length is being typed, number keys go to the length.
+
+Drawing lines, press on the end the line tool draws from and drag: the
+segment is an arc tangent to the line before it, and the tool goes on
+with lines from its end. While a sketch is edited, what its profile
+closes is shaded (what a pad takes, holes open; Preferences › Sketcher
+turns it off), and a curve's loose end, which the profile leaves out,
+has a red ring once no shape is being drawn.
 
 | Design | Keys |
 | --- | --- |

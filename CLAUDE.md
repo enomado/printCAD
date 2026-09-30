@@ -212,6 +212,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
 - `workbenches/wb_sketch`: sketcher: `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
+  the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
+  the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
+  the profile's regions shaded while editing (`get_overlay_meshes` over
+  `KernelQueries::profile_mesh`, cached by profile) and loose ends ringed,
   `profile.rs` (closed-wire extraction), `overlay.rs` (screen-space rendering
   while editing), `glyphs.rs` (constraint icons and dimension layouts),
   `constrain.rs` (which constraint a toolbar action creates for the
