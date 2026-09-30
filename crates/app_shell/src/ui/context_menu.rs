@@ -112,6 +112,10 @@ pub fn draw(
                                 commands.push(UiCommand::ConvertToSolid(vec![menu.body]));
                                 commands.push(UiCommand::CloseViewportMenu);
                             }
+                            if document.can_refine(menu.body) && item(ui, "Refine shape") {
+                                commands.push(UiCommand::RefineShapes(vec![menu.body]));
+                                commands.push(UiCommand::CloseViewportMenu);
+                            }
                             if item(ui, "Hide") {
                                 // An imported part hides as its row does; any other
                                 // body hides itself.

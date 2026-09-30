@@ -113,6 +113,9 @@ struct TreeNode {
     /// Mesh bodies at or below this row not yet sent for conversion: what
     /// the row's "Convert to solid" entry acts on.
     convertible: Vec<BodyId>,
+    /// Converted solids at or below this row still in facets, not yet sent
+    /// to be refined: what the row's "Refine shape" entry acts on.
+    refinable: Vec<BodyId>,
     /// The row is a mesh body: its icon takes the mesh colour.
     mesh: bool,
     /// A feature from a package that is not loaded: the package's id and
@@ -370,6 +373,7 @@ fn build_feature_node(
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        refinable: Vec::new(),
         needs_package: registry
             .feature_info(node)
             .is_none()
@@ -423,6 +427,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 defect: false,
                 repairable: Vec::new(),
                 convertible: Vec::new(),
+                refinable: Vec::new(),
                 mesh: false,
                 needs_package: None,
                 is_tip: false,
@@ -554,6 +559,7 @@ fn build_body_node_blank() -> TreeNode {
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        refinable: Vec::new(),
         needs_package: None,
         mesh: false,
         is_tip: false,
@@ -585,6 +591,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        refinable: Vec::new(),
         needs_package: None,
         mesh: false,
         is_tip: false,
@@ -660,7 +667,8 @@ fn mark_shape_health(nodes: &mut [TreeNode], document: &Document) -> usize {
 }
 
 /// Say which rows are meshes, and gather the ones a row's "Convert to solid"
-/// acts on: its own body and every mesh body below it not yet sent.
+/// acts on (its own body and every mesh body below it not yet sent) and
+/// the converted solids its "Refine shape" acts on.
 fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
     for node in nodes {
         mark_meshes(&mut node.children, document);
@@ -690,6 +698,19 @@ fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
         convertible.sort();
         convertible.dedup();
         node.convertible = convertible;
+        let mut refinable: Vec<BodyId> = node
+            .children
+            .iter()
+            .flat_map(|c| c.refinable.iter().copied())
+            .collect();
+        if let Some(body) = node.body
+            && document.can_refine(body)
+        {
+            refinable.push(body);
+        }
+        refinable.sort();
+        refinable.dedup();
+        node.refinable = refinable;
     }
 }
 
@@ -796,6 +817,7 @@ fn build_imported_node(
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        refinable: Vec::new(),
         needs_package: None,
         mesh: false,
         is_tip: false,
@@ -1722,12 +1744,35 @@ fn attach_body_menu(
                     .button(label)
                     .on_hover_text(
                         "Build a B-rep solid from the mesh's triangles, flat regions merged \
-                     into faces, so it can be measured, checked and cloned into a body \
-                     for features. This clears the undo history.",
+                     into faces and curved ones kept as facets (Refine shape then finds \
+                     their round surfaces), so it can be measured, checked and take \
+                     features. This clears the undo history.",
                     )
                     .clicked()
                 {
                     convert = true;
+                    ui.close();
+                }
+                ui.separator();
+            }
+            if !node.refinable.is_empty() {
+                let label = match node.refinable.len() {
+                    1 => "Refine shape".to_string(),
+                    n => format!("Refine {n} shapes"),
+                };
+                if ui
+                    .button(label)
+                    .on_hover_text(
+                        "Find the cylinders, cones, spheres and tori among the converted \
+                     solid's facets and rebuild them as round faces, so holes and fillets \
+                     measure and take features as drawn ones do. Where the facets do not \
+                     fit a surface they stay as they are. This clears the undo history.",
+                    )
+                    .clicked()
+                {
+                    result
+                        .commands
+                        .push(super::UiCommand::RefineShapes(node.refinable.clone()));
                     ui.close();
                 }
                 ui.separator();

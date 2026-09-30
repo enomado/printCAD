@@ -342,6 +342,9 @@ pub enum UiCommand {
     RepairShapes(Vec<core_document::BodyId>),
     /// Ask the kernel to turn these mesh bodies into solids.
     ConvertToSolid(Vec<core_document::BodyId>),
+    /// Ask the kernel to rebuild these converted solids' facets on the
+    /// surfaces they approximate.
+    RefineShapes(Vec<core_document::BodyId>),
     /// The property panel's Label row renamed a tree item.
     RenameTreeItem {
         item: TreeItemId,

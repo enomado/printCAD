@@ -538,7 +538,8 @@ impl PrintCadApp {
         }
 
         // Dev/bench hook: `PRINTCAD_BENCH_CONVERT=1` asks for every mesh
-        // body to become a solid, once, as the tree's menu would.
+        // body to become a solid, once, as the tree's menu would; `=refine`
+        // then asks for every converted solid's refine once it lands.
         if !self.bench_convert_fired && std::env::var_os("PRINTCAD_BENCH_CONVERT").is_some() {
             let meshes: Vec<_> = self
                 .session
@@ -551,6 +552,23 @@ impl PrintCadApp {
             if !meshes.is_empty() {
                 self.bench_convert_fired = true;
                 self.apply_ui_commands(vec![ui::UiCommand::ConvertToSolid(meshes)], event_loop);
+            }
+        }
+
+        if !self.bench_refine_fired
+            && std::env::var("PRINTCAD_BENCH_CONVERT").as_deref() == Ok("refine")
+        {
+            let faceted: Vec<_> = self
+                .session
+                .document
+                .bodies()
+                .iter()
+                .map(|b| b.id)
+                .filter(|b| self.session.document.can_refine(*b))
+                .collect();
+            if !faceted.is_empty() {
+                self.bench_refine_fired = true;
+                self.apply_ui_commands(vec![ui::UiCommand::RefineShapes(faceted)], event_loop);
             }
         }
 
@@ -653,6 +671,7 @@ impl PrintCadApp {
             app.drain_document_opens();
             app.drive_part_recompute();
             app.drive_shape_repairs();
+            app.drive_shape_refinements();
             app.drive_shape_replacements();
             app.drive_mesh_solids();
             app.drive_mirrored_copies();

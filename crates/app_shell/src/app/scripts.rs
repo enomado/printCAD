@@ -178,6 +178,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .param("bodies", ParamKind::List, "The mesh bodies")
             .returns("nothing; pc.doc.rebuild() waits for the conversion"),
         CommandSpec::new(
+            "doc.refine",
+            "Rebuild converted solids' facets on the cylinders, cones, spheres and tori they \
+             approximate",
+        )
+        .param("bodies", ParamKind::List, "The converted bodies")
+        .returns("nothing; pc.doc.rebuild() waits for the refine"),
+        CommandSpec::new(
             "doc.replace_shape",
             "Read a body's shape from another file: its first solid becomes the shape the \
              body's features build on",
@@ -985,6 +992,7 @@ impl PrintCadApp {
         self.in_script_tab(|app| {
             app.drive_part_recompute();
             app.drive_shape_repairs();
+            app.drive_shape_refinements();
             app.drive_shape_replacements();
             app.drive_mesh_solids();
             app.drive_mirrored_copies();
@@ -1223,12 +1231,12 @@ impl PrintCadApp {
                 self.apply_ui_commands(vec![command], event_loop);
                 Ok(Value::Null)
             }
-            "doc.repair" | "doc.convert_to_solid" => {
+            "doc.repair" | "doc.convert_to_solid" | "doc.refine" => {
                 let bodies = body_list(args.get("bodies"))?.unwrap_or_default();
-                let command = if id == "doc.repair" {
-                    crate::ui::UiCommand::RepairShapes(bodies)
-                } else {
-                    crate::ui::UiCommand::ConvertToSolid(bodies)
+                let command = match id {
+                    "doc.repair" => crate::ui::UiCommand::RepairShapes(bodies),
+                    "doc.refine" => crate::ui::UiCommand::RefineShapes(bodies),
+                    _ => crate::ui::UiCommand::ConvertToSolid(bodies),
                 };
                 self.apply_ui_commands(vec![command], event_loop);
                 Ok(Value::Null)
@@ -1365,11 +1373,13 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
             let id = item_id(*item)?;
             Some(call("doc.delete", json!({"id": id.to_string()})))
         }
-        UiCommand::RepairShapes(bodies) | UiCommand::ConvertToSolid(bodies) => {
-            let id = if matches!(command, UiCommand::RepairShapes(_)) {
-                "doc.repair"
-            } else {
-                "doc.convert_to_solid"
+        UiCommand::RepairShapes(bodies)
+        | UiCommand::ConvertToSolid(bodies)
+        | UiCommand::RefineShapes(bodies) => {
+            let id = match command {
+                UiCommand::RepairShapes(_) => "doc.repair",
+                UiCommand::RefineShapes(_) => "doc.refine",
+                _ => "doc.convert_to_solid",
             };
             let bodies: Vec<String> = bodies.iter().map(|b| b.0.to_string()).collect();
             Some(call(id, json!({"bodies": bodies})))
@@ -2483,6 +2493,7 @@ mod tests {
         }
         more.push(recorded_of(&UiCommand::RepairShapes(vec![body])).unwrap());
         more.push(recorded_of(&UiCommand::ConvertToSolid(vec![body])).unwrap());
+        more.push(recorded_of(&UiCommand::RefineShapes(vec![body])).unwrap());
         assert_eq!(
             more.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             [
@@ -2490,7 +2501,8 @@ mod tests {
                 "doc.move",
                 "doc.set_tip",
                 "doc.repair",
-                "doc.convert_to_solid"
+                "doc.convert_to_solid",
+                "doc.refine"
             ]
         );
         // Every call a recording can hold is a command a script can call.

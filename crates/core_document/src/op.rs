@@ -195,6 +195,12 @@ pub enum DocumentOp {
     RequestMeshSolid {
         id: BodyId,
     },
+    /// Ask for a converted solid's facets to be rebuilt on the surfaces
+    /// they approximate. The refined solid is derived, as an import's
+    /// geometry is.
+    RequestBodyRefine {
+        id: BodyId,
+    },
     /// Delete a body: the inverse of `CreateBody`, and what the tree's
     /// Delete does. Any features still attached go with it, along with the
     /// body's geometry.

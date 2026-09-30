@@ -263,6 +263,11 @@ pub struct Body {
     /// solid is derived from it, like the rest of an import's geometry.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub solid_requested: bool,
+    /// The user asked for this converted solid's facets to be rebuilt on
+    /// the surfaces they approximate. Derived from it, like the rest of an
+    /// import's geometry.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub refine_requested: bool,
     /// Kept out of the scene: not drawn, picked or framed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
@@ -862,6 +867,7 @@ impl Document {
             | Op::RequestBodyRepair { .. }
             | Op::ReplaceBodyShape { .. }
             | Op::RequestMeshSolid { .. }
+            | Op::RequestBodyRefine { .. }
             | Op::ImportModel { .. }
             | Op::AppendImportedObjectGraph { .. }
             | Op::ClearImportedObjectGraph => return None,
@@ -959,6 +965,7 @@ impl Document {
                     repair_requested: false,
                     shape_asset: None,
                     solid_requested: false,
+                    refine_requested: false,
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
                     copy_of: None,
@@ -980,6 +987,7 @@ impl Document {
                     repair_requested: false,
                     shape_asset: None,
                     solid_requested: false,
+                    refine_requested: false,
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
                     copy_of: Some(*source),
@@ -1009,6 +1017,7 @@ impl Document {
                     repair_requested: false,
                     shape_asset: None,
                     solid_requested: false,
+                    refine_requested: false,
                     hidden: false,
                     placement: BodyPlacement::IDENTITY,
                     copy_of: None,
@@ -1097,8 +1106,9 @@ impl Document {
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.shape_asset = Some(asset.id);
-                    // A new shape is checked and repaired afresh.
+                    // A new shape is checked, repaired and refined afresh.
                     entry.repair_requested = false;
+                    entry.refine_requested = false;
                 }
             }
             Op::SetBodyVisible { id, visible } => {
@@ -1115,6 +1125,11 @@ impl Document {
             Op::RequestMeshSolid { id } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.solid_requested = true;
+                }
+            }
+            Op::RequestBodyRefine { id } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.refine_requested = true;
                 }
             }
             Op::RemoveBody { id } => {
@@ -1302,6 +1317,7 @@ impl Document {
                         repair_requested: false,
                         shape_asset: None,
                         solid_requested: false,
+                        refine_requested: false,
                         hidden: false,
                         placement: BodyPlacement::IDENTITY,
                     });
@@ -2096,6 +2112,47 @@ impl Document {
         self.bodies
             .iter()
             .filter(|b| b.solid_requested && self.is_mesh_body(b.id))
+            .map(|b| b.id)
+            .collect()
+    }
+
+    /// Whether the body is a converted solid whose curved stretches are
+    /// still facets, not yet sent to be refined, and takes no features yet:
+    /// the faces a refine rebuilds are the ones features would stand on.
+    pub fn can_refine(&self, body: BodyId) -> bool {
+        self.bodies
+            .iter()
+            .any(|b| b.id == body && !b.refine_requested && b.link.is_none())
+            && !self.has_base_solid(body)
+            && self.copy_source(body).is_none()
+            && self.imported_geometry(body).is_some_and(|g| {
+                g.source_asset.is_some() && g.health.as_ref().is_some_and(|h| h.faceted)
+            })
+    }
+
+    /// Ask for a converted solid's facets to be rebuilt on the surfaces
+    /// they approximate; once, and only where [`Self::can_refine`].
+    /// Returns whether the request was recorded. Not undoable, as a
+    /// conversion is not.
+    pub fn request_body_refine(&mut self, body: BodyId) -> bool {
+        if !self.can_refine(body) {
+            return false;
+        }
+        self.record_and_apply(op::DocumentOp::RequestBodyRefine { id: body });
+        true
+    }
+
+    /// Bodies whose refine was asked for and whose shape is still the
+    /// facets: the host derives each one.
+    pub fn bodies_awaiting_refine(&self) -> Vec<BodyId> {
+        self.bodies
+            .iter()
+            .filter(|b| b.refine_requested)
+            .filter(|b| {
+                self.imported_geometry(b.id)
+                    .and_then(|g| g.health.as_ref())
+                    .is_some_and(|h| h.faceted)
+            })
             .map(|b| b.id)
             .collect()
     }

@@ -245,6 +245,7 @@ struct PrintCadApp {
     bench_task_fired: bool,
     bench_repair_fired: bool,
     bench_convert_fired: bool,
+    bench_refine_fired: bool,
     /// Frames since the bench click hook saw geometry; drives its stages.
     bench_click_frames: u32,
     /// Process start, for the `PRINTCAD_EXIT_AFTER_MS` bench hook.
@@ -474,6 +475,7 @@ impl PrintCadApp {
             bench_task_fired: false,
             bench_repair_fired: false,
             bench_convert_fired: false,
+            bench_refine_fired: false,
             bench_click_frames: 0,
             bench_started: Instant::now(),
             frame_phase_accum: (0.0, 0.0, 0),

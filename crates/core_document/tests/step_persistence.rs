@@ -435,6 +435,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
         suspect: 0,
         findings: vec!["[broken] Vertex: tolerance too tight".into()],
         repaired: false,
+        faceted: false,
     };
     doc.set_imported_geometry(
         imported,
@@ -530,6 +531,82 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
     assert_eq!(health.broken, 3);
     assert!(health.repaired);
     assert!(loaded.bodies_awaiting_repair().is_empty());
+}
+
+/// A converted solid still in facets offers a refine once, the request
+/// is an op a peer and a saved file keep, and the refined shape landing
+/// ends the wait.
+#[test]
+fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
+    use core_document::history::OpJournal;
+    use kernel_api::ShapeHealth;
+
+    let mut doc = Document::new("Refine");
+    let converted = doc.create_body(Some("Converted".into()));
+    let smooth = doc.create_body(Some("Smooth".into()));
+    let asset = AssetReference::new("assets/part.stl".to_string(), AssetType::Stl, json!({}));
+    let asset_id = doc.add_asset_with_data(asset, b"solid".to_vec());
+    let geometry = |faceted: bool| ImportedGeometry {
+        mesh: fake_mesh(),
+        source_asset: Some(asset_id),
+        revision: 0,
+        bounds_mm: None,
+        brep_blob_path: None,
+        face_colors_path: None,
+        health: Some(ShapeHealth {
+            faceted,
+            ..ShapeHealth::default()
+        }),
+    };
+    doc.set_imported_geometry(converted, geometry(true));
+    doc.set_imported_geometry(smooth, geometry(false));
+    let mut journal = OpJournal::new(16);
+    doc.rename_body(smooth, "Renamed");
+    journal.note(&mut doc);
+    let _ = doc.take_pending_ops();
+
+    assert!(!doc.can_refine(smooth), "nothing faceted to refine");
+    assert!(!doc.request_body_refine(smooth));
+    assert!(doc.can_refine(converted));
+    assert!(doc.request_body_refine(converted));
+    assert!(!doc.request_body_refine(converted), "asked once");
+    journal.note(&mut doc);
+    assert!(!journal.can_undo(), "a refine request clears undo history");
+    let ops = doc.take_pending_ops();
+    assert_eq!(ops.len(), 1, "one op for one request");
+    assert_eq!(doc.bodies_awaiting_refine(), vec![converted]);
+
+    let mut peer = Document::new("Peer");
+    peer.apply_remote_op(&core_document::op::DocumentOp::CreateBody {
+        id: converted,
+        name: "Converted".into(),
+        created_at: 0,
+    });
+    peer.apply_remote_op(&ops[0]);
+    assert!(
+        peer.bodies()
+            .iter()
+            .any(|b| b.id == converted && b.refine_requested)
+    );
+
+    let tmp = std::env::temp_dir().join(format!(
+        "printcad_refine_request_{}.prtcad",
+        std::process::id()
+    ));
+    doc.save_to_file(&tmp, Compression::None)
+        .expect("save .prtcad");
+    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
+    let _ = std::fs::remove_file(&tmp);
+    assert_eq!(
+        loaded.bodies_awaiting_refine(),
+        vec![converted],
+        "a file saved before the refine landed derives it on opening"
+    );
+
+    // The refined shape lands: nothing waits, and nothing is offered.
+    doc.set_imported_geometry(converted, geometry(false));
+    assert!(doc.bodies_awaiting_refine().is_empty());
+    assert!(!doc.can_refine(converted));
 }
 
 /// A body imported from a mesh file is a mesh body until its solid lands;

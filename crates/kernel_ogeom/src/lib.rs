@@ -114,7 +114,8 @@ impl OgeomKernel {
     }
 
     /// Build a B-rep from a mesh body's render mesh: coplanar triangles
-    /// merged into planar faces, open shells where the mesh does not close.
+    /// merged into planar faces, curved stretches kept as facets for a
+    /// later refine, open shells where the mesh does not close.
     pub fn mesh_to_solid(
         &mut self,
         mesh: &TriMesh,
@@ -122,6 +123,18 @@ impl OgeomKernel {
     ) -> KernelResult<kernel_api::MeshSolidResult> {
         self.initialize()?;
         mesh::solid_of_mesh(mesh, detail)
+    }
+
+    /// Rebuild a converted solid's faceted stretches on the surfaces they
+    /// approximate; refused where the result would not close.
+    pub fn refine_brep(
+        &mut self,
+        brep_blob: &[u8],
+        face_colors: &[[f32; 3]],
+        detail: &TessellationSettings,
+    ) -> KernelResult<kernel_api::MeshSolidResult> {
+        self.initialize()?;
+        mesh::refine_blob(brep_blob, face_colors, detail)
     }
 
     /// Volume, surface area and centre of mass of a body's snapshot.

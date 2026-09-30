@@ -280,6 +280,11 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `bodies` (list): The mesh bodies
 - Returns nothing; pc.doc.rebuild() waits for the conversion
 
+`pc.doc.refine`: Rebuild converted solids' facets on the cylinders, cones, spheres and tori they approximate.
+
+- `bodies` (list): The converted bodies
+- Returns nothing; pc.doc.rebuild() waits for the refine
+
 `pc.doc.replace_shape`: Read a body's shape from another file: its first solid becomes the shape the body's features build on.
 
 - `body` (id): An imported or converted body, or one with a base shape

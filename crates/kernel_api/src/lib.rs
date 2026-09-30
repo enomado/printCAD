@@ -332,6 +332,11 @@ pub struct ShapeHealth {
     /// The kernel's repair has run on the shape these findings describe.
     #[serde(default)]
     pub repaired: bool,
+    /// The shape is a mesh converted as it is: its flat stretches are
+    /// faces and its curved ones still the mesh's facets, which a refine
+    /// can rebuild on the surfaces they approximate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub faceted: bool,
 }
 
 impl ShapeHealth {

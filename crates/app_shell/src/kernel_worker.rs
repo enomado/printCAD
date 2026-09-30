@@ -77,6 +77,13 @@ pub enum KernelRequest {
         face_colors: Vec<[f32; 3]>,
         detail: TessellationSettings,
     },
+    /// Rebuild a converted solid's facets on the surfaces they approximate.
+    RefineShape {
+        body_id: Uuid,
+        brep_blob: Arc<Vec<u8>>,
+        face_colors: Vec<[f32; 3]>,
+        detail: TessellationSettings,
+    },
 }
 
 /// Result delivered from the worker back to the UI thread.
@@ -137,6 +144,12 @@ pub enum KernelResponse {
     MeshSolidFailed {
         body_id: Uuid,
         error: String,
+    },
+    /// A converted solid refined, or why it could not be.
+    ShapeRefined {
+        body_id: Uuid,
+        result: Result<kernel_api::MeshSolidResult, String>,
+        elapsed: Duration,
     },
     /// A mirrored copy's snapshot, made from `from`.
     ShapeMirrored {
@@ -285,6 +298,29 @@ impl KernelWorker {
         if self
             .tx
             .send(KernelRequest::RepairShape {
+                body_id,
+                brep_blob,
+                face_colors,
+                detail,
+            })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit the refine of a converted body's solid. One response
+    /// arrives per request.
+    pub fn request_refine(
+        &mut self,
+        body_id: Uuid,
+        brep_blob: Arc<Vec<u8>>,
+        face_colors: Vec<[f32; 3]>,
+        detail: TessellationSettings,
+    ) {
+        if self
+            .tx
+            .send(KernelRequest::RefineShape {
                 body_id,
                 brep_blob,
                 face_colors,
@@ -699,6 +735,21 @@ fn worker_loop(
                         body_id,
                         error: err.to_string(),
                     },
+                }
+            }
+            KernelRequest::RefineShape {
+                body_id,
+                brep_blob,
+                face_colors,
+                detail,
+            } => {
+                let started = Instant::now();
+                KernelResponse::ShapeRefined {
+                    body_id,
+                    result: kernel
+                        .refine_brep(&brep_blob, &face_colors, &detail)
+                        .map_err(|e| e.to_string()),
+                    elapsed: started.elapsed(),
                 }
             }
         });

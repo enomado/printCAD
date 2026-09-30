@@ -15,7 +15,9 @@ use kernel_api::{
     ImportReport, ImportedBody, ImportedModel, KernelError, KernelResult, LengthUnit,
     MeshSolidResult, TessellationSettings, TriMesh,
 };
-use ogeom::algo::{MeshSolidOptions, solid_from_mesh};
+use ogeom::algo::{
+    MeshSolid, MeshSolidOptions, refine_solid, single_precision_quantum, solid_from_mesh,
+};
 use ogeom::math::{Point, Vector};
 use ogeom::topo::{Filter, Model, ShapeType, Triangulation, explore};
 
@@ -258,8 +260,12 @@ fn crease_outline(mesh: &TriMesh) -> Vec<u32> {
 }
 
 /// Build a B-rep from a mesh body's render mesh and mesh it as any shape.
-/// Coplanar triangles merge into planar faces; a mesh that does not close
-/// comes back as its open shells, `closed` false, with the reason.
+///
+/// The conversion takes the mesh as it is: coplanar triangles merge into
+/// planar faces and curved stretches stay the mesh's facets, every mesh
+/// vertex kept, so [`refine_blob`] can later find the surfaces the facets
+/// approximate. A mesh that does not close comes back as its open shells,
+/// `closed` false, with the reason.
 pub fn solid_of_mesh(
     mesh: &TriMesh,
     detail: &TessellationSettings,
@@ -282,29 +288,99 @@ pub fn solid_of_mesh(
     };
     let tol = tess::tolerances();
     let mut model = Model::new();
-    let built = solid_from_mesh(&mut model, &tri, &MeshSolidOptions::default(), tol)
+    let options = MeshSolidOptions {
+        recognize: false,
+        keep_vertices: true,
+        // A render mesh holds its points in single precision.
+        quantum: Some(single_precision_quantum(&tri)),
+        ..MeshSolidOptions::default()
+    };
+    let built = solid_from_mesh(&mut model, &tri, &options, tol)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("the mesh did not convert: {e}")))?;
-    let report = &built.report;
-
-    let faces = explore(&model, &built.shape, Filter::OfType(ShapeType::Face))
-        .map_err(|e| KernelError::Other(anyhow::anyhow!("exploring faces failed: {e}")))?;
     let uniform = mesh
         .colors
         .first()
         .filter(|first| mesh.colors.iter().all(|c| c == *first))
         .copied();
+    let mut result = finish(&model, &built, uniform, detail)?;
+    result.health.faceted = built.closed;
+    Ok(result)
+}
+
+/// Rebuild a converted solid's faceted stretches on the surfaces they
+/// approximate: the cylinders, cones, spheres and tori among its facets
+/// become faces of their own. A refine that does not close is refused, so
+/// the solid it would replace stays as it is.
+pub fn refine_blob(
+    brep_blob: &[u8],
+    face_colors: &[[f32; 3]],
+    detail: &TessellationSettings,
+) -> KernelResult<MeshSolidResult> {
+    progress::context("Refining the converted solid");
+    let (mut model, root) = tess::read_blob(brep_blob)?;
+    let tol = tess::tolerances();
+    // The solid's points came from a single-precision mesh: the rounding
+    // at its largest coordinate is what they may stand off their surface.
+    let quantum = tess::robust_bounds(&model, &root).map(|(lo, hi)| {
+        single_precision_quantum(&Triangulation {
+            positions: vec![lo, hi],
+            ..Triangulation::default()
+        })
+    });
+    let options = MeshSolidOptions {
+        quantum,
+        ..MeshSolidOptions::default()
+    };
+    let built = refine_solid(&mut model, &root, &options, tol)
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("the refine failed: {e}")))?;
+    if !built.closed {
+        return Err(KernelError::Other(anyhow::anyhow!(
+            "the refined shape does not close, so the facets were kept"
+        )));
+    }
+    let uniform = face_colors
+        .first()
+        .filter(|first| face_colors.iter().all(|c| c == *first))
+        .copied();
+    let mut result = finish(&model, &built, uniform, detail)?;
+    let report = &built.report;
+    result.summary = vec![match report.curved_faces {
+        0 => "no curved surface found among the facets".to_string(),
+        n => format!("{n} curved face(s) found, {} faces in all", report.faces),
+    }];
+    if report.curved_faceted > 0 {
+        result.summary.push(format!(
+            "{} curved region(s) kept as facets",
+            report.curved_faceted
+        ));
+    }
+    if report.recognition_withdrawn {
+        result
+            .summary
+            .push("a piece whose surfaces did not hold its volume kept its facets".to_string());
+    }
+    Ok(result)
+}
+
+/// Mesh a converted shape and say what the conversion did: its snapshot,
+/// its mesh coloured `uniform` throughout when given, the checker's verdict
+/// and a phrase per thing worth telling.
+fn finish(
+    model: &Model,
+    built: &MeshSolid,
+    uniform: Option<[f32; 3]>,
+    detail: &TessellationSettings,
+) -> KernelResult<MeshSolidResult> {
+    let report = &built.report;
+    let faces = explore(model, &built.shape, Filter::OfType(ShapeType::Face))
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("exploring faces failed: {e}")))?;
     let face_colors = uniform.map_or_else(Vec::new, |c| vec![c; faces.len()]);
 
     progress::context("Meshing the solid");
-    let shaped = tess::mesh_shape_with(
-        &model,
-        &built.shape,
-        &face_colors,
-        detail,
-        tess::Faces::Wide,
-    )
-    .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
-    let bounds_mm = tess::robust_bounds(&model, &built.shape).map(|(lo, hi)| {
+    let shaped =
+        tess::mesh_shape_with(model, &built.shape, &face_colors, detail, tess::Faces::Wide)
+            .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
+    let bounds_mm = tess::robust_bounds(model, &built.shape).map(|(lo, hi)| {
         (
             [lo.x as f32, lo.y as f32, lo.z as f32],
             [hi.x as f32, hi.y as f32, hi.z as f32],
@@ -332,11 +408,11 @@ pub fn solid_of_mesh(
     }
 
     Ok(MeshSolidResult {
-        brep_blob: tess::write_blob(&model, &built.shape)?,
+        brep_blob: tess::write_blob(model, &built.shape)?,
         face_colors,
         mesh: shaped,
         bounds_mm,
-        health: health::diagnose(&model, &built.shape),
+        health: health::diagnose(model, &built.shape),
         closed: built.closed,
         summary,
     })

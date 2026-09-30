@@ -541,7 +541,7 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
 /// What a pad reversed `length` mm into a converted part builds, and the
 /// part's own volume: all of it made from the file each time, by the code
 /// the application runs. The part is a user's STL (not bundled; named by
-/// `PRINTCAD_TEST_MESH_PART`), converted to a solid; the sketch stands on
+/// `PRINTCAD_TEST_MESH_PART`), converted to a solid and refined; the sketch stands on
 /// its top face, made of that face's own edges; the pad goes down into the
 /// part along the face's outline. The file is only read. `None` without it.
 fn pad_into_converted_part(
@@ -555,8 +555,11 @@ fn pad_into_converted_part(
     let mut kernel = OgeomKernel::new();
     let detail = TessellationSettings::default();
     let model = kernel.import_step_full_mesh(&path, &detail).unwrap();
-    let solid = kernel
+    let coarse = kernel
         .mesh_to_solid(&model.bodies[0].mesh, &detail)
+        .unwrap();
+    let solid = kernel
+        .refine_brep(&coarse.brep_blob, &coarse.face_colors, &detail)
         .unwrap();
     assert_eq!(solid.health.broken, 0, "the part converts sound");
 

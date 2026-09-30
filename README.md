@@ -25,7 +25,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   clearance checks, exploded views and a parts list.
 - **Import:** STEP and IGES as solids, with the dimensions, tolerances,
   datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
-  as meshes that can be converted to solids.
+  as meshes that convert to solids, their round faces found on request.
 - **Export:** STEP, STL and 3MF, or straight to your slicer.
 - **Documents:** `.prtcad` files, one tab each, with undo and redo.
 - **View:** GPU picking of faces and edges, a clipping plane, a measure

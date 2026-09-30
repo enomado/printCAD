@@ -74,7 +74,7 @@ impl PrintCadApp {
     /// Whether a kernel error is the user's own cancellation rather than a
     /// geometry failure. The kernel reports it as an ordinary `Err` carrying
     /// `OgeomError::Cancelled`'s message, so match on that.
-    fn is_cancellation(error: &str) -> bool {
+    pub(crate) fn is_cancellation(error: &str) -> bool {
         error.contains("cancelled")
     }
 
@@ -96,6 +96,7 @@ impl PrintCadApp {
                 | KernelResponse::Measured { body_id, .. }
                 | KernelResponse::MeshSolidBuilt { body_id, .. }
                 | KernelResponse::MeshSolidFailed { body_id, .. }
+                | KernelResponse::ShapeRefined { body_id, .. }
                 | KernelResponse::ShapeMirrored { body_id, .. } => self.tab_index_of_body(*body_id),
             };
             match target {
@@ -228,6 +229,11 @@ impl PrintCadApp {
                         app_log::error(format!("`{name}` did not convert to a solid: {error}"));
                     }
                 }
+                KernelResponse::ShapeRefined {
+                    body_id,
+                    result,
+                    elapsed,
+                } => self.apply_shape_refine(BodyId(body_id), result, elapsed),
                 KernelResponse::ShapeMirrored {
                     body_id,
                     from,

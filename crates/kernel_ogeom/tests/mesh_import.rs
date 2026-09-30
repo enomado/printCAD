@@ -334,3 +334,58 @@ fn a_mesh_file_reads_as_a_solid() {
     assert!(!read.brep_blob.is_empty());
     assert_eq!(read.health.broken, 0);
 }
+
+/// A mesh converts as it is, its round walls still facets, and a refine
+/// then finds the cylinder they approximate: fewer faces, curved ones
+/// among them, the same volume, and nothing left to refine.
+#[test]
+fn a_converted_cylinder_refines_onto_its_round_wall() {
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let mut kernel = OgeomKernel::new();
+    let detail = TessellationSettings::default();
+    let drum = kernel
+        .execute_solid_chain(
+            &[SolidOp::Primitive {
+                kind: PrimitiveKind::Cylinder {
+                    radius: 5.0,
+                    height: 10.0,
+                    angle_deg: 360.0,
+                },
+                placement: Placement::default(),
+                op: BooleanOp::NewSolid,
+            }],
+            &detail,
+        )
+        .expect("a cylinder");
+    let coarse = kernel.mesh_to_solid(&drum.mesh, &detail).unwrap();
+    assert!(
+        coarse.closed && coarse.health.faceted,
+        "{:?}",
+        coarse.summary
+    );
+    let faces = |mesh: &kernel_api::TriMesh| mesh.faces.iter().collect::<BTreeSet<_>>().len();
+    let volume = |blob: &[u8]| {
+        OgeomKernel::new()
+            .physical_properties(blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap()
+    };
+    let refined = kernel
+        .refine_brep(&coarse.brep_blob, &coarse.face_colors, &detail)
+        .unwrap();
+    assert!(!refined.health.faceted);
+    assert_eq!(refined.health.broken, 0, "{:?}", refined.health.findings);
+    assert!(
+        faces(&refined.mesh) < faces(&coarse.mesh) && faces(&refined.mesh) <= 4,
+        "{} faces from {}: {:?}",
+        faces(&refined.mesh),
+        faces(&coarse.mesh),
+        refined.summary
+    );
+    let (before, after) = (volume(&coarse.brep_blob), volume(&refined.brep_blob));
+    assert!(
+        (after - before).abs() < before * 1e-2,
+        "{after} against {before}"
+    );
+}

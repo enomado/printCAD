@@ -378,7 +378,11 @@ impl PrintCadApp {
         self.session
             .document
             .set_imported_brep_data(body, result.brep_blob, result.face_colors);
-        let health = result.health;
+        // A repair mends the facets; whether they are refined is its own.
+        let health = kernel_api::ShapeHealth {
+            faceted: previous.health.as_ref().is_some_and(|h| h.faceted),
+            ..result.health
+        };
         let verdict = if health.is_broken() {
             format!(
                 "{} defect(s) remain that the repair does not mend",
@@ -410,6 +414,83 @@ impl PrintCadApp {
         app_log::info(format!(
             "Repaired `{name}` in {:.0}ms: {mended}; {verdict}",
             elapsed.as_secs_f64() * 1000.0
+        ));
+    }
+
+    /// Hand every converted solid whose refine was asked for, and which
+    /// is still in facets, to the kernel worker. The request is an op: a
+    /// peer's and a reopened document's refine the same way.
+    pub(crate) fn drive_shape_refinements(&mut self) {
+        for body in self.session.document.bodies_awaiting_refine() {
+            if self.session.refines_in_flight.contains(&body.0)
+                || self.session.refines_failed.contains(&body.0)
+            {
+                continue;
+            }
+            let document = &self.session.document;
+            let Some(blob) = document.imported_brep_blob_arc(body) else {
+                continue;
+            };
+            let face_colors = document
+                .imported_brep_face_colors(body)
+                .map(<[_]>::to_vec)
+                .unwrap_or_default();
+            self.session.refines_in_flight.insert(body.0);
+            app_log::info(format!("Refining `{}`…", self.body_name(body)));
+            self.kernel_worker
+                .request_refine(body.0, blob, face_colors, self.solid_detail());
+        }
+    }
+
+    /// Land a refined solid: its snapshot and mesh in place of the facets.
+    /// A refine that failed leaves the facets as they are, said in the log.
+    pub(crate) fn apply_shape_refine(
+        &mut self,
+        body: core_document::BodyId,
+        result: Result<kernel_api::MeshSolidResult, String>,
+        elapsed: std::time::Duration,
+    ) {
+        self.session.refines_in_flight.remove(&body.0);
+        let name = self.body_name(body);
+        let refined = match result {
+            Ok(refined) => refined,
+            Err(error) => {
+                self.session.refines_failed.insert(body.0);
+                if Self::is_cancellation(&error) {
+                    app_log::info(format!("Refine of `{name}` cancelled"));
+                } else {
+                    app_log::error(format!(
+                        "`{name}` could not be refined and keeps its facets: {error}"
+                    ));
+                }
+                return;
+            }
+        };
+        let Some(previous) = self.session.document.imported_geometry(body).cloned() else {
+            // The body left the document while the refine ran.
+            return;
+        };
+        self.session
+            .document
+            .set_imported_brep_data(body, refined.brep_blob, refined.face_colors);
+        self.session.document.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(refined.mesh),
+                bounds_mm: refined.bounds_mm.or(previous.bounds_mm),
+                health: Some(refined.health),
+                ..previous
+            },
+        );
+        if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
+            self.session.face_highlight = None;
+            self.session.last_face_hit = None;
+        }
+        self.session.hovered_face = None;
+        app_log::info(format!(
+            "Refined `{name}` in {:.0}ms: {}",
+            elapsed.as_secs_f64() * 1000.0,
+            refined.summary.join(", ")
         ));
     }
 

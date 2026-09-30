@@ -54,7 +54,9 @@ feature tree. It is derived:
   `brep/<body>.base.bin`; its history starts with a Base feature built
   from it.
 - A mesh body (from STL, OBJ, 3MF, PLY, glTF or VRML) has triangles only, until it is
-  converted to a solid.
+  converted to a solid (op `RequestMeshSolid`). The conversion keeps curved
+  stretches as facets; a refine (op `RequestBodyRefine`, offered while the
+  body has no features) rebuilds them on the surfaces they approximate.
 
 The result lands in `ImportedGeometry`: an `Arc<TriMesh>` for drawing, a
 `revision` the renderer uses to know when to upload again, the bounds, and

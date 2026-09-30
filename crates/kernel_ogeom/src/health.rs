@@ -24,6 +24,7 @@ pub fn diagnose(model: &Model, shape: &Shape) -> ShapeHealth {
             suspect: 0,
             findings: vec![format!("the checker could not walk the shape: {e}")],
             repaired: false,
+            faceted: false,
         },
     }
 }
@@ -42,6 +43,7 @@ fn health_of(diagnosis: &Diagnosis, repaired: bool) -> ShapeHealth {
         suspect: suspect.len(),
         findings,
         repaired,
+        faceted: false,
     }
 }
 

@@ -412,6 +412,20 @@ impl PrintCadApp {
                         ));
                     }
                 }
+                UiCommand::RefineShapes(bodies) => {
+                    self.session.viewport_menu = None;
+                    let asked = bodies
+                        .into_iter()
+                        .filter(|body| self.session.document.request_body_refine(*body))
+                        .count();
+                    if asked > 0 {
+                        self.session.journal.label_next("Refine shape");
+                        self.close_gesture();
+                        app_log::info(format!(
+                            "Refine asked for {asked} converted solid(s); undo history cleared"
+                        ));
+                    }
+                }
                 UiCommand::RepairShapes(bodies) => {
                     self.session.viewport_menu = None;
                     let asked = bodies

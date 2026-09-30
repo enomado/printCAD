@@ -134,9 +134,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   they draw, hide and pick and take no features. "Convert to solid" (tree
   and viewport menus) records `RequestMeshSolid`, a history barrier, and
   `drive_mesh_solids` derives the B-rep with the kernel's `solid_from_mesh`
-  (coplanar triangles merged into faces; a mesh that does not close becomes
-  an open shell, said in the log), after which the body is an ordinary
-  imported solid. The files' annotations (`annotations.rs`: PMI callouts,
+  as the mesh is (coplanar triangles merged into faces, curved stretches
+  left as facets with every vertex kept, `ShapeHealth::faceted`; a mesh
+  that does not close becomes an open shell, said in the log), after which
+  the body is an ordinary imported solid. "Refine shape" (`RequestBodyRefine`,
+  a history barrier, offered by `Document::can_refine` while the body is
+  faceted and has no base) has `drive_shape_refinements` run the kernel's
+  `refine_solid` (`mesh::refine_blob`), which rebuilds the cylinders, cones,
+  spheres and tori among the facets; a refine that fails or would not
+  close leaves the facets and is not asked again that session. The files' annotations (`annotations.rs`: PMI callouts,
   undrawn semantic dimensions/tolerances/datums, datum targets, notes)
   leave as `ImportedModel.annotations`, one per body a callout describes,
   placed with that body's occurrence, text formatted (`Ø 35 ±0.2`); IGES
