@@ -156,6 +156,7 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.faces",
     "doc.set_body",
     "doc.set_face_color",
+    "doc.set_textures",
     "doc.linked_copy",
     "doc.move_after",
     "doc.recompute",

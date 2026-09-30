@@ -236,6 +236,11 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `translation` (any, optional): {x, y, z}: where its origin goes; bodies moving as one with it follow
 - `rotation` (any, optional): {x, y, z, w}: its turn as a quaternion
 
+`pc.doc.set_textures`: Set every surface texture pressed into a body's faces for printing: drawn in the view, baked into STL and 3MF files and what goes to the slicer.
+
+- `body` (id)
+- `textures` (list): Each {texture = {pattern, projection, tile_mm, depth_mm, rotation_deg, inward, keep_flat_deg}, faces = {...}}: pattern Knurl, Ribs, Dots, Hex, Bricks, Waves, Noise or Crosshatch; projection Triplanar, {Planar = "Z"}, {Cylindrical = "Z"} or Spherical; faces as doc.faces numbers them, none for every face; an empty list takes them all away
+
 `pc.doc.set_face_color`: Colour one face of a body, over the body's colour.
 
 - `body` (id)

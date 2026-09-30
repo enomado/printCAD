@@ -114,6 +114,21 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "{x, y, z, w}: its turn as a quaternion",
         ),
         CommandSpec::new(
+            "doc.set_textures",
+            "Set every surface texture pressed into a body's faces for printing: drawn in the \
+             view, baked into STL and 3MF files and what goes to the slicer",
+        )
+        .param("body", ParamKind::Id, "")
+        .param(
+            "textures",
+            ParamKind::List,
+            "Each {texture = {pattern, projection, tile_mm, depth_mm, rotation_deg, inward, \
+             keep_flat_deg}, faces = {...}}: pattern Knurl, Ribs, Dots, Hex, Bricks, Waves, \
+             Noise or Crosshatch; projection Triplanar, {Planar = \"Z\"}, {Cylindrical = \"Z\"} \
+             or Spherical; faces as doc.faces numbers them, none for every face; an empty list \
+             takes them all away",
+        ),
+        CommandSpec::new(
             "doc.set_face_color",
             "Colour one face of a body, over the body's colour",
         )
@@ -1559,6 +1574,12 @@ pub(crate) fn document_command(
             set_body(document, registry, body, &a)?;
             Ok(Value::Null)
         }
+        "doc.set_textures" => {
+            let body = body_arg(document, &a)?;
+            let textures = textures_arg(document, body, a.0.get("textures"))?;
+            document.set_body_textures(body, textures);
+            Ok(Value::Null)
+        }
         "doc.set_face_color" => {
             let body = body_arg(document, &a)?;
             let index = a.number("face")? as i64;
@@ -2103,6 +2124,53 @@ pub(crate) fn move_after(
                 name(document, neighbour)
             ),
         })
+}
+
+/// A body's textures as a script gives them: each face a number (as
+/// `doc.faces` has it) or `{name, index}` as a recording writes it.
+fn textures_arg(
+    document: &core_document::Document,
+    body: BodyId,
+    value: Option<&Value>,
+) -> Result<Vec<core_document::FaceTexture>, CommandError> {
+    let list = value
+        .and_then(Value::as_array)
+        .ok_or_else(|| CommandError::bad("textures", "must be a list"))?;
+    let mesh = document
+        .imported_geometry(body)
+        .map(|g| std::sync::Arc::clone(&g.mesh));
+    list.iter()
+        .map(|item| {
+            let texture: surface_texture::Texture =
+                serde_json::from_value(item.get("texture").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| {
+                        CommandError::bad("textures", format!("has a texture it cannot read: {e}"))
+                    })?;
+            let faces = item
+                .get("faces")
+                .and_then(Value::as_array)
+                .map(|faces| {
+                    faces
+                        .iter()
+                        .map(|face| match face.as_u64() {
+                            Some(index) => mesh
+                                .as_deref()
+                                .map(|m| core_document::FaceKey::of(m, index as u32))
+                                .ok_or_else(|| CommandError::failed("the body has no solid yet")),
+                            None => serde_json::from_value(face.clone()).map_err(|e| {
+                                CommandError::bad(
+                                    "textures",
+                                    format!("has a face it cannot read: {e}"),
+                                )
+                            }),
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+            Ok(core_document::FaceTexture { texture, faces })
+        })
+        .collect()
 }
 
 fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, CommandError> {
