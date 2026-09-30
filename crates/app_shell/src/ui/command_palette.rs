@@ -103,6 +103,12 @@ const SHELL: &[ShellEntry] = &[
         action: ShellAction::File(FileCommand::Export),
     },
     ShellEntry {
+        label: "Save view as picture…",
+        icon: "export-stl",
+        binding: None,
+        action: ShellAction::File(FileCommand::SavePicture),
+    },
+    ShellEntry {
         label: "Send to slicer",
         icon: "workbench-print",
         binding: Some("file.send_to_slicer"),

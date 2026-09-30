@@ -92,6 +92,12 @@ impl PrintCadApp {
                 UiCommand::File(FileCommand::New) => intents.new_document = true,
                 UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
                 UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(),
+                UiCommand::File(FileCommand::SavePicture) => {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.renderer.request_capture();
+                        self.redraw_needed = true;
+                    }
+                }
                 UiCommand::ConfirmExport => self.confirm_export(),
                 UiCommand::CancelExport => self.session.export_pending = None,
                 // Dialog-kind priority (import > open > save-as > save)

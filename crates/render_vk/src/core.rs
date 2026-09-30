@@ -105,6 +105,13 @@ pub(crate) struct RendererCore {
     pick_in_flight: Vec<Option<PendingPick>>,
     // Cached pick result (updated when an in-flight readback resolves)
     last_pick_result: PickResult,
+    /// A picture of the scene is wanted: the next frame copies it out.
+    pending_capture: bool,
+    /// Per-in-flight-frame copies of the scene into host memory, read once
+    /// their frame's fence is waited, as picks are.
+    capture_in_flight: Vec<Option<PendingCapture>>,
+    /// The last picture taken, until the caller takes it.
+    captured: Option<crate::CapturedImage>,
     /// The loaded Vulkan library. Last, so it is unloaded only after `drop`
     /// has destroyed everything made through it.
     _entry: Entry,
@@ -267,6 +274,9 @@ impl RendererCore {
             pending_pick: None,
             last_draw_stats: crate::mesh::DrawStats::default(),
             pick_in_flight: vec![None; MAX_FRAMES_IN_FLIGHT],
+            pending_capture: false,
+            capture_in_flight: (0..MAX_FRAMES_IN_FLIGHT).map(|_| None).collect(),
+            captured: None,
             last_pick_result: PickResult::default(),
             _entry: entry,
         };
@@ -324,6 +334,7 @@ impl RendererCore {
         }
         // Device is idle: retired buffers can be reclaimed immediately.
         self.mesh_cache.flush_retired(&self.device);
+        self.drop_captures();
         self.cleanup_swapchain();
         self.create_swapchain(extent)?;
         self.create_depth_resources()?;
@@ -378,6 +389,71 @@ impl RendererCore {
         self.pending_pick = Some((x, y));
     }
 
+    pub(crate) fn request_capture(&mut self) {
+        self.pending_capture = true;
+    }
+
+    pub(crate) fn take_capture(&mut self) -> Option<crate::CapturedImage> {
+        self.captured.take()
+    }
+
+    /// Whether a picture is asked for or on its way.
+    pub(crate) fn capture_pending(&self) -> bool {
+        self.pending_capture || self.capture_in_flight.iter().any(Option::is_some)
+    }
+
+    /// Free the copies no frame will read now. Only with the device idle.
+    fn drop_captures(&mut self) {
+        for slot in &mut self.capture_in_flight {
+            if let Some(capture) = slot.take() {
+                capture.destroy(&self.device);
+            }
+        }
+    }
+
+    /// Read a finished copy of the scene into an RGBA picture of the
+    /// viewport, and free it.
+    fn read_capture(&self, capture: PendingCapture) -> Result<crate::CapturedImage, RenderError> {
+        let size = (capture.width * capture.height * 4) as usize;
+        let mut pixels = vec![0u8; size];
+        unsafe {
+            let ptr = self.device.map_memory(
+                capture.memory,
+                0,
+                size as u64,
+                vk::MemoryMapFlags::empty(),
+            )? as *const u8;
+            std::ptr::copy_nonoverlapping(ptr, pixels.as_mut_ptr(), size);
+            self.device.unmap_memory(capture.memory);
+        }
+        let bgra = matches!(
+            capture.format,
+            vk::Format::B8G8R8A8_UNORM | vk::Format::B8G8R8A8_SRGB
+        );
+        let rect = capture.viewport;
+        let (x0, y0) = (rect.x.min(capture.width), rect.y.min(capture.height));
+        let w = rect.width.min(capture.width - x0);
+        let h = rect.height.min(capture.height - y0);
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for y in y0..y0 + h {
+            for x in x0..x0 + w {
+                let i = ((y * capture.width + x) * 4) as usize;
+                let p = &pixels[i..i + 4];
+                if bgra {
+                    rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
+                } else {
+                    rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
+                }
+            }
+        }
+        capture.destroy(&self.device);
+        Ok(crate::CapturedImage {
+            width: w,
+            height: h,
+            rgba,
+        })
+    }
+
     pub(crate) fn last_pick_result(&self) -> PickResult {
         self.last_pick_result.clone()
     }
@@ -402,6 +478,14 @@ impl RendererCore {
         // Destroy retired GPU buffers that are provably no longer referenced
         // by any in-flight command buffer.
         self.mesh_cache.begin_frame(&self.device);
+
+        // A picture of the scene copied out in this slot's frame is done.
+        if let Some(capture) = self.capture_in_flight[self.current_frame].take() {
+            match self.read_capture(capture) {
+                Ok(image) => self.captured = Some(image),
+                Err(e) => warn!("Scene picture readback failed: {:?}", e),
+            }
+        }
 
         // The fence wait above proves the readback recorded into this slot's
         // frame has completed: resolve it host-side with no extra sync.
@@ -1323,7 +1407,16 @@ impl RendererCore {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[region],
             );
-
+        }
+        // A picture asked for: the same scene into host memory, read when
+        // this frame's fence is next waited.
+        if std::mem::take(&mut self.pending_capture) {
+            match self.record_capture(command_buffer, frame) {
+                Ok(capture) => self.capture_in_flight[self.current_frame] = Some(capture),
+                Err(e) => warn!("Scene picture copy failed: {:?}", e),
+            }
+        }
+        unsafe {
             // Hand the swapchain image to the UI pass as a color attachment.
             let swap_to_color = vk::ImageMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -1502,6 +1595,96 @@ impl RendererCore {
     }
 }
 
+/// A copy of the scene image on its way to host memory.
+struct PendingCapture {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    width: u32,
+    height: u32,
+    format: vk::Format,
+    viewport: ViewportRect,
+}
+
+impl PendingCapture {
+    fn destroy(self, device: &ash::Device) {
+        unsafe {
+            device.destroy_buffer(self.buffer, None);
+            device.free_memory(self.memory, None);
+        }
+    }
+}
+
+impl RendererCore {
+    /// Copy the scene image, in its transfer layout, into a new host
+    /// buffer, made visible to the host once the frame is done.
+    fn record_capture(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        frame: &FrameSubmission,
+    ) -> Result<PendingCapture, RenderError> {
+        let extent = self.swapchain_extent;
+        let size = u64::from(extent.width) * u64::from(extent.height) * 4;
+        let (buffer, memory) = crate::util::create_buffer(
+            &self.device,
+            size,
+            vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            &self.memory_properties,
+        )?;
+        let region = vk::BufferImageCopy::default()
+            .image_subresource(vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: 0,
+                base_array_layer: 0,
+                layer_count: 1,
+            })
+            .image_extent(vk::Extent3D {
+                width: extent.width,
+                height: extent.height,
+                depth: 1,
+            });
+        let to_host = vk::BufferMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::HOST_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .buffer(buffer)
+            .offset(0)
+            .size(vk::WHOLE_SIZE);
+        unsafe {
+            self.device.cmd_copy_image_to_buffer(
+                command_buffer,
+                self.scene_image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                buffer,
+                &[region],
+            );
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[to_host],
+                &[],
+            );
+        }
+        Ok(PendingCapture {
+            buffer,
+            memory,
+            width: extent.width,
+            height: extent.height,
+            format: self.swapchain_format,
+            viewport: frame.viewport_rect.unwrap_or(ViewportRect {
+                x: 0,
+                y: 0,
+                width: extent.width,
+                height: extent.height,
+            }),
+        })
+    }
+}
+
 impl Drop for RendererCore {
     fn drop(&mut self) {
         let started = std::time::Instant::now();
@@ -1515,6 +1698,7 @@ impl Drop for RendererCore {
         // segfault at exit, and every one of its allocations reported as
         // leaked by the validation layer. Take it down first, explicitly.
         drop(self.egui_renderer.take());
+        self.drop_captures();
         self.textures_to_free.clear();
         self.pending_textures.clear();
         self.cleanup_swapchain();

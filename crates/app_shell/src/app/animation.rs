@@ -190,16 +190,21 @@ fn encode(animation: &Animation) -> Result<Vec<u8>, String> {
 }
 
 /// One frame as a PNG of its own.
-fn encode_png(rgba: &[u8]) -> Result<Vec<u8>, String> {
+/// A `width` × `height` RGBA picture as PNG bytes.
+pub(crate) fn png_of(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     {
-        let mut encoder = png::Encoder::new(&mut out, WIDTH, HEIGHT);
+        let mut encoder = png::Encoder::new(&mut out, width, height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
         writer.write_image_data(rgba).map_err(|e| e.to_string())?;
     }
     Ok(out)
+}
+
+fn encode_png(rgba: &[u8]) -> Result<Vec<u8>, String> {
+    png_of(WIDTH, HEIGHT, rgba)
 }
 
 /// The frames as a GIF played on a loop, each frame's colours chosen for

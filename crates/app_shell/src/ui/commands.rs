@@ -39,6 +39,8 @@ pub enum FileCommand {
     Export,
     /// Every visible body written for the slicer and opened in it.
     SendToSlicer,
+    /// The view as drawn, saved as a PNG picture where the user picks.
+    SavePicture,
     /// Pick a Lua script and run it.
     RunScript,
 }

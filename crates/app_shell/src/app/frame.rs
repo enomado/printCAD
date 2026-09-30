@@ -181,8 +181,40 @@ impl PrintCadApp {
     /// settles. The wake gate and the end-of-frame scheduler share this —
     /// a source listed in only one of them either burns CPU or sleeps
     /// through its own completion.
+    /// A picture of the view that arrived: saved where the user picks.
+    fn drive_picture(&mut self) {
+        let Some(picture) = self.picture.take() else {
+            return;
+        };
+        if let Some(path) = std::env::var_os("PRINTCAD_BENCH_PICTURE") {
+            let written =
+                crate::app::animation::png_of(picture.width, picture.height, &picture.rgba)
+                    .and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()));
+            tracing::info!(target: "printcad.frame", "bench picture {:?}: {:?}", path, written);
+            return;
+        }
+        match crate::app::animation::png_of(picture.width, picture.height, &picture.rgba) {
+            Ok(contents) => {
+                self.start_file_dialog(crate::app::doc_io::FileDialogKind::SaveFile(Box::new(
+                    crate::app::doc_io::FileToSave {
+                        name: format!("{}.png", self.session.document.name()),
+                        kind: "PNG picture".into(),
+                        extension: "png".into(),
+                        contents,
+                    },
+                )));
+            }
+            Err(why) => app_log::error(format!("Could not make the picture: {why}")),
+        }
+    }
+
     fn async_work_pending(&self) -> bool {
-        self.kernel_worker.in_flight() > 0
+        self.picture.is_some()
+            || self
+                .gfx
+                .as_ref()
+                .is_some_and(|gfx| gfx.renderer.capture_pending())
+            || self.kernel_worker.in_flight() > 0
             || self.any_tab_busy()
             || self.file_dialog_rx.is_some()
             || self.export_rx.is_some()
@@ -410,6 +442,22 @@ impl PrintCadApp {
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_PICTURE=<path>` takes one picture
+        // of the view once the scene has settled and writes it there.
+        const PICTURE_SETTLE_FRAMES: u32 = 60;
+        if std::env::var_os("PRINTCAD_BENCH_PICTURE").is_some()
+            && self.bench_picture_frames <= PICTURE_SETTLE_FRAMES
+            && self.kernel_worker.in_flight() == 0
+        {
+            self.bench_picture_frames += 1;
+            self.redraw_needed = true;
+            if self.bench_picture_frames > PICTURE_SETTLE_FRAMES
+                && let Some(gfx) = self.gfx.as_mut()
+            {
+                gfx.renderer.request_capture();
+            }
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_TASK=appearance|placement|history`
         // opens that task of the application's on the first body (its first
         // feature, for history) once it has geometry, as its menu entry
@@ -585,6 +633,7 @@ impl PrintCadApp {
         self.drive_scripts(event_loop);
         self.drive_agent_tools();
         self.drive_chats();
+        self.drive_picture();
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();
@@ -810,6 +859,9 @@ impl PrintCadApp {
             if renderer.scene_redrawn_last_frame() {
                 self.scene_redraw_accum += 1;
             }
+            if let Some(picture) = renderer.take_capture() {
+                self.picture = Some(picture);
+            }
 
             // Render on demand: another frame is scheduled only while
             // something is moving, pending, or animating. A short tail after
@@ -825,7 +877,9 @@ impl PrintCadApp {
             // method call cannot coexist with the live `gfx` borrow, and
             // this must be frame-END truth — a kernel job submitted during
             // this frame has to keep the loop awake. Mirror the helper.
-            let work_pending = self.kernel_worker.in_flight() > 0
+            let work_pending = renderer.capture_pending()
+                || self.picture.is_some()
+                || self.kernel_worker.in_flight() > 0
                 || crate::app::tabs::tabs_busy(&self.session, &self.tabs)
                 || self.file_dialog_rx.is_some()
                 || self.export_rx.is_some()

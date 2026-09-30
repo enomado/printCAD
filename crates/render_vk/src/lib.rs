@@ -286,6 +286,14 @@ pub struct ViewportRect {
 }
 
 /// Minimal scene data required to emit a frame.
+/// A picture of the scene, row by row from the top, RGBA.
+#[derive(Debug, Clone)]
+pub struct CapturedImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 pub struct FrameSubmission {
     pub bodies: Vec<BodySubmission>,
     pub view_proj: [[f32; 4]; 4],
@@ -464,6 +472,25 @@ impl VulkanRenderer {
         if let Some(core) = self.core.as_mut() {
             core.request_pick(x, y);
         }
+    }
+
+    /// Ask for a picture of the scene as drawn, the viewport alone: it
+    /// arrives through [`Self::take_capture`] a few frames on.
+    pub fn request_capture(&mut self) {
+        if let Some(core) = self.core.as_mut() {
+            core.request_capture();
+        }
+    }
+
+    /// The picture asked for, once it has arrived.
+    pub fn take_capture(&mut self) -> Option<CapturedImage> {
+        self.core.as_mut().and_then(|c| c.take_capture())
+    }
+
+    /// Whether a picture is asked for or on its way: frames must keep
+    /// coming until it arrives.
+    pub fn capture_pending(&self) -> bool {
+        self.core.as_ref().is_some_and(|c| c.capture_pending())
     }
 }
 

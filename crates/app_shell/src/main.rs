@@ -238,6 +238,9 @@ struct PrintCadApp {
     bench_open_fired: bool,
     /// Whether `PRINTCAD_BENCH_SELECT` has fired.
     bench_select_fired: bool,
+    /// Frames the `PRINTCAD_BENCH_PICTURE` hook has waited for the scene
+    /// to settle; past its wait, the picture has been asked for.
+    bench_picture_frames: u32,
     /// `PRINTCAD_BENCH_TASK` has opened its task.
     bench_task_fired: bool,
     bench_repair_fired: bool,
@@ -319,6 +322,8 @@ struct PrintCadApp {
     /// The files of the tabs closed, the latest last: what Reopen closed
     /// tab opens again.
     closed_files: Vec<PathBuf>,
+    /// A picture of the view that arrived from the renderer, to be saved.
+    picture: Option<render_vk::CapturedImage>,
     /// The MCP server agents reach the document through.
     mcp: Option<app::mcp::McpServer>,
     /// Changes agents asked for, waiting for the user's OK.
@@ -435,6 +440,7 @@ impl PrintCadApp {
             script_rebuild: None,
             recording: None,
             closed_files: Vec::new(),
+            picture: None,
             mcp: None,
             approvals: Vec::new(),
             assistant_attention: false,
@@ -450,6 +456,7 @@ impl PrintCadApp {
             },
             bench_open_fired: false,
             bench_select_fired: false,
+            bench_picture_frames: 0,
             bench_task_fired: false,
             bench_repair_fired: false,
             bench_convert_fired: false,

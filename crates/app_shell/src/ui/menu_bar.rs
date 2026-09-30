@@ -214,6 +214,14 @@ pub fn draw_menu_bar(
                             }
                             if item_needing_document(
                                 ui,
+                                "Save view as picture…",
+                                None,
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SavePicture));
+                            }
+                            if item_needing_document(
+                                ui,
                                 "Send to slicer",
                                 key("file.send_to_slicer"),
                                 have_document,
