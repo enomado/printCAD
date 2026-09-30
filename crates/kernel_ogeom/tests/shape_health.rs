@@ -271,3 +271,70 @@ fn repair_names_a_swept_drum_as_a_cylinder() {
         "{after:?} (was {before:?})"
     );
 }
+
+/// A 10 mm cube with a 2 mm void at (4, 4, 4) whose faces are placed by a
+/// location, as an assembly part's are, and face into the material (the
+/// void written reversed twice, as some exporters do): it reads broken,
+/// and the repair turns the void the right way out where it stands.
+#[test]
+#[ignore = "kernel: fix_shape drops a turned face's location, so a located void moves out of its solid (ogeom-rs#101)"]
+fn a_located_void_inside_out_is_turned_where_it_stands() {
+    use ogeom::core::Tolerances;
+    use ogeom::math::{Frame, Transform, Vector};
+    use ogeom::topo::{Filter, Location, Model, ShapeType, explore};
+
+    let tol = Tolerances::millimetres();
+    let mut model = Model::new();
+    let shell_of = |model: &Model, shape| {
+        explore(model, shape, Filter::OfType(ShapeType::Shell)).unwrap()[0].clone()
+    };
+    let outer = ogeom::algo::make_box(&mut model, Frame::WORLD, (10.0, 10.0, 10.0), tol)
+        .unwrap()
+        .shape;
+    let local = ogeom::algo::make_box(&mut model, Frame::WORLD, (2.0, 2.0, 2.0), tol)
+        .unwrap()
+        .shape;
+    let place = Location::of(model.add_datum(Transform::translation(Vector::new(4.0, 4.0, 4.0))));
+    let faces: Vec<_> = explore(
+        &model,
+        &shell_of(&model, &local),
+        Filter::OfType(ShapeType::Face),
+    )
+    .unwrap()
+    .into_iter()
+    .map(|f| f.reversed().moved(&place))
+    .collect();
+    let void = model.add_shell(&faces).unwrap().reversed();
+    let outer_shell = shell_of(&model, &outer);
+    let solid = ogeom::algo::make_solid(&mut model, &[outer_shell, void])
+        .unwrap()
+        .shape;
+    let blob = ogeom::io::native::write(
+        &model,
+        std::slice::from_ref(&solid),
+        ogeom::io::native::WriteOptions {
+            triangulations: false,
+        },
+    )
+    .unwrap()
+    .into_bytes();
+
+    let mut kernel = OgeomKernel::new();
+    let repaired = kernel
+        .repair_brep(&blob, &[], &TessellationSettings::default())
+        .unwrap();
+    assert!(
+        repaired.mended.iter().any(|m| m.contains("turned")),
+        "{:?}",
+        repaired.mended
+    );
+    assert_eq!(repaired.health.broken, 0, "{}", repaired.health.describe());
+    let props = kernel.physical_properties(&repaired.brep_blob).unwrap();
+    let volume = props.volume_mm3.unwrap();
+    assert!((volume - 992.0).abs() < 1e-6, "{volume}");
+    // The void stays in the middle, so the centre does too; a void moved to
+    // the corner pulls it away.
+    for c in props.centre_mm {
+        assert!((c - 5.0).abs() < 1e-6, "{:?}", props.centre_mm);
+    }
+}

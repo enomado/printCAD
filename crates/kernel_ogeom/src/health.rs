@@ -78,6 +78,11 @@ pub fn repair_blob(
         note(sewn, "edge pair(s) sewn");
     }
     note(report.tolerances_reduced, "tolerance(s) tightened");
+    note(
+        report.tolerances_widened,
+        "tolerance(s) widened to hold what they bound",
+    );
+    note(report.faces_turned, "face(s) turned the right way out");
 
     // Then what the checker does not call broken but gets in the way: a
     // swept line or circle that is a plane, drum, cone, ball or torus is
