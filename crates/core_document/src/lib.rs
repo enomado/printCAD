@@ -299,6 +299,59 @@ pub struct Body {
     /// Colours chosen for single faces, over the body's own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_colors: Vec<FaceColor>,
+    /// Textures pressed into its faces for printing: drawn in the view and
+    /// baked into the meshes written for the slicer, the exact solid left
+    /// as it is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub textures: Vec<FaceTexture>,
+}
+
+/// A texture on some faces of a body. Each face is found by its name when
+/// the mesh names it, so the texture follows the face through a rebuild,
+/// else by its index; no faces means every face.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FaceTexture {
+    pub texture: surface_texture::Texture,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub faces: Vec<FaceKey>,
+}
+
+/// A face of a body's mesh: its name, when the mesh has one, and its index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FaceKey {
+    pub name: kernel_api::naming::TopoName,
+    pub index: u32,
+}
+
+impl FaceKey {
+    /// Face `index` of `mesh`, keyed as it stands.
+    pub fn of(mesh: &TriMesh, index: u32) -> Self {
+        Self {
+            name: mesh.face_names.get(index as usize).copied().unwrap_or(0),
+            index,
+        }
+    }
+
+    /// Whether this is face `index` of `mesh`.
+    pub fn is_face(&self, mesh: &TriMesh, index: u32) -> bool {
+        match mesh.face_names.get(index as usize) {
+            Some(name) if *name != 0 && self.name != 0 => *name == self.name,
+            _ => index == self.index,
+        }
+    }
+}
+
+impl FaceTexture {
+    /// The faces of `mesh` it covers, by index; empty for all of them.
+    pub fn face_indices(&self, mesh: &TriMesh) -> Vec<u32> {
+        if self.faces.is_empty() {
+            return Vec::new();
+        }
+        let count = mesh.faces.iter().max().map_or(0, |m| m + 1);
+        (0..count)
+            .filter(|i| self.faces.iter().any(|k| k.is_face(mesh, *i)))
+            .collect()
+    }
 }
 
 /// A material: its name and density.
@@ -696,6 +749,10 @@ impl Document {
                 id: *id,
                 selectable: !self.bodies.iter().find(|b| b.id == *id)?.unselectable,
             },
+            Op::SetBodyTextures { id, .. } => Op::SetBodyTextures {
+                id: *id,
+                textures: self.bodies.iter().find(|b| b.id == *id)?.textures.clone(),
+            },
             Op::SetBodyMaterial { id, .. } => Op::SetBodyMaterial {
                 id: *id,
                 material: self.bodies.iter().find(|b| b.id == *id)?.material.clone(),
@@ -891,6 +948,7 @@ impl Document {
                     unselectable: false,
                     material: None,
                     face_colors: Vec::new(),
+                    textures: Vec::new(),
                     link: None,
                     mirror: None,
                     id: *id,
@@ -932,6 +990,7 @@ impl Document {
                     unselectable: false,
                     material: None,
                     face_colors: Vec::new(),
+                    textures: Vec::new(),
                 });
                 self.refresh_copy(*id);
             }
@@ -960,6 +1019,7 @@ impl Document {
                     unselectable: false,
                     material: None,
                     face_colors: Vec::new(),
+                    textures: Vec::new(),
                 });
             }
             Op::SetBodyLink { id, link } => {
@@ -986,6 +1046,11 @@ impl Document {
             Op::SetBodySelectable { id, selectable } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.unselectable = !selectable;
+                }
+            }
+            Op::SetBodyTextures { id, textures } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.textures.clone_from(textures);
                 }
             }
             Op::SetBodyMaterial { id, material } => {
@@ -1225,6 +1290,7 @@ impl Document {
                         unselectable: false,
                         material: None,
                         face_colors: Vec::new(),
+                        textures: Vec::new(),
                         link: None,
                         mirror: None,
                         copy_of: None,
@@ -1821,6 +1887,17 @@ impl Document {
     }
 
     /// Say what a body is made of, or `None` for nothing said.
+    /// Set the textures pressed into `body`'s faces, all of them at once.
+    pub fn set_body_textures(&mut self, body: BodyId, textures: Vec<FaceTexture>) {
+        if self
+            .bodies
+            .iter()
+            .any(|b| b.id == body && b.textures != textures)
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyTextures { id: body, textures });
+        }
+    }
+
     pub fn set_body_material(&mut self, body: BodyId, material: Option<Material>) {
         if self
             .bodies

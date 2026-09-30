@@ -142,6 +142,11 @@ pub enum DocumentOp {
         id: BodyId,
         material: Option<crate::Material>,
     },
+    /// The textures pressed into a body's faces, all of them.
+    SetBodyTextures {
+        id: BodyId,
+        textures: Vec<crate::FaceTexture>,
+    },
     /// A face's own colour, `None` to take it away. `face` names the face;
     /// its colour field is not read.
     SetFaceColor {
