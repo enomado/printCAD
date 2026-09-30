@@ -521,10 +521,12 @@ impl PrintCadApp {
             .as_ref()
             .filter(|hover| Some(hover.body) == body)
             .map(|hover| hover.face);
+        let repeat = self.last_tool_label();
         self.session.viewport_menu = body.map(|body| crate::ui::ViewportMenu {
             body: core_document::BodyId(body),
             at: [(vp.0 + cx) / scale, (vp.1 + cy) / scale],
             face,
+            repeat,
         });
         true
     }

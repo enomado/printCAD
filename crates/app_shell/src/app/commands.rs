@@ -129,6 +129,10 @@ impl PrintCadApp {
                 UiCommand::SetBodyDisplay { body, display } => {
                     intents.body_display.push((body, display));
                 }
+                UiCommand::RepeatLastTool => {
+                    self.session.viewport_menu = None;
+                    self.repeat_last_tool();
+                }
                 UiCommand::LookAtFace { body, face } => {
                     self.session.viewport_menu = None;
                     self.look_at_face(body, face);
@@ -796,6 +800,52 @@ impl PrintCadApp {
     /// Host-driven workbench switch (create-sketch flow, return-on-finish).
     /// Remembers the outgoing workbench as the return target when jumping
     /// INTO an edit-session bench so finishing can jump back.
+    /// Start the last tool started again, as its button would, when its
+    /// bench is the one in use.
+    fn repeat_last_tool(&mut self) {
+        let Some((bench, id)) = self.session.last_tool.clone() else {
+            app_log::info("No tool to repeat yet");
+            return;
+        };
+        if bench != self.session.active_workbench.0 {
+            app_log::info("The last tool belongs to another workbench");
+            return;
+        }
+        let Ok(tools) = self.registry.tools_for(&bench) else {
+            return;
+        };
+        let base = core_document::base_tool_id(&id);
+        let Some(tool) = tools.iter().find(|t| t.id == base) else {
+            return;
+        };
+        if tool.planned.is_some() {
+            return;
+        }
+        crate::ui::toolbar::activate_tool(&mut self.session.active_tool, tools, tool, &id);
+        self.redraw_needed = true;
+    }
+
+    /// The name the last tool goes by, for Repeat's menu entry.
+    pub(crate) fn last_tool_label(&self) -> Option<String> {
+        let (bench, id) = self.session.last_tool.as_ref()?;
+        if *bench != self.session.active_workbench.0 {
+            return None;
+        }
+        let tool = self
+            .registry
+            .tools_for(bench)
+            .ok()?
+            .iter()
+            .find(|t| t.id == core_document::base_tool_id(id))?;
+        let variant = id
+            .split_once(':')
+            .and_then(|(_, v)| tool.variants.iter().find(|x| x.id == v));
+        Some(match variant {
+            Some(v) => format!("{} · {}", tool.label, v.label),
+            None => tool.label.clone(),
+        })
+    }
+
     /// Turn the view square to a face of a body, looking at it from
     /// outside, centred on it, keeping the view's up as near as it goes.
     fn look_at_face(&mut self, body: core_document::BodyId, face: u32) {

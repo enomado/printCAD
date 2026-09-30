@@ -109,6 +109,8 @@ pub(crate) struct DocumentSession {
     /// Workbench to return to when an edit session finishes, when the flow
     /// was started from another workbench (e.g. Design).
     pub return_workbench: Option<ActiveWorkbench>,
+    /// The last tool started, and its bench: what Repeat starts again.
+    pub last_tool: Option<(crate::WorkbenchId, String)>,
     /// A workbench task is open in the right panel; its edits form one undo
     /// entry until it closes.
     pub task_open: bool,
@@ -231,6 +233,7 @@ impl DocumentSession {
             reveal_body: None,
             viewport_menu: None,
             return_workbench: None,
+            last_tool: None,
             task_open: false,
             dimension_cache: None,
             measure: None,

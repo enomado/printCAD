@@ -55,6 +55,7 @@ pub enum HostAction {
     PrintBed,
     Annotations,
     Recompute,
+    Repeat,
     Rename,
     Properties,
     LogPanel,
@@ -179,6 +180,13 @@ const HOST: &[HostSpec] = {
             "Recompute all",
             "Edit",
             &["Ctrl+R"],
+        ),
+        spec(
+            Repeat,
+            "edit.repeat",
+            "Repeat the last tool",
+            "Edit",
+            &["Shift+Space"],
         ),
         spec(FitAll, "view.fit_all", "Fit all", "View", &["F"]),
         spec(
@@ -806,6 +814,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         PrintBed => C(UiCommand::TogglePrintBed),
         Annotations => C(UiCommand::ToggleAnnotations),
         Recompute => C(UiCommand::RecomputeAll),
+        Repeat => C(UiCommand::RepeatLastTool),
         Rename => match state.tree_selection {
             Some(item) if item != TreeItemId::DocumentRoot => {
                 HostOutcome::Local(super::MenuLocal::Rename(item))
@@ -955,6 +964,19 @@ mod tests {
             keymap.get("wb.one.planned").is_none(),
             "a planned tool takes no key"
         );
+    }
+
+    /// Shift+Space starts the last tool again, whichever bench is in use.
+    #[test]
+    fn shift_space_repeats_the_last_tool() {
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
+        for bench in ["wb.one", "wb.two"] {
+            let bench = WorkbenchId::from(bench);
+            assert_eq!(
+                keymap.lookup(key("Shift+Space"), &bench).unwrap().id,
+                "edit.repeat"
+            );
+        }
     }
 
     #[test]

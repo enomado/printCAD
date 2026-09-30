@@ -756,6 +756,14 @@ impl PrintCadApp {
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
                 ui_repaint_delay = ui_result.repaint_delay;
                 self.frame_submission.egui = Some(ui_result.submission);
+                // A tool that started this frame is what Repeat starts again.
+                if let Some(started) = ui_result.active_tool.active_ids.iter().find(|id| {
+                    !self.session.active_tool.active_ids.contains(*id)
+                        && !core_document::base_tool_id(id).ends_with(".select")
+                }) {
+                    self.session.last_tool =
+                        Some((ui_result.active_workbench.0.clone(), started.clone()));
+                }
                 self.session.active_tool = ui_result.active_tool;
                 self.session.active_workbench = ui_result.active_workbench;
                 self.session.task_open = ui_result.task_open;

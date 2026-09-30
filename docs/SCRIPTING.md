@@ -480,6 +480,8 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 `pc.edit.recompute`: Recompute all.
 
+`pc.edit.repeat`: Repeat the last tool.
+
 ### view
 
 `pc.view.fit_all`: Fit all.

@@ -23,6 +23,8 @@ pub struct ViewportMenu {
     /// The face it was opened on, when there was one: its index in the
     /// body's mesh.
     pub face: Option<u32>,
+    /// The last tool started, by name, which the menu offers to repeat.
+    pub repeat: Option<String>,
 }
 
 pub fn draw(
@@ -70,6 +72,12 @@ pub fn draw(
                             ui.spacing_mut().item_spacing.y = 2.0;
                             ui.label(RichText::new(&name).font(sans(FONT_XS)).color(TEXT3));
                             ui.separator();
+                            if let Some(tool) = &menu.repeat {
+                                if item(ui, &format!("Repeat {tool}")) {
+                                    commands.push(UiCommand::RepeatLastTool);
+                                }
+                                ui.separator();
+                            }
                             if item(ui, "Show in tree") {
                                 commands.push(UiCommand::RevealInTree(menu.body));
                             }
