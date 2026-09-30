@@ -243,6 +243,17 @@ impl DesignWorkbench {
         flat.then_some(FacePick::of(face))
     }
 
+    /// Whether a pad or a pocket has a profile without a sketch: a flat
+    /// face of `body`'s solid picked in the viewport, or a borrow of faces
+    /// selected in the tree that lends one.
+    fn profile_without_sketch(ctx: &WorkbenchRuntimeContext, body: BodyId) -> bool {
+        Self::selected_profile_face(ctx, body).is_some()
+            || ctx.active_document_object.is_some_and(|id| {
+                crate::borrow::borrow_of(ctx.document, id).is_some_and(|b| b.body == body)
+                    && crate::borrow::lent_face(ctx.document, id, 0).is_some()
+            })
+    }
+
     /// The flat face picked in the viewport, as a plane to mirror across;
     /// a curved face has no plane to offer.
     fn selected_mirror_face(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<MirrorPlane> {
@@ -1895,11 +1906,18 @@ impl Workbench for DesignWorkbench {
             "design.clone" => has_body && !has_solid,
             "design.borrow" => has_body && ctx.document.bodies().len() > 1,
             "design.scaled" => has_solid,
-            "design.pad" | "design.revolve" | "design.loft" | "design.pipe" | "design.helix" => {
+            // A pad or a pocket also takes a flat face of the solid, or a
+            // borrow lending one, as its profile.
+            "design.pad" => {
                 has_sketch
+                    || (has_solid && body.is_some_and(|b| Self::profile_without_sketch(ctx, b)))
             }
-            "design.pocket"
-            | "design.groove"
+            "design.pocket" => {
+                has_solid
+                    && (has_sketch || body.is_some_and(|b| Self::profile_without_sketch(ctx, b)))
+            }
+            "design.revolve" | "design.loft" | "design.pipe" | "design.helix" => has_sketch,
+            "design.groove"
             | "design.hole"
             | "design.subtractive_loft"
             | "design.subtractive_pipe"
@@ -2436,6 +2454,80 @@ mod body_tool {
             radius: 5.0,
         };
         assert_eq!(mirror_with(Some(round)), MirrorPlane::YZ);
+    }
+
+    /// Pad and Pocket take a flat face of the solid as their profile: with
+    /// one picked they are there to click, with a curved one or nothing
+    /// they are not, and the pad made has the face for its profile.
+    #[test]
+    fn a_picked_flat_face_is_a_pad_s_or_pocket_s_profile() {
+        let mut wb = DesignWorkbench::default();
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        doc.add_feature_in_body(
+            DesignFeature::Primitive {
+                attached: None,
+                refine: false,
+                kind: primitive_preset("box").unwrap(),
+                placement: kernel_api::Placement::default(),
+                subtractive: false,
+            },
+            "Box".into(),
+            Some(body),
+        )
+        .unwrap();
+        let top = |surface| core_document::FaceRef {
+            name: 0,
+            point: [5.0, 5.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            surface,
+        };
+        let flat = kernel_api::FaceSurface::Plane {
+            origin: [0.0, 0.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let round = kernel_api::FaceSurface::Cylinder {
+            origin: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius: 5.0,
+        };
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.selected_body_id = Some(body.0);
+        let tools = |wb: &DesignWorkbench, ctx: &WorkbenchRuntimeContext| {
+            (
+                wb.is_tool_enabled("design.pad", ctx),
+                wb.is_tool_enabled("design.pocket", ctx),
+            )
+        };
+        assert_eq!(tools(&wb, &ctx), (false, false), "nothing picked");
+        ctx.selected_face = Some(top(Some(round)));
+        assert_eq!(
+            tools(&wb, &ctx),
+            (false, false),
+            "a curved face has no plane"
+        );
+        ctx.selected_face = Some(top(Some(flat)));
+        assert_eq!(tools(&wb, &ctx), (true, true), "a flat face is a profile");
+
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("design.pad"),
+            &mut ctx,
+        );
+        let profile = doc
+            .feature_tree()
+            .all_nodes()
+            .find_map(|(_, n)| match DesignFeature::from_json(&n.data).ok()? {
+                DesignFeature::Pad {
+                    sketch,
+                    profile_face,
+                    ..
+                } => Some((sketch, profile_face)),
+                _ => None,
+            })
+            .expect("the tool made a pad");
+        assert_eq!(profile.0, None, "no sketch");
+        assert_eq!(profile.1.map(|f| f.point), Some([5.0, 5.0, 10.0]));
     }
 
     #[test]

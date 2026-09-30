@@ -1095,6 +1095,53 @@ fn revolve_axis_editor(
     changed
 }
 
+/// A pad's or a pocket's face profile, when it has one: where it is, and a
+/// flat face picked in the view to take its place.
+fn face_profile_row(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    profile_face: &mut Option<FacePick>,
+) -> bool {
+    let Some(face) = profile_face else {
+        return false;
+    };
+    ui.horizontal_wrapped(|ui| {
+        label_cell(ui, "Profile");
+        mono_label(
+            ui,
+            format!(
+                "face at ({:.1}, {:.1}, {:.1})",
+                face.point[0], face.point[1], face.point[2]
+            ),
+            FONT_XS,
+            TEXT1,
+        );
+    });
+    // Its own line: beside the face's position it runs past a narrow
+    // panel.
+    let picked = ctx.selected_face_in(body).filter(|f| {
+        matches!(
+            f.surface,
+            None | Some(kernel_api::FaceSurface::Plane { .. })
+        )
+    });
+    let clicked = ui
+        .add_enabled_ui(picked.is_some(), |ui| {
+            accent_outline_button(ui, "Use selected face")
+        })
+        .inner
+        .on_hover_text("Click another flat face of the solid first, then press this")
+        .clicked();
+    match picked {
+        Some(pick) if clicked => {
+            *face = FacePick::of(pick);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// What a pipe sweeps and along what: its profile a sketch or a picked
 /// face, its path a sketch, picked edges of the solid or edges another body
 /// lends.
@@ -2097,7 +2144,7 @@ pub fn feature_editor(
             taper_deg,
             up_to_face,
             up_to_offset,
-            profile_face: _,
+            profile_face,
             profile_borrowed: _,
             direction,
             up_to_shape,
@@ -2108,6 +2155,7 @@ pub fn feature_editor(
             extras,
         } => {
             let borrowed = end_targets(ctx, body);
+            changed |= face_profile_row(ui, ctx, body, profile_face);
             changed |=
                 extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature, &borrowed);
             changed |= extrude_side_rows(
@@ -2164,7 +2212,7 @@ pub fn feature_editor(
             taper_deg,
             up_to_face,
             up_to_offset,
-            profile_face: _,
+            profile_face,
             profile_borrowed: _,
             direction,
             up_to_shape,
@@ -2181,6 +2229,7 @@ pub fn feature_editor(
                 *mode = ExtrudeMode::ThroughAll;
                 changed = true;
             }
+            changed |= face_profile_row(ui, ctx, body, profile_face);
             let borrowed = end_targets(ctx, body);
             changed |= extrude_mode_combo(
                 ui,
