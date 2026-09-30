@@ -417,6 +417,15 @@ impl DesignWorkbench {
         match &node.error {
             Some(error) => {
                 note_card(ui, Note::Error, Some("Recompute failed"), error);
+                if let Some(hint) = faceted_hint(ctx.document, body, feature_id) {
+                    ui.add_space(SPACE_1);
+                    note_card(
+                        ui,
+                        Note::Warning,
+                        Some("The body is still in facets"),
+                        &hint,
+                    );
+                }
             }
             None if node.dirty => {
                 note_card(ui, Note::Info, None, "Rebuilding…");
@@ -527,6 +536,36 @@ impl DesignWorkbench {
             }
         });
     }
+}
+
+/// What to do about a feature that failed on a solid converted from a mesh
+/// whose curved areas are still facets: refine the body first. `None` for
+/// any other body.
+fn faceted_hint(
+    document: &core_document::Document,
+    body: core_document::BodyId,
+    feature: FeatureId,
+) -> Option<String> {
+    if !document.body_health(body).is_some_and(|h| h.faceted) {
+        return None;
+    }
+    let others = crate::build::design_features_of_body(document, body)
+        .into_iter()
+        .filter(|(id, f)| *id != feature && !matches!(f, DesignFeature::Base { .. }))
+        .count();
+    let intro = "This body was converted from a mesh and its curved areas are still flat \
+                 facets, which features on or along them may fail against.";
+    Some(if others == 0 {
+        format!(
+            "{intro} Cancel, right-click the body › Refine shape to find its round faces, \
+             then make this feature again."
+        )
+    } else {
+        format!(
+            "{intro} Refine shape is offered while the body has no features: delete them \
+             (the Base last), then right-click the body › Refine shape."
+        )
+    })
 }
 
 #[cfg(test)]
@@ -883,5 +922,45 @@ mod tests {
         assert_eq!(typed(vec![key(egui::Key::Enter)], OPEN), "PadXY");
         assert_eq!(typed(vec![key(egui::Key::Escape)], OPEN), "Pad");
         assert_eq!(typed(vec![], OK), "PadXY");
+    }
+
+    /// A feature failing on a converted solid still in facets says to
+    /// refine it: cancel and refine when it is the body's first feature,
+    /// clear the features first otherwise; any other body gets no hint.
+    #[test]
+    fn a_failure_on_a_faceted_body_says_to_refine_it() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Part".into()));
+        let geometry = |faceted: bool| core_document::ImportedGeometry {
+            mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+            source_asset: Some(uuid::Uuid::new_v4()),
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: Some(kernel_api::ShapeHealth {
+                faceted,
+                ..Default::default()
+            }),
+        };
+        let sketch = doc
+            .add_feature_in_body(rect_sketch(), "Sketch".into(), Some(body))
+            .unwrap();
+        let first = doc
+            .add_feature_in_body(pad(sketch, 10.0), "Pad".into(), Some(body))
+            .unwrap();
+
+        doc.set_imported_geometry(body, geometry(false));
+        assert_eq!(faceted_hint(&doc, body, first), None);
+
+        doc.set_imported_geometry(body, geometry(true));
+        let hint = faceted_hint(&doc, body, first).expect("a hint");
+        assert!(hint.contains("Cancel"), "{hint}");
+
+        let second = doc
+            .add_feature_in_body(pad(sketch, 5.0), "Pad001".into(), Some(body))
+            .unwrap();
+        let hint = faceted_hint(&doc, body, second).expect("a hint");
+        assert!(hint.contains("delete them"), "{hint}");
     }
 }
