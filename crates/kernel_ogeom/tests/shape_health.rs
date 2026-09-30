@@ -279,6 +279,32 @@ fn repair_names_a_swept_drum_as_a_cylinder() {
 #[test]
 #[ignore = "kernel: fix_shape drops a turned face's location, so a located void moves out of its solid (ogeom-rs#101)"]
 fn a_located_void_inside_out_is_turned_where_it_stands() {
+    let blob = cube_with_inside_out_void();
+    let mut kernel = OgeomKernel::new();
+    let repaired = kernel
+        .repair_brep(&blob, &[], &TessellationSettings::default())
+        .unwrap();
+    assert!(
+        repaired.mended.iter().any(|m| m.contains("turned")),
+        "{:?}",
+        repaired.mended
+    );
+    assert_eq!(repaired.health.broken, 0, "{}", repaired.health.describe());
+    let props = kernel.physical_properties(&repaired.brep_blob).unwrap();
+    let volume = props.volume_mm3.unwrap();
+    assert!((volume - 992.0).abs() < 1e-6, "{volume}");
+    // The void stays in the middle, so the centre does too; a void moved to
+    // the corner pulls it away.
+    for c in props.centre_mm {
+        assert!((c - 5.0).abs() < 1e-6, "{:?}", props.centre_mm);
+    }
+}
+
+/// A 10 mm cube with a 2 mm void at (4, 4, 4) as a snapshot: the void's
+/// faces drawn at the origin and placed by a location, as an assembly
+/// part's are, facing into the box and their shell marked reversed as well,
+/// so the void faces into the material (as some exporters write it).
+fn cube_with_inside_out_void() -> Vec<u8> {
     use ogeom::core::Tolerances;
     use ogeom::math::{Frame, Transform, Vector};
     use ogeom::topo::{Filter, Location, Model, ShapeType, explore};
@@ -309,7 +335,7 @@ fn a_located_void_inside_out_is_turned_where_it_stands() {
     let solid = ogeom::algo::make_solid(&mut model, &[outer_shell, void])
         .unwrap()
         .shape;
-    let blob = ogeom::io::native::write(
+    ogeom::io::native::write(
         &model,
         std::slice::from_ref(&solid),
         ogeom::io::native::WriteOptions {
@@ -317,24 +343,71 @@ fn a_located_void_inside_out_is_turned_where_it_stands() {
         },
     )
     .unwrap()
-    .into_bytes();
+    .into_bytes()
+}
 
-    let mut kernel = OgeomKernel::new();
-    let repaired = kernel
-        .repair_brep(&blob, &[], &TessellationSettings::default())
+/// A 10 mm cube with a 2 mm cubic void at its middle, read from `name`:
+/// what the checker says and the volume.
+fn void_fixture(name: &str) -> (kernel_api::ShapeHealth, f64) {
+    let (mut kernel, model) = import(name);
+    let body = &model.bodies[0];
+    let volume = kernel
+        .physical_properties(&body.brep_blob)
+        .unwrap()
+        .volume_mm3
         .unwrap();
-    assert!(
-        repaired.mended.iter().any(|m| m.contains("turned")),
-        "{:?}",
-        repaired.mended
-    );
-    assert_eq!(repaired.health.broken, 0, "{}", repaired.health.describe());
-    let props = kernel.physical_properties(&repaired.brep_blob).unwrap();
-    let volume = props.volume_mm3.unwrap();
+    (body.health.clone().unwrap(), volume)
+}
+
+/// A STEP solid with a void, written as the standard has it, imports as
+/// the cube with a hole: the void subtracts and nothing is broken.
+#[test]
+fn a_step_void_imports_as_a_void() {
+    let (health, volume) = void_fixture("void_in_step.step");
+    assert_eq!(health.broken, 0, "{}", health.describe());
     assert!((volume - 992.0).abs() < 1e-6, "{volume}");
-    // The void stays in the middle, so the centre does too; a void moved to
-    // the corner pulls it away.
-    for c in props.centre_mm {
-        assert!((c - 5.0).abs() < 1e-6, "{:?}", props.centre_mm);
-    }
+}
+
+/// The same void written the wrong way out, its faces into the void and
+/// its shell marked reversed besides (as one exporter writes them), still
+/// imports as the cube with a hole it plainly is.
+#[test]
+#[ignore = "kernel: the STEP reader reads a doubly reversed void inside out instead of orienting it by its geometry (ogeom-rs#102)"]
+fn a_step_void_written_the_wrong_way_out_imports_as_a_void() {
+    let (health, volume) = void_fixture("void_reversed_twice.step");
+    assert_eq!(health.broken, 0, "{}", health.describe());
+    assert!((volume - 992.0).abs() < 1e-6, "{volume}");
+}
+
+/// A solid with a void, exported to STEP and read back, keeps its void.
+#[test]
+#[ignore = "kernel: the STEP writer writes only a solid's first shell, dropping its voids (ogeom-rs#103)"]
+fn a_void_survives_a_step_export() {
+    use kernel_ogeom::export::{ExportBody, ExportFormat, export};
+    let (_, model) = import("void_in_step.step");
+    let body = &model.bodies[0];
+    let out = export(
+        &[ExportBody {
+            name: "cube".into(),
+            brep: Some(&body.brep_blob),
+            transform: None,
+            mesh: &body.mesh,
+            finish: None,
+        }],
+        ExportFormat::Step,
+        &TessellationSettings::default(),
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!("printcad-void-{}.step", std::process::id()));
+    std::fs::write(&path, &out.bytes).unwrap();
+    let back = OgeomKernel::new()
+        .import_step(&path, &TessellationSettings::default())
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    let volume = OgeomKernel::new()
+        .physical_properties(&back.bodies[0].brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    assert!((volume - 992.0).abs() < 1e-6, "{volume}");
 }
