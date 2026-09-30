@@ -12,6 +12,8 @@ use super::{FileCommand, StartKind, UiCommand};
 
 pub struct StartPageInputs<'a> {
     pub recent: &'a [RecentEntry],
+    /// Autosaved copies a crash left.
+    pub recoverable: &'a [crate::app::recovery::Recoverable],
     /// Substring filter over recent names; UI-local.
     pub search: &'a mut String,
     /// The document the New cards start from, and the benches whose cards
@@ -299,6 +301,52 @@ fn nav_item(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
     response
 }
 
+/// The copies a crash left: each with when it was written and where its
+/// document was, to bring back or let go.
+fn recover_section(
+    ui: &mut Ui,
+    copies: &[crate::app::recovery::Recoverable],
+    now: u64,
+    commands: &mut Vec<UiCommand>,
+) {
+    overline(ui, "Recover unsaved work");
+    for copy in copies {
+        Card::new().fill(BG2).padding(SPACE_3).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(&copy.name)
+                            .font(sans_medium(FONT_MD))
+                            .color(TEXT1),
+                    );
+                    let whence = match &copy.file {
+                        Some(file) => format!(
+                            "Autosaved {} · {}",
+                            humanize_age(copy.saved_ms, now).to_lowercase(),
+                            file.display()
+                        ),
+                        None => format!(
+                            "Autosaved {} · never saved",
+                            humanize_age(copy.saved_ms, now).to_lowercase()
+                        ),
+                    };
+                    ui.label(RichText::new(whence).font(sans(FONT_XS)).color(TEXT3));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui_kit::widgets::secondary_button(ui, "Discard").clicked() {
+                        commands.push(UiCommand::DiscardRecovery(copy.copy.clone()));
+                    }
+                    if ui_kit::widgets::primary_button(ui, "Recover").clicked() {
+                        commands.push(UiCommand::RecoverDocument(copy.copy.clone()));
+                    }
+                });
+            });
+        });
+    }
+    ui.add_space(SPACE_2);
+}
+
 fn search_field(ui: &mut Ui, search: &mut String) {
     let (rect, _) = ui.allocate_exact_size(vec2(240.0, INPUT + 2.0), Sense::hover());
     ui.painter().rect(
@@ -434,6 +482,9 @@ pub fn draw_start_page(
                         StartView::Start => {}
                     }
 
+                    if !inputs.recoverable.is_empty() {
+                        recover_section(ui, inputs.recoverable, now, commands);
+                    }
                     overline(ui, "New");
                     ui.horizontal(|ui| {
                         let size = vec2(card_w, 116.0);

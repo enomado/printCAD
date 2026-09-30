@@ -444,6 +444,9 @@ impl PrintCadApp {
                     // would be silently marked as saved.
                     if at_seq == self.session.document.mutation_seq() {
                         self.session.document.mark_clean();
+                        // Saved, the tab needs no copy to come back from.
+                        self.autosaved.remove(&self.session.tab);
+                        crate::app::recovery::forget(self.session.tab);
                     }
                     self.session.current_file = Some(path.clone());
                     self.touch_recent(&path);
@@ -766,6 +769,153 @@ impl PrintCadApp {
     /// Every tab's saves, before the process ends (CLAUDE.md invariant).
     pub(crate) fn wait_for_all_document_saves(&mut self) {
         self.for_each_tab(|app| app.wait_for_document_saves());
+        // On the way out, after the user answered for every tab: no copy is
+        // left to come back from.
+        for job in self.autosave_jobs.drain(..) {
+            let _ = job.join();
+        }
+        crate::app::recovery::forget(self.session.tab);
+        for slot in &self.tabs {
+            crate::app::recovery::forget(slot.tab);
+        }
+    }
+
+    /// How long between autosaves; `None` when off. `PRINTCAD_AUTOSAVE_SECS`
+    /// shortens it, for trying it out.
+    fn autosave_every(&self) -> Option<std::time::Duration> {
+        let secs = std::env::var("PRINTCAD_AUTOSAVE_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(u64::from(self.user_settings.autosave_minutes) * 60);
+        (secs > 0).then(|| std::time::Duration::from_secs(secs))
+    }
+
+    /// When the next autosave is due: while a tab has edits its copy lacks,
+    /// or a saved tab's copy is still to be taken away. The loop wakes for
+    /// it though nothing else moves.
+    pub(crate) fn next_autosave(&self) -> Option<std::time::Instant> {
+        let every = self.autosave_every()?;
+        let stale = std::iter::once(&self.session)
+            .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()))
+            .any(|session| {
+                let kept = self.autosaved.get(&session.tab);
+                if session.document.metadata().dirty() {
+                    kept != Some(&session.document.mutation_seq())
+                } else {
+                    kept.is_some()
+                }
+            });
+        stale.then(|| self.autosaved_at + every)
+    }
+
+    /// Autosave: every few minutes, a copy of each tab's document edited
+    /// since its last copy, packed and written on a thread of its own. A
+    /// tab that is saved has its copy taken away.
+    pub(crate) fn drive_autosave(&mut self) {
+        self.autosave_jobs.retain(|job| !job.is_finished());
+        if !self
+            .next_autosave()
+            .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            return;
+        }
+        self.autosaved_at = std::time::Instant::now();
+        let sessions = std::iter::once(&self.session)
+            .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()));
+        let mut wanted = Vec::new();
+        for session in sessions {
+            let tab = session.tab;
+            if !session.document.metadata().dirty() {
+                if self.autosaved.remove(&tab).is_some() {
+                    crate::app::recovery::forget(tab);
+                }
+                continue;
+            }
+            let seq = session.document.mutation_seq();
+            if self.autosaved.get(&tab) == Some(&seq) {
+                continue;
+            }
+            wanted.push((
+                tab,
+                seq,
+                session.document.clone(),
+                session.current_file.clone(),
+            ));
+        }
+        for (tab, seq, mut document, file) in wanted {
+            self.autosaved.insert(tab, seq);
+            let name = document.name().to_string();
+            let spawned = std::thread::Builder::new()
+                .name("printcad-autosave".to_string())
+                .spawn(move || {
+                    let kept = document
+                        .save_to_bytes(core_document::Compression::Zstd)
+                        .map_err(|e| e.to_string())
+                        .and_then(|bytes| {
+                            crate::app::recovery::keep(tab, &name, file.as_deref(), &bytes)
+                                .map_err(|e| e.to_string())
+                        });
+                    if let Err(why) = kept {
+                        tracing::warn!("Autosave of `{name}` failed: {why}");
+                    }
+                });
+            if let Ok(job) = spawned {
+                self.autosave_jobs.push(job);
+            }
+        }
+    }
+
+    /// Bring back a copy a crash left, as an untitled document in a tab
+    /// of its own: saving it says where it goes.
+    pub(crate) fn recover_document(&mut self, copy: PathBuf) {
+        let Some(entry) = self.recoverable.iter().find(|r| r.copy == copy).cloned() else {
+            return;
+        };
+        let document = std::fs::read(&copy)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| Self::parse_document_bytes(&copy, bytes));
+        let document = match document {
+            Ok(document) => document,
+            Err(err) => {
+                app_log::error(format!("Could not recover `{}`: {err:#}", entry.name));
+                return;
+            }
+        };
+        self.reset_to_new_document();
+        self.session.document = document;
+        self.session
+            .document
+            .set_name(format!("{} (recovered)", entry.name));
+        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+        if let Some((mn, mx)) = document_imported_aabb(&self.session.document) {
+            let (center, radius) = aabb_fit_center_radius(mn, mx);
+            self.session.camera.reset_to_fit(
+                center,
+                radius,
+                Some((mn, mx)),
+                &self.user_settings.camera,
+            );
+        }
+        self.session.journal.reset(&mut self.session.document);
+        self.session
+            .server
+            .send(core_document::server::ClientMessage::Rebase);
+        self.session.document.mark_dirty();
+        self.discard_recovery(copy);
+        match &entry.file {
+            Some(file) => app_log::info(format!(
+                "Recovered `{}`; it was {}: Save as there to keep it",
+                entry.name,
+                file.display()
+            )),
+            None => app_log::info(format!("Recovered `{}`", entry.name)),
+        }
+    }
+
+    /// Let a copy a crash left go.
+    pub(crate) fn discard_recovery(&mut self, copy: PathBuf) {
+        crate::app::recovery::remove(&copy);
+        self.recoverable.retain(|r| r.copy != copy);
     }
 
     pub(crate) fn wait_for_document_saves(&mut self) {

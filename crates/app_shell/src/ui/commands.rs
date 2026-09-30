@@ -131,6 +131,10 @@ pub enum UiCommand {
     /// Files dropped on the window, outside the assistant: documents open,
     /// model files import.
     OpenDropped(Vec<std::path::PathBuf>),
+    /// Bring back an autosaved copy a crash left, by its path.
+    RecoverDocument(std::path::PathBuf),
+    /// Let an autosaved copy a crash left go.
+    DiscardRecovery(std::path::PathBuf),
     /// Open again the file of the last tab closed.
     ReopenTab,
     CloseTab(uuid::Uuid),

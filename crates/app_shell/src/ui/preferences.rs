@@ -902,6 +902,22 @@ fn general_page(
                 ],
                 filter,
             );
+            let autosave = &mut draft.autosave_minutes;
+            pref_group(
+                ui,
+                "Autosave",
+                vec![
+                    PrefRow::new("Every", move |ui| {
+                        ui.add(egui::DragValue::new(autosave).range(0..=120).suffix(" min"))
+                            .changed()
+                    })
+                    .hint(
+                        "A copy of each edited document, which the start page offers back after \
+                         a crash; 0 turns it off",
+                    ),
+                ],
+                filter,
+            );
             pref_group(
                 ui,
                 "Diagnostics",

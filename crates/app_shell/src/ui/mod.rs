@@ -304,6 +304,7 @@ impl UiLayer {
         let UiFrameInputs {
             screen,
             recent,
+            recoverable,
             active_tool: host_active_tool,
             active_workbench: host_active_workbench,
             settings,
@@ -569,6 +570,7 @@ impl UiLayer {
                     ui,
                     start_page::StartPageInputs {
                         recent,
+                        recoverable,
                         search: &mut self.recent_search,
                         view: &mut self.start_view,
                         thumbnails: &mut self.recent_thumbnails,

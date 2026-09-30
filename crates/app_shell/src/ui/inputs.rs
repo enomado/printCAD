@@ -26,6 +26,8 @@ pub struct UiFrameInputs<'a> {
     pub screen: Screen,
     /// Recently opened documents, most recent first.
     pub recent: &'a [RecentEntry],
+    /// Autosaved copies a crash left, which the start page offers back.
+    pub recoverable: &'a [crate::app::recovery::Recoverable],
     /// The host's tool state — authoritative. The host consumes a used
     /// Action tool id from its copy once its bench has handled it, so the
     /// UI must re-seed from it each frame rather than keeping its own.

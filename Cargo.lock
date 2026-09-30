@@ -139,6 +139,7 @@ dependencies = [
  "resvg",
  "rfd",
  "scripting",
+ "serde",
  "serde_json",
  "settings",
  "sixdof",

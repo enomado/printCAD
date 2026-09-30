@@ -67,6 +67,10 @@ pub struct UserSettings {
     /// palette's own keys: it lists them first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_commands: Vec<String>,
+    /// Minutes between autosaved copies of edited documents; 0 turns
+    /// autosave off.
+    #[serde(default = "default_autosave_minutes")]
+    pub autosave_minutes: u32,
     /// Looking for newer printCAD releases.
     #[serde(default)]
     pub updates: UpdateSettings,
@@ -302,6 +306,7 @@ impl Default for UserSettings {
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
             recent_commands: Vec::new(),
+            autosave_minutes: default_autosave_minutes(),
             updates: UpdateSettings::default(),
         }
     }
@@ -557,6 +562,10 @@ pub struct RenderingSettings {
 
 fn default_show_annotations() -> bool {
     true
+}
+
+fn default_autosave_minutes() -> u32 {
+    5
 }
 
 fn default_curve_step_deg() -> f32 {
@@ -907,15 +916,22 @@ pub fn config_path(name: &str) -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION).map(|dirs| dirs.config_dir().join(name))
 }
 
-/// The folder the user's scripts live in: every `.lua` file there is a
-/// command of the application. `None` when the system names no
-/// configuration folder.
 /// Where workbench packages are installed, one folder each.
 pub fn workbenches_dir() -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|dirs| dirs.data_dir().join("workbenches"))
 }
 
+/// Where autosaved copies of edited documents wait, until saved, closed
+/// or recovered.
+pub fn recovery_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.data_dir().join("recovery"))
+}
+
+/// The folder the user's scripts live in: every `.lua` file there is a
+/// command of the application. `None` when the system names no
+/// configuration folder.
 pub fn scripts_dir() -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|dirs| dirs.config_dir().join("scripts"))

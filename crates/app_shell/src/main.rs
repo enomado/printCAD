@@ -326,6 +326,14 @@ struct PrintCadApp {
     closed_files: Vec<PathBuf>,
     /// A picture of the view that arrived from the renderer, to be saved.
     picture: Option<render_vk::CapturedImage>,
+    /// When the documents were last autosaved.
+    autosaved_at: std::time::Instant,
+    /// Each tab's document as last autosaved, by its mutation seq.
+    autosaved: std::collections::HashMap<Uuid, u64>,
+    /// Autosave writes on their threads, joined before an exit.
+    autosave_jobs: Vec<std::thread::JoinHandle<()>>,
+    /// Copies a crash left, offered back on the start page.
+    recoverable: Vec<app::recovery::Recoverable>,
     /// The MCP server agents reach the document through.
     mcp: Option<app::mcp::McpServer>,
     /// Changes agents asked for, waiting for the user's OK.
@@ -443,6 +451,10 @@ impl PrintCadApp {
             recording: None,
             closed_files: Vec::new(),
             picture: None,
+            autosaved_at: std::time::Instant::now(),
+            autosaved: std::collections::HashMap::new(),
+            autosave_jobs: Vec::new(),
+            recoverable: app::recovery::left_behind(),
             mcp: None,
             approvals: Vec::new(),
             assistant_attention: false,

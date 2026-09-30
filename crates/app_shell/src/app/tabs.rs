@@ -179,6 +179,9 @@ impl PrintCadApp {
         self.chats.retain(|c| c.tab != closing.tab);
         self.carry_viewport_from(&closing);
         app_log::info(format!("Closed `{}`", closing.document.name()));
+        // Closed, with its changes saved or let go: no copy to come back from.
+        self.autosaved.remove(&closing.tab);
+        crate::app::recovery::forget(closing.tab);
         if let Some(file) = &closing.current_file {
             self.closed_files.retain(|f| f != file);
             self.closed_files.push(file.clone());

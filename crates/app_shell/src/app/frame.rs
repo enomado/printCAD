@@ -280,6 +280,8 @@ impl PrintCadApp {
 
     pub(crate) fn frame(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+        // When the loop must wake for the next autosave, idle or not.
+        let autosave_at = self.next_autosave();
         // Optional FPS cap from settings (0 = uncapped).
         // We only advance timing/FPS when we actually render a frame.
         let fps_cap = self.user_settings.fps_cap.max(0.0);
@@ -311,13 +313,19 @@ impl PrintCadApp {
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
                 || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
+            let autosave_due = autosave_at.is_some_and(|at| at <= now);
             if !(self.redraw_needed
                 || input_active
                 || self.async_work_pending()
                 || animating
+                || autosave_due
                 || self.pending_ui_repaint.is_zero())
             {
-                event_loop.set_control_flow(ControlFlow::Wait);
+                // Asleep, the loop still wakes for the next autosave.
+                event_loop.set_control_flow(match autosave_at {
+                    Some(at) => ControlFlow::WaitUntil(at),
+                    None => ControlFlow::Wait,
+                });
                 return;
             }
         }
@@ -656,6 +664,7 @@ impl PrintCadApp {
         self.drive_agent_tools();
         self.drive_chats();
         self.drive_picture();
+        self.drive_autosave();
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();
@@ -748,6 +757,7 @@ impl PrintCadApp {
                     ui::UiFrameInputs {
                         screen: self.session.screen,
                         recent: &self.recent.files,
+                        recoverable: &self.recoverable,
                         active_tool: self.session.active_tool.clone(),
                         active_workbench: self.session.active_workbench.clone(),
                         settings: &self.user_settings,
@@ -939,7 +949,10 @@ impl PrintCadApp {
                 event_loop
                     .set_control_flow(ControlFlow::WaitUntil(Instant::now() + ui_repaint_delay));
             } else if fps_cap <= 0.0 {
-                event_loop.set_control_flow(ControlFlow::Wait);
+                event_loop.set_control_flow(match autosave_at {
+                    Some(at) => ControlFlow::WaitUntil(at),
+                    None => ControlFlow::Wait,
+                });
             }
 
             // Retrieve pick result from GPU picking (processed during render).

@@ -18,6 +18,7 @@ pub(crate) mod mcp;
 pub(crate) mod measure;
 pub(crate) mod packages;
 pub(crate) mod recompute;
+pub(crate) mod recovery;
 pub(crate) mod scripts;
 #[cfg(test)]
 mod seam_lint;
