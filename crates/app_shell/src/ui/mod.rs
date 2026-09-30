@@ -101,6 +101,8 @@ pub struct UiLayer {
     /// The newer release whose notice was put away.
     dismissed_release: Option<String>,
     palette: command_palette::PaletteState,
+    /// The pictures a bench lays over the viewport, uploaded once each.
+    image_textures: std::collections::HashMap<u64, egui::TextureHandle>,
     orientation_cube_config: OrientationCubeConfig,
     /// Substring filter over the model tree; UI-local.
     tree_filter: String,
@@ -203,6 +205,7 @@ impl UiLayer {
             bench_prefs_opened: false,
             dismissed_release: None,
             palette: command_palette::PaletteState::default(),
+            image_textures: std::collections::HashMap::new(),
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
             property_tab: property_panel::PropertyTab::default(),
@@ -334,6 +337,7 @@ impl UiLayer {
             pick_filter,
             scene_bounds,
             screen_space_overlays,
+            screen_space_images,
             screen_space_marks,
             screen_space_labels,
             pending_imports,
@@ -913,6 +917,12 @@ impl UiLayer {
 
             viewport_rect_logical = ui.available_rect_before_wrap();
 
+            overlays::draw_screen_space_images(
+                ui.ctx(),
+                viewport_rect_logical,
+                screen_space_images,
+                &mut self.image_textures,
+            );
             overlays::draw_screen_space_overlays(
                 ui.ctx(),
                 viewport_rect_logical,

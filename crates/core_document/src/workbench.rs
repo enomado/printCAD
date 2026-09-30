@@ -44,6 +44,23 @@ impl From<&str> for WorkbenchId {
 /// Screen-space overlays are rendered as 2D lines in screen coordinates, maintaining
 /// constant thickness regardless of zoom or camera rotation. Ideal for grid lines,
 /// guides, and reference geometry.
+/// A picture laid over the viewport, under the bench's lines: its pixels
+/// and where its corners land on screen.
+#[derive(Debug, Clone)]
+pub struct ScreenSpaceImage {
+    /// Names the pixels: one key, one picture, so the host uploads it once.
+    pub key: u64,
+    /// Width and height in pixels.
+    pub size: [u32; 2],
+    /// Row by row from the top, RGBA.
+    pub rgba: std::sync::Arc<Vec<u8>>,
+    /// The picture's top left, top right, bottom right and bottom left, in
+    /// viewport pixels.
+    pub corners: [[f32; 2]; 4],
+    /// 0..=1.
+    pub opacity: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct ScreenSpaceOverlay {
     /// Starting point in screen coordinates (x, y) in pixels, relative to viewport origin.
@@ -956,6 +973,16 @@ pub trait Workbench: Send {
         _ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceOverlay> {
+        Vec::new()
+    }
+
+    /// Pictures laid over the viewport under the bench's lines (the
+    /// sketcher's reference images while a sketch is edited).
+    fn get_screen_space_images(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceImage> {
         Vec::new()
     }
 

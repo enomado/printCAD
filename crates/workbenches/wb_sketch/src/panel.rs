@@ -99,6 +99,7 @@ impl SketchWorkbench {
         self.array_section(ui, ctx);
         self.spline_section(ui, ctx, &sketch);
         self.text_section(ui, ctx, &sketch);
+        self.images_section(ui, ctx, &sketch);
         self.solver_section(ui, ctx, &sketch);
         self.edit_controls_section(ui);
         self.constraints_section(ui, ctx, &sketch);
@@ -867,6 +868,88 @@ impl SketchWorkbench {
                 );
             }
             None => {}
+        }
+    }
+
+    /// The sketch's reference pictures: each one's middle, width, turn and
+    /// how much of it shows, and a way to take it away.
+    fn images_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
+        if sketch.images.is_empty()
+            || !section_header(ui, "sketch_images", "Reference images", None, true)
+        {
+            return;
+        }
+        let Some(sketch_id) = self.active_sketch_id else {
+            return;
+        };
+        let mut change: Option<serde_json::Value> = None;
+        for (n, image) in sketch.images.iter().enumerate() {
+            let (mut x, mut y, mut width, mut angle, mut opacity) = (
+                image.center.x,
+                image.center.y,
+                image.width,
+                image.angle_deg,
+                image.opacity,
+            );
+            let id = serde_json::json!(image.id.to_string());
+            ui.label(
+                RichText::new(format!("Picture {}", n + 1))
+                    .font(sans(FONT_XS))
+                    .color(TEXT3),
+            );
+            egui::Grid::new(("sketch_image_grid", image.id))
+                .num_columns(2)
+                .spacing([SPACE_2, SPACE_1])
+                .show(ui, |ui| {
+                    let row = |ui: &mut egui::Ui, label: &str, field: QtyField, key: &str| {
+                        ui_kit::widgets::field_label(ui, label);
+                        let changed = field.show(ui);
+                        ui.end_row();
+                        changed.then(|| key.to_string())
+                    };
+                    let edits = [
+                        row(ui, "Middle x", QtyField::new(&mut x).unit("mm"), "x"),
+                        row(ui, "Middle y", QtyField::new(&mut y).unit("mm"), "y"),
+                        row(
+                            ui,
+                            "Width",
+                            QtyField::new(&mut width).unit("mm").range(0.01..=1.0e6),
+                            "width",
+                        ),
+                        row(ui, "Turn", QtyField::degrees(&mut angle), "angle"),
+                        row(
+                            ui,
+                            "Opacity",
+                            QtyField::new(&mut opacity)
+                                .range(0.05..=1.0)
+                                .speed(0.01)
+                                .decimals(2),
+                            "opacity",
+                        ),
+                    ];
+                    if edits.iter().any(Option::is_some) {
+                        change = Some(serde_json::json!({
+                            "image": id, "x": x, "y": y, "width": width,
+                            "angle": angle, "opacity": opacity,
+                        }));
+                    }
+                });
+            if secondary_button(ui, "Remove").clicked() {
+                change = Some(serde_json::json!({"image": id, "remove": true}));
+            }
+            ui.add_space(SPACE_1);
+        }
+        if let Some(mut args) = change {
+            args["sketch"] = serde_json::json!(sketch_id.0.to_string());
+            let args = crate::commands::args(args);
+            if crate::commands::run("sketch.set_image", &args, ctx).is_ok() {
+                ctx.record("sketch.set_image", args, serde_json::Value::Null);
+            }
         }
     }
 

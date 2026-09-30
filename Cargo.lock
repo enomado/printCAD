@@ -1849,6 +1849,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -5351,6 +5353,7 @@ dependencies = [
  "core_document",
  "egui",
  "glam 0.33.7",
+ "image",
  "kernel_api",
  "scripting",
  "serde",

@@ -46,6 +46,56 @@ fn ends(
     )
 }
 
+/// Draw the pictures a bench lays over the viewport, each a textured quad
+/// between its corners; a picture no longer shown lets its texture go.
+pub fn draw_screen_space_images(
+    ctx: &Context,
+    viewport_rect: egui::Rect,
+    images: &[core_document::ScreenSpaceImage],
+    textures: &mut std::collections::HashMap<u64, egui::TextureHandle>,
+) {
+    textures.retain(|key, _| images.iter().any(|i| i.key == *key));
+    if images.is_empty() {
+        return;
+    }
+    let ppp = ctx.pixels_per_point();
+    let painter = viewport_painter(ctx, viewport_rect, "screen_space_images");
+    for image in images {
+        let texture = textures.entry(image.key).or_insert_with(|| {
+            let pixels = egui::ColorImage::from_rgba_unmultiplied(
+                [image.size[0] as usize, image.size[1] as usize],
+                &image.rgba,
+            );
+            ctx.load_texture(
+                format!("screen_image::{}", image.key),
+                pixels,
+                egui::TextureOptions::LINEAR,
+            )
+        });
+        let mut mesh = egui::Mesh::with_texture(texture.id());
+        let tint = Color32::from_white_alpha((image.opacity.clamp(0.0, 1.0) * 255.0) as u8);
+        let uv = [
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1.0, 0.0),
+            egui::pos2(1.0, 1.0),
+            egui::pos2(0.0, 1.0),
+        ];
+        for (corner, uv) in image.corners.iter().zip(uv) {
+            let pos = egui::pos2(
+                viewport_rect.min.x + corner[0] / ppp,
+                viewport_rect.min.y + corner[1] / ppp,
+            );
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos,
+                uv,
+                color: tint,
+            });
+        }
+        mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+        painter.add(egui::Shape::mesh(mesh));
+    }
+}
+
 /// Draw constant-thickness lines in the viewport area.
 pub fn draw_screen_space_overlays(
     ctx: &Context,

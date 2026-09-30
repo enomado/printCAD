@@ -79,6 +79,33 @@ pub struct Sketch {
     /// Text laid out as outlines, each block standing on a point.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<TextBlock>,
+    /// Pictures on the plane to draw over, shown while the sketch is
+    /// edited; no part of the profile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ReferenceImage>,
+}
+
+/// A picture laid on the sketch plane, its pixels a document asset.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReferenceImage {
+    pub id: Uuid,
+    /// The document asset holding the file's bytes.
+    pub asset: Uuid,
+    /// Where its middle is, in sketch coordinates.
+    pub center: Vec2D,
+    /// How wide it lies, in sketch units (mm); its height keeps its
+    /// proportions.
+    pub width: f32,
+    /// Its turn counter-clockwise, in degrees.
+    #[serde(default)]
+    pub angle_deg: f32,
+    /// How much of it shows over the scene, 0..=1.
+    #[serde(default = "half")]
+    pub opacity: f32,
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 /// A string in a font, laid out as closed outlines standing on `anchor`
@@ -189,6 +216,7 @@ impl Sketch {
             external: std::collections::HashMap::new(),
             solver: SolverSettings::default(),
             texts: Vec::new(),
+            images: Vec::new(),
         }
     }
 

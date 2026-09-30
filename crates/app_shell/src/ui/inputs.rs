@@ -79,6 +79,8 @@ pub struct UiFrameInputs<'a> {
     pub pick_filter: super::view_toolbar::PickFilter,
     pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
+    /// Pictures the active bench lays over the viewport.
+    pub screen_space_images: &'a [core_document::ScreenSpaceImage],
     pub screen_space_marks: &'a [core_document::ScreenSpaceMark],
     pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],
     pub pending_imports: u32,

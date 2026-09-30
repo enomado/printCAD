@@ -13,6 +13,7 @@ mod feature;
 pub mod generator;
 mod geom2d;
 mod glyphs;
+mod images;
 pub mod internal;
 mod measure;
 mod overlay;
@@ -384,6 +385,8 @@ const LINE_DRAG_PX: f32 = 5.0;
 
 #[derive(Default)]
 pub struct SketchWorkbench {
+    /// Reference pictures decoded so far, by asset.
+    image_cache: images::Cache,
     /// A left press of the line tool, held to tell a click from a drag:
     /// dragged from the end it draws from, it draws an arc.
     line_press: Option<LinePress>,
@@ -3870,6 +3873,44 @@ impl Workbench for SketchWorkbench {
                 .map(|c| format!("X {:.2} · Y {:.2} mm", c.x, c.y)),
             mode: Some("Sketch edit mode".to_string()),
         })
+    }
+
+    /// The edited sketch's reference pictures, laid on its plane under
+    /// its lines.
+    fn get_screen_space_images(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceImage> {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return Vec::new();
+        };
+        let proj = SketchProjector::new(ctx, feature.plane);
+        feature
+            .sketch
+            .images
+            .iter()
+            .filter_map(|image| {
+                let decoded = self.image_cache.get(image.asset, || {
+                    ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
+                })?;
+                let aspect = decoded.height as f32 / decoded.width.max(1) as f32;
+                let [a, b, c, d] = images::corners(image, aspect);
+                let (hi, lo) = image.asset.as_u64_pair();
+                Some(core_document::ScreenSpaceImage {
+                    key: hi ^ lo,
+                    size: [decoded.width, decoded.height],
+                    rgba: std::sync::Arc::clone(&decoded.rgba),
+                    corners: [
+                        proj.to_px(a)?,
+                        proj.to_px(b)?,
+                        proj.to_px(c)?,
+                        proj.to_px(d)?,
+                    ],
+                    opacity: image.opacity,
+                })
+            })
+            .collect()
     }
 
     /// The regions the edited sketch's profile closes, shaded on its

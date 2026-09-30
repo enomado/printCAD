@@ -42,6 +42,41 @@ pub fn register(context: &mut WorkbenchContext) {
         .returns("the sketch's id"),
     );
     context.register_import(FileImport::new("DXF drawing", ["dxf"], "sketch.import_dxf"));
+    let placed = |spec: CommandSpec| {
+        spec.optional("x", ParamKind::Number, "Its middle, mm; 0 when left out")
+            .optional("y", ParamKind::Number, "Its middle, mm; 0 when left out")
+            .optional("width", ParamKind::Number, "How wide it lies, mm")
+            .optional(
+                "angle",
+                ParamKind::Number,
+                "Its turn counter-clockwise, degrees",
+            )
+            .optional("opacity", ParamKind::Number, "How much of it shows, 0 to 1")
+    };
+    context.register_command(
+        placed(placing(CommandSpec::new(
+            "sketch.image",
+            "Lay a picture (PNG or JPEG) on a sketch's plane to draw over: in the sketch \
+             given or being edited, else in a new one",
+        )))
+        .param("path", ParamKind::String, "The picture file")
+        .optional("sketch", ParamKind::Id, "The sketch it goes in")
+        .returns("{sketch, image}")
+        .agent_always_asks(),
+    );
+    context.register_import(FileImport::new(
+        "Reference image (sketch)",
+        ["png", "jpg", "jpeg"],
+        "sketch.image",
+    ));
+    context.register_command(
+        placed(sketch(CommandSpec::new(
+            "sketch.set_image",
+            "Move, size, turn or fade a sketch's picture, or take it away",
+        )))
+        .param("image", ParamKind::Id, "The picture")
+        .optional("remove", ParamKind::Bool, "true: take it away"),
+    );
     context.register_command(
         sketch(CommandSpec::new("sketch.point", "Add a point"))
             .param("x", ParamKind::Number, "")
@@ -689,6 +724,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     if id == "sketch.import_dxf" {
         return import_dxf(&a, ctx);
     }
+    if id == "sketch.image" {
+        return add_image(&a, ctx);
+    }
     let sketch_id = FeatureId(a.id("sketch")?);
     let mut feature = load(ctx, sketch_id)?;
     match id {
@@ -698,6 +736,22 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "sketch.merge" => {
             let with = feature_ids(args.get("with"), "with")?;
             return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.set_image" => {
+            let image = a.id("image")?;
+            let Some(at) = feature.sketch.images.iter().position(|i| i.id == image) else {
+                return Err(CommandError::bad(
+                    "image",
+                    "is not a picture of this sketch",
+                ));
+            };
+            if a.opt_bool("remove")?.unwrap_or(false) {
+                feature.sketch.images.remove(at);
+            } else {
+                let placed = place_image(&a, feature.sketch.images[at].clone())?;
+                feature.sketch.images[at] = placed;
+            }
+            return save(ctx, sketch_id, feature, Value::Null);
         }
         "sketch.attachment" => {
             let Some(mut support) = feature.support.clone() else {
@@ -1203,6 +1257,98 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
 
 /// A sketch of the DXF drawing at `path`, placed as `sketch.new` places
 /// one and named after the file unless `name` says otherwise.
+/// A picture's placement from `a`, over `image`'s where `a` says nothing.
+fn place_image(
+    a: &Args,
+    mut image: crate::sketch::ReferenceImage,
+) -> Result<crate::sketch::ReferenceImage, CommandError> {
+    if let Some(x) = a.opt_number("x")? {
+        image.center.x = x as f32;
+    }
+    if let Some(y) = a.opt_number("y")? {
+        image.center.y = y as f32;
+    }
+    if let Some(width) = a.opt_number("width")? {
+        if !(width > 0.0 && width.is_finite()) {
+            return Err(CommandError::bad("width", "must be more than zero"));
+        }
+        image.width = width as f32;
+    }
+    if let Some(angle) = a.opt_number("angle")? {
+        image.angle_deg = angle as f32;
+    }
+    if let Some(opacity) = a.opt_number("opacity")? {
+        image.opacity = (opacity as f32).clamp(0.0, 1.0);
+    }
+    Ok(image)
+}
+
+/// Lay a picture file on a sketch's plane: the file kept in the document,
+/// the picture in the sketch given, else the one being edited, else a new
+/// sketch named after the file.
+fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let path = std::path::Path::new(a.string("path")?);
+    let bytes = std::fs::read(path)
+        .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
+    crate::images::decode(&bytes)
+        .map_err(|e| CommandError::bad("path", format!("is not a picture printCAD reads: {e}")))?;
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "png".to_string());
+    let asset = ctx.document.add_asset_with_data(
+        core_document::AssetReference::new(
+            format!("assets/reference-{}.{extension}", Uuid::new_v4()),
+            core_document::AssetType::Other,
+            json!({"kind": "reference image", "file": path.file_name().map(|n| n.to_string_lossy())}),
+        ),
+        bytes,
+    );
+    let image = place_image(
+        a,
+        crate::sketch::ReferenceImage {
+            id: Uuid::new_v4(),
+            asset,
+            center: Vec2D::new(0.0, 0.0),
+            width: DEFAULT_IMAGE_WIDTH_MM,
+            angle_deg: 0.0,
+            opacity: 0.5,
+        },
+    )?;
+    let is_sketch = |id: FeatureId| {
+        ctx.document
+            .get_feature_meta(id)
+            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch")
+    };
+    let target = match a.opt_id("sketch")? {
+        Some(id) => Some(FeatureId(id)),
+        None => ctx.active_document_object.filter(|id| is_sketch(*id)),
+    };
+    let answer =
+        |sketch: FeatureId| json!({"sketch": sketch.0.to_string(), "image": image.id.to_string()});
+    match target {
+        Some(id) => {
+            let mut feature = load(ctx, id)?;
+            feature.sketch.images.push(image.clone());
+            save(ctx, id, feature, answer(id))
+        }
+        None => {
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| crate::SketchWorkbench::next_sketch_name(ctx.document));
+            let mut sketch = Sketch::new(name);
+            sketch.images.push(image.clone());
+            let id = add_sketch(a, ctx, sketch)?;
+            Ok(answer(id))
+        }
+    }
+}
+
+/// How wide a picture lies when nothing says, mm.
+const DEFAULT_IMAGE_WIDTH_MM: f32 = 100.0;
+
 fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let path = std::path::Path::new(a.string("path")?);
     let given_scale = a.opt_number("scale")?;
@@ -2334,6 +2480,66 @@ mod tests {
     fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         run(id, args.as_object().unwrap(), &mut ctx)
+    }
+
+    /// A picture file comes in as a document asset and lies in a new
+    /// sketch named after it; it moves, sizes and goes by its id.
+    #[test]
+    fn a_reference_picture_comes_in_and_is_placed() {
+        let path = std::env::temp_dir().join(format!("printcad-ref-{}.png", Uuid::new_v4()));
+        image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 100, 50, 255]))
+            .save(&path)
+            .unwrap();
+        let mut doc = Document::new("t");
+        let made = call(
+            &mut doc,
+            "sketch.image",
+            json!({"path": path.to_string_lossy(), "width": 40.0}),
+        )
+        .unwrap();
+        let _ = std::fs::remove_file(&path);
+        let sketch = FeatureId(Uuid::parse_str(made["sketch"].as_str().unwrap()).unwrap());
+        let image = made["image"].as_str().unwrap().to_string();
+        let feature = SketchFeature::from_json(doc.get_feature_data(sketch).unwrap()).unwrap();
+        assert!(
+            doc.get_feature_meta(sketch)
+                .unwrap()
+                .name
+                .starts_with("printcad-ref-")
+        );
+        let placed = &feature.sketch.images[0];
+        assert_eq!(placed.width, 40.0);
+        assert!(doc.asset_bytes(placed.asset).is_some(), "the file is kept");
+
+        call(
+            &mut doc,
+            "sketch.set_image",
+            json!({"sketch": sketch.0.to_string(), "image": image, "x": 5.0, "angle": 30.0}),
+        )
+        .unwrap();
+        let feature = SketchFeature::from_json(doc.get_feature_data(sketch).unwrap()).unwrap();
+        let moved = &feature.sketch.images[0];
+        assert_eq!(
+            (moved.center.x, moved.angle_deg, moved.width),
+            (5.0, 30.0, 40.0)
+        );
+
+        call(
+            &mut doc,
+            "sketch.set_image",
+            json!({"sketch": sketch.0.to_string(), "image": image, "remove": true}),
+        )
+        .unwrap();
+        let feature = SketchFeature::from_json(doc.get_feature_data(sketch).unwrap()).unwrap();
+        assert!(feature.sketch.images.is_empty());
+        assert!(
+            call(
+                &mut doc,
+                "sketch.image",
+                json!({"path": "/nonexistent/picture.png"})
+            )
+            .is_err()
+        );
     }
 
     /// `sketch.new{on = datum}` draws the sketch on the datum and keeps it

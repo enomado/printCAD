@@ -568,6 +568,38 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `scale` (number, optional): Millimetres per drawing unit; the drawing's own unit when left out, else 1
 - Returns the sketch's id
 
+`pc.sketch.image`: Lay a picture (PNG or JPEG) on a sketch's plane to draw over: in the sketch given or being edited, else in a new one.
+
+- `body` (id, optional): The body it belongs to; the selected body, else a new one
+- `plane` (string, optional): XY (the default), XZ or YZ
+- `offset` (number, optional): How far along the plane's normal it sits
+- `name` (string, optional): Its name in the tree
+- `attachment` (any, optional): Attached as a datum plane is, the attachment as a datum keeps it (doc.feature on a datum shows it): {Face = {face = {point = {x, y, z}, normal = {x, y, z}}}}, {ThreePoints = {points = {{At = {point = {x, y, z}}}, ...}}} and the like, faces and edges on the body's own solid; the sketch follows what it stands on. design.datum makes the same from plainer arguments, and `on` takes that datum
+- `attachment_offset` (any, optional): The attachment's offset, as a datum's
+- `on` (id, optional): A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes
+- `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
+- `origin` (list, optional): With normal: where the plane's origin sits, {x, y, z}
+- `x_axis` (list, optional): With normal: the sketch's X direction, {x, y, z}
+- `x` (number, optional): Its middle, mm; 0 when left out
+- `y` (number, optional): Its middle, mm; 0 when left out
+- `width` (number, optional): How wide it lies, mm
+- `angle` (number, optional): Its turn counter-clockwise, degrees
+- `opacity` (number, optional): How much of it shows, 0 to 1
+- `path` (string): The picture file
+- `sketch` (id, optional): The sketch it goes in
+- Returns {sketch, image}
+
+`pc.sketch.set_image`: Move, size, turn or fade a sketch's picture, or take it away.
+
+- `sketch` (id): The sketch to draw in
+- `x` (number, optional): Its middle, mm; 0 when left out
+- `y` (number, optional): Its middle, mm; 0 when left out
+- `width` (number, optional): How wide it lies, mm
+- `angle` (number, optional): Its turn counter-clockwise, degrees
+- `opacity` (number, optional): How much of it shows, 0 to 1
+- `image` (id): The picture
+- `remove` (boolean, optional): true: take it away
+
 `pc.sketch.point`: Add a point.
 
 - `sketch` (id): The sketch to draw in
