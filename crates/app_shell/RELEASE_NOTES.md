@@ -4,6 +4,52 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.3.0
+
+### Import and repair
+- Imported and converted solids take features: their shape becomes the body's Base, and Replace shape reads it again from another file with the features building on it.
+- Convert to solid is quick and keeps curved areas as facets; Refine shape then finds their cylinders, cones, spheres and tori.
+- Delete faces, Offset faces and Move faces edit an imported solid directly, the neighbouring faces following.
+- Recognize holes turns a solid's round holes back into Hole features you can resize.
+
+### Design
+- Part Design is now called Design.
+- Pad and Pocket push or press a picked flat face, no sketch needed.
+- Surface textures: knurls, ribs, dots, hexagons and more, or a picture, pressed into chosen faces, shown in the view and written into STL and 3MF exports.
+- Features drag to another place in their history in the tree.
+- Curved solids draw at a smoothness you choose, finer by default.
+
+### Sketcher
+- A line dragged from its end becomes a tangent arc.
+- Closed regions shade and loose ends are ringed while you edit; a profile is the sketch's closed loops, stray lines left out.
+- A face picked for external geometry brings every edge around it, splines come in exact, and projected geometry draws dashed while it only guides.
+- A reference picture on the sketch plane to draw over.
+- Editing a sketch can cut the view at its plane (Section view, per sketch or in Preferences).
+- Closing a sketch leaves it selected, ready for a feature.
+
+### View
+- A pick filter for faces, edges or whole bodies, and a double click on an edge selects the edges running smoothly on from it.
+- Look at turns the view square to a face; the tree row under the pointer lights up what it stands for.
+- File › Save view as picture writes the view as drawn to a PNG.
+
+### Documents
+- Autosave keeps a copy of edited documents, and the start page offers it back after a crash.
+- Drop a file on the window to open or import it; Ctrl+Shift+T reopens the last tab closed.
+- Cancelling a feature puts its body back exactly as its history has it.
+
+### Interface
+- Toolbar groups drag to where you want them and stay there; menus fit the window.
+- Shift+Space repeats the last tool, and the command palette lists what you ran lately first.
+- The status bar opens the log, the console and the assistant, and the pointer shows a busy arrow while work runs.
+- Help › Check for updates, and a notice when a newer release is out.
+- Number fields keep the value they show; offsets take zero and negative values.
+
+### Assistant
+- Messages sent while the agent is working wait in a queue you can edit.
+
+### Scripting
+- `doc.set_textures`, `doc.refine`, `doc.replace_shape`, `design.recognize_holes`, and `design.*` names for the Design workbench (`part.*` still works).
+
 ## 0.2.0
 
 ### Sketcher
