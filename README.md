@@ -221,6 +221,10 @@ moves, sizes, turns and fades it.
 | Hole | Shift+H |
 | Fillet, chamfer, mirrored | U, C, M |
 
+Pad and Pocket take a sketch selected in the tree, or with none, a flat
+face of the solid picked in the view: that face pushed out or pressed in,
+no sketch needed. The task shows the face and takes another one picked.
+
 | Assembly | Keys |
 | --- | --- |
 | Mate, align, angle, hinge, slider | M, A, N, H, L |
