@@ -635,7 +635,6 @@ fn volume_of(built: &kernel_api::SolidBuildResult) -> f64 {
 /// A pad 3 mm into a converted part, along its face's own outline: it is
 /// all inside the part, so the part is what the fuse leaves.
 #[test]
-#[ignore = "kernel: every ray meets an ambiguous crossing and the fuse gives up (ogeom-rs#99)"]
 fn a_pad_along_a_converted_solid_s_sides_fuses() {
     let Some((built, part)) = pad_into_converted_part(3.0) else {
         return;
@@ -651,7 +650,6 @@ fn a_pad_along_a_converted_solid_s_sides_fuses() {
 /// The same pad 10 mm deep, out through the part's bottom: the fuse keeps
 /// what leaves it, so the part grows.
 #[test]
-#[ignore = "kernel: a piece on the other solid's boundary finds no coincident face and the fuse gives up (ogeom-rs#100)"]
 fn a_pad_out_through_a_converted_solid_s_bottom_fuses() {
     let Some((built, part)) = pad_into_converted_part(10.0) else {
         return;
