@@ -23,6 +23,8 @@ pub(crate) struct ExportDraft {
     pub detail: TessellationSettings,
     /// One file per configuration, each named after it.
     pub every_configuration: bool,
+    /// Bodies' surface textures pressed into the mesh formats.
+    pub textures: bool,
 }
 
 impl Default for ExportDraft {
@@ -31,6 +33,7 @@ impl Default for ExportDraft {
             format: ExportFormat::ThreeMf,
             selected_only: false,
             every_configuration: false,
+            textures: true,
             // A print resolves far finer than a screen: a hundredth of a
             // millimetre off the true surface and a few degrees per facet.
             detail: TessellationSettings {
@@ -51,6 +54,43 @@ struct OwnedBody {
     /// moved.
     transform: Option<[[f64; 4]; 4]>,
     mesh: Arc<TriMesh>,
+    /// The body's surface textures, to press into its mesh.
+    pressing: Option<crate::app::textures::Pressing>,
+}
+
+impl OwnedBody {
+    /// What a mesh file writes of the body's faces: its textures pressed
+    /// in at the export's detail.
+    fn finish(&self) -> Option<Finish<'_>> {
+        let pressing = self.pressing.as_ref()?;
+        Some(Box::new(move |mesh: TriMesh| {
+            pressing.apply(&mesh, surface_texture::Detail::EXPORT)
+        }))
+    }
+}
+
+/// What a mesh file writes of one body's faces once meshed.
+type Finish<'a> = Box<dyn Fn(TriMesh) -> TriMesh + Sync + 'a>;
+
+/// Borrow owned bodies as the kernel's export takes them, their finishes
+/// kept alive beside them.
+fn borrowed<'a>(
+    bodies: &'a [OwnedBody],
+    finishes: &'a [Option<Finish<'a>>],
+) -> Vec<ExportBody<'a>> {
+    bodies
+        .iter()
+        .zip(finishes)
+        .map(|(b, finish)| ExportBody {
+            name: b.name.clone(),
+            brep: b.brep.as_deref().map(Vec::as_slice),
+            transform: b.transform,
+            mesh: &b.mesh,
+            finish: finish
+                .as_deref()
+                .map(|f| f as &(dyn Fn(TriMesh) -> TriMesh + Sync)),
+        })
+        .collect()
 }
 
 /// A finished export, for the log.
@@ -175,6 +215,8 @@ impl PrintCadApp {
             selected_only: false,
             detail: self.last_export.detail.clone(),
             every_configuration: false,
+            // What goes to the slicer is what gets printed.
+            textures: true,
         };
         if self.export_bodies(&draft).is_empty() {
             app_log::warn("Nothing to send: no visible body has geometry");
@@ -215,15 +257,8 @@ impl PrintCadApp {
             path.display()
         ));
         std::thread::spawn(move || {
-            let borrowed: Vec<ExportBody<'_>> = bodies
-                .iter()
-                .map(|b| ExportBody {
-                    name: b.name.clone(),
-                    brep: b.brep.as_deref().map(Vec::as_slice),
-                    transform: b.transform,
-                    mesh: &b.mesh,
-                })
-                .collect();
+            let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
+            let borrowed = borrowed(&bodies, &finishes);
             let result = export(&borrowed, draft.format, &draft.detail)
                 .map_err(|e| e.to_string())
                 .and_then(|exported| {
@@ -296,13 +331,17 @@ impl PrintCadApp {
         // What a bench says is not made (a bought part) stays out of an
         // export of everything.
         let not_made = self.registry.not_printed(document);
-        bodies_to_export(document, |id| {
-            if draft.selected_only {
-                selected == Some(id.0)
-            } else {
-                document.imported_body_effective_visible(id) && !not_made.contains(&id)
-            }
-        })
+        bodies_to_export(
+            document,
+            |id| {
+                if draft.selected_only {
+                    selected == Some(id.0)
+                } else {
+                    document.imported_body_effective_visible(id) && !not_made.contains(&id)
+                }
+            },
+            draft.textures && draft.format.is_mesh(),
+        )
     }
 }
 
@@ -428,10 +467,14 @@ pub(crate) fn export_document(
     bodies: Option<Vec<core_document::BodyId>>,
     tolerance: Option<f32>,
 ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
-    let owned = bodies_to_export(document, |id| match &bodies {
-        Some(list) => list.contains(&id),
-        None => document.imported_body_effective_visible(id),
-    });
+    let owned = bodies_to_export(
+        document,
+        |id| match &bodies {
+            Some(list) => list.contains(&id),
+            None => document.imported_body_effective_visible(id),
+        },
+        format.is_mesh(),
+    );
     if owned.is_empty() {
         return Err("there is nothing to export".to_string());
     }
@@ -439,15 +482,8 @@ pub(crate) fn export_document(
     if let Some(tolerance) = tolerance {
         detail.chord_tolerance = tolerance;
     }
-    let borrowed: Vec<ExportBody<'_>> = owned
-        .iter()
-        .map(|b| ExportBody {
-            name: b.name.clone(),
-            brep: b.brep.as_deref().map(Vec::as_slice),
-            transform: b.transform,
-            mesh: &b.mesh,
-        })
-        .collect();
+    let finishes: Vec<_> = owned.iter().map(OwnedBody::finish).collect();
+    let borrowed = borrowed(&owned, &finishes);
     let path = with_extension(&path, format);
     let exported = export(&borrowed, format, &detail).map_err(|e| e.to_string())?;
     std::fs::write(&path, &exported.bytes).map_err(|e| format!("could not write the file: {e}"))?;
@@ -455,11 +491,13 @@ pub(crate) fn export_document(
 }
 
 /// The bodies of `document` that `take` accepts and that have geometry,
-/// in tree order.
+/// in tree order, their surface textures with them when `textured`.
 fn bodies_to_export(
     document: &core_document::Document,
     take: impl Fn(core_document::BodyId) -> bool,
+    textured: bool,
 ) -> Vec<OwnedBody> {
+    let mut pictures = crate::app::textures::Pictures::new();
     let mut out: Vec<(usize, OwnedBody)> = document
         .imported_geometries()
         .filter(|(id, geometry)| !geometry.mesh.indices.is_empty() && take(**id))
@@ -484,6 +522,9 @@ fn bodies_to_export(
                         (!placement.is_identity()).then(|| placement.rows())
                     },
                     mesh: Arc::clone(&geometry.mesh),
+                    pressing: textured
+                        .then(|| crate::app::textures::Pressing::of(document, *id, &mut pictures))
+                        .flatten(),
                 },
             )
         })
@@ -495,6 +536,122 @@ fn bodies_to_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 10 mm box built by the kernel, its top face textured.
+    fn textured_box(textured: bool) -> core_document::Document {
+        use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+        let built = kernel_ogeom::OgeomKernel::new()
+            .execute_solid_chain(
+                &[SolidOp::Primitive {
+                    kind: PrimitiveKind::Box {
+                        length: 10.0,
+                        width: 10.0,
+                        height: 10.0,
+                    },
+                    placement: Placement::default(),
+                    op: BooleanOp::NewSolid,
+                }],
+                &TessellationSettings::default(),
+            )
+            .unwrap();
+        let mut doc = core_document::Document::new("t");
+        let body = doc.create_body(None);
+        let mesh = Arc::new(built.mesh.clone());
+        let top = mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(&mesh.faces)
+            .find(|(t, _)| {
+                t.iter()
+                    .all(|i| (mesh.positions[*i as usize][2] - 10.0).abs() < 1e-4)
+            })
+            .map(|(_, f)| *f)
+            .unwrap();
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                bounds_mm: mesh.bounds(),
+                mesh: Arc::clone(&mesh),
+                source_asset: None,
+                revision: 1,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        doc.set_imported_brep_data(body, built.brep_blob, Vec::new());
+        if textured {
+            doc.set_body_textures(
+                body,
+                vec![core_document::FaceTexture {
+                    texture: surface_texture::Texture {
+                        tile_mm: 2.0,
+                        depth_mm: 0.5,
+                        ..Default::default()
+                    },
+                    faces: vec![core_document::FaceKey::of(&mesh, top)],
+                }],
+            );
+        }
+        doc
+    }
+
+    /// An STL of a textured box carries the texture: many more triangles,
+    /// and the top raised by up to the texture's depth.
+    #[test]
+    fn a_mesh_export_presses_the_texture_in() {
+        let top_of = |bytes: &[u8]| {
+            let mesh = ogeom_stl(bytes);
+            mesh.1
+        };
+        let dir = std::env::temp_dir();
+        let (plain_path, plain) = export_document(
+            &textured_box(false),
+            dir.join(format!("plain-{}.stl", uuid::Uuid::new_v4())),
+            ExportFormat::Stl,
+            None,
+            None,
+        )
+        .unwrap();
+        let (textured_path, textured) = export_document(
+            &textured_box(true),
+            dir.join(format!("textured-{}.stl", uuid::Uuid::new_v4())),
+            ExportFormat::Stl,
+            None,
+            None,
+        )
+        .unwrap();
+        let _ = std::fs::remove_file(plain_path);
+        let _ = std::fs::remove_file(textured_path);
+        assert!(
+            textured.triangles > plain.triangles * 20,
+            "{} vs {}",
+            textured.triangles,
+            plain.triangles
+        );
+        let (plain_top, textured_top) = (top_of(&plain.bytes), top_of(&textured.bytes));
+        assert!((plain_top - 10.0).abs() < 1e-3, "{plain_top}");
+        assert!(
+            textured_top > 10.3 && textured_top <= 10.5 + 1e-3,
+            "{textured_top}"
+        );
+    }
+
+    /// A binary STL's triangle count and highest point.
+    fn ogeom_stl(bytes: &[u8]) -> (usize, f32) {
+        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+        let mut top = f32::MIN;
+        for t in 0..count {
+            let at = 84 + t * 50 + 12;
+            for v in 0..3 {
+                let z = at + v * 12 + 8;
+                top = top.max(f32::from_le_bytes(bytes[z..z + 4].try_into().unwrap()));
+            }
+        }
+        (count, top)
+    }
 
     #[test]
     fn the_slicer_command_takes_the_file_where_it_says_or_last() {

@@ -85,6 +85,23 @@ pub struct HeightMap {
 }
 
 impl HeightMap {
+    /// A PNG or JPEG file's grey levels as heights, white high, no wider
+    /// or taller than `longest` pixels.
+    pub fn from_image(bytes: &[u8], longest: u32) -> Result<Self, String> {
+        let picture = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+        let picture = if picture.width().max(picture.height()) > longest {
+            picture.resize(longest, longest, image::imageops::FilterType::Triangle)
+        } else {
+            picture
+        };
+        let grey = picture.to_luma8();
+        Ok(Self {
+            width: grey.width() as usize,
+            height: grey.height() as usize,
+            values: grey.pixels().map(|p| f32::from(p.0[0]) / 255.0).collect(),
+        })
+    }
+
     /// The height at `(u, v)` in tiles, the picture repeating, read
     /// between its pixels.
     pub fn sample(&self, u: f32, v: f32) -> f32 {
@@ -227,6 +244,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A picture file's grey levels are its heights.
+    #[test]
+    fn a_picture_file_becomes_heights() {
+        let mut png = Vec::new();
+        image::GrayImage::from_fn(4, 2, |_, y| image::Luma([if y == 0 { 255 } else { 0 }]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let map = HeightMap::from_image(&png, 1024).unwrap();
+        assert_eq!((map.width, map.height), (4, 2));
+        assert_eq!(map.values[0], 1.0);
+        assert_eq!(map.values[4], 0.0);
+        assert!(HeightMap::from_image(b"no", 1024).is_err());
     }
 
     /// A picture reads white as high, its top at the tile's top.

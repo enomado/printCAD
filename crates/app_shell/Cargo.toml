@@ -45,3 +45,4 @@ gif = "0.14"
 rfd = "0.17"
 serde_json.workspace = true
 serde.workspace = true
+surface_texture = { path = "../surface_texture" }

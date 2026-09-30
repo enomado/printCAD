@@ -143,6 +143,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sixdof",
+ "surface_texture",
  "tiny-skia 0.12.0",
  "tracing",
  "tracing-appender",
@@ -4105,6 +4106,7 @@ name = "surface_texture"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.7",
+ "image",
  "kernel_api",
  "serde",
  "uuid",

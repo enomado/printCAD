@@ -57,6 +57,7 @@ fn round_trip(format: ExportFormat) -> (ImportedModel, ImportedModel) {
             brep: Some(&b.brep_blob),
             transform: None,
             mesh: &b.mesh,
+            finish: None,
         })
         .collect();
     let out = export(&bodies, format, &TessellationSettings::default()).expect("exports");
@@ -101,6 +102,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats() {
         brep: None,
         transform: None,
         mesh,
+        finish: None,
     }];
     assert!(
         export(
@@ -135,6 +137,7 @@ fn a_real_part_written_as_3mf_is_closed() {
             brep: Some(&b.brep_blob),
             transform: None,
             mesh: &b.mesh,
+            finish: None,
         })
         .collect();
     let out = export(
@@ -168,6 +171,7 @@ fn a_placed_body_is_written_where_it_sits() {
         brep: Some(&body.brep_blob),
         transform: Some(shift),
         mesh: &body.mesh,
+        finish: None,
     }];
     let (lo, hi) = body.bounds_mm.unwrap();
     for format in [ExportFormat::Step, ExportFormat::ThreeMf] {
@@ -220,6 +224,7 @@ fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
         brep: Some(&built.brep_blob),
         transform: None,
         mesh: &built.mesh,
+        finish: None,
     };
     let out = export(
         &[body],
@@ -272,12 +277,14 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
             brep: Some(&body.brep_blob),
             transform: None,
             mesh: &body.mesh,
+            finish: None,
         },
         ExportBody {
             name: "right".into(),
             brep: Some(&body.brep_blob),
             transform: Some(at(100.0)),
             mesh: &body.mesh,
+            finish: None,
         },
     ];
     let out = export(

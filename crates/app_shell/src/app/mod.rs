@@ -26,6 +26,7 @@ pub(crate) mod session;
 pub(crate) mod sixdof;
 pub(crate) mod step_import;
 pub(crate) mod tabs;
+pub(crate) mod textures;
 pub(crate) mod undo_host;
 pub(crate) mod updates;
 pub(crate) mod workbench_host;

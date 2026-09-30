@@ -74,6 +74,10 @@ pub fn draw_export_modal(
                     });
                     check_row(ui, &mut draft.selected_only, "Selected body only")
                         .on_hover_text("Otherwise every visible body");
+                    if draft.format.is_mesh() {
+                        check_row(ui, &mut draft.textures, "Surface textures")
+                            .on_hover_text("Press the bodies' surface textures into the mesh");
+                    }
                     if configurations > 0 {
                         check_row(
                             ui,

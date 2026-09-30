@@ -231,7 +231,8 @@ impl PrintCadApp {
     }
 
     fn async_work_pending(&self) -> bool {
-        self.picture.is_some()
+        self.texture_previews_pending()
+            || self.picture.is_some()
             || self
                 .gfx
                 .as_ref()
@@ -913,6 +914,7 @@ impl PrintCadApp {
             // this must be frame-END truth — a kernel job submitted during
             // this frame has to keep the loop awake. Mirror the helper.
             let work_pending = renderer.capture_pending()
+                || self.session.textured.values().any(|p| p.making.is_some())
                 || self.picture.is_some()
                 || self.kernel_worker.in_flight() > 0
                 || crate::app::tabs::tabs_busy(&self.session, &self.tabs)
@@ -1112,6 +1114,8 @@ impl PrintCadApp {
             .camera
             .update(dt_secs, &self.user_settings.camera);
 
+        self.drive_texture_previews();
+
         // Imported geometry (e.g. STEP files) becomes regular renderable bodies.
         // The body id from the document is reused so picking/selection stays
         // stable, and the document's revision counter is forwarded to the
@@ -1165,14 +1169,25 @@ impl PrintCadApp {
                     None => core_document::BodyDisplay::default().color,
                 };
                 let opacity = chosen.map(|d| d.opacity.clamp(0.05, 1.0)).unwrap_or(1.0);
+                // A textured body draws its textured mesh, the last one
+                // made while a newer is being made.
+                let (shown, shown_revision) = match self
+                    .session
+                    .textured
+                    .get(body_id)
+                    .and_then(|p| p.made.as_ref())
+                {
+                    Some((key, mesh)) => (Arc::clone(mesh), *key),
+                    None => (Arc::clone(&geometry.mesh), geometry.revision),
+                };
                 // Faces coloured on their own: the mesh with those colours
                 // in it, the rest in the body's, made once per change.
                 let (mesh, revision, color) = if face_colors.is_empty() {
-                    (Arc::clone(&geometry.mesh), geometry.revision, base_color)
+                    (shown, shown_revision, base_color)
                 } else {
                     use std::hash::{Hash, Hasher};
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    geometry.revision.hash(&mut hasher);
+                    shown_revision.hash(&mut hasher);
                     for c in face_colors {
                         (c.name, c.index, c.color.map(f32::to_bits)).hash(&mut hasher);
                     }
@@ -1188,15 +1203,11 @@ impl PrintCadApp {
                         // A body's own colours stay where no chosen colour
                         // covers them.
                         let base = if chosen.is_some() {
-                            let mut plain = (*geometry.mesh).clone();
+                            let mut plain = (*shown).clone();
                             plain.colors.clear();
                             core_document::mesh_with_face_colors(&plain, face_colors, base_color)
                         } else {
-                            core_document::mesh_with_face_colors(
-                                &geometry.mesh,
-                                face_colors,
-                                base_color,
-                            )
+                            core_document::mesh_with_face_colors(&shown, face_colors, base_color)
                         };
                         let mesh = Arc::new(base);
                         self.session

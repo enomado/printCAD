@@ -82,6 +82,10 @@ pub struct ExportBody<'a> {
     /// already.
     pub transform: Option<[[f64; 4]; 4]>,
     pub mesh: &'a TriMesh,
+    /// What a mesh file writes of the body's faces once meshed, in the
+    /// body's own frame, before it is placed (a surface texture pressed
+    /// in); `None` writes them as meshed.
+    pub finish: Option<&'a (dyn Fn(TriMesh) -> TriMesh + Sync)>,
 }
 
 /// What an export wrote.
@@ -242,13 +246,20 @@ fn export_mesh(
             .map_err(|e| KernelError::Other(anyhow::anyhow!("export stopped: {e}")))?;
         let mesh = match body.brep {
             Some(blob) => {
-                let mut mesh = tess::tessellate_blob(blob, &[], detail, tess::Faces::Wide)?;
+                let mesh = tess::tessellate_blob(blob, &[], detail, tess::Faces::Wide)?;
+                let mut mesh = match body.finish {
+                    Some(finish) => finish(mesh),
+                    None => mesh,
+                };
                 if let Some(m) = &body.transform {
                     moved_mesh(&mut mesh, m);
                 }
                 mesh
             }
-            None => body.mesh.clone(),
+            None => match body.finish {
+                Some(finish) => finish(body.mesh.clone()),
+                None => body.mesh.clone(),
+            },
         };
         if !mesh.indices.is_empty() {
             meshes.push((body.name.clone(), welded(&mesh)));
