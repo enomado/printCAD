@@ -661,9 +661,13 @@ impl<'a> QtyField<'a> {
                     let mut v = *self.value as f64;
                     let resp = ui.add_enabled(
                         !self.dim,
+                        // The range bounds what is dragged or typed; a value
+                        // outside it is shown as it is, never changed by
+                        // being shown.
                         egui::DragValue::new(&mut v)
                             .speed(self.speed)
                             .range(self.range.clone())
+                            .clamp_existing_to_range(false)
                             .fixed_decimals(self.decimals)
                             .suffix(suffix),
                     );
@@ -1491,5 +1495,26 @@ mod formula_field_tests {
             type_and_press(None, "Printer.x * 2", egui::Key::Escape),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod qty_field_tests {
+    use super::QtyField;
+
+    /// Shown, a field leaves a value outside its range as it is and says
+    /// nothing changed: only an edit changes a value.
+    #[test]
+    fn showing_a_field_never_changes_its_value() {
+        let ctx = egui::Context::default();
+        crate::theme::apply_theme(&ctx);
+        let mut value = 0.0_f32;
+        let mut changed = true;
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            changed = QtyField::mm(&mut value).show(ui);
+        });
+        out.textures_delta.clear();
+        assert_eq!(value, 0.0, "0 is not raised to the range's 0.001");
+        assert!(!changed);
     }
 }

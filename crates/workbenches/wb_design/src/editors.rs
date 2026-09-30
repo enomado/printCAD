@@ -270,6 +270,15 @@ fn mm_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool
     field(ui, label, |ui| QtyField::mm(value).speed(0.5).show(ui))
 }
 
+/// A length that may be zero or negative: a shift either way.
+fn offset_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
+    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
+        *value = v as f32;
+        return changed;
+    }
+    field(ui, label, |ui| QtyField::offset(value).speed(0.5).show(ui))
+}
+
 /// Which way a positive taper leans, under its field.
 fn taper_note(ui: &mut Ui, text: &str) {
     ui.label(
@@ -849,7 +858,7 @@ fn extrude_extras_rows(
     two_sided: bool,
     direction: ExtrudeDirection,
 ) -> bool {
-    let mut changed = mm_drag(ui, fx, &mut extras.start_offset, "Start offset:");
+    let mut changed = offset_drag(ui, fx, &mut extras.start_offset, "Start offset:");
     if two_sided {
         let mut own = extras.taper2_deg.is_some();
         if check_row(ui, &mut own, "Second side's own taper").changed() {
@@ -888,14 +897,14 @@ fn extrude_side_rows(
         }
         ExtrudeMode::UpToFace => {
             changed |= face_pick_row(ui, ctx, face, "Target face:");
-            changed |= mm_drag(ui, fx, offset.0, offset.1);
+            changed |= offset_drag(ui, fx, offset.0, offset.1);
         }
         ExtrudeMode::UpToBorrowed(_) | ExtrudeMode::UpToPlane(_) => {
-            changed |= mm_drag(ui, fx, offset.0, offset.1);
+            changed |= offset_drag(ui, fx, offset.0, offset.1);
         }
         ExtrudeMode::UpToShape => {
             changed |= face_list_editor(ui, ctx, shape, "Stop faces:");
-            changed |= mm_drag(ui, fx, offset.0, offset.1);
+            changed |= offset_drag(ui, fx, offset.0, offset.1);
         }
         _ => {}
     }
@@ -2023,9 +2032,9 @@ pub fn datum_editor(
 
     // One row each: side by side they are wider than the panel.
     let [x, y, n] = &mut datum.offset.translation;
-    changed |= mm_drag(ui, fx, x, "Offset X:");
-    changed |= mm_drag(ui, fx, y, "Offset Y:");
-    changed |= mm_drag(ui, fx, n, "Normal offset:");
+    changed |= offset_drag(ui, fx, x, "Offset X:");
+    changed |= offset_drag(ui, fx, y, "Offset Y:");
+    changed |= offset_drag(ui, fx, n, "Normal offset:");
     changed |= deg_drag(
         ui,
         fx,
@@ -2544,12 +2553,12 @@ pub fn feature_editor(
                 }
                 HelixMode::HeightTurnsGrowth => {
                     // A height of 0 is a flat spiral; below it is nothing.
-                    if mm_drag(ui, fx, height, "Height:") {
+                    if offset_drag(ui, fx, height, "Height:") {
                         *height = height.max(0.0);
                         changed = true;
                     }
                     changed |= turns_field(ui, fx, turns);
-                    changed |= mm_drag(ui, fx, growth, "Growth:");
+                    changed |= offset_drag(ui, fx, growth, "Growth:");
                 }
             }
             if *mode != HelixMode::HeightTurnsGrowth {
@@ -2597,9 +2606,9 @@ pub fn feature_editor(
                         changed = true;
                     }
                     let [x, y, n] = &mut a.offset.translation;
-                    changed |= mm_drag(ui, fx, x, "Offset X:");
-                    changed |= mm_drag(ui, fx, y, "Offset Y:");
-                    changed |= mm_drag(ui, fx, n, "Normal offset:");
+                    changed |= offset_drag(ui, fx, x, "Offset X:");
+                    changed |= offset_drag(ui, fx, y, "Offset Y:");
+                    changed |= offset_drag(ui, fx, n, "Normal offset:");
                     changed |= deg_drag(
                         ui,
                         fx,
