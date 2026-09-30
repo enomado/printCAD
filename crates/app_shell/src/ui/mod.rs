@@ -843,6 +843,17 @@ impl UiLayer {
                     0,
                 );
             }
+            // Files dropped anywhere the assistant did not take them open or
+            // import.
+            let dropped: Vec<std::path::PathBuf> = ui
+                .ctx()
+                .input_mut(|i| std::mem::take(&mut i.raw.dropped_files))
+                .into_iter()
+                .map(|f| f.path().to_path_buf())
+                .collect();
+            if !dropped.is_empty() {
+                commands.push(UiCommand::OpenDropped(dropped));
+            }
 
             let task_result = task_panel::draw_task_panel(
                 ui,

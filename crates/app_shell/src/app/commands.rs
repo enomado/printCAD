@@ -429,6 +429,7 @@ impl PrintCadApp {
                 UiCommand::ShowWorkspace => intents.show_workspace = true,
                 UiCommand::NewTab => intents.new_tab = true,
                 UiCommand::ReopenTab => self.reopen_closed_tab(),
+                UiCommand::OpenDropped(paths) => self.open_dropped(paths),
                 UiCommand::NoteRecentCommand(key) => {
                     let recent = &mut self.user_settings.recent_commands;
                     recent.retain(|k| *k != key);

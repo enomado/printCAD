@@ -325,6 +325,44 @@ impl PrintCadApp {
     /// Ask the server for a document's bytes. The load epoch rides as the
     /// request token so a response landing after File > New is ignored.
     /// Public face of [`Self::request_document_open`] for startup hooks.
+    /// Import a file picked or dropped: a mesh, or a file a workbench
+    /// reads, at once; a STEP or IGES file through the import settings,
+    /// which its meshing needs.
+    pub(crate) fn import_picked(&mut self, path: PathBuf) {
+        if kernel_ogeom::is_mesh_file(&path) || self.registry.file_import_for(&path).is_some() {
+            self.import_step_at(&path, self.last_step_import_detail.clone());
+        } else {
+            self.session.step_import_pending = Some((path, self.last_step_import_detail.clone()));
+        }
+    }
+
+    /// Files dropped on the window: a printCAD document opens in a tab of
+    /// its own, a model file imports as File › Import would take it.
+    pub(crate) fn open_dropped(&mut self, paths: Vec<PathBuf>) {
+        const MODELS: &[&str] = &[
+            "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb", "gltf", "wrl", "vrml",
+        ];
+        for path in paths {
+            let extension = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            if extension == "prtcad" {
+                self.open_document_at(path);
+            } else if MODELS.contains(&extension.as_str())
+                || self.registry.file_import_for(&path).is_some()
+            {
+                self.import_picked(path);
+            } else {
+                app_log::warn(format!(
+                    "printCAD neither opens nor imports `{}`",
+                    path.display()
+                ));
+            }
+        }
+    }
+
     pub(crate) fn open_document_at(&mut self, path: PathBuf) {
         // A file already open is that tab; otherwise it gets a blank one.
         if let Some(index) = self.tab_index_of_file(&path) {
@@ -778,13 +816,8 @@ impl PrintCadApp {
                         .is_some_and(|e| e.eq_ignore_ascii_case("prtcad"))
                     {
                         self.insert_linked(path);
-                    } else if kernel_ogeom::is_mesh_file(&path)
-                        || self.registry.file_import_for(&path).is_some()
-                    {
-                        self.import_step_at(&path, self.last_step_import_detail.clone());
                     } else {
-                        self.session.step_import_pending =
-                            Some((path, self.last_step_import_detail.clone()));
+                        self.import_picked(path);
                     }
                 }
             }

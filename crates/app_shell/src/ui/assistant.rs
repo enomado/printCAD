@@ -199,6 +199,8 @@ fn take_dropped_files(
         );
     }
     if !dropped.is_empty() && here {
+        // Taken here, they are not the window's to open.
+        ui.ctx().input_mut(|i| i.raw.dropped_files.clear());
         commands.push(UiCommand::AttachPaths {
             chat,
             paths: dropped,

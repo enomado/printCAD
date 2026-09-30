@@ -128,6 +128,9 @@ pub enum UiCommand {
     /// The palette ran the entry this key names: it goes to the top of
     /// the recent list.
     NoteRecentCommand(String),
+    /// Files dropped on the window, outside the assistant: documents open,
+    /// model files import.
+    OpenDropped(Vec<std::path::PathBuf>),
     /// Open again the file of the last tab closed.
     ReopenTab,
     CloseTab(uuid::Uuid),
