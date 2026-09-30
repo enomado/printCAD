@@ -368,8 +368,27 @@ pub(crate) struct SketchPicker {
     pub checked: HashSet<FeatureId>,
 }
 
+/// A left press of the line tool, and what the pointer did since.
+#[derive(Debug, Clone, Copy)]
+struct LinePress {
+    /// Where it landed, in viewport pixels.
+    at: (f32, f32),
+    /// The pointer has moved far enough to be a drag.
+    dragged: bool,
+    /// The drag draws an arc tangent to what ends where the line starts.
+    arcing: bool,
+}
+
+/// How far, in pixels, a press moves before it is a drag.
+const LINE_DRAG_PX: f32 = 5.0;
+
 #[derive(Default)]
 pub struct SketchWorkbench {
+    /// A left press of the line tool, held to tell a click from a drag:
+    /// dragged from the end it draws from, it draws an arc.
+    line_press: Option<LinePress>,
+    /// The line tool's next click is its arc (`step::line_arc_click`).
+    arc_click: bool,
     /// The shaded regions of the sketch being edited, by the profile they
     /// were meshed from.
     regions: std::cell::RefCell<Option<(u64, kernel_api::TriMesh)>>,
@@ -1134,17 +1153,33 @@ impl SketchWorkbench {
             avoid_redundant: self.options.avoid_redundant_auto,
         };
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
-        let outcome = step::click(
-            &mut self.tool_state,
-            &mut self.dim_capture,
-            tool,
-            &mut feature.sketch,
-            cursor,
-            &typed,
-            constrain,
-            &settings,
-            &self.selected,
-        );
+        let arc = tool == "sketch.line" && std::mem::take(&mut self.arc_click);
+        let outcome = if arc {
+            // Recorded as the arc it is.
+            if let Some(event) = self.draw_record.as_mut().and_then(|r| r.events.last_mut()) {
+                *event = serde_json::json!({"x": cursor.x, "y": cursor.y, "arc": true});
+            }
+            step::line_arc_click(
+                &mut self.tool_state,
+                &mut self.dim_capture,
+                &mut feature.sketch,
+                cursor,
+                &settings,
+                &self.selected,
+            )
+        } else {
+            step::click(
+                &mut self.tool_state,
+                &mut self.dim_capture,
+                tool,
+                &mut feature.sketch,
+                cursor,
+                &typed,
+                constrain,
+                &settings,
+                &self.selected,
+            )
+        };
         if outcome.skipped > 0 {
             ctx.log_info(format!(
                 "Skipped {} redundant auto constraint(s)",
@@ -1311,6 +1346,37 @@ impl SketchWorkbench {
         // A new press ends whatever the last one armed.
         self.dragging = None;
         self.box_select = None;
+        self.line_press = None;
+
+        // The line tool: a press on the end it draws from, dragged, is an
+        // arc tangent to what ends there; a press anywhere else clicks, and
+        // dragged from a first point draws the line to where it is let go.
+        if tool == Some("sketch.line") {
+            let on_end = match self.tool_state {
+                ToolState::LineFrom {
+                    from: snap::SnapTarget::Existing(from),
+                    ..
+                } => feature
+                    .sketch
+                    .point_position(from)
+                    .is_some_and(|at| (at - cursor).to_glam().length() <= tol),
+                _ => false,
+            };
+            let press = LinePress {
+                at: viewport_pos,
+                dragged: false,
+                arcing: false,
+            };
+            if on_end {
+                self.line_press = Some(press);
+                return InputResult::consumed();
+            }
+            let result = self.apply_tool_click(ctx, "sketch.line", cursor, false);
+            if matches!(self.tool_state, ToolState::LineFrom { chain: false, .. }) {
+                self.line_press = Some(press);
+            }
+            return result;
+        }
 
         match tool {
             // A press trims what it lands on and starts a stroke: dragging
@@ -1453,6 +1519,17 @@ impl SketchWorkbench {
         let plane = feature.plane;
         self.cursor = Self::cursor_to_sketch(ctx, &plane, viewport_pos);
 
+        // A line tool press that moves far enough is a drag; from an end
+        // something runs into, the drag draws a tangent arc.
+        if tool == Some("sketch.line")
+            && let Some(press) = self.line_press.as_mut()
+            && !press.dragged
+            && (viewport_pos.0 - press.at.0).hypot(viewport_pos.1 - press.at.1) > LINE_DRAG_PX
+        {
+            press.dragged = true;
+            press.arcing = tools::line_arc_begin(&mut self.tool_state, &feature.sketch);
+        }
+
         // Dimension label drag: purely cosmetic, no solver run needed.
         let tol = Self::snap_tolerance(ctx, &plane);
         if let Some(ld) = self.label_drag.as_mut() {
@@ -1533,6 +1610,15 @@ impl SketchWorkbench {
     }
 
     fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        // A line tool drag lands: the arc, or the line, ends where it is let go.
+        if let Some(press) = self.line_press.take()
+            && press.dragged
+            && !self.tool_state.is_idle()
+            && let Some(cursor) = self.cursor
+        {
+            self.arc_click = press.arcing;
+            return self.apply_tool_click(ctx, "sketch.line", cursor, false);
+        }
         if self.trim_stroke.take().is_some() {
             return InputResult::consumed();
         }

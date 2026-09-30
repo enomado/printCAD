@@ -639,7 +639,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - `sketch` (id): The sketch to draw in
 - `tool` (string): line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, circle, circle3, arc, arc3, ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, chamfer, trim, extend, split, bspline_knot, offset, translate, rotate, scale or mirror
-- `points` (list): The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} with values typed at it; "arc" and "line" switch a polyline, "finish" ends a spline
+- `points` (list): The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} with values typed at it, or for the line tool {x = , y = , arc = true}: an arc there, tangent to what ends where it draws from; "arc" and "line" switch a polyline, "finish" ends a spline
 - `tolerance` (number, optional): How close a click snaps onto points and curves, mm (0.001)
 - `params` (any, optional): Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, copies_linked, bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, mirror_keep, mirror_linked, mirror_center
 - `construction` (boolean, optional): What it makes is construction geometry

@@ -327,9 +327,9 @@ impl ToolState {
         match self {
             ToolState::Idle => None,
             ToolState::LineFrom { chain: false, .. } => Some("Line: click the end point"),
-            ToolState::LineFrom { chain: true, .. } => {
-                Some("Line: click to chain, right-click or Esc to finish")
-            }
+            ToolState::LineFrom { chain: true, .. } => Some(
+                "Line: click to chain, drag from the end for a tangent arc, right-click or Esc to finish",
+            ),
             ToolState::RectFrom { .. } => Some("Rectangle: click the opposite corner"),
             ToolState::RectCenterAt { .. } => Some("Rectangle: click a corner"),
             ToolState::Rect3A { .. } => Some("Rectangle: click the second corner"),
@@ -685,6 +685,65 @@ pub fn toggle_polyline_arc(state: &mut ToolState) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// The curve that ends at point `at` and the way it runs into it: a line
+/// from its other end, an arc as it turns there. The latest such curve
+/// when several end there; `None` when none does.
+pub fn heading_into(sketch: &Sketch, at: Uuid) -> Option<(Uuid, Vec2D)> {
+    let pos = |id: Uuid| sketch.point_position(id);
+    let here = pos(at)?;
+    sketch.geometry.iter().rev().find_map(|g| {
+        let heading = match g {
+            GeometryElement::Line(l) if l.end == at => here - pos(l.start)?,
+            GeometryElement::Line(l) if l.start == at => here - pos(l.end)?,
+            // An arc runs counter-clockwise from its start to its end.
+            GeometryElement::Arc(a) if a.end == at => {
+                Vec2D::from_glam((here - pos(a.center)?).to_glam().perp())
+            }
+            GeometryElement::Arc(a) if a.start == at => {
+                Vec2D::from_glam(-(here - pos(a.center)?).to_glam().perp())
+            }
+            _ => return None,
+        };
+        (heading.to_glam().length() > 1e-9).then(|| (g.id(), heading))
+    })
+}
+
+/// The line tool's arc: from the point the line tool draws from, turn it
+/// into a polyline's tangent-arc step, heading as the curve that ends
+/// there runs. Whether there was one to be tangent to.
+pub fn line_arc_begin(state: &mut ToolState, sketch: &Sketch) -> bool {
+    let from = match *state {
+        ToolState::LineFrom {
+            from: SnapTarget::Existing(from),
+            ..
+        } => from,
+        ToolState::PolylineFrom {
+            segment: PolySegment::Tangent,
+            heading: Some(_),
+            ..
+        } => return true,
+        _ => return false,
+    };
+    let Some((prev, heading)) = heading_into(sketch, from) else {
+        return false;
+    };
+    *state = ToolState::PolylineFrom {
+        from: SnapTarget::Existing(from),
+        first: None,
+        heading: Some(heading),
+        prev: Some(prev),
+        segment: PolySegment::Tangent,
+    };
+    true
+}
+
+/// Back to the line tool after its arc, drawing on from where the arc ended.
+pub fn line_arc_end(state: &mut ToolState) {
+    if let ToolState::PolylineFrom { from, .. } = *state {
+        *state = ToolState::LineFrom { from, chain: true };
     }
 }
 

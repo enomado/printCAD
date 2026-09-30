@@ -224,6 +224,31 @@ fn a_session_recorded_through_the_ui_replays_to_the_same_sketch() {
     assert_replays(&s.recorded, before, id, &done);
 }
 
+/// A line tool's arc, dragged from the end it draws from, records with the
+/// line's other points and replays to the same arc.
+#[test]
+fn a_dragged_arc_replays_as_it_was_drawn() {
+    let (mut s, id, before) = session_on_a_sketch();
+    s.click(0.0, 0.0, "sketch.line");
+    s.click(10.0, 0.0, "sketch.line");
+    s.press(10.0, 0.0, "sketch.line");
+    s.move_to(12.0, 1.0, "sketch.line");
+    s.move_to(15.0, 5.0, "sketch.line");
+    s.release(15.0, 5.0, "sketch.line");
+    s.click(15.0, 15.0, "sketch.line");
+    s.key(KeyCode::Escape, Some("sketch.line"));
+
+    let done = summary(&s.sketch(id));
+    assert!(done.1.contains(&"arc"), "{done:?}");
+    let draws: Vec<&Recorded> = s
+        .recorded
+        .iter()
+        .filter(|r| r.id == "sketch.draw")
+        .collect();
+    assert_eq!(draws.len(), 1, "one line tool run: {:#?}", s.recorded);
+    assert_replays(&s.recorded, before, id, &done);
+}
+
 /// Write `recorded` as a script, run it on `before`, and check sketch `id`
 /// comes out as `done`.
 fn assert_replays(

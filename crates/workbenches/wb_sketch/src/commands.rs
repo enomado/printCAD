@@ -179,8 +179,9 @@ pub fn register(context: &mut WorkbenchContext) {
             "points",
             ParamKind::List,
             "The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} \
-             with values typed at it; \"arc\" and \"line\" switch a polyline, \"finish\" \
-             ends a spline",
+             with values typed at it, or for the line tool {x = , y = , arc = true}: an arc \
+             there, tangent to what ends where it draws from; \"arc\" and \"line\" switch a \
+             polyline, \"finish\" ends a spline",
         )
         .optional(
             "tolerance",
@@ -2054,6 +2055,24 @@ fn draw(
                     ));
                 }
             },
+            // A line tool's arc: tangent to what ends where it draws from.
+            click
+                if tool == "sketch.line"
+                    && click.get("arc").and_then(Value::as_bool) == Some(true) =>
+            {
+                let (at, _, _) = click_of(click)?;
+                let outcome = step::line_arc_click(
+                    &mut state,
+                    &mut capture,
+                    sketch,
+                    at,
+                    &settings,
+                    &selected,
+                );
+                if outcome.changed {
+                    crate::solver::solve(sketch);
+                }
+            }
             click => {
                 let (at, typed, constrain) = click_of(click)?;
                 let outcome = step::click(

@@ -611,6 +611,65 @@ fn overlays_are_generated_while_editing() {
     assert!(dots >= 4, "corner points drawn as dots, got {dots}");
 }
 
+/// Pressed on the end the line tool draws from and dragged, the line tool
+/// draws an arc tangent to the line before it, then goes on with lines
+/// from the arc's end.
+#[test]
+fn dragging_from_a_line_s_end_draws_a_tangent_arc() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    // Press on the end, drag, let go.
+    h.click(10.0, 0.0, "sketch.line");
+    for (x, y) in [(12.0, 1.0), (15.0, 5.0)] {
+        let viewport_pos = h.px_of(x, y);
+        h.event(
+            WorkbenchInputEvent::MouseMove { viewport_pos },
+            Some("sketch.line"),
+        );
+    }
+    let viewport_pos = h.px_of(15.0, 5.0);
+    h.event(
+        WorkbenchInputEvent::MouseRelease {
+            button: MouseButton::Left,
+            viewport_pos,
+        },
+        Some("sketch.line"),
+    );
+    let (_, lines, _, arcs) = h.counts();
+    assert_eq!((lines, arcs), (1, 1), "the line, then the arc");
+    let sketch = h.sketch();
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::Tangent { .. })),
+        "held tangent to the line"
+    );
+    // The line tool draws on from the arc's end.
+    h.click(15.0, 15.0, "sketch.line");
+    let (points, lines, _, arcs) = h.counts();
+    assert_eq!((lines, arcs), (2, 1));
+    assert_eq!(points, 5, "the ends shared, plus the arc's centre");
+
+    // A press that does not move is a click there, as before: no arc.
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    let viewport_pos = h.px_of(10.0, 0.0);
+    h.event(
+        WorkbenchInputEvent::MouseRelease {
+            button: MouseButton::Left,
+            viewport_pos,
+        },
+        Some("sketch.line"),
+    );
+    assert_eq!(h.counts().3, 0);
+}
+
 /// Counts the profiles it is asked to mesh, and meshes each as one triangle.
 struct CountingRegions(std::sync::atomic::AtomicUsize);
 

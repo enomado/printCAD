@@ -153,6 +153,40 @@ pub(crate) fn click(
     }
 }
 
+/// The line tool's arc to `cursor`: tangent to the curve that ends where
+/// the line tool draws from, made as the polyline makes its arcs, after
+/// which the line tool draws on from the arc's end.
+pub(crate) fn line_arc_click(
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+) -> StepOutcome {
+    if !tools::line_arc_begin(state, sketch) {
+        return StepOutcome {
+            changed: false,
+            added: 0,
+            skipped: 0,
+            log: Some("No line or arc ends there for an arc to leave tangent to".into()),
+        };
+    }
+    let outcome = click(
+        state,
+        capture,
+        "sketch.polyline",
+        sketch,
+        cursor,
+        &[],
+        false,
+        settings,
+        selected,
+    );
+    tools::line_arc_end(state);
+    outcome
+}
+
 /// The points a drag of `elements` carries, where they are now: each
 /// element's own points, external geometry left where its edge is.
 pub(crate) fn drag_targets(sketch: &Sketch, elements: &[Uuid]) -> Vec<(Uuid, Vec2D)> {
