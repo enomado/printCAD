@@ -30,6 +30,8 @@ pub(crate) struct DocumentSession {
     pub section: Option<crate::camera::section::SectionPlane>,
     /// What a click in the view picks.
     pub pick_filter: crate::ui::PickFilter,
+    /// The tree row under the pointer: what it stands for lights up.
+    pub tree_hovered: Option<crate::ui::TreeItemId>,
     pub active_tool: ActiveTool,
     pub selected_body: Option<Uuid>,
     pub hovered_body: Option<Uuid>,
@@ -202,6 +204,7 @@ impl DocumentSession {
             camera: CameraController::new(camera_settings, (1, 1)),
             section: None,
             pick_filter: Default::default(),
+            tree_hovered: None,
             export_pending: None,
             export_when_ready: false,
             active_tool: ActiveTool::default(),

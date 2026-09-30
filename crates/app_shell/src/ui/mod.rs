@@ -88,6 +88,8 @@ pub struct UiFrameOutput {
     pub commands: Vec<UiCommand>,
     /// A workbench task is open in the right panel after this frame.
     pub task_open: bool,
+    /// The tree row under the pointer.
+    pub tree_hovered: Option<TreeItemId>,
 }
 
 pub struct UiLayer {
@@ -385,6 +387,7 @@ impl UiLayer {
         let mut viewport_rect_logical = egui::Rect::NOTHING;
         let mut task_open = false;
         let mut tree_selection = None;
+        let mut tree_hovered = None;
         let mut step_import_dialog = StepImportDialogAction::default();
         let mut export_dialog = StepImportDialogAction::default();
 
@@ -766,6 +769,7 @@ impl UiLayer {
                 },
             );
             apply_writeback(&combo.writeback, &mut commands, &mut tree_selection);
+            tree_hovered = combo.tree_hovered;
             // An explicit tree click wins over a panel-created feature.
             if combo.tree_selection.is_some() {
                 tree_selection = combo.tree_selection;
@@ -1083,6 +1087,7 @@ impl UiLayer {
             active_workbench,
             commands,
             task_open,
+            tree_hovered,
         }
     }
 }

@@ -181,6 +181,28 @@ impl PrintCadApp {
     /// settles. The wake gate and the end-of-frame scheduler share this —
     /// a source listed in only one of them either burns CPU or sleeps
     /// through its own completion.
+    /// The body the tree row under the pointer stands for: a body's row, an
+    /// imported part's, or a feature's that builds its body's solid. A
+    /// hidden body lights nothing.
+    fn tree_hovered_body(&self) -> Option<core_document::BodyId> {
+        use crate::ui::TreeItemId;
+        let document = &self.session.document;
+        let body = match self.session.tree_hovered? {
+            TreeItemId::Body(id) => Some(id),
+            TreeItemId::ImportedObject(node) => document.body_of_imported_object(node),
+            TreeItemId::Feature(id) => document.get_feature_meta(id).and_then(|node| {
+                self.registry
+                    .feature_info(node)
+                    .filter(|info| info.builds_solid)
+                    .and(node.body)
+            }),
+            _ => None,
+        }?;
+        document
+            .imported_body_effective_visible(body)
+            .then_some(body)
+    }
+
     /// A picture of the view that arrived: saved where the user picks.
     fn drive_picture(&mut self) {
         let Some(picture) = self.picture.take() else {
@@ -817,6 +839,7 @@ impl PrintCadApp {
                 self.session.active_tool = ui_result.active_tool;
                 self.session.active_workbench = ui_result.active_workbench;
                 self.session.task_open = ui_result.task_open;
+                self.session.tree_hovered = ui_result.tree_hovered;
 
                 // The window title follows the document and its dirty state.
                 let title = if self.session.screen == crate::ui::Screen::Start {
@@ -1029,7 +1052,9 @@ impl PrintCadApp {
                 let is_selected = self.session.active_document_object == Some(feature_id)
                     || self.session.tree_selection
                         == Some(crate::ui::TreeItemId::Feature(feature_id));
-                let is_hovered = self.session.hovered_feature == Some(feature_id);
+                let is_hovered = self.session.hovered_feature == Some(feature_id)
+                    || self.session.tree_hovered
+                        == Some(crate::ui::TreeItemId::Feature(feature_id));
                 let palette = core_document::SketchPalette::default();
                 let color = if is_selected {
                     palette.selected
@@ -1427,6 +1452,29 @@ impl PrintCadApp {
                 mesh: Arc::clone(&geometry.mesh),
                 color: paint,
                 opacity,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+                pickable: false,
+                on_top: false,
+                edge_color: None,
+                front_only: false,
+            });
+        }
+
+        // The body a tree row under the pointer stands for, translucent in
+        // the hover paint, unless it is selected already.
+        if let Some(body) = self.tree_hovered_body()
+            && self.session.selected_body != Some(body.0)
+            && !self.session.previews.contains_key(&body)
+            && let Some(geometry) = self.session.document.imported_geometry(body)
+        {
+            let (hi, lo) = body.0.as_u64_pair();
+            all_meshes.push(BodySubmission {
+                id: self.tree_hover_id,
+                revision: geometry.revision ^ hi ^ lo,
+                mesh: Arc::clone(&geometry.mesh),
+                color: HOVER_PAINT,
+                opacity: opacity * 0.5,
                 highlight: HighlightState::None,
                 is_wireframe: false,
                 pickable: false,

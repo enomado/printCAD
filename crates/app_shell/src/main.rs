@@ -299,6 +299,8 @@ struct PrintCadApp {
     face_highlight_id: Uuid,
     /// Submission id of the hovered face's overlay.
     face_hover_id: Uuid,
+    /// The overlay slot of the body a tree row under the pointer stands for.
+    tree_hover_id: Uuid,
     /// The submission id of the whole-body selection overlay.
     body_highlight_id: Uuid,
     /// The submission ids of the hovered-edge and selected-edges outlines.
@@ -487,6 +489,7 @@ impl PrintCadApp {
             modifiers: winit::keyboard::ModifiersState::default(),
             face_highlight_id: Uuid::new_v4(),
             face_hover_id: Uuid::new_v4(),
+            tree_hover_id: Uuid::new_v4(),
             body_highlight_id: Uuid::new_v4(),
             edge_hover_id: Uuid::new_v4(),
             edge_select_id: Uuid::new_v4(),

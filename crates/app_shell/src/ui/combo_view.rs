@@ -16,6 +16,8 @@ pub struct ComboViewResult {
     pub writeback: PanelWriteback,
     pub tree_selection: Option<TreeItemId>,
     pub tree_activation: Option<TreeItemId>,
+    /// The tree row under the pointer, lit up in the view.
+    pub tree_hovered: Option<TreeItemId>,
     pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
     /// A body shown or hidden, from its tree row or the property panel.
     pub body_visibility_change: Option<(core_document::BodyId, bool)>,
@@ -200,6 +202,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     result.bench_command = tree_ui.bench_command;
                     result.tree_selection = tree_ui.selection;
                     result.tree_activation = tree_ui.activation;
+                    result.tree_hovered = tree_ui.hovered;
                     result.imported_visibility_change = tree_ui.imported_visibility_change;
                     result.body_visibility_change = tree_ui.body_visibility_change;
                     result.tree_feature_command = tree_ui.feature_command;
