@@ -129,6 +129,11 @@ impl PrintCadApp {
                 UiCommand::SetBodyDisplay { body, display } => {
                     intents.body_display.push((body, display));
                 }
+                UiCommand::SetPickFilter(filter) => {
+                    self.session.pick_filter = filter;
+                    self.session.hovered_edge = None;
+                    app_log::info(format!("Picking: {}", filter.label()));
+                }
                 UiCommand::RepeatLastTool => {
                     self.session.viewport_menu = None;
                     self.repeat_last_tool();

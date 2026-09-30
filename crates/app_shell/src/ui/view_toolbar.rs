@@ -62,8 +62,50 @@ fn toggled(
     }
 }
 
+/// What a click in the view picks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickFilter {
+    /// An edge near the cursor, else the face under it; a double click
+    /// the whole body.
+    #[default]
+    Any,
+    Faces,
+    Edges,
+    /// A click takes the whole body.
+    Bodies,
+}
+
+impl PickFilter {
+    pub const ALL: [PickFilter; 4] = [
+        PickFilter::Any,
+        PickFilter::Faces,
+        PickFilter::Edges,
+        PickFilter::Bodies,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PickFilter::Any => "Faces and edges",
+            PickFilter::Faces => "Faces only",
+            PickFilter::Edges => "Edges only",
+            PickFilter::Bodies => "Whole bodies",
+        }
+    }
+
+    /// Whether an edge near the cursor hovers and picks.
+    pub fn edges(self) -> bool {
+        matches!(self, PickFilter::Any | PickFilter::Edges)
+    }
+
+    /// Whether the face under the cursor hovers and picks.
+    pub fn faces(self) -> bool {
+        matches!(self, PickFilter::Any | PickFilter::Faces)
+    }
+}
+
 /// The view state the toolbar shows.
 pub struct ViewToolbarState {
+    pub pick_filter: PickFilter,
     pub projection: ProjectionMode,
     pub field_of_view_deg: f32,
     pub draw_style: DrawStyle,
@@ -85,6 +127,7 @@ pub fn draw_view_toolbar(
         None => label.to_string(),
     };
     let ViewToolbarState {
+        pick_filter,
         projection,
         field_of_view_deg,
         draw_style,
@@ -241,6 +284,10 @@ pub fn draw_view_toolbar(
                                 }
                             }
                         }
+                        ui.add_space(3.0);
+                        vseparator(ui, 18.0);
+                        ui.add_space(3.0);
+                        pick_filter_button(ui, pick_filter, commands);
                         // The perspective's strength, dragged or typed: the
                         // object keeps its size, only the distortion changes.
                         if !ortho {
@@ -269,6 +316,35 @@ pub fn draw_view_toolbar(
     if let Some(plane) = section {
         draw_section_bar(ctx, viewport, plane, scene_bounds, commands);
     }
+}
+
+/// What clicks in the view pick: a button showing the filter, its list
+/// below it.
+fn pick_filter_button(ui: &mut egui::Ui, filter: PickFilter, commands: &mut Vec<UiCommand>) {
+    let state = ToolButtonState {
+        enabled: true,
+        active: filter != PickFilter::Any,
+        planned: None,
+        menu: true,
+    };
+    let response = tool_button(
+        ui,
+        "select",
+        &format!("Pick: {}", filter.label()),
+        BUTTON,
+        state,
+    );
+    egui::Popup::menu(&response).show(|ui| {
+        for choice in PickFilter::ALL {
+            if ui
+                .selectable_label(choice == filter, choice.label())
+                .clicked()
+            {
+                commands.push(UiCommand::SetPickFilter(choice));
+                ui.close();
+            }
+        }
+    });
 }
 
 /// The clipping plane's own pill, under the toolbar: its axis, its
@@ -335,4 +411,21 @@ fn draw_section_bar(
                     });
                 });
         });
+}
+
+#[cfg(test)]
+mod pick_filter_tests {
+    use super::PickFilter;
+
+    /// Each filter lets through what it names: edges and faces both by
+    /// default, one of them alone, or neither when whole bodies are picked.
+    #[test]
+    fn each_filter_picks_what_it_names() {
+        let lets = |f: PickFilter| (f.faces(), f.edges());
+        assert_eq!(lets(PickFilter::Any), (true, true));
+        assert_eq!(lets(PickFilter::Faces), (true, false));
+        assert_eq!(lets(PickFilter::Edges), (false, true));
+        assert_eq!(lets(PickFilter::Bodies), (false, false));
+        assert_eq!(PickFilter::default(), PickFilter::Any);
+    }
 }

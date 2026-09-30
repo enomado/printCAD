@@ -26,6 +26,7 @@ mod tab_bar;
 mod task_panel;
 pub(crate) mod toolbar;
 mod view_toolbar;
+pub use view_toolbar::PickFilter;
 
 mod body_menu;
 mod host_tasks;
@@ -326,6 +327,7 @@ impl UiLayer {
             physical,
             field_of_view_deg,
             section,
+            pick_filter,
             scene_bounds,
             screen_space_overlays,
             screen_space_marks,
@@ -943,6 +945,7 @@ impl UiLayer {
                 ui.ctx(),
                 viewport_rect_logical,
                 &view_toolbar::ViewToolbarState {
+                    pick_filter,
                     projection,
                     field_of_view_deg,
                     draw_style: settings.rendering.draw_style,

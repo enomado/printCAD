@@ -579,7 +579,13 @@ impl PrintCadApp {
             return true;
         }
 
+        let filter = self.session.pick_filter;
         if let Some(hovered) = self.session.hovered_body {
+            // Picking only edges, a click on a body away from them takes
+            // nothing.
+            if filter == crate::ui::PickFilter::Edges {
+                return true;
+            }
             // A feature's own geometry is occasionally GPU-picked too (e.g.
             // clicking exactly on a sketch line): same selection path.
             let feature_id = core_document::FeatureId(hovered);
@@ -611,7 +617,8 @@ impl PrintCadApp {
                 .is_mesh_body(core_document::BodyId(hovered))
                 && !already_whole;
 
-            if is_double || whole_mesh {
+            let whole_only = filter == crate::ui::PickFilter::Bodies;
+            if is_double || whole_mesh || (whole_only && !already_whole) {
                 // The whole body the face belongs to — one part of an
                 // assembly, not the assembly. A modelling bench works from
                 // the tree, so there the body's row opens and scrolls into

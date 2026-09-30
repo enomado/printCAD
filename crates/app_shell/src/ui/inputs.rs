@@ -73,6 +73,8 @@ pub struct UiFrameInputs<'a> {
     pub field_of_view_deg: f32,
     /// The clipping plane, when on, and the scene box it moves across.
     pub section: Option<crate::camera::section::SectionPlane>,
+    /// What a click in the view picks.
+    pub pick_filter: super::view_toolbar::PickFilter,
     pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
     pub screen_space_marks: &'a [core_document::ScreenSpaceMark],

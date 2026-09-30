@@ -703,6 +703,7 @@ impl PrintCadApp {
                         physical,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),
                         section: self.session.section,
+                        pick_filter: self.session.pick_filter,
                         scene_bounds: self.session.camera.scene_bounds(),
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_marks: &screen_space_marks,
@@ -877,7 +878,9 @@ impl PrintCadApp {
         }
         // The edge under the cursor, on the body the pick found; an edge
         // takes the hover from the face it borders.
-        let hovered_edge = self.edge_under_cursor().filter(|_| over_scene);
+        let hovered_edge = self
+            .edge_under_cursor()
+            .filter(|_| over_scene && self.session.pick_filter.edges());
         if hovered_edge != self.session.hovered_edge {
             self.session.hovered_edge = hovered_edge;
             self.redraw_needed = true;
@@ -1383,6 +1386,7 @@ impl PrintCadApp {
         // selected face already.
         if let Some(hover) = &self.session.hovered_face
             && self.session.hovered_edge.is_none()
+            && self.session.pick_filter.faces()
             && !self
                 .session
                 .face_highlight

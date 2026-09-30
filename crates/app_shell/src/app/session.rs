@@ -28,6 +28,8 @@ pub(crate) struct DocumentSession {
     pub export_when_ready: bool,
     /// The view toolbar's clipping plane, when on.
     pub section: Option<crate::camera::section::SectionPlane>,
+    /// What a click in the view picks.
+    pub pick_filter: crate::ui::PickFilter,
     pub active_tool: ActiveTool,
     pub selected_body: Option<Uuid>,
     pub hovered_body: Option<Uuid>,
@@ -199,6 +201,7 @@ impl DocumentSession {
             document: Document::new("Untitled"),
             camera: CameraController::new(camera_settings, (1, 1)),
             section: None,
+            pick_filter: Default::default(),
             export_pending: None,
             export_when_ready: false,
             active_tool: ActiveTool::default(),

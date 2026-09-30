@@ -103,6 +103,8 @@ pub enum UiCommand {
     ReplaceShape(core_document::BodyId),
     /// The tree opens its way to this body and scrolls to it.
     RevealInTree(core_document::BodyId),
+    /// What a click in the view picks from now on.
+    SetPickFilter(crate::ui::PickFilter),
     /// Start the last tool started again, as its button would.
     RepeatLastTool,
     /// Turn the view square to face `face` of `body` (its index in the
