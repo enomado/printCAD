@@ -1,6 +1,7 @@
 mod assistant;
 mod combo_view;
 mod command_palette;
+pub use command_palette::RECENT_KEPT as PALETTE_RECENT_KEPT;
 mod context_menu;
 mod variables_view;
 pub use context_menu::ViewportMenu;
@@ -664,6 +665,7 @@ impl UiLayer {
                         palette_activate = Some((active_workbench.clone(), id));
                     }
                 }
+                self.palette.recent.clone_from(&settings.recent_commands);
                 let palette = command_palette::draw_command_palette(
                     ui.ctx(),
                     &mut self.palette,

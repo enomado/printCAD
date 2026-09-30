@@ -123,6 +123,9 @@ pub enum UiCommand {
     ShowWorkspace,
     /// A blank tab, on the start page.
     NewTab,
+    /// The palette ran the entry this key names: it goes to the top of
+    /// the recent list.
+    NoteRecentCommand(String),
     /// Open again the file of the last tab closed.
     ReopenTab,
     CloseTab(uuid::Uuid),

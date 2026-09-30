@@ -19,6 +19,8 @@ pub struct PaletteState {
     selected: usize,
     /// The frame the palette opened on: the field takes focus once.
     just_opened: bool,
+    /// What was run lately, the latest first, as the settings keep it.
+    pub recent: Vec<String>,
 }
 
 impl PaletteState {
@@ -283,7 +285,41 @@ fn entries(
     out
 }
 
+/// How many recent commands the palette keeps.
+pub const RECENT_KEPT: usize = 8;
+
+impl Entry {
+    /// What names the entry among runs: the recent list keeps these.
+    fn key(&self) -> String {
+        match &self.kind {
+            EntryKind::Shell(_) => format!("shell:{}", self.label),
+            EntryKind::Tool { bench, id } => format!("tool:{}:{id}", bench.as_str()),
+            EntryKind::Script(path) => format!("script:{}", path.display()),
+        }
+    }
+}
+
+/// The order entries show in: the better match first; among matches as
+/// good, what was run lately, the latest first; then as listed.
+fn order(all: &[Entry], needle: &str, recent: &[String]) -> Vec<usize> {
+    let mut shown: Vec<(u8, usize, usize)> = all
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            let text = format!("{} {}", e.label.to_lowercase(), e.scope.to_lowercase());
+            let lately = recent
+                .iter()
+                .position(|k| *k == e.key())
+                .unwrap_or(usize::MAX);
+            match_rank(&text, needle).map(|rank| (rank, lately, i))
+        })
+        .collect();
+    shown.sort();
+    shown.into_iter().map(|(_, _, i)| i).collect()
+}
+
 fn run(entry: &Entry, commands: &mut Vec<UiCommand>, result: &mut PaletteResult) {
+    commands.push(UiCommand::NoteRecentCommand(entry.key()));
     match &entry.kind {
         EntryKind::Shell(action) => match action {
             ShellAction::File(f) => commands.push(UiCommand::File(*f)),
@@ -324,16 +360,7 @@ pub fn draw_command_palette(
     }
     let all = entries(registry, keymap, active, enabled_active);
     let needle = state.query.trim().to_lowercase();
-    let mut shown: Vec<(u8, usize)> = all
-        .iter()
-        .enumerate()
-        .filter_map(|(i, e)| {
-            let text = format!("{} {}", e.label.to_lowercase(), e.scope.to_lowercase());
-            match_rank(&text, &needle).map(|rank| (rank, i))
-        })
-        .collect();
-    shown.sort_by_key(|(rank, i)| (*rank, *i));
-    let shown: Vec<usize> = shown.into_iter().map(|(_, i)| i).collect();
+    let shown = order(&all, &needle, &state.recent);
     if shown.is_empty() {
         state.selected = 0;
     } else if state.selected >= shown.len() {
@@ -508,5 +535,34 @@ mod tests {
         assert_eq!(match_rank("pocket", "pkt"), Some(1));
         assert_eq!(match_rank("pocket", "xyz"), None);
         assert_eq!(match_rank("anything", ""), Some(0));
+    }
+
+    /// What ran lately comes first, the latest first, but never ahead of
+    /// a better match.
+    #[test]
+    fn recent_commands_come_first_among_equal_matches() {
+        let tool = |label: &str| Entry {
+            label: label.to_string(),
+            scope: "Design".to_string(),
+            icon: "pad",
+            keys: None,
+            inert: false,
+            planned: None,
+            kind: EntryKind::Tool {
+                bench: WorkbenchId::from("wb.test"),
+                id: format!("test.{}", label.to_lowercase()),
+            },
+        };
+        let all = [tool("Pad"), tool("Pocket"), tool("Fillet"), tool("Chamfer")];
+        let recent = vec![all[2].key(), all[1].key()];
+        let labels = |needle: &str| -> Vec<&str> {
+            order(&all, needle, &recent)
+                .into_iter()
+                .map(|i| all[i].label.as_str())
+                .collect()
+        };
+        assert_eq!(labels(""), ["Fillet", "Pocket", "Pad", "Chamfer"]);
+        // "pa" is in Pad itself; Pocket only matches it spread out.
+        assert_eq!(labels("pa")[0], "Pad");
     }
 }

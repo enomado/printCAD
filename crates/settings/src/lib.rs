@@ -63,6 +63,10 @@ pub struct UserSettings {
     /// Where the toolbar groups sit, as the user dragged them.
     #[serde(default)]
     pub toolbars: ToolbarLayout,
+    /// What the command palette ran lately, the latest first, by the
+    /// palette's own keys: it lists them first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_commands: Vec<String>,
     /// Looking for newer printCAD releases.
     #[serde(default)]
     pub updates: UpdateSettings,
@@ -297,6 +301,7 @@ impl Default for UserSettings {
             ai: AiSettings::default(),
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
+            recent_commands: Vec::new(),
             updates: UpdateSettings::default(),
         }
     }
