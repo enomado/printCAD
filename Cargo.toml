@@ -3,7 +3,7 @@ members = [
   "crates/app_shell",
   "crates/core_document",
   "crates/bench_api",
-    "crates/doc_server",
+  "crates/doc_server",
   "crates/kernel_api",
   "crates/kernel_ogeom",
   "crates/render_vk",
@@ -11,8 +11,8 @@ members = [
   "crates/workbenches/fixtures",
   "crates/workbenches/wb_assembly",
   "crates/workbenches/wb_wasm",
-"crates/settings",
-"crates/axes",
+  "crates/settings",
+  "crates/axes",
   "crates/ui_kit",
   "crates/scripting",
   "crates/agents",
@@ -21,13 +21,6 @@ members = [
 resolver = "2"
 # Workbench packages build apart, for wasm32-wasip2.
 exclude = ["sdk"]
-
-# The geometry kernel is numeric code that runs unoptimized in a plain
-# `cargo run`, where it is ~26x slower — enough to make a large STEP import
-# look like a hang. Optimize dependencies even in dev builds; our own crates
-# stay unoptimized so rebuilds are fast and backtraces stay readable.
-[profile.dev.package."*"]
-opt-level = 3
 
 [workspace.package]
 edition = "2024"
@@ -66,6 +59,13 @@ rayon = "1.12"
 ogeom = "0.5.1"
 sixdof = { version = "0.2", features = ["magellan"] }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
+
+# The geometry kernel is numeric code that runs unoptimized in a plain
+# `cargo run`, where it is ~26x slower — enough to make a large STEP import
+# look like a hang. Optimize dependencies even in dev builds; our own crates
+# stay unoptimized so rebuilds are fast and backtraces stay readable.
+[profile.dev.package."*"]
+opt-level = 3
 
 # Uncomment to build against a local checkout instead of the released crate:
 #[patch.crates-io]
