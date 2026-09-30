@@ -31,6 +31,7 @@ pub use view_toolbar::PickFilter;
 
 mod body_menu;
 mod host_tasks;
+mod texture_task;
 pub use body_menu::{MenuLocal, OpenTask};
 pub use commands::{BodyEdit, ConfigEdit, EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
@@ -149,6 +150,9 @@ impl UiLayer {
                 host_tasks::HostTask::appearance(document, body, face)
             }
             OpenTask::History(feature) => host_tasks::HostTask::history(document, feature),
+            OpenTask::Texture(body, face) => {
+                host_tasks::HostTask::Texture(texture_task::TextureTask::open(document, body, face))
+            }
         };
         self.host_task = Some((tab.into(), task));
     }

@@ -511,6 +511,7 @@ impl PrintCadApp {
             let open = match which.as_str() {
                 "placement" => Some(ui::OpenTask::Placement(body)),
                 "history" => first.map(ui::OpenTask::History),
+                "texture" => Some(ui::OpenTask::Texture(body, None)),
                 _ => Some(ui::OpenTask::Appearance(body, None)),
             };
             if let Some(open) = open {

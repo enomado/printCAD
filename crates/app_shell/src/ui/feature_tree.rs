@@ -143,6 +143,8 @@ struct TreeNode {
     linked_file: bool,
     /// A frozen body: its features are not rebuilt.
     frozen: bool,
+    /// A body with surface textures.
+    textured: bool,
 }
 
 impl DocumentTree {
@@ -387,6 +389,7 @@ fn build_feature_node(
         linked: false,
         linked_file: false,
         frozen: false,
+        textured: false,
     }
 }
 
@@ -434,6 +437,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 linked: true,
                 linked_file: false,
                 frozen: false,
+                textured: false,
             });
         }
     }
@@ -564,6 +568,7 @@ fn build_body_node_blank() -> TreeNode {
         linked: false,
         linked_file: false,
         frozen: false,
+        textured: false,
     }
 }
 
@@ -594,6 +599,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         linked: false,
         linked_file: false,
         frozen: body.frozen,
+        textured: !body.textures.is_empty(),
     }
 }
 
@@ -812,6 +818,7 @@ fn build_imported_node(
         linked: false,
         linked_file: false,
         frozen: false,
+        textured: false,
     })
 }
 
@@ -1262,6 +1269,17 @@ fn draw_node(
             text: "TIP",
             color: SUCCESS,
             tooltip: Some("The body's shape stops at this feature".to_string()),
+            opens_details: false,
+        });
+    }
+    if node.textured {
+        badges.push(Badge {
+            text: "TEXTURED",
+            color: TEXT3,
+            tooltip: Some(
+                "A pattern is pressed into its faces: drawn here, and in the files for the slicer"
+                    .to_string(),
+            ),
             opens_details: false,
         });
     }

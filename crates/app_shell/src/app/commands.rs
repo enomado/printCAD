@@ -191,6 +191,9 @@ impl PrintCadApp {
                     intents.persist_settings = true;
                 }
                 UiCommand::CheckForUpdates => self.check_app_release(false),
+                UiCommand::PickTexturePicture { body, index } => {
+                    self.start_file_dialog(FileDialogKind::TexturePicture(body, index));
+                }
                 UiCommand::ReplaceShape(body) => {
                     self.start_file_dialog(FileDialogKind::ReplaceShape(body));
                 }
@@ -1175,6 +1178,59 @@ impl PrintCadApp {
 
     /// Read `body`'s shape from `path`, as `doc.replace_shape` does: one
     /// step of history, recorded as that command.
+    /// Make the picture at `path` texture `index` of `body`'s pattern: the
+    /// file kept in the document, its grey levels the heights.
+    pub(crate) fn use_texture_picture(
+        &mut self,
+        body: core_document::BodyId,
+        index: usize,
+        path: &std::path::Path,
+    ) {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                app_log::error(format!("Could not read {}: {err}", path.display()));
+                return;
+            }
+        };
+        if let Err(err) = surface_texture::HeightMap::from_image(&bytes, 16) {
+            app_log::error(format!(
+                "{} is not a picture printCAD reads: {err}",
+                path.display()
+            ));
+            return;
+        }
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_else(|| "png".to_string());
+        let document = &mut self.session.document;
+        let mut textures = document
+            .bodies()
+            .iter()
+            .find(|b| b.id == body)
+            .map(|b| b.textures.clone())
+            .unwrap_or_default();
+        let Some(texture) = textures.get_mut(index) else {
+            return;
+        };
+        let asset = document.add_asset_with_data(
+            core_document::AssetReference::new(
+                format!("assets/texture-{}.{extension}", uuid::Uuid::new_v4()),
+                core_document::AssetType::Other,
+                serde_json::json!({
+                    "kind": "texture picture",
+                    "file": path.file_name().map(|n| n.to_string_lossy()),
+                }),
+            ),
+            bytes,
+        );
+        texture.texture.pattern = surface_texture::Pattern::Image { asset };
+        document.set_body_textures(body, textures);
+        app_log::info(format!("Texture picture: {}", path.display()));
+    }
+
     pub(crate) fn replace_shape_from(
         &mut self,
         body: core_document::BodyId,

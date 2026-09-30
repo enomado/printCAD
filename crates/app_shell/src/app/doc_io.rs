@@ -89,6 +89,8 @@ pub(crate) enum FileDialogKind {
     InstallPackage,
     /// A file whose first solid becomes the body's shape.
     ReplaceShape(core_document::BodyId),
+    /// A picture for a texture's pattern: the body and which texture.
+    TexturePicture(core_document::BodyId, usize),
 }
 
 /// A file a bench asked to save: its suggested name, the dialog's filter
@@ -1007,6 +1009,11 @@ impl PrintCadApp {
                     self.replace_shape_from(body, &path);
                 }
             }
+            FileDialogKind::TexturePicture(body, index) => {
+                if let Some(path) = path {
+                    self.use_texture_picture(body, index, &path);
+                }
+            }
         }
         self.file_dialog_rx = None;
     }
@@ -1088,6 +1095,9 @@ impl PrintCadApp {
                             "gltf", "wrl", "vrml",
                         ],
                     ),
+                FileDialogKind::TexturePicture(..) => rfd::FileDialog::new()
+                    .set_title("A picture for the texture: grey levels, white high")
+                    .add_filter("PNG or JPEG picture", &["png", "jpg", "jpeg"]),
                 FileDialogKind::InstallPackage => rfd::FileDialog::new()
                     .set_title("Install a workbench package")
                     .add_filter("Workbench package", &[workbenches::ARCHIVE_EXTENSION]),
@@ -1124,7 +1134,8 @@ impl PrintCadApp {
                     | FileDialogKind::SaveAnimation(_) => dialog.save_file(),
                     FileDialogKind::RunScript
                     | FileDialogKind::InstallPackage
-                    | FileDialogKind::ReplaceShape(_) => dialog.pick_file(),
+                    | FileDialogKind::ReplaceShape(_)
+                    | FileDialogKind::TexturePicture(..) => dialog.pick_file(),
                     FileDialogKind::Attach(_) => None,
                 }),
             };

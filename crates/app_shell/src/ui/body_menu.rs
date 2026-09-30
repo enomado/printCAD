@@ -32,6 +32,9 @@ pub enum OpenTask {
     Appearance(BodyId, Option<u32>),
     /// A feature's place in its body's history.
     History(FeatureId),
+    /// The patterns pressed into the body's faces, with the face the menu
+    /// was opened on, if any.
+    Texture(BodyId, Option<u32>),
 }
 
 /// A body as a script names it: its id, with its name beside.
@@ -73,6 +76,16 @@ pub fn body_entries(
             .clicked()
     {
         *local = Some(MenuLocal::Task(OpenTask::Appearance(body, Some(face))));
+        picked = true;
+    }
+    if ui
+        .button("Surface texture…")
+        .on_hover_text(
+            "Press a pattern into the body's faces for printing: knurling, ribs, a picture",
+        )
+        .clicked()
+    {
+        *local = Some(MenuLocal::Task(OpenTask::Texture(body, face)));
         picked = true;
     }
     if ui

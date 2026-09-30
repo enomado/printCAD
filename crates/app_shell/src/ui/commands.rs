@@ -107,6 +107,11 @@ pub enum UiCommand {
     RevealInTree(core_document::BodyId),
     /// What a click in the view picks from now on.
     SetPickFilter(crate::ui::PickFilter),
+    /// Pick a picture for texture `index` of `body`'s pattern.
+    PickTexturePicture {
+        body: core_document::BodyId,
+        index: usize,
+    },
     /// Start the last tool started again, as its button would.
     RepeatLastTool,
     /// Turn the view square to face `face` of `body` (its index in the

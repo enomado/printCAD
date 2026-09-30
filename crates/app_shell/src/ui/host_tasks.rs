@@ -61,6 +61,7 @@ pub enum HostTask {
     Placement(PlacementTask),
     Appearance(AppearanceTask),
     History(HistoryTask),
+    Texture(super::texture_task::TextureTask),
 }
 
 #[derive(Debug, Clone)]
@@ -254,6 +255,7 @@ impl HostTask {
         match self {
             Self::Placement(t) => format!("Placement · {}", body_name(document, t.body)),
             Self::Appearance(t) => format!("Appearance · {}", body_name(document, t.body)),
+            Self::Texture(t) => format!("Surface texture · {}", body_name(document, t.body())),
             Self::History(t) => format!(
                 "Move · {}",
                 document
@@ -272,6 +274,7 @@ impl HostTask {
                 document.bodies().iter().any(|b| b.id == *body)
             }
             Self::History(t) => document.get_feature_meta(t.feature).is_some(),
+            Self::Texture(t) => document.bodies().iter().any(|b| b.id == t.body()),
         }
     }
 
@@ -288,6 +291,14 @@ impl HostTask {
             Self::Placement(t) => t.show(ui, inputs.document, accept, cancel),
             Self::Appearance(t) => t.show(ui, inputs, accept, cancel, commands),
             Self::History(t) => t.show(ui, inputs.document, accept, cancel),
+            Self::Texture(t) => t.show(
+                ui,
+                inputs.document,
+                inputs.picked_face,
+                accept,
+                cancel,
+                commands,
+            ),
         }
     }
 }
