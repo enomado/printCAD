@@ -557,6 +557,47 @@ impl PrintCadApp {
         // them.
         if let Some(hit) = self.session.hovered_edge {
             let ctrl = self.modifiers.control_key();
+            // A double click on an edge takes every edge that runs on from
+            // it smoothly: a fillet's or chamfer's round outline in one go.
+            let now = Instant::now();
+            let double = self.session.last_edge_click.is_some_and(|(t, body, edge)| {
+                body == hit.body && edge == hit.edge && now.duration_since(t).as_millis() < 400
+            });
+            self.session.last_edge_click = Some((now, hit.body, hit.edge));
+            if double
+                && let Some(geometry) = self
+                    .session
+                    .document
+                    .imported_geometry(core_document::BodyId(hit.body))
+            {
+                let mesh = &geometry.mesh;
+                let chain: Vec<crate::app::edges::EdgeHit> =
+                    crate::app::edges::tangent_chain(mesh, hit.edge)
+                        .into_iter()
+                        .filter_map(|edge| crate::app::edges::edge_hit(mesh, hit.body, edge))
+                        .collect();
+                if !ctrl {
+                    self.session.selected_edges.clear();
+                }
+                for edge in chain {
+                    if !self
+                        .session
+                        .selected_edges
+                        .iter()
+                        .any(|s| s.body == edge.body && s.edge == edge.edge)
+                    {
+                        self.session.selected_edges.push(edge);
+                    }
+                }
+                self.session.face_highlight = None;
+                self.session.last_face_hit = None;
+                self.session.selected_body = Some(hit.body);
+                app_log::info(format!(
+                    "Selected {} edge(s) along the chain",
+                    self.session.selected_edges.len()
+                ));
+                return true;
+            }
             let already = self
                 .session
                 .selected_edges

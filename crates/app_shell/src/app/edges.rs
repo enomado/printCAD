@@ -210,6 +210,105 @@ impl PrintCadApp {
 }
 
 /// The ends of a kernel edge's outline segments.
+/// How far an edge may turn from the one before it and still continue
+/// it: the outline's chords stand off a curve's tangent by up to half the
+/// display's angular step.
+const CHAIN_TURN_DEG: f32 = 20.0;
+
+/// Where a kernel edge's outline ends, and the way it runs out of each
+/// end. A closed edge (a full circle) has none.
+fn edge_ends(mesh: &TriMesh, edge: u32) -> Vec<(Vec3, Vec3)> {
+    let key = |p: Vec3| (p * 1000.0).round().as_ivec3();
+    let segments: Vec<(Vec3, Vec3)> = mesh
+        .edges
+        .chunks(2)
+        .zip(&mesh.edge_ids)
+        .filter(|(_, id)| **id == edge)
+        .map(|(pair, _)| {
+            (
+                Vec3::from_array(mesh.positions[pair[0] as usize]),
+                Vec3::from_array(mesh.positions[pair[1] as usize]),
+            )
+        })
+        .collect();
+    let mut seen: std::collections::HashMap<glam::IVec3, usize> = Default::default();
+    for (a, b) in &segments {
+        *seen.entry(key(*a)).or_default() += 1;
+        *seen.entry(key(*b)).or_default() += 1;
+    }
+    let mut ends = Vec::new();
+    for (a, b) in &segments {
+        if seen[&key(*a)] == 1 {
+            ends.push((*a, (*a - *b).normalize_or_zero()));
+        }
+        if seen[&key(*b)] == 1 {
+            ends.push((*b, (*b - *a).normalize_or_zero()));
+        }
+    }
+    ends
+}
+
+/// The edges of `mesh` that continue `start` smoothly, `start` first: at
+/// each end, an edge meeting it there and running on within
+/// [`CHAIN_TURN_DEG`] of its direction, and so on from that one.
+pub(crate) fn tangent_chain(mesh: &TriMesh, start: u32) -> Vec<u32> {
+    let key = |p: Vec3| (p * 1000.0).round().as_ivec3();
+    let mut ids: Vec<u32> = mesh.edge_ids.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    let ends: std::collections::HashMap<u32, Vec<(Vec3, Vec3)>> =
+        ids.iter().map(|id| (*id, edge_ends(mesh, *id))).collect();
+    let mut at: std::collections::HashMap<glam::IVec3, Vec<(u32, Vec3)>> = Default::default();
+    for (id, list) in &ends {
+        for (p, out) in list {
+            at.entry(key(*p)).or_default().push((*id, *out));
+        }
+    }
+    let smooth = CHAIN_TURN_DEG.to_radians().cos();
+    let mut chain = vec![start];
+    let mut next = vec![start];
+    while let Some(edge) = next.pop() {
+        for (p, out) in ends.get(&edge).into_iter().flatten() {
+            for (other, other_out) in at.get(&key(*p)).into_iter().flatten() {
+                // Running on means leaving the point the way this one
+                // arrived: against the other's own way out.
+                if !chain.contains(other) && out.dot(-*other_out) >= smooth {
+                    chain.push(*other);
+                    next.push(*other);
+                }
+            }
+        }
+    }
+    chain
+}
+
+/// The pick of edge `edge` of a body, as a click at its middle makes it.
+pub(crate) fn edge_hit(mesh: &TriMesh, body: Uuid, edge: u32) -> Option<EdgeHit> {
+    let segments: Vec<&[u32]> = mesh
+        .edges
+        .chunks(2)
+        .zip(&mesh.edge_ids)
+        .filter(|(_, id)| **id == edge)
+        .map(|(pair, _)| pair)
+        .collect();
+    let pair = segments.get(segments.len() / 2)?;
+    let a = Vec3::from_array(mesh.positions[pair[0] as usize]);
+    let b = Vec3::from_array(mesh.positions[pair[1] as usize]);
+    Some(EdgeHit {
+        body,
+        edge,
+        point: a.lerp(b, 0.5).to_array(),
+        direction: (b - a).normalize_or_zero().to_array(),
+        length_mm: edge_length(mesh, edge),
+        circle: EdgeCircle::fit(&edge_points(mesh, edge)),
+        faces: mesh
+            .edge_faces
+            .get(edge as usize)
+            .copied()
+            .unwrap_or_default(),
+    })
+}
+
 fn edge_points(mesh: &TriMesh, edge: u32) -> Vec<[f32; 3]> {
     mesh.edges
         .chunks(2)
@@ -431,6 +530,110 @@ fn nearest_segment(
 
 #[cfg(test)]
 mod tests {
+
+    /// An outline of kernel edges, each a run of points.
+    fn outline(edges: &[&[[f32; 3]]]) -> TriMesh {
+        let mut mesh = TriMesh::default();
+        for (id, points) in edges.iter().enumerate() {
+            let base = mesh.positions.len() as u32;
+            mesh.positions.extend_from_slice(points);
+            for i in 1..points.len() as u32 {
+                mesh.edges.extend_from_slice(&[base + i - 1, base + i]);
+                mesh.edge_ids.push(id as u32);
+            }
+        }
+        mesh
+    }
+
+    /// A slot's outline: two lines joined by a half circle run on into one
+    /// another; the square corner at the far end stops the chain.
+    #[test]
+    fn a_tangent_chain_runs_on_until_a_corner() {
+        let arc: Vec<[f32; 3]> = (0..=8)
+            .map(|i| {
+                let t = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 8.0;
+                [10.0 + 5.0 * t.cos(), 5.0 + 5.0 * t.sin(), 0.0]
+            })
+            .collect();
+        let mesh = outline(&[
+            &[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+            &arc,
+            &[[10.0, 10.0, 0.0], [0.0, 10.0, 0.0]],
+            // Square to the bottom line at its start.
+            &[[0.0, 10.0, 0.0], [0.0, 0.0, 0.0]],
+        ]);
+        let mut chain = super::tangent_chain(&mesh, 0);
+        chain.sort();
+        assert_eq!(chain, [0, 1, 2]);
+        assert_eq!(super::tangent_chain(&mesh, 3), [3], "a corner at both ends");
+        let hit = super::edge_hit(&mesh, Uuid::nil(), 1).expect("the arc");
+        assert!((hit.length_mm - 5.0 * std::f32::consts::PI).abs() < 0.2);
+    }
+
+    /// On a real solid, a padded rounded rectangle, the top outline's four
+    /// lines and four arcs are one chain, and nothing that runs down the
+    /// sides joins it.
+    #[test]
+    fn a_rounded_outline_s_edges_are_one_chain() {
+        use kernel_api::{
+            BooleanOp, ExtrudeTermination, Profile, ProfilePlane, ProfileSegment, ProfileWire,
+            SolidOp, SweepKind, TessellationSettings,
+        };
+        let r = 2.0;
+        let (w, h) = (20.0, 10.0);
+        let d = r * (1.0 - std::f64::consts::FRAC_1_SQRT_2);
+        let arc =
+            |start: [f64; 2], mid: [f64; 2], end: [f64; 2]| ProfileSegment::Arc { start, mid, end };
+        let line = |start: [f64; 2], end: [f64; 2]| ProfileSegment::Line { start, end };
+        let wire = ProfileWire {
+            names: Vec::new(),
+            segments: vec![
+                line([r, 0.0], [w - r, 0.0]),
+                arc([w - r, 0.0], [w - d, d], [w, r]),
+                line([w, r], [w, h - r]),
+                arc([w, h - r], [w - d, h - d], [w - r, h]),
+                line([w - r, h], [r, h]),
+                arc([r, h], [d, h - d], [0.0, h - r]),
+                line([0.0, h - r], [0.0, r]),
+                arc([0.0, r], [d, d], [r, 0.0]),
+            ],
+        };
+        let pad = SolidOp::Sweep {
+            profile: Profile {
+                plane: ProfilePlane {
+                    origin: [0.0; 3],
+                    x_axis: [1.0, 0.0, 0.0],
+                    y_axis: [0.0, 1.0, 0.0],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                wires: vec![wire],
+            },
+            kind: SweepKind::Extrude {
+                termination: ExtrudeTermination::Blind { distance: 5.0 },
+                second_side: None,
+                symmetric: false,
+                reversed: false,
+                taper_deg: 0.0,
+                direction: None,
+            },
+            op: BooleanOp::NewSolid,
+        };
+        let built = kernel_ogeom::OgeomKernel::new()
+            .execute_solid_chain(&[pad], &TessellationSettings::default())
+            .expect("the rounded box pads");
+        let mesh = &built.mesh;
+        // A top edge: every point of its outline at the top.
+        let top = |edge: u32| {
+            edge_points(mesh, edge)
+                .iter()
+                .all(|p| (p[2] - 5.0).abs() < 1e-3)
+        };
+        let start = *mesh.edge_ids.iter().find(|e| top(**e)).expect("a top edge");
+        let chain = super::tangent_chain(mesh, start);
+        assert_eq!(chain.len(), 8, "{chain:?}");
+        assert!(chain.iter().all(|e| top(*e)), "only the top loop");
+    }
+
     use super::*;
 
     /// A unit cube outline seen straight down -Z with 10 px per mm: x and y

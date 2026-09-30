@@ -30,6 +30,9 @@ pub(crate) struct DocumentSession {
     pub section: Option<crate::camera::section::SectionPlane>,
     /// What a click in the view picks.
     pub pick_filter: crate::ui::PickFilter,
+    /// The last click on an edge, to tell a double click: when, the body
+    /// and the edge.
+    pub last_edge_click: Option<(std::time::Instant, Uuid, u32)>,
     /// The tree row under the pointer: what it stands for lights up.
     pub tree_hovered: Option<crate::ui::TreeItemId>,
     pub active_tool: ActiveTool,
@@ -205,6 +208,7 @@ impl DocumentSession {
             section: None,
             pick_filter: Default::default(),
             tree_hovered: None,
+            last_edge_click: None,
             export_pending: None,
             export_when_ready: false,
             active_tool: ActiveTool::default(),
