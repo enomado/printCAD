@@ -159,6 +159,12 @@ file), where the windowing system delivers drops. File › Save view as
 picture writes the view as drawn to a PNG. The command palette lists what
 you ran lately first.
 
+A body's **Surface texture…** (tree and view menus) presses a pattern into
+chosen faces for printing: knurling, ribs, hexagons, noise or your own
+greyscale picture, laid flat, wrapped round an axis or blended on any
+shape. It shows in the view and goes into STL and 3MF exports and the
+slicer; see [docs/TEXTURES.md](docs/TEXTURES.md).
+
 Every few minutes (Preferences › General › Autosave) an edited document
 is copied aside; after a crash the start page offers the copy back, as
 an untitled document to save where it belongs.

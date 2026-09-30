@@ -225,6 +225,18 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `constrain.rs` (which constraint a toolbar action creates for the
   selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind).
+- `surface_texture`: patterns pressed into chosen faces of a mesh for
+  printing (`Texture`: pattern, projection, tile, depth, turn, inward,
+  keep flat; `apply` welds, splits the chosen faces' triangles and their
+  neighbours along shared edges so no crack opens, then moves each point
+  along its normal, the rim fixed). The document keeps them on the body
+  (`Body::textures`, `FaceTexture` with `FaceKey`s found by name like face
+  colours, op `SetBodyTextures`, `doc.set_textures`); the app's
+  `app/textures.rs` resolves faces and pictures (`Pressing`), makes the
+  view's preview on threads (`drive_texture_previews`, the last one shown
+  while a newer is made) and hands export a `finish` per body
+  (`ExportBody::finish`, applied in the body's frame before placement);
+  `ui/texture_task.rs` is the task. `docs/TEXTURES.md` is the guide.
 - `workbenches` facade: `register_all_workbenches` (built-in benches) and
   `register_packages` (installed packages, after them, as the user allowed;
   `PackageStatus` for the Preferences page).
