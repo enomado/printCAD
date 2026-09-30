@@ -148,6 +148,8 @@ struct TreeNode {
     frozen: bool,
     /// A body with surface textures.
     textured: bool,
+    /// A converted solid whose curved areas are still the mesh's facets.
+    faceted: bool,
 }
 
 impl DocumentTree {
@@ -394,6 +396,7 @@ fn build_feature_node(
         linked_file: false,
         frozen: false,
         textured: false,
+        faceted: false,
     }
 }
 
@@ -443,6 +446,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 linked_file: false,
                 frozen: false,
                 textured: false,
+                faceted: false,
             });
         }
     }
@@ -575,6 +579,7 @@ fn build_body_node_blank() -> TreeNode {
         linked_file: false,
         frozen: false,
         textured: false,
+        faceted: false,
     }
 }
 
@@ -607,6 +612,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         linked_file: false,
         frozen: body.frozen,
         textured: !body.textures.is_empty(),
+        faceted: false,
     }
 }
 
@@ -711,6 +717,10 @@ fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
         refinable.sort();
         refinable.dedup();
         node.refinable = refinable;
+        node.faceted = node
+            .body
+            .and_then(|body| document.body_health(body))
+            .is_some_and(|h| h.faceted);
     }
 }
 
@@ -841,6 +851,7 @@ fn build_imported_node(
         linked_file: false,
         frozen: false,
         textured: false,
+        faceted: false,
     })
 }
 
@@ -1302,6 +1313,25 @@ fn draw_node(
                 "A pattern is pressed into its faces: drawn here, and in the files for the slicer"
                     .to_string(),
             ),
+            opens_details: false,
+        });
+    }
+    if node.faceted {
+        let own = node.body.is_some_and(|b| node.refinable.contains(&b));
+        badges.push(Badge {
+            text: "FACETED",
+            color: WARNING,
+            tooltip: Some(if own {
+                "Converted from a mesh as it is: its curved areas are flat facets, and \
+                 features on or along them (pads and pockets on a face, fillets) may fail. \
+                 Right-click › Refine shape finds their round faces first."
+                    .to_string()
+            } else {
+                "Converted from a mesh as it is: its curved areas are flat facets, and \
+                 features on or along them may fail. Refine shape is offered only before \
+                 the body has features."
+                    .to_string()
+            }),
             opens_details: false,
         });
     }
@@ -2194,6 +2224,41 @@ mod tests {
         let (detail, convertible) = row(&doc);
         assert!(detail.contains("converting"), "{detail}");
         assert!(convertible.is_empty(), "not offered twice");
+
+        // The solid lands with its curved areas as facets: the row says so
+        // and offers the refine, once.
+        doc.set_imported_brep_data(mesh, b"ogeom".to_vec(), Vec::new());
+        doc.set_imported_geometry(
+            mesh,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                source_asset: Some(asset),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: Some(kernel_api::ShapeHealth {
+                    faceted: true,
+                    ..Default::default()
+                }),
+            },
+        );
+        let faceted = |doc: &Document| {
+            let tree = DocumentTree::build(doc, &DocumentService::default());
+            let node = tree
+                .nodes()
+                .iter()
+                .find(|n| n.id == TreeItemId::Body(mesh))
+                .expect("the body's row");
+            (node.faceted, node.refinable.clone())
+        };
+        assert_eq!(faceted(&doc), (true, vec![mesh]));
+        assert!(doc.request_body_refine(mesh));
+        assert_eq!(
+            faceted(&doc),
+            (true, vec![]),
+            "still faceted until the refine lands, and not offered twice"
+        );
     }
 
     #[test]

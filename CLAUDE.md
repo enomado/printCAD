@@ -142,7 +142,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   faceted and has no base) has `drive_shape_refinements` run the kernel's
   `refine_solid` (`mesh::refine_blob`), which rebuilds the cylinders, cones,
   spheres and tori among the facets; a refine that fails or would not
-  close leaves the facets and is not asked again that session. The files' annotations (`annotations.rs`: PMI callouts,
+  close leaves the facets and is not asked again that session. A faceted
+  body's row carries a FACETED badge, and its conversion logs a warning,
+  saying features on its curved areas may fail until it is refined. The files' annotations (`annotations.rs`: PMI callouts,
   undrawn semantic dimensions/tolerances/datums, datum targets, notes)
   leave as `ImportedModel.annotations`, one per body a callout describes,
   placed with that body's occurrence, text formatted (`Ø 35 ±0.2`); IGES

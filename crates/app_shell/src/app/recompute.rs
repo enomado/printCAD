@@ -626,6 +626,7 @@ impl PrintCadApp {
             return;
         };
         let name = self.body_name(body);
+        let faceted = result.health.faceted;
         self.session
             .document
             .set_imported_brep_data(body, result.brep_blob, result.face_colors);
@@ -649,6 +650,13 @@ impl PrintCadApp {
             app_log::info(format!(
                 "Converted `{name}` to a solid in {ms:.0}ms: {summary}"
             ));
+            if faceted {
+                app_log::warn(format!(
+                    "`{name}` keeps its curved areas as flat facets: features on or along \
+                     them (pads and pockets on a face, fillets) may fail until you refine it \
+                     (right-click › Refine shape)"
+                ));
+            }
         } else {
             app_log::warn(format!(
                 "`{name}` does not close, so it became an open shell, not a solid \
