@@ -214,6 +214,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
   the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
+  reference pictures (`images.rs`, `Sketch::images`, the file a document
+  asset, decoded once each, shown through `Workbench::get_screen_space_images`
+  as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,
+  File › Import for PNG and JPEG),
   the profile's regions shaded while editing (`get_overlay_meshes` over
   `KernelQueries::profile_mesh`, cached by profile) and loose ends ringed,
   `profile.rs` (closed-wire extraction), `overlay.rs` (screen-space rendering
@@ -898,6 +902,11 @@ one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with
 `PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a
 toolbar click would and logs every feature's rebuild error (frame.rs);
+`PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
+once the scene settles (the renderer's scene readback, `request_capture`);
+`PRINTCAD_AUTOSAVE_SECS` shortens the autosave wait (`app/recovery.rs`:
+copies of edited tabs in the data folder's `recovery/`, taken away when
+saved, closed or on exit, offered on the start page after a crash);
 `PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once,
 `PRINTCAD_BENCH_CONVERT=1` the conversion of every mesh body. Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.

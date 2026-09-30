@@ -105,6 +105,7 @@ Every shortcut can be changed in Preferences › Keyboard. The defaults:
 | Send to slicer | Ctrl+P |
 | Undo, Redo | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y |
 | New tab, Close tab | Ctrl+T, Ctrl+W |
+| Reopen the last tab closed | Ctrl+Shift+T |
 | Next, Previous tab | Ctrl+Tab, Ctrl+Shift+Tab |
 | Cut, Copy, Paste sketch geometry or features | Ctrl+X, Ctrl+C, Ctrl+V |
 | Preferences | Ctrl+, |
@@ -149,7 +150,18 @@ what was there.
 
 The pick button at the view toolbar's right end says what a click in the
 view takes: faces and edges (the default), faces only, edges only, or
-whole bodies.
+whole bodies. A double click on an edge takes every edge that runs on
+from it smoothly, the whole round outline for a fillet or chamfer.
+Pointing at a row of the tree lights up its body in the view.
+
+A file dropped on the window opens (a `.prtcad`) or imports (a model
+file), where the windowing system delivers drops. File › Save view as
+picture writes the view as drawn to a PNG. The command palette lists what
+you ran lately first.
+
+Every few minutes (Preferences › General › Autosave) an edited document
+is copied aside; after a crash the start page offers the copy back, as
+an untitled document to save where it belongs.
 
 The Appearance task holds the body's colour (a palette, your own colours,
 which you keep or forget from the custom colour picker and which every
@@ -187,6 +199,11 @@ with lines from its end. While a sketch is edited, what its profile
 closes is shaded (what a pad takes, holes open; Preferences › Sketcher
 turns it off), and a curve's loose end, which the profile leaves out,
 has a red ring once no shape is being drawn.
+
+File › Import takes a PNG or JPEG as a reference picture: it lies on the
+plane of the sketch being edited (else in a new sketch), shown while the
+sketch is edited, to draw over. The panel's Reference images section
+moves, sizes, turns and fades it.
 
 | Design | Keys |
 | --- | --- |
