@@ -76,6 +76,14 @@ pub fn draw(
                             if item(ui, "Select body") {
                                 commands.push(UiCommand::SelectBody(menu.body));
                             }
+                            if let Some(face) = menu.face
+                                && item(ui, "Look at")
+                            {
+                                commands.push(UiCommand::LookAtFace {
+                                    body: menu.body,
+                                    face,
+                                });
+                            }
                             let repairable = document
                                 .body_health(menu.body)
                                 .is_some_and(|h| h.is_broken())

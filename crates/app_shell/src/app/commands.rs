@@ -129,6 +129,10 @@ impl PrintCadApp {
                 UiCommand::SetBodyDisplay { body, display } => {
                     intents.body_display.push((body, display));
                 }
+                UiCommand::LookAtFace { body, face } => {
+                    self.session.viewport_menu = None;
+                    self.look_at_face(body, face);
+                }
                 UiCommand::RevealInTree(body) => {
                     self.session.viewport_menu = None;
                     self.session.reveal_body = Some(body);
@@ -792,6 +796,34 @@ impl PrintCadApp {
     /// Host-driven workbench switch (create-sketch flow, return-on-finish).
     /// Remembers the outgoing workbench as the return target when jumping
     /// INTO an edit-session bench so finishing can jump back.
+    /// Turn the view square to a face of a body, looking at it from
+    /// outside, centred on it, keeping the view's up as near as it goes.
+    fn look_at_face(&mut self, body: core_document::BodyId, face: u32) {
+        let Some(frame) = self
+            .session
+            .document
+            .imported_geometry(body)
+            .and_then(|g| crate::app::input::face_frame(&g.mesh, face))
+        else {
+            return;
+        };
+        let (centre, normal) = frame;
+        let (forward, up) = self.session.camera.view_basis();
+        // Looking straight along the view's up, the view's forward is up.
+        let up = if up.dot(normal).abs() > 0.99 {
+            forward
+        } else {
+            up
+        };
+        self.session.camera.orient_to_plane(
+            centre,
+            normal,
+            up,
+            Some(centre),
+            &self.user_settings.camera,
+        );
+    }
+
     pub(crate) fn switch_workbench_for_flow(&mut self, target: crate::WorkbenchId) {
         if self.session.active_workbench.0 == target {
             return;

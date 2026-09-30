@@ -103,6 +103,12 @@ pub enum UiCommand {
     ReplaceShape(core_document::BodyId),
     /// The tree opens its way to this body and scrolls to it.
     RevealInTree(core_document::BodyId),
+    /// Turn the view square to face `face` of `body` (its index in the
+    /// body's mesh), centred on it.
+    LookAtFace {
+        body: core_document::BodyId,
+        face: u32,
+    },
     /// The whole body, as a double click would.
     SelectBody(core_document::BodyId),
     /// The viewport's context menu was dismissed or used.

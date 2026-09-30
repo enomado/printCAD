@@ -810,6 +810,39 @@ pub(crate) struct FaceHover {
 /// translucent pass passes equal depth, so the copy sits on its surface
 /// whichever way the face is wound. A copy lifted along the winding normal
 /// would sink into the solid on a face wound inward and never show.
+/// Where face `face` of `mesh` stands and the way it faces: the centre of
+/// its area and its area-weighted outward normal, from the mesh's own
+/// normals (the kernel's, outward, where the winding may not be).
+pub(crate) fn face_frame(
+    mesh: &kernel_api::TriMesh,
+    face: u32,
+) -> Option<(glam::Vec3, glam::Vec3)> {
+    let mut area_sum = 0.0;
+    let mut centre = glam::Vec3::ZERO;
+    let mut normal = glam::Vec3::ZERO;
+    for (tri, id) in mesh.indices.as_chunks::<3>().0.iter().zip(&mesh.faces) {
+        if *id != face {
+            continue;
+        }
+        let p = |i: u32| {
+            mesh.positions
+                .get(i as usize)
+                .map(|p| glam::Vec3::from_array(*p))
+        };
+        let (a, b, c) = (p(tri[0])?, p(tri[1])?, p(tri[2])?);
+        let area = (b - a).cross(c - a).length() / 2.0;
+        area_sum += area;
+        centre += (a + b + c) / 3.0 * area;
+        for i in tri {
+            if let Some(n) = mesh.normals.get(*i as usize) {
+                normal += glam::Vec3::from_array(*n) * area;
+            }
+        }
+    }
+    (area_sum > 0.0 && normal.length_squared() > 1e-12)
+        .then(|| (centre / area_sum, normal.normalize()))
+}
+
 pub(crate) fn face_submesh_by_id(
     mesh: &kernel_api::TriMesh,
     face: u32,
@@ -942,6 +975,35 @@ fn point_triangle_distance_sq(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: gl
 
 #[cfg(test)]
 mod tests {
+
+    /// A face's frame is the centre of its area and the way it faces out,
+    /// read from the mesh's normals whatever the triangles' winding.
+    #[test]
+    fn a_face_frame_is_its_centre_and_outward_normal() {
+        // A 2 × 2 square at z = 3 facing +z, one triangle wound backwards,
+        // beside a second face.
+        let mesh = kernel_api::TriMesh {
+            positions: vec![
+                [0.0, 0.0, 3.0],
+                [2.0, 0.0, 3.0],
+                [2.0, 2.0, 3.0],
+                [0.0, 2.0, 3.0],
+                [9.0, 9.0, 9.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 5],
+            indices: vec![0, 1, 2, 0, 3, 2, 1, 2, 4],
+            faces: vec![7, 7, 8],
+            ..Default::default()
+        };
+        let (centre, normal) = super::face_frame(&mesh, 7).expect("face 7 is there");
+        assert!(
+            (centre - glam::Vec3::new(1.0, 1.0, 3.0)).length() < 1e-5,
+            "{centre}"
+        );
+        assert!((normal - glam::Vec3::Z).length() < 1e-5, "{normal}");
+        assert!(super::face_frame(&mesh, 3).is_none());
+    }
+
     use super::coplanar_face_submesh;
     use kernel_api::TriMesh;
 
