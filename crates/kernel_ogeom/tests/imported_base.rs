@@ -538,68 +538,124 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
     );
 }
 
-/// A pad fused into a solid converted from a mesh, its sides along the
-/// solid's own: the fuse settles inside and outside. The two shapes are
-/// read from `PRINTCAD_TEST_FUSE_DIR` (`base.ogeom`, `tool.ogeom`, made
-/// from a user's part, not bundled).
+/// What a pad reversed `length` mm into a converted part builds, and the
+/// part's own volume: all of it made from the file each time, by the code
+/// the application runs. The part is a user's STL (not bundled; named by
+/// `PRINTCAD_TEST_MESH_PART`), converted to a solid; the sketch stands on
+/// its top face, made of that face's own edges; the pad goes down into the
+/// part along the face's outline. The file is only read. `None` without it.
+fn pad_into_converted_part(
+    length: f64,
+) -> Option<(
+    Result<kernel_api::SolidBuildResult, kernel_api::ChainError>,
+    f64,
+)> {
+    use kernel_api::KernelQueries;
+    let path = std::path::PathBuf::from(std::env::var_os("PRINTCAD_TEST_MESH_PART")?);
+    let mut kernel = OgeomKernel::new();
+    let detail = TessellationSettings::default();
+    let model = kernel.import_step_full_mesh(&path, &detail).unwrap();
+    let solid = kernel
+        .mesh_to_solid(&model.bodies[0].mesh, &detail)
+        .unwrap();
+    assert_eq!(solid.health.broken, 0, "the part converts sound");
+
+    let mut document = Document::new("part");
+    let body = document.create_body(Some("Part".into()));
+    let mesh = std::sync::Arc::new(solid.mesh.clone());
+    let (_, hi) = mesh.bounds().unwrap();
+    document.set_imported_geometry(
+        body,
+        ImportedGeometry {
+            bounds_mm: mesh.bounds(),
+            mesh,
+            source_asset: Some(body.0),
+            revision: 0,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+    document.set_imported_brep_data(body, solid.brep_blob.clone(), Vec::new());
+
+    // The part's top face: its small tab at the left end.
+    let top = hi[2];
+    let edges = kernel_ogeom::QUERIES
+        .face_edges(&solid.brep_blob, [105.157, 89.76, f64::from(top)])
+        .unwrap();
+    let list: Vec<String> = edges
+        .iter()
+        .map(|(p, d)| {
+            format!(
+                "{{body = \"{}\", point = {{{}, {}, {}}}, direction = {{{}, {}, {}}}}}",
+                body.0, p[0], p[1], p[2], d[0], d[1], d[2]
+            )
+        })
+        .collect();
+    let mut host = benches(document);
+    let out = ScriptEngine::new().run_script(
+        &format!(
+            r#"
+            s = pc.sketch.new{{body = "{body}", plane = "XY", offset = {top}}}
+            pc.sketch.external{{sketch = s, counts = true, edges = {{{edges}}}}}
+            pc.design.pad{{sketch = s, length = {length}, reversed = true}}
+            "#,
+            body = body.0,
+            edges = list.join(",\n"),
+        ),
+        "pad.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    host.registry.evaluate(&mut host.document);
+    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
+    let volume = |r: &kernel_api::SolidBuildResult| {
+        OgeomKernel::new()
+            .physical_properties(&r.brep_blob)
+            .unwrap()
+            .volume_mm3
+            .expect("a closed solid")
+    };
+    let base = kernel.execute_solid_chain(&ops[..1], &detail).unwrap();
+    Some((kernel.execute_solid_chain(&ops, &detail), volume(&base)))
+}
+
+/// The volume of a built solid.
+fn volume_of(built: &kernel_api::SolidBuildResult) -> f64 {
+    OgeomKernel::new()
+        .physical_properties(&built.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a closed solid")
+}
+
+/// A pad 3 mm into a converted part, along its face's own outline: it is
+/// all inside the part, so the part is what the fuse leaves.
 #[test]
 #[ignore = "kernel: every ray meets an ambiguous crossing and the fuse gives up (ogeom-rs#99)"]
 fn a_pad_along_a_converted_solid_s_sides_fuses() {
-    fuses_along_its_sides("base.ogeom", "tool.ogeom");
-}
-
-/// The same face's outline, its spline sides exact, padded out through the
-/// converted solid's bottom: the fuse keeps what leaves it. Read from
-/// `PRINTCAD_TEST_FUSE_DIR` (`exact-base.ogeom`, `exact-tool.ogeom`).
-#[test]
-#[ignore = "kernel: the arrangement leaves no piece of a face and the fuse gives up (ogeom-rs#100)"]
-fn a_pad_out_through_a_converted_solid_s_bottom_fuses() {
-    fuses_along_its_sides("exact-base.ogeom", "exact-tool.ogeom");
-}
-
-/// Fuses the tool into the base, both read from `PRINTCAD_TEST_FUSE_DIR`,
-/// and checks the union reaches as far as either does.
-fn fuses_along_its_sides(base: &str, tool: &str) {
-    let Some(dir) = std::env::var_os("PRINTCAD_TEST_FUSE_DIR") else {
+    let Some((built, part)) = pad_into_converted_part(3.0) else {
         return;
     };
-    let dir = std::path::PathBuf::from(dir);
-    let base = std::fs::read(dir.join(base)).unwrap();
-    let tool = std::fs::read(dir.join(tool)).unwrap();
-    let ops = [
-        kernel_api::SolidOp::Shape { brep: base },
-        kernel_api::SolidOp::Boolean {
-            tool_brep: tool.clone(),
-            kind: kernel_api::BoolKind::Fuse,
-            tool_transform: None,
-        },
-    ];
-    let mut kernel = OgeomKernel::new();
-    let detail = TessellationSettings::default();
-    let built = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("the fuse settles");
-    let mut bounds = |ops: &[kernel_api::SolidOp]| {
-        kernel
-            .execute_solid_chain(ops, &detail)
-            .unwrap()
-            .mesh
-            .bounds()
-            .unwrap()
+    let built = built.expect("the fuse settles");
+    let volume = volume_of(&built);
+    assert!(
+        (volume - part).abs() < 1e-3 * part,
+        "{volume} vs the part's {part}"
+    );
+}
+
+/// The same pad 10 mm deep, out through the part's bottom: the fuse keeps
+/// what leaves it, so the part grows.
+#[test]
+#[ignore = "kernel: a piece on the other solid's boundary finds no coincident face and the fuse gives up (ogeom-rs#100)"]
+fn a_pad_out_through_a_converted_solid_s_bottom_fuses() {
+    let Some((built, part)) = pad_into_converted_part(10.0) else {
+        return;
     };
-    let (lo, hi) = built.mesh.bounds().unwrap();
-    // The union reaches as far as either solid does.
-    for (a, b) in [
-        bounds(&ops[..1]),
-        bounds(&[kernel_api::SolidOp::Shape { brep: tool }]),
-    ] {
-        for k in 0..3 {
-            assert!(
-                lo[k] <= a[k] + 1e-3 && hi[k] >= b[k] - 1e-3,
-                "{lo:?} {hi:?} vs {a:?} {b:?}"
-            );
-        }
-    }
+    let built = built.expect("the fuse settles");
+    let volume = volume_of(&built);
+    assert!(volume > part + 1.0, "{volume} vs the part's {part}");
 }
 
 /// A face picked for projection brings every edge around it: the box's
