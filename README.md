@@ -312,3 +312,16 @@ What each workbench still lacks, feature by feature, is in
 
 MIT or Apache 2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and
 [LICENSE-APACHE](LICENSE-APACHE).
+
+## Inspiration
+
+printCAD stands on ideas from these projects:
+
+- [FreeCAD](https://www.freecad.org): the parametric workflow, workbenches,
+  the model tree and the task panel.
+- [Open CASCADE Technology (OCCT)](https://dev.opencascade.org): the B-rep
+  kernel printCAD first ran on, and the model for much of how it treats
+  shapes.
+- [stlTexturizer](https://github.com/CNCKitchen/stlTexturizer) by CNC
+  Kitchen: the idea behind surface textures. Its code and textures are not
+  used here.
