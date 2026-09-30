@@ -1388,6 +1388,34 @@ impl PrintCadApp {
                     app_log::info("Deleted feature");
                 }
             }
+            TreeFeatureCommand::MoveNextTo { target, before } => {
+                let Some(after) =
+                    crate::app::scripts::drop_place(&self.session.document, target, before)
+                else {
+                    app_log::warn("Cannot move: the two features are not in one body");
+                    return;
+                };
+                match crate::app::scripts::move_after(&mut self.session.document, feature, after) {
+                    Ok(()) => {
+                        let mut args = serde_json::json!({"id": feature.0.to_string()});
+                        if let Some(after) = after {
+                            args["after"] = serde_json::json!(after.0.to_string());
+                        }
+                        self.record_calls(vec![core_document::Recorded {
+                            id: "doc.move_after".into(),
+                            args: match args {
+                                serde_json::Value::Object(map) => map,
+                                _ => Default::default(),
+                            },
+                            result: serde_json::Value::Null,
+                        }]);
+                        self.session.journal.label_next("Reorder history");
+                        self.close_gesture();
+                        app_log::info("Reordered build history");
+                    }
+                    Err(why) => app_log::warn(format!("Cannot move: {why}")),
+                }
+            }
             TreeFeatureCommand::MoveUp | TreeFeatureCommand::MoveDown => {
                 let up = command == TreeFeatureCommand::MoveUp;
                 match crate::app::scripts::move_in_history(&mut self.session.document, feature, up)

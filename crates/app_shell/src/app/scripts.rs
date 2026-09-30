@@ -1374,7 +1374,8 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
                 TreeFeatureCommand::ClearTip => {
                     Some(call("doc.set_tip", json!({"id": id, "clear": true})))
                 }
-                TreeFeatureCommand::SetVisible(_) => None,
+                // Recorded where it lands, which only the document knows.
+                TreeFeatureCommand::SetVisible(_) | TreeFeatureCommand::MoveNextTo { .. } => None,
             }
         }
         _ => None,
@@ -2060,6 +2061,23 @@ fn set_body(
     Ok(())
 }
 
+/// The feature a drop next to `target` lands after: `target` itself, or
+/// for a drop before it, the one before it in its body's history
+/// (`Some(None)`: the start). `None` when `target` is in no history.
+pub(crate) fn drop_place(
+    document: &core_document::Document,
+    target: FeatureId,
+    before: bool,
+) -> Option<Option<FeatureId>> {
+    let order = document.body_history_of(target);
+    let at = order.iter().position(|f| *f == target)?;
+    Some(if before {
+        at.checked_sub(1).map(|i| order[i])
+    } else {
+        Some(target)
+    })
+}
+
 /// Move `feature` in its body's history to just after `after`, or first
 /// for `None`, saying why a step is refused.
 pub(crate) fn move_after(
@@ -2613,6 +2631,21 @@ mod tests {
         assert_eq!(order(&doc), ["b", "d", "c", "a"]);
         move_after(&mut doc, ids[0], None).unwrap();
         assert_eq!(order(&doc), ["a", "b", "d", "c"]);
+
+        // A drop above a row goes before it, below it after it.
+        let place = |doc: &core_document::Document, target, before| {
+            drop_place(doc, target, before).unwrap()
+        };
+        assert_eq!(
+            place(&doc, ids[0], true),
+            None,
+            "above the first: the start"
+        );
+        assert_eq!(place(&doc, ids[3], true), Some(ids[1]), "above d: after b");
+        assert_eq!(place(&doc, ids[3], false), Some(ids[3]));
+        let after = place(&doc, ids[1], true);
+        move_after(&mut doc, ids[2], after).unwrap();
+        assert_eq!(order(&doc), ["a", "c", "b", "d"], "c dropped above b");
     }
 
     #[test]

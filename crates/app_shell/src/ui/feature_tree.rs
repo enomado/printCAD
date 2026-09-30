@@ -37,7 +37,17 @@ pub enum TreeFeatureCommand {
     MoveDown,
     SetTip,
     ClearTip,
+    /// Dragged and dropped on `target`'s row: goes just before or after it
+    /// in the history.
+    MoveNextTo {
+        target: FeatureId,
+        before: bool,
+    },
 }
+
+/// A feature row being dragged.
+#[derive(Debug, Clone, Copy)]
+struct DraggedFeature(FeatureId);
 
 #[derive(Debug, Default)]
 pub struct TreeUiResult {
@@ -979,6 +989,46 @@ fn paint_icon(ui: &Ui, name: &str, rect: egui::Rect, tint: egui::Color32) {
     }
 }
 
+/// A feature row's part in dragging features along the history: it starts
+/// a drag, and while another feature is dragged over it, shows where that
+/// goes (above its middle, before it; below, after it) and takes the drop.
+fn drag_and_drop(
+    ui: &Ui,
+    response: &egui::Response,
+    rect: egui::Rect,
+    id: FeatureId,
+    result: &mut TreeUiResult,
+) {
+    if response.drag_started() {
+        response.dnd_set_drag_payload(DraggedFeature(id));
+    }
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    let Some(dragged) = response.dnd_hover_payload::<DraggedFeature>() else {
+        return;
+    };
+    if dragged.0 == id {
+        return;
+    }
+    let before = ui
+        .ctx()
+        .pointer_hover_pos()
+        .is_some_and(|p| p.y < rect.center().y);
+    let y = if before { rect.top() } else { rect.bottom() };
+    ui.painter().hline(
+        rect.left()..=rect.right(),
+        y,
+        egui::Stroke::new(2.0, ACCENT),
+    );
+    if let Some(dragged) = response.dnd_release_payload::<DraggedFeature>() {
+        result.feature_command = Some((
+            dragged.0,
+            TreeFeatureCommand::MoveNextTo { target: id, before },
+        ));
+    }
+}
+
 /// Draw one row; returns whether its children are shown. `node` carries
 /// the feature context menu when the row is a feature.
 fn draw_row(
@@ -989,10 +1039,20 @@ fn draw_row(
     node: Option<&TreeNode>,
 ) -> bool {
     let selected = options.selected == Some(spec.id);
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), TREE_ROW),
-        egui::Sense::click(),
-    );
+    // A feature's row drags to another place in the history.
+    let feature = match spec.id {
+        TreeItemId::Feature(id) => Some(id),
+        _ => None,
+    };
+    let sense = if feature.is_some() {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), TREE_ROW), sense);
+    if let Some(id) = feature {
+        drag_and_drop(ui, &response, rect, id, result);
+    }
     if options.scroll_to == Some(spec.id) {
         ui.scroll_to_rect(rect, Some(egui::Align::Center));
     }
