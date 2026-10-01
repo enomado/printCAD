@@ -1,7 +1,7 @@
 //! Per-feature parameter editors for the task panel.
 //!
-//! Every dialog option maps 1:1 to a feature field; editing either path
-//! recomputes. Editors return `true` when the feature payload changed.
+//! Every option maps 1:1 to a feature field. Editors return `true` when
+//! the feature payload changed; the task applies edits live.
 //! Rows are a fixed-width label column beside a control, the way the
 //! design lays out its parameter cards.
 
@@ -1761,7 +1761,8 @@ fn draft_references_editor(
     changed
 }
 
-/// Earlier part features selectable as pattern originals.
+/// The body's Design features before this one, modifiers left out,
+/// selectable as pattern originals.
 fn originals_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,

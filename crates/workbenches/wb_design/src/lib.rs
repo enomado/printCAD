@@ -160,8 +160,6 @@ impl DesignWorkbench {
             .then_some(id)
     }
 
-    /// The body the current selection belongs to: the selected feature's
-    /// owning body, or the selected body itself.
     /// The body a new feature goes in: the selected feature's, else the
     /// selected body. A linked copy takes its shape from its source and
     /// takes no features.
@@ -904,9 +902,10 @@ impl DesignWorkbench {
 
     /// Add the feature `tool` makes, from the selection, to `body` and mark
     /// it for rebuild; `edit` changes it before it goes in. An imported
-    /// body's solid lives in the import, not in the tree, so a feature can't
-    /// extend it: it goes to a body of its own, which leaves the import as
-    /// it was.
+    /// body first takes its solid as a base (`take_base`); one that cannot
+    /// (a mesh, a linked copy, a part linked from another file) has no
+    /// history to build on, so the feature goes to a body of its own, which
+    /// leaves the import as it was.
     pub(crate) fn create_feature(
         &self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -1498,8 +1497,8 @@ impl Workbench for DesignWorkbench {
         );
     }
 
-    /// A feature row offers to move the feature into each other body built
-    /// here (not one read from a file).
+    /// A feature row offers Duplicate, and a move into each other body
+    /// built here (not one read from a file).
     fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
         let MenuScope::TreeFeature(id) = scope else {
             return Vec::new();
@@ -2232,7 +2231,7 @@ impl Workbench for DesignWorkbench {
     }
 }
 
-/// Wireframe visualization mesh for a datum in world space.
+/// Wireframe mesh for a datum, in its body's frame.
 fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
     let frame = datum.frame();
     let o = frame.origin;
@@ -2263,8 +2262,8 @@ fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
         }
         core_document::DatumShape::Line { length } => {
             let h = length * 0.5;
-            // A degenerate-thin quad along the x-axis; the edge list is what
-            // the viewer actually reads.
+            // A degenerate-thin triangle along the x-axis; the edge list is
+            // what the viewer reads.
             mesh.positions = vec![at(-h, 0.0, 0.0), at(h, 0.0, 0.0), at(h, 0.2, 0.0)];
             mesh.normals = vec![n; 3];
             mesh.indices = vec![0, 1, 2];

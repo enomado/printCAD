@@ -258,7 +258,6 @@ pub(crate) fn filled(edges: &[FrozenEdge]) -> Result<SketchFeature, String> {
         id
     };
     for edge in edges {
-        // The edge's pieces chained into one run of points.
         let run = chain(&edge.outline)
             .into_iter()
             .map(flat)

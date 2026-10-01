@@ -20,7 +20,6 @@ use crate::DesignWorkbench;
 /// What the path is held to, in millimetres, unless the command says.
 pub(crate) const TOLERANCE_MM: f64 = 0.02;
 
-/// The tool's icon.
 pub(crate) const ICON: &str = "datum-line";
 
 /// A face picked for the path, in its body's frame.

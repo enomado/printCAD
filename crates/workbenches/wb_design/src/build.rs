@@ -21,7 +21,7 @@ use crate::feature::{
     TransformStep,
 };
 
-/// This body's part features in creation order (the build history).
+/// This body's part features in history order (the build history).
 pub fn design_features_of_body(
     document: &Document,
     body: BodyId,
@@ -37,7 +37,7 @@ pub fn design_features_of_body(
                 .map(|f| (node.seq, *id, f))
         })
         .collect();
-    // `seq` is the document's explicit insertion order — the build history.
+    // `seq` is the document's explicit insertion order: the build history.
     // Ties (two replicas inserting concurrently) break on the feature id so
     // every replica agrees on the order.
     features.sort_by_key(|(seq, id, _)| (*seq, *id));
@@ -211,8 +211,6 @@ fn datums_asking(
                 core_document::DATUM_KIND => core_document::DatumFeature::from_json(&n.data)
                     .ok()?
                     .probes(),
-                // A face a borrow lends is on another body's solid:
-                // `answer_lent_faces` finds it, not this body's build.
                 // A primitive attached by a mode asks what the attachment
                 // asks.
                 "wb.design" => match DesignFeature::from_json(&n.data).ok()? {
@@ -227,6 +225,8 @@ fn datums_asking(
                     // Attached by a mode, it asks what the attachment asks.
                     match sketch.attached {
                         Some(attached) => attached.probes(),
+                        // A face a borrow lends is on another body's solid:
+                        // `answer_lent_faces` finds it, not this body's build.
                         None => sketch
                             .face
                             .iter()
@@ -2369,8 +2369,6 @@ fn profile_of(sketch_feature: &SketchFeature) -> Result<Profile, String> {
     })
 }
 
-/// Extract a sketch's geometry as a single connected path (open or closed)
-/// for use as a pipe spine.
 /// The kernel's frame for a pipe's orientation: an auxiliary path read as a
 /// spine of its own, a binormal as the direction it names in the body's
 /// frame, where every profile of the build sits.
@@ -2460,8 +2458,8 @@ fn sketch_spine(
             GeometryElement::Line(line) => endpoints.push((line.start, line.end, i)),
             GeometryElement::Arc(arc) => endpoints.push((arc.start, arc.end, i)),
             _ => {
-                // Endpoint-bearing kinds added later (splines) expose their
-                // ends as the first/last referenced points.
+                // Other curves with ends (splines) give them as the first
+                // and last points they reference.
                 if ids.len() >= 2 {
                     endpoints.push((ids[0], *ids.last().unwrap(), i));
                 } else {
@@ -2582,7 +2580,7 @@ fn spine_segment(
     }
 }
 
-// ---- Pattern transform math (row-major 4x4, last row 0 0 0 1) ----
+// Pattern transforms: row-major 4x4, last row 0 0 0 1.
 
 type Mat4 = [[f64; 4]; 4];
 
@@ -3011,8 +3009,8 @@ pub fn sketch_plane_description(document: &Document, sketch: FeatureId) -> Strin
     )
 }
 
-/// Mark every part feature dirty (used after undo/redo jumps, where the
-/// applied solid geometry may no longer match the restored feature state).
+/// Mark every part feature dirty (`invalidate_all`: a history jump or
+/// Recompute All, where the solids shown may not match the features).
 pub fn mark_all_design_features_dirty(document: &mut Document) {
     let ids: Vec<FeatureId> = document
         .feature_tree()

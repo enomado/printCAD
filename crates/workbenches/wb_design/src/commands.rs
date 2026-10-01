@@ -439,8 +439,9 @@ pub fn run(
             .or_else(|| ctx.selected_body_id.map(BodyId))
             .ok_or_else(|| CommandError::bad("body", "is required when there is no sketch"))?,
     };
-    // A face given here stands in for one picked in the viewport, which is
-    // where the toolbar's path reads it, in world space.
+    // A face given here, in the body's own frame, stands in for one picked
+    // in the viewport: placed in world space, where the toolbar's path
+    // reads it.
     if a.has("face_point") {
         let placement = ctx.document.body_placement(body);
         let point = vector3(a.0.get("face_point"), "face_point")?;
@@ -452,8 +453,8 @@ pub fn run(
             surface: None,
         });
     }
-    // A thickness opens a face, a draft turns about one and a deletion
-    // takes one away: in a script that face is an argument.
+    // A thickness opens a face, a draft turns about one, and a deletion,
+    // offset or move works on one: in a script that face is an argument.
     if matches!(
         id,
         "design.thickness"

@@ -93,7 +93,6 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
     }
 }
 
-/// Whether `id` is one of the generator commands.
 pub(crate) fn is_command(id: &str) -> bool {
     GENERATORS.iter().any(|(_, _, _, command)| *command == id)
 }

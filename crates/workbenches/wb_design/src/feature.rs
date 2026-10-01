@@ -193,7 +193,8 @@ pub enum PlaneTarget {
     },
 }
 
-/// A planar face picked in the viewport, identified geometrically.
+/// A face picked in the viewport, found again by its name or else by its
+/// point and normal.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FacePick {
     pub point: [f32; 3],
@@ -449,7 +450,6 @@ pub enum PipeOrientation {
 }
 
 impl PipeOrientation {
-    /// The kinds, one each, for choosing between them.
     pub fn label(&self) -> &'static str {
         match self {
             PipeOrientation::Standard => "Standard",
@@ -1638,7 +1638,7 @@ impl DesignFeature {
         borrows
     }
 
-    /// Earlier part features this feature re-applies (patterns/mirror).
+    /// Earlier features this feature re-applies (patterns/mirror).
     pub fn originals(&self) -> Option<&[FeatureId]> {
         match self {
             DesignFeature::Mirrored { originals, .. }
@@ -2096,7 +2096,7 @@ mod tests {
 
     #[test]
     fn old_pad_json_without_new_fields_still_deserializes() {
-        // A Pad serialized before the termination-mode fields existed.
+        // A Pad with none of the termination-mode fields.
         let old = serde_json::json!({
             "Pad": { "sketch": FeatureId::new(), "length": 5.0, "reversed": false }
         });

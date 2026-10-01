@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].id, "design.set");
 
-        // No face selected: refused, nothing changed.
+        // No face selected: refused.
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         assert!(set_reference(&mut ctx, pad_id, PROFILE, ReferenceChoice::SelectedFace).is_err());
     }
