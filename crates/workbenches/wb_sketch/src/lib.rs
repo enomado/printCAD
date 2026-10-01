@@ -6212,7 +6212,7 @@ mod constraint_filter {
         assert_eq!(listed(ConstraintFilter::Parked, &[], &[]), [measured]);
         assert_eq!(listed(ConstraintFilter::Selected, &[], &[level]), [level]);
         // The first line reaches its length and, through its end at `a`,
-        // the distance; the second line's level is not its.
+        // the distance. The second line's level is not its own.
         assert_eq!(
             listed(ConstraintFilter::Related, &[first], &[]),
             [width, measured]

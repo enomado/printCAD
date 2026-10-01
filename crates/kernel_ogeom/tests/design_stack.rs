@@ -926,7 +926,8 @@ fn a_variable_tilts_a_pad_s_custom_direction() {
         .unwrap();
     doc.set_feature_formula(pad_id, "/Pad/direction/Custom/1", Some("Tilt.lean".into()))
         .unwrap();
-    // New, as the application marks it.
+    // A feature is built once marked stale, as the application marks a
+    // new one.
     doc.mark_feature_stale(pad_id);
 
     let depth = |doc: &mut Document| {

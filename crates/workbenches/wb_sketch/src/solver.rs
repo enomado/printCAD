@@ -2471,11 +2471,11 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
             GeometryElement::Line(_) | GeometryElement::BSpline(_) => {}
         }
     }
-    // What named an axis of an ellipse whose axes traded places names the
-    // other now: its radius dimensions and its shown axis lines, so the
-    // next solve holds the same ellipse rather than trading them back. The
-    // frame turned a quarter, so the old major axis runs the other way as
-    // the minor: its line's ends trade too.
+    // When an ellipse's axes trade places, what names one of them is
+    // turned to name the other: its radius dimensions and its shown axis
+    // lines, so the next solve holds the same ellipse rather than trading
+    // them back. The frame turns a quarter, so the axis that was the major
+    // runs the other way as the minor: its line's ends trade too.
     let mut reversed = Vec::new();
     for c in &mut sketch.constraints {
         match &mut c.kind {

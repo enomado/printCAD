@@ -511,8 +511,8 @@ mod tests {
     }
 
     /// The minor axis's end dragged past the major radius, the centre held
-    /// and the foci not shown: the axes trade places (that line now holds
-    /// the major axis, the other runs the other way as the minor), the
+    /// and the foci not shown: the axes trade places (that line holds the
+    /// major axis, the other runs the other way as the minor), the
     /// ellipse goes through the dragged end, and solving again changes
     /// nothing.
     #[test]
