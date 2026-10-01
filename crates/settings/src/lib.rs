@@ -777,8 +777,6 @@ impl LightSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraSettings {
-    #[serde(default)]
-    pub navigation_style: NavigationStyle,
     /// Zoom toward cursor (focal-plane correction after dolly / ortho scale).
     #[serde(default = "default_true")]
     pub zoom_to_cursor: bool,
@@ -869,7 +867,6 @@ fn default_click_drag_threshold_px() -> f32 {
 impl Default for CameraSettings {
     fn default() -> Self {
         Self {
-            navigation_style: NavigationStyle::default(),
             zoom_to_cursor: default_true(),
             invert_zoom: false,
             wheel_zoom_factor: default_wheel_zoom_factor(),
@@ -891,14 +888,6 @@ impl Default for CameraSettings {
             axis_preset: AxisPreset::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub enum NavigationStyle {
-    #[default]
-    Gesture,
-    /// Navigates as `Gesture` does: no binding reads the style.
-    Cad,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

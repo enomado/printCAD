@@ -8,9 +8,7 @@ use egui::{
     Vec2, pos2, vec2,
 };
 use kernel_api::LinearDeflectionMode;
-use settings::{
-    NavigationStyle, OrbitYawAxis, ProjectionMode, SixDofMotion, SlicerFormat, UserSettings,
-};
+use settings::{OrbitYawAxis, ProjectionMode, SixDofMotion, SlicerFormat, UserSettings};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
     Card, PrefRow, QtyField, overline, pref_group, primary_button, secondary_button,
@@ -658,7 +656,6 @@ fn reset_group(state: &mut PreferencesState) {
         }
         PrefGroup::Input => {
             let camera = &mut state.draft.camera;
-            camera.navigation_style = defaults.camera.navigation_style;
             camera.zoom_to_cursor = defaults.camera.zoom_to_cursor;
             camera.invert_zoom = defaults.camera.invert_zoom;
             camera.wheel_zoom_factor = defaults.camera.wheel_zoom_factor;
@@ -2384,15 +2381,6 @@ fn input_page(
                 ui,
                 "Navigation",
                 vec![
-                    PrefRow::select(
-                        "Navigation style",
-                        "prefs_nav_style",
-                        &mut camera.navigation_style,
-                        &[
-                            (NavigationStyle::Gesture, "Gesture"),
-                            (NavigationStyle::Cad, "CAD"),
-                        ],
-                    ),
                     PrefRow::toggle("Zoom to cursor", &mut camera.zoom_to_cursor)
                         .hint("Wheel zoom keeps the point under the cursor still"),
                     PrefRow::toggle("Invert zoom", &mut camera.invert_zoom),

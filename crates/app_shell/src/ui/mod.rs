@@ -404,10 +404,6 @@ impl UiLayer {
         let mut export_dialog = StepImportDialogAction::default();
 
         let projection = settings.camera.projection;
-        let nav_style = match settings.camera.navigation_style {
-            settings::NavigationStyle::Gesture => "Gesture",
-            settings::NavigationStyle::Cad => "CAD",
-        };
         let document_name = document.name().to_owned();
         let document_dirty = document.metadata().dirty();
         let breadcrumb = editing_feature
@@ -724,7 +720,6 @@ impl UiLayer {
                     server: &server,
                     document_saving,
                     save_progress,
-                    nav_style,
                     nav_device: nav_device.as_deref(),
                     items: status_items.as_ref(),
                     preselect: hover_card.as_ref().map(|h| h.title.as_str()),

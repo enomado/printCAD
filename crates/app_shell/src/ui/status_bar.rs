@@ -1,6 +1,6 @@
 //! The status bar: activity or workbench state on the left, selection
 //! summary, and mono readouts on the right (coordinates, dimensions,
-//! navigation style, frame counters, the document server).
+//! the 6-DoF device, frame counters, the document server).
 
 use axes::AxisSystem;
 use core_document::{StatusItems, Unit};
@@ -40,7 +40,6 @@ pub struct StatusBarInputs<'a> {
     pub document_saving: bool,
     /// Bytes packed into the archive being saved, out of the whole.
     pub save_progress: Option<(u64, u64)>,
-    pub nav_style: &'a str,
     /// The connected 6-DoF mouse, when there is one.
     pub nav_device: Option<&'a str>,
     pub items: Option<&'a StatusItems>,
@@ -236,7 +235,7 @@ fn draw_left(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, result: &mut Statu
     });
 }
 
-/// The readouts, laid out from the right edge: navigation, performance,
+/// The readouts, laid out from the right edge: the 6-DoF device, performance,
 /// the server, then what the bench or the cursor says.
 fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
     let mut result = StatusBarResult::default();
@@ -246,7 +245,6 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResul
     result.toggle_console = panel_button(ui, "console", "Console", panels.console);
     result.toggle_log = panel_button(ui, "log", "Log panel", panels.log);
     vseparator(ui, 12.0);
-    text(ui, inputs.nav_style, TEXT3).on_hover_text("Navigation style (Preferences › Input)");
     if let Some(device) = inputs.nav_device {
         text(ui, device, TEXT3).on_hover_text("6-DoF mouse connected");
     }
@@ -460,7 +458,6 @@ mod tests {
             server,
             document_saving: false,
             save_progress: None,
-            nav_style: "Gesture",
             nav_device: None,
             items: None,
             preselect: None,
