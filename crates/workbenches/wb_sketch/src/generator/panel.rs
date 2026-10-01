@@ -425,8 +425,8 @@ fn set(data: &mut Value, pointer: &str, value: f64) {
     }
 }
 
-/// Set the field at `pointer`, adding it to its object when a file
-/// written before it had none.
+/// Set the field at `pointer`, adding it to its object when the stored
+/// data has none.
 fn set_value(data: &mut Value, pointer: &str, value: Value) {
     let Some((parent, field)) = pointer.rsplit_once('/') else {
         return;
@@ -443,8 +443,9 @@ fn object(value: Value) -> Map<String, Value> {
     }
 }
 
-/// The fields changed and not yet recorded, kept while a drag goes on so
-/// the recording takes where it ended rather than every step on the way.
+/// Where the fields changed and not yet recorded are kept while a drag
+/// goes on, so the recording takes where it ended rather than every step
+/// on the way.
 fn pending_id(id: FeatureId) -> egui::Id {
     egui::Id::new(("generator_record", id))
 }

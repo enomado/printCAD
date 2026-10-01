@@ -7,7 +7,8 @@
 //!
 //! Handlers live in submodules: `draw` (new geometry), `modify`
 //! (fillet/chamfer/trim/extend/split/offset), `transform`
-//! (translate/rotate/scale/mirror over the current selection).
+//! (translate/rotate/scale/mirror/array over the current selection),
+//! `join` (a chain of curves merged into one B-spline).
 
 mod draw;
 mod join;
@@ -464,10 +465,8 @@ fn curve_attach_eps(snap_tol: f32) -> f32 {
 /// Like `materialize`, but a NEW point placed where a snap put it stays
 /// there: at a line's middle by a midpoint constraint, on the origin by a
 /// coincidence, on each curve it lies on (two at a crossing) by an on-curve
-/// constraint. Snapped positions sit numerically on what they snapped to;
-/// anything else is at least a full tolerance away, so a tiny epsilon finds
-/// them again here. Existing points are reused untouched: shared ids
-/// already imply coincidence.
+/// constraint, found again within `curve_attach_eps`. Existing points are
+/// reused untouched: shared ids already imply coincidence.
 fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f32) -> Uuid {
     let SnapTarget::New(pos) = target else {
         return materialize(sketch, target);
@@ -528,7 +527,7 @@ fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f32) 
     point
 }
 
-/// What a snap made by `tool` in `state` knows of the drawing in
+/// What a snap made in tool `state` knows of the drawing in
 /// progress: a straight segment's start, for alignment, which it must not
 /// land back on.
 pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
@@ -550,7 +549,7 @@ pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
     }
 }
 
-/// Where a click of drawing tool `tool` at `cursor` lands, and on what:
+/// Where a click in tool `state` at `cursor` lands, and on what:
 /// what the click uses and what the cue before it shows.
 pub fn snap_at(state: &ToolState, sketch: &Sketch, cursor: Vec2D, tol: f32) -> snap::Snap {
     snap::resolve(sketch, cursor, tol, &snap_context(state, sketch))
@@ -747,7 +746,7 @@ pub fn line_arc_end(state: &mut ToolState) {
     }
 }
 
-/// Put a polyline in progress on `segment` (a recording's switch).
+/// Put a polyline in progress on segment kind `to` (a recording's switch).
 pub fn set_polyline_segment(state: &mut ToolState, to: PolySegment) {
     if let ToolState::PolylineFrom {
         segment, heading, ..

@@ -4,10 +4,6 @@
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
 use kernel_api::TriMesh;
 
-/// Convert sketch geometry to a renderable mesh.
-///
-/// This tessellates the sketch geometry (lines, circles, arcs) into triangles
-/// for rendering in the 3D viewport.
 /// The sketch as world-space polylines: one per line, sampled curve, or
 /// point cross. Shared by the quad mesh and the line list.
 pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3]>> {
@@ -174,13 +170,11 @@ fn add_line_quad(
     let dir = glam::Vec3::from_array([end[0] - start[0], end[1] - start[1], end[2] - start[2]]);
     let length = dir.length();
     if length < 1e-6 {
-        return; // Degenerate line
+        return;
     }
 
     let dir_norm = dir / length;
 
-    // Find a perpendicular vector for the quad width
-    // Use a simple approach: cross with a standard vector
     let up = glam::Vec3::new(0.0, 0.0, 1.0);
     let perp = if (dir_norm.dot(up)).abs() > 0.9 {
         // If line is nearly vertical, use a different vector
@@ -195,7 +189,6 @@ fn add_line_quad(
     // This ensures consistent lighting for all geometry on the same plane
     let normal = plane_normal;
 
-    // Create quad vertices
     let v0 = glam::Vec3::from_array(start) - perp;
     let v1 = glam::Vec3::from_array(start) + perp;
     let v2 = glam::Vec3::from_array(end) + perp;
@@ -212,7 +205,6 @@ fn add_line_quad(
     normals.push(normal.to_array());
     normals.push(normal.to_array());
 
-    // Two triangles: (0, 1, 2) and (0, 2, 3)
     indices.push(base);
     indices.push(base + 1);
     indices.push(base + 2);

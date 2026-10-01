@@ -53,8 +53,8 @@ pub struct GearSpec {
     pub rim: f32,
 }
 
-/// A gear as files hold it: one written before the addendum and dedendum
-/// were set by hand gives its root as a clearance past the mating tip.
+/// A gear as files hold it: one with no dedendum gives its root as a
+/// clearance past the mating tip.
 #[derive(Deserialize)]
 #[serde(default)]
 struct StoredGear {

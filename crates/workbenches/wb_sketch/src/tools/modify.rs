@@ -17,8 +17,6 @@ use crate::snap::{self, arc_angles};
 /// at the ends).
 const SPAN_EPS: f32 = 1e-3;
 
-// ---------------------------------------------------------------- corners
-
 /// What a corner tool puts between two curves: an arc of a radius, or a
 /// line set back a length from where they meet.
 #[derive(Clone, Copy)]
@@ -536,11 +534,9 @@ fn finish(
     }
 }
 
-// ---------------------------------------------------------- intersections
-
-/// Intersections of `target` with every OTHER line/arc/circle in the
-/// sketch. `bounded_target` restricts hits to the target's own extent
-/// (trim/split); extend wants the unbounded carrier.
+/// Intersections of `target` with every other curve in the sketch.
+/// `bounded_target` restricts hits to the target's own extent (trim);
+/// extend wants the unbounded carrier.
 fn hits_with_others(
     sketch: &Sketch,
     target_id: Uuid,
@@ -565,8 +561,8 @@ fn hits_with_others(
     out
 }
 
-/// Nearest line/arc/circle within `tol` of `pos` (points and other element
-/// kinds excluded).
+/// Nearest line or arc within `tol` of `pos`, circles too with
+/// `include_circles` (points and other element kinds excluded).
 fn curve_under_cursor(
     sketch: &Sketch,
     pos: Vec2D,
@@ -587,7 +583,7 @@ fn curve_under_cursor(
 }
 
 /// Remove `point_id` (and constraints referencing it) when no remaining
-/// curve uses it — cleanup for endpoints a trim disconnected.
+/// curve uses it: the end a cut left behind.
 fn drop_if_orphan(sketch: &mut Sketch, point_id: Uuid) {
     let referenced = sketch
         .geometry
@@ -602,8 +598,6 @@ fn drop_if_orphan(sketch: &mut Sketch, point_id: Uuid) {
         sketch.remove_geometry_cascade(&[point_id]);
     }
 }
-
-// ------------------------------------------------------------------- trim
 
 /// The span a trim click would remove.
 enum TrimPlan {
@@ -946,8 +940,6 @@ pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
     }
 }
 
-// ----------------------------------------------------------------- extend
-
 pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
     if let Some((id, curve)) = general_under_cursor(sketch, cursor, tol) {
         return extend_general(sketch, id, &curve, cursor);
@@ -1032,8 +1024,6 @@ pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect
         Prim::Circle { .. } => ToolEffect::none(),
     }
 }
-
-// ------------------------------------------------------------------ split
 
 pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
     if let Some(effect) = split_conic(sketch, cursor, tol) {
@@ -1141,8 +1131,6 @@ fn split_conic(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> Option<ToolEffec
     }));
     Some(ToolEffect::changed("Split arc"))
 }
-
-// ------------------------------------------------- ellipses, conics, splines
 
 /// The curve nearest `pos` within `tol`, of any kind.
 fn nearest_curve(sketch: &Sketch, pos: Vec2D, tol: f32) -> Option<Uuid> {
@@ -1633,8 +1621,6 @@ fn split_general(sketch: &mut Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) ->
     curve_resized(sketch, id);
     ToolEffect::changed("Split arc")
 }
-
-// ----------------------------------------------------------------- offset
 
 /// One curve of the selection, oriented along the chain walk.
 struct ChainLink {

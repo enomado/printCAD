@@ -1,6 +1,6 @@
 //! End-to-end interaction tests: drive `SketchWorkbench::on_input` through
 //! a real `Document` + `WorkbenchRuntimeContext`, exactly like the app
-//! shell does — clicks arrive as viewport pixels and are raycast onto the
+//! shell does: clicks arrive as viewport pixels and are raycast onto the
 //! sketch plane by the workbench itself.
 
 use core_document::{
@@ -337,7 +337,7 @@ fn create_action_opens_picker_instead_of_creating() {
         WorkbenchInputEvent::KeyPress { key: KeyCode::A },
         Some("sketch.create"),
     );
-    // No feature yet — the plane picker is pending in the panel.
+    // No feature yet: the plane picker is pending in the panel.
     assert!(h.active_object.is_none());
     assert_eq!(h.doc.feature_tree().all_nodes().count(), 0);
 }
@@ -466,7 +466,7 @@ fn chained_lines_share_vertices() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.5, "sketch.line"); // not axis-snapped (0.5 > tolerance at this zoom? verify below)
+    h.click(10.0, 0.5, "sketch.line");
     h.click(10.0, 8.0, "sketch.line");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (3, 2), "chain adds one point per segment");
@@ -653,7 +653,7 @@ fn dragging_from_a_line_s_end_draws_a_tangent_arc() {
     assert_eq!((lines, arcs), (2, 1));
     assert_eq!(points, 5, "the ends shared, plus the arc's centre");
 
-    // A press that does not move is a click there, as before: no arc.
+    // A press that does not move is a click there: no arc.
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
@@ -1559,7 +1559,7 @@ fn box_selection_draws_dashed_rectangle_overlay() {
         h.wb.get_screen_space_overlays(&ctx, h.active_object).len()
     };
     let idle_count = overlays_of(&mut h); // axes only
-    // Start clear of the axes and the origin, which are selectable now.
+    // Start clear of the axes and the origin, which are selectable.
     h.click(4.0, 4.0, "sketch.select");
     h.mouse_move(10.0, 8.0, "sketch.select");
     let box_count = overlays_of(&mut h);
@@ -1577,8 +1577,7 @@ fn box_selection_draws_dashed_rectangle_overlay() {
 fn box_selection_covers_circles_and_arcs() {
     let mut h = Harness::new();
     h.create_sketch();
-    // Circle center (0,0) r=5; arc centered (15,0) from (19,0) CCW to (15,6)... reuse
-    // the shapes from the circle/arc end-to-end test.
+    // Circle center (0,0) r=5; arc centered (15,0) from (19,0) CCW to (15,6).
     h.click(0.0, 0.0, "sketch.circle");
     h.click(5.0, 0.0, "sketch.circle");
     h.click(15.0, 0.0, "sketch.arc");
@@ -3498,7 +3497,7 @@ fn a_three_point_circle_takes_a_typed_diameter() {
 
 /// Typing into the dimension editor: every key lands in the frame it
 /// arrives, and only the frame the editor takes focus interrupts the
-/// input method. Interrupting it every frame made keys arrive late and
+/// input method. Interrupting it every frame makes keys arrive late and
 /// several at once.
 #[test]
 fn typing_into_the_dimension_editor_lands_every_key_at_once() {

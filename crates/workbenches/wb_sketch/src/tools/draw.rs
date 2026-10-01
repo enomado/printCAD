@@ -13,7 +13,7 @@ use crate::sketch::{
 use crate::snap::{self, AxisSnap, SnapTarget, arc_angles};
 use crate::spline;
 
-/// Point snap first (id reuse — never a coincident duplicate); otherwise a
+/// Point snap first (its id reused, never a coincident duplicate); otherwise a
 /// curve within tolerance captures the click, projecting the position onto
 /// it so `materialize_on_curve` records the on-curve constraint.
 fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f32) -> SnapTarget {
@@ -307,7 +307,7 @@ fn square_or_touching(
     Some(said)
 }
 
-/// Four counter-clockwise corner positions → 4 shared-vertex lines plus the
+/// Four counter-clockwise corner points → 4 shared-vertex lines plus the
 /// H/V constraints that make the shape stay a rectangle under later edits.
 fn close_rectangle(sketch: &mut Sketch, pa: Uuid, pb: Uuid, pc: Uuid, pd: Uuid) {
     let bottom = sketch.add_geometry(GeometryElement::Line(Line::new(pa, pb)));

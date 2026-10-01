@@ -15,7 +15,8 @@ use crate::spline::{Basis, MAX_DEGREE, insert_knot};
 use crate::tools::ToolEffect;
 
 /// A spline in the making: degree, clamped knots, and control points with
-/// their weights, the first and last already points of the sketch.
+/// their weights; `start` and `end` are the sketch points the first and
+/// last keep, where the curve it is made from has them.
 struct Made {
     degree: u32,
     knots: Vec<f64>,

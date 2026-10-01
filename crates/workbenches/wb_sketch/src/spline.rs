@@ -25,8 +25,8 @@ pub struct Basis {
 }
 
 impl Basis {
-    /// The basis of `spline` over `points` control points. `None` when
-    /// there are too few to make a curve.
+    /// The basis of `spline`. `None` when it has too few control points to
+    /// make a curve.
     pub fn of(spline: &BSpline) -> Option<Self> {
         Some(
             Self::new(
@@ -204,14 +204,14 @@ impl Basis {
     pub fn piece(&self, control: &[[f64; 2]], t0: f64, t1: f64) -> Option<Piece> {
         let p = self.degree;
         let (d0, d1) = self.domain();
-        // A closed spline laid out twice round as an open one, so a part
-        // can cross where it closes.
         // Worked on weighted points, so a rational spline's part is exact.
         let weight = |i: usize| self.weights.get(i).copied().unwrap_or(1.0);
         let lift = |i: usize| {
             let (c, w) = (control[i], weight(i));
             [c[0] * w, c[1] * w, w]
         };
+        // A closed spline laid out twice round as an open one, so a part
+        // can cross where it closes.
         let (mut knots, mut ctrl) = if self.periodic {
             let n = self.points;
             let knots: Vec<f64> = (0..2 * n + 2 * p + 1).map(|i| i as f64).collect();
@@ -634,8 +634,8 @@ impl BSpline {
         Some(basis.sample(&self.control_positions(sketch)?, samples))
     }
 
-    /// Whether the kernel needs more than the default cubic over uniform
-    /// knots to draw it: another degree, or knots of its own.
+    /// Whether the kernel can draw it as the default cubic over uniform
+    /// knots: degree 3, with no knots or weights of its own.
     pub fn is_default_cubic(&self) -> bool {
         self.degree == 3 && self.knots.is_empty() && self.weights.is_empty()
     }

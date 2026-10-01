@@ -356,8 +356,8 @@ pub fn snap_axis(from: Vec2D, cursor: Vec2D, tol: f32) -> (Vec2D, Option<AxisSna
     }
 }
 
-/// Distance from `pos` to the closest bit of `geom` (sketch units), used
-/// for hit-testing in select mode. `None` for unresolvable references.
+/// Distance from `pos` to the closest bit of `geom` (sketch units).
+/// `None` for unresolvable references.
 pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<f32> {
     let p = pos.to_glam();
     match geom {
@@ -432,8 +432,8 @@ pub fn arc_angles(start_vec: glam::Vec2, end_vec: glam::Vec2) -> (f32, f32) {
     (start_angle, sweep)
 }
 
-/// Projection of `pos` onto a curve element (`None` off the curve's range
-/// or for kinds without an on-curve constraint: points, ellipses, splines).
+/// Projection of `pos` onto a line, circle or arc (`None` off the curve's
+/// range, and for every other kind).
 fn project_to_curve(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<Vec2D> {
     let p = pos.to_glam();
     match geom {
@@ -522,9 +522,9 @@ pub fn snap_to_curve(
     best.map(|(id, proj, _)| (id, proj))
 }
 
-/// Distance from `pos` to the nearest CURVE of the sketch (lines, arcs,
-/// circles — points excluded, they're too small to be a click target for
-/// feature-level selection). `None` for a sketch with no curves.
+/// Distance from `pos` to the nearest curve of the sketch, points left
+/// out: they are too small to be a click target for feature-level
+/// selection. `None` for a sketch with no curves.
 pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f32> {
     sketch
         .geometry

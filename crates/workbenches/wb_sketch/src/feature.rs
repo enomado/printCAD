@@ -8,9 +8,8 @@ use crate::sketch::{Sketch, SketchPlane};
 /// A sketch feature that can be stored in the document's feature tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SketchFeature {
-    /// The sketch data.
     pub sketch: Sketch,
-    /// The reference plane for the sketch.
+    /// The plane the sketch lies on, in its body's own frame.
     pub plane: SketchPlane,
     /// The datum the sketch was drawn on, which its plane follows: moved,
     /// turned or flipped, the datum takes the sketch with it.

@@ -296,8 +296,8 @@ fn internal_element(sketch: &Sketch, curve: Uuid, id: Uuid) -> bool {
     })
 }
 
-/// Show or hide the internal geometry of the curves `items` name. `show`
-/// `None` shows it when some curve lacks a piece, else hides it. Returns
+/// Show or hide the internal geometry of the curves `items` name.
+/// `show_it` `None` shows it when some curve lacks a piece, else hides it. Returns
 /// whether it showed, and what it made or took away.
 pub fn toggle(sketch: &mut Sketch, items: &[Uuid], show_it: Option<bool>) -> (bool, Vec<Uuid>) {
     let curves = curves_of(sketch, items);

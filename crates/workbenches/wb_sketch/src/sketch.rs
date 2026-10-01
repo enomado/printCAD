@@ -53,7 +53,7 @@ pub struct Sketch {
     pub id: Uuid,
     /// Name of the sketch (user-facing).
     pub name: String,
-    /// Reference plane (normal vector and origin) - for now just a placeholder.
+    /// The plane the sketch lies on, in its body's own frame.
     pub plane: SketchPlane,
     /// Geometry elements in the sketch.
     pub geometry: Vec<GeometryElement>,
@@ -64,7 +64,7 @@ pub struct Sketch {
     /// Ids of geometry flagged as construction:
     /// guides that snap, hit-test and constrain like normal geometry but are
     /// excluded from profile extraction. Defaults to empty so sketches saved
-    /// before this field existed keep loading.
+    /// without it keep loading.
     #[serde(default)]
     pub construction: std::collections::HashSet<Uuid>,
     /// Geometry projected from a solid's edges, or cut from its faces by the
@@ -277,8 +277,7 @@ impl Sketch {
         self.geometry.iter_mut().find(|g| g.id() == id)
     }
 
-    /// Position of a point element, if `id` refers to one.
-    /// Position of `id`, including the origin reference.
+    /// Position of the point element `id`, or of the origin reference.
     pub fn point_position(&self, id: Uuid) -> Option<Vec2D> {
         if id == ORIGIN_ID {
             return Some(Vec2D::new(0.0, 0.0));
@@ -390,9 +389,8 @@ impl Sketch {
         removed
     }
 
-    /// Ids of every point that no remaining curve references. Used to offer
-    /// cleanup of construction leftovers; NOT auto-removed on delete because
-    /// standalone points are legitimate sketch geometry.
+    /// Ids of every point that no remaining curve references. A delete
+    /// leaves them, since standalone points are legitimate sketch geometry.
     pub fn orphan_point_ids(&self) -> Vec<Uuid> {
         use std::collections::HashSet;
         let mut referenced: HashSet<Uuid> = HashSet::new();
@@ -410,8 +408,8 @@ impl Sketch {
 }
 
 /// The reference geometry every sketch carries: the origin and the two
-/// axes through it. They hold no entry in `geometry` — nothing can move,
-/// delete or extrude them — but they answer to fixed ids so constraints can
+/// axes through it. They hold no entry in `geometry` (nothing can move,
+/// delete or extrude them), but they answer to fixed ids so constraints can
 /// pin real geometry against them.
 pub const ORIGIN_ID: Uuid = Uuid::from_u128(0x5c_e701_0000_0000_0000_0000_0000_0001);
 pub const X_AXIS_ID: Uuid = Uuid::from_u128(0x5c_e701_0000_0000_0000_0000_0000_0002);
@@ -1263,7 +1261,7 @@ pub struct Constraint {
     pub id: Uuid,
     pub kind: ConstraintKind,
     /// Dimensional constraints only: `false` makes it a *reference*
-    /// dimension — measured and displayed, never enforced.
+    /// dimension: measured and displayed, never enforced.
     pub driving: bool,
     /// `false` keeps the constraint but excludes it from the solve.
     pub active: bool,

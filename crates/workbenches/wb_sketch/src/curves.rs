@@ -170,7 +170,8 @@ impl Curve {
 
     /// The parameters the carrier covers for looking past the element's
     /// ends: a whole turn of a closed one from the element's start, a long
-    /// way on each side of a line, conic or spline's part.
+    /// way on each side of a line's or conic's part, and an open spline's
+    /// own span, since it stops at its ends.
     pub fn reach(&self) -> (f64, f64) {
         if self.period > 0.0 {
             return (self.span.0, self.span.0 + self.period);

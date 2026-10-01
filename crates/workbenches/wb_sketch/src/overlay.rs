@@ -216,9 +216,9 @@ const SNAP_MARK_PX: f32 = POINT_RADIUS_PX + 3.0;
 /// to (a square on an endpoint, a ring on a centre, a ringed cross on the
 /// origin, an X on a crossing, a triangle on a midpoint, a square corner
 /// at a perpendicular's foot, a ring and a touching line at a tangent
-/// point, a diamond on a
-/// curve or an axis, a dashed guide back to the point being drawn from
-/// when level or plumb with it), and its name beside it.
+/// point, a diamond on a curve or an axis, a dashed guide back to the
+/// point being drawn from when level or plumb with it), and its name
+/// beside it.
 fn push_snap_marker(
     out: &mut Overlays,
     proj: &SketchProjector,
@@ -434,7 +434,7 @@ fn push_element(
 }
 
 /// The sketch's reference geometry: the two axes and the origin they cross
-/// at. Faint until picked — they take constraints like anything else, so
+/// at. Faint until picked: they take constraints like anything else, so
 /// selection and hover have to read.
 fn push_axes(
     out: &mut Overlays,
@@ -585,7 +585,6 @@ fn push_ghost(
     }
 }
 
-/// Preview of the in-progress tool shape from its anchors to `cursor`.
 /// The outline of the rectangle from `a` to `c` with its corners rounded
 /// at `radius` (no more than half its shorter side, as the fillet can).
 fn rounded_rect_points(a: Vec2D, c: Vec2D, radius: f32) -> Vec<Vec2D> {
@@ -610,6 +609,7 @@ fn rounded_rect_points(a: Vec2D, c: Vec2D, radius: f32) -> Vec<Vec2D> {
     out
 }
 
+/// Preview of the in-progress tool shape from its anchors to `cursor`.
 #[allow(clippy::too_many_arguments)]
 fn push_preview(
     out: &mut Overlays,
@@ -1412,10 +1412,6 @@ fn push_selection_box(
     );
 }
 
-/// Build the full overlay set for one frame of sketch editing.
-/// `selection_box` is an in-progress box selection (anchor, current corner)
-/// in sketch coordinates; `active_tool`/`snap_tol` drive tool-specific
-/// hover feedback (the trim tool highlights the span a click would remove).
 /// A ring in the conflict colour round every loose end of the profile's
 /// curves: the points the profile leaves out with their curves.
 fn push_loose_ends(
@@ -1439,6 +1435,10 @@ fn push_loose_ends(
     }
 }
 
+/// Build the full overlay set for one frame of sketch editing.
+/// `selection_box` is an in-progress box selection (anchor, current corner)
+/// in sketch coordinates; `active_tool`/`snap_tol` drive tool-specific
+/// hover feedback (the trim tool highlights the span a click would remove).
 #[allow(clippy::too_many_arguments)]
 pub fn build_overlays(
     proj: &SketchProjector,

@@ -1255,8 +1255,6 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     Ok(answer)
 }
 
-/// A sketch of the DXF drawing at `path`, placed as `sketch.new` places
-/// one and named after the file unless `name` says otherwise.
 /// A picture's placement from `a`, over `image`'s where `a` says nothing.
 fn place_image(
     a: &Args,
@@ -1349,6 +1347,8 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
 /// How wide a picture lies when nothing says, mm.
 const DEFAULT_IMAGE_WIDTH_MM: f32 = 100.0;
 
+/// A sketch of the DXF drawing at `path`, placed as `sketch.new` places
+/// one and named after the file unless `name` says otherwise.
 fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let path = std::path::Path::new(a.string("path")?);
     let given_scale = a.opt_number("scale")?;
@@ -1702,8 +1702,6 @@ fn unit(v: [f64; 3], name: &str) -> Result<[f64; 3], CommandError> {
     Ok(v.map(|c| c / length))
 }
 
-/// Ids named in a list: element and constraint ids, and the names of the
-/// sketch's origin and axes.
 /// A text's font, size, spacing and angle where `a` gives them.
 fn text_options(a: &Args, spec: &mut crate::text::TextSpec) -> Result<(), CommandError> {
     if let Some(font) = a.opt_string("font")? {
@@ -1737,6 +1735,8 @@ fn one_id(
     Ok(ids(Some(&json!([value])), name, sketch)?[0])
 }
 
+/// Ids named in a list: element and constraint ids, and the names of the
+/// sketch's origin and axes.
 fn ids(value: Option<&Value>, name: &str, sketch: &Sketch) -> Result<Vec<Uuid>, CommandError> {
     let list = value
         .and_then(Value::as_array)
@@ -1773,7 +1773,6 @@ fn ids(value: Option<&Value>, name: &str, sketch: &Sketch) -> Result<Vec<Uuid>, 
         .collect()
 }
 
-/// Add the constraints `kind` makes for `items`, at `value` when given.
 /// Store an edited sketch and answer `answer`.
 fn save(
     ctx: &mut WorkbenchRuntimeContext,
@@ -1841,7 +1840,7 @@ fn feature_ids(value: Option<&Value>, name: &str) -> Result<Vec<FeatureId>, Comm
         .collect()
 }
 
-/// Set the driving and active flags of `items`, where given.
+/// Set the driving, active and parked flags of `items`, where given.
 pub(crate) fn set_constraints(sketch: &mut Sketch, items: &[Uuid], flags: ConstraintFlags) {
     for c in &mut sketch.constraints {
         if items.contains(&c.id) {
@@ -1878,7 +1877,7 @@ pub(crate) fn paste(sketch: &mut Sketch, clip: &Sketch, by: Vec2D) -> usize {
     )
 }
 
-/// Every sketch's plane where its body sits.
+/// Sketch `id` with its plane where its body sits.
 fn placed(document: &core_document::Document, id: FeatureId) -> Option<SketchFeature> {
     let mut feature = crate::stored_sketch(document, id)?;
     let placement = crate::sketch_placement(document, id);
@@ -2325,6 +2324,7 @@ fn click_of(click: &Value) -> Result<Click, CommandError> {
     Ok((at, typed, constrain))
 }
 
+/// Add the constraints `kind` makes for `items`, at `value` when given.
 pub(crate) fn constrain(
     sketch: &mut Sketch,
     kind: &str,

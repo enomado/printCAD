@@ -1,10 +1,12 @@
 //! 2D sketch constraint solver.
 //!
-//! Solves the sketch's constraints by adjusting point positions and
-//! circle/arc radii using Gauss-Newton iteration with Levenberg-Marquardt
-//! damping. The Jacobian is computed numerically (central differences) and
-//! the normal equations are solved with a small dense Gaussian elimination —
-//! no external solver dependencies.
+//! Solves the sketch's constraints by adjusting point positions,
+//! circle/arc radii, the shapes of ellipses and conics that something
+//! sizes, and the parameters constraints on curves add, using Gauss-Newton
+//! iteration with Levenberg-Marquardt damping. The Jacobian is computed
+//! numerically (central differences) and the normal equations are solved
+//! with a small dense Gaussian elimination, with no external solver
+//! dependencies.
 
 use std::collections::HashMap;
 
@@ -162,7 +164,8 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
         }
         if !improved {
             // Damping saturated without any cost reduction: the problem is
-            // contradictory or we are at a (possibly non-zero) local minimum.
+            // contradictory or the solve sits at a (possibly non-zero) local
+            // minimum.
             break;
         }
     }
@@ -242,7 +245,7 @@ const MAX_DIAGNOSED_CONSTRAINTS: usize = 60;
 pub struct Diagnosis {
     /// Remaining degrees of freedom (`dof_estimate`).
     pub dof: i32,
-    /// Constraints whose removal does not change the Jacobian rank — they
+    /// Constraints whose removal does not change the Jacobian rank: they
     /// add nothing the others don't already enforce.
     pub redundant: Vec<Uuid>,
     /// Constraints whose individual removal lets the solve converge.
@@ -1346,8 +1349,8 @@ fn build_system_with(
                 radius_vars.insert(a.id, vars.len());
                 vars.push(f64::from(a.radius));
             }
-            // Lines are fully defined by their endpoint variables; ellipse
-            // shape and spline control points carry no residuals (yet).
+            // Lines and splines move with their points; an ellipse's or
+            // conic's shape joins above when something sizes it.
             GeometryElement::Line(_)
             | GeometryElement::Ellipse(_)
             | GeometryElement::BSpline(_)

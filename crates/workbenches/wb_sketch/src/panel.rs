@@ -1872,8 +1872,6 @@ fn list_row(
     response
 }
 
-/// The value cell of a constraint row: an editable driving value, or the
-/// measured reference value in parentheses.
 /// What a dimension's value cell reads besides the constraint: the
 /// document, for its formula and to read typed formulas against.
 struct DimensionCell<'a> {
@@ -1881,6 +1879,8 @@ struct DimensionCell<'a> {
     sketch_id: Option<core_document::FeatureId>,
 }
 
+/// The value cell of a constraint row: an editable driving value, or the
+/// measured reference value in parentheses.
 fn dimension_value_cell(
     ui: &mut egui::Ui,
     sketch: &Sketch,

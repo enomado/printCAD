@@ -1478,8 +1478,7 @@ fn extend_arc_end_reaches_circle() {
     let s = pt(&mut sketch, 5.0, 0.0);
     let e = pt(&mut sketch, 0.0, 5.0);
     sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
-    // A wall crossing the arc's circle at (-5, 0) (and (0,±?) no: the line
-    // x = -5 is tangent... use the horizontal line y = 0 extended left).
+    // A wall along y = 0 to the left, crossing the arc's circle at (-5, 0).
     let w1 = pt(&mut sketch, -10.0, 0.0);
     let w2 = pt(&mut sketch, -2.0, 0.0);
     line_between(&mut sketch, w1, w2);
@@ -1758,7 +1757,7 @@ fn rotate_selection_about_pivot() {
     let selected: HashSet<Uuid> = [l].into_iter().collect();
     let params = ToolParams::default();
     let mut state = ToolState::default();
-    // Pivot at origin — but (0,0) snaps to point `a`, same position anyway.
+    // Pivot at the origin, where it snaps to point `a` at the same spot.
     click_sel(
         &mut state,
         "sketch.rotate",
@@ -1803,8 +1802,8 @@ fn scale_selection_scales_radii_too() {
     let selected: HashSet<Uuid> = [circle_id].into_iter().collect();
     let params = ToolParams::default();
     let mut state = ToolState::default();
-    // Base at origin, reference at (1,0)... rounded up: use (10,0) → (20,0)
-    // for factor 2 without snapping interference.
+    // Base at the origin, reference at (10, 0), target at (20, 0): a factor
+    // of 2, clicked clear of the circle's points so nothing snaps.
     click_sel(
         &mut state,
         "sketch.scale",

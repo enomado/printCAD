@@ -1,7 +1,7 @@
 //! Extraction of closed profile wires from sketch geometry, for
 //! consumption by solid-modeling features (pad/pocket).
 //!
-//! Curves are stitched into loops through their *shared point ids* — the
+//! Curves are stitched into loops through their *shared point ids*: the
 //! sketcher's endpoint snapping reuses point elements, so a visually closed
 //! profile is topologically closed here with no coincidence tolerance.
 
@@ -17,7 +17,7 @@ use crate::snap::arc_angles;
 pub enum ProfileError {
     /// The sketch has no closed geometry to extrude.
     Empty,
-    /// A curve endpoint is used by only one curve — the loop never closes.
+    /// A curve endpoint is used by only one curve: the loop never closes.
     OpenAt(Uuid),
     /// More than two curves meet at one point; the loop is ambiguous.
     BranchingAt(Uuid),
@@ -88,7 +88,7 @@ const PROJECTED_JOIN: f64 = 1e-4;
 
 /// Extract every closed wire from the sketch. Standalone points are
 /// ignored; circles are closed wires by themselves; lines/arcs must form
-/// closed loops via shared endpoints.
+/// closed loops via shared endpoints, and those that do not are left out.
 pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> {
     let mut wires = Vec::new();
     let mut edges: Vec<EdgeCurve> = Vec::new();
@@ -351,7 +351,6 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                 reversed(&edge.segment)
             });
             names.push(edge.name);
-            // Advance to the far end of this edge.
             current_point = if edge.ends.0 == current_point {
                 edge.ends.1
             } else {
@@ -462,8 +461,8 @@ pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
 }
 
 /// The profile segment of spline `b` over its control point positions: the
-/// cubic over even knots as it always was, anything else with its degree
-/// and knots spelt out.
+/// cubic over even knots as plain control points, anything else with its
+/// degree and knots spelt out.
 fn spline_segment(b: &crate::sketch::BSpline, control_points: Vec<[f64; 2]>) -> ProfileSegment {
     if b.is_default_cubic() {
         return ProfileSegment::BSpline {
@@ -644,7 +643,7 @@ mod tests {
         let e = pt(&mut sketch, -5.0, -5.0);
         let e2 = pt(&mut sketch, -5.0, 5.0);
         // Two extra edges through corner `a` (degree 4) forming a closed-ish
-        // detour — every vertex except `a` has degree 2, so the failure is
+        // detour: every vertex except `a` has degree 2, so the failure is
         // unambiguously the branch at `a`.
         line(&mut sketch, a, e);
         line(&mut sketch, e, e2);

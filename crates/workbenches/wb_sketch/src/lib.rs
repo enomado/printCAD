@@ -272,7 +272,7 @@ struct LabelDrag {
 }
 
 /// An in-viewport dimension edit (opened by double-clicking a dimensional
-/// glyph, or as a tool adds a dimension; drawn from the left-panel hook).
+/// glyph, or as a tool adds a dimension; drawn from the task panel).
 #[derive(Debug, Clone)]
 pub struct DimEdit {
     pub constraint: Uuid,
@@ -329,7 +329,6 @@ const REGION_LIFT_MM: f64 = 0.01;
 /// How much of the geometry colour the shaded regions take.
 const REGION_OPACITY: f32 = 0.12;
 
-/// Sketch workbench: 2D drawing with constraints.
 /// The switches on the sketcher's panel and Preferences page.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -432,6 +431,7 @@ struct LinePress {
 /// How far, in pixels, a press moves before it is a drag.
 const LINE_DRAG_PX: f32 = 5.0;
 
+/// Sketch workbench: 2D drawing with constraints.
 #[derive(Default)]
 pub struct SketchWorkbench {
     /// Reference pictures decoded so far, by asset.
@@ -492,7 +492,7 @@ pub struct SketchWorkbench {
     tool_params: ToolParams,
     /// What the text tool lays out at its next click.
     text_draft: text::TextSpec,
-    /// Most recent sketch tool seen in `on_input`; used by the left panel to
+    /// Most recent sketch tool seen in `on_input`; used by the task panel to
     /// show the matching tool settings.
     last_tool: Option<String>,
     /// The tool id as it was activated, variant and all: a change of it is
@@ -676,9 +676,6 @@ fn keyed(tool: ToolDescriptor) -> ToolDescriptor {
     }
 }
 
-/// The points a drag of `id` moves: the point itself, or every point the
-/// curve is pinned to. Moving them all translates the element, and
-/// anything sharing those points comes with it.
 /// The tools that act on the selection, whose recording names it.
 const SELECTION_TOOLS: &[&str] = &[
     "sketch.offset",
@@ -697,6 +694,9 @@ fn ids_json(ids: &[Uuid]) -> serde_json::Value {
     )
 }
 
+/// The points a drag of `id` moves: the point itself, or every point the
+/// curve is pinned to. Moving them all translates the element, and
+/// anything sharing those points comes with it.
 pub(crate) fn drag_point_ids(sketch: &Sketch, id: Uuid) -> Vec<Uuid> {
     match sketch.get_geometry(id) {
         Some(sketch::GeometryElement::Point(p)) => vec![p.id],
@@ -773,9 +773,6 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
 }
 
 impl SketchWorkbench {
-    /// The active sketch, with its plane where the scene has it: a sketch
-    /// keeps its plane in its body's frame, and editing works where the
-    /// body sits.
     /// The dimensions of the edited sketch that a formula sets.
     fn bound_dimensions(&self, ctx: &WorkbenchRuntimeContext) -> HashSet<Uuid> {
         self.active_sketch_id
@@ -789,6 +786,9 @@ impl SketchWorkbench {
             .unwrap_or_default()
     }
 
+    /// The active sketch, with its plane where the scene has it: a sketch
+    /// keeps its plane in its body's frame, and editing works where the
+    /// body sits.
     fn get_active_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
         let id = self.active_sketch_id?;
         let mut feature = stored_sketch(ctx.document, id)?;
@@ -881,7 +881,7 @@ impl SketchWorkbench {
     }
 
     /// Press on `id`: it joins the selection when it is new, and a drag is
-    /// armed — of the whole selection when the press landed inside it, of
+    /// armed: of the whole selection when the press landed inside it, of
     /// this element alone otherwise. Selection inside a sketch accumulates,
     /// so no modifier is needed; clicking empty space clears it.
     fn begin_drag(&mut self, sketch: &Sketch, id: Uuid, cursor: Vec2D) {
@@ -1053,8 +1053,6 @@ impl SketchWorkbench {
         SNAP_TOLERANCE_PX * proj.units_per_px()
     }
 
-    /// The "Create Sketch" action: open the plane picker. The sketch is
-    /// created once a plane is chosen in the left panel.
     /// Another workbench (or the host) asked for a sketch on a specific
     /// body: take the request and open the plane picker, the face it
     /// offers in the body's own frame.
@@ -1067,6 +1065,8 @@ impl SketchWorkbench {
         }
     }
 
+    /// Open the plane picker. The sketch is created once a plane is chosen
+    /// in the task panel.
     fn begin_sketch_creation(
         &mut self,
         body: Option<BodyId>,
@@ -1157,9 +1157,6 @@ impl SketchWorkbench {
         }
     }
 
-    /// Advance the active drawing tool with a click at `cursor` (sketch
-    /// coords): typed on-view parameters override the position and become
-    /// driving constraints after the shape commits.
     /// Run the tool at `cursor` (typed dimensions override it). `constrain`
     /// turns the typed values into constraints as well; a plain click keeps
     /// the geometry free.
@@ -1594,7 +1591,7 @@ impl SketchWorkbench {
             return InputResult::consumed();
         }
         // Constraint-aware drag: carry every point of the grabbed geometry
-        // by the cursor delta and let the solver settle the rest — whatever
+        // by the cursor delta and let the solver settle the rest: whatever
         // shares those points comes along, and the dimensions that are not
         // driving adjust. Consumed so the camera doesn't orbit underneath.
         if let Some(drag) = self.dragging.as_mut() {
@@ -1657,7 +1654,7 @@ impl SketchWorkbench {
         } else {
             self.hovered = None;
         }
-        // Never consume moves — the camera still needs them for orbiting.
+        // Never consume moves: the camera still needs them for orbiting.
         InputResult::redraw_only()
     }
 
@@ -2394,8 +2391,7 @@ impl SketchWorkbench {
 
     /// Replace the constraint at `idx` with `constraint`, then re-solve and
     /// persist. Backs the panel's inline dimension editing: the constraint
-    /// is edited in place, no extra
-    /// state is kept.
+    /// is edited in place, no extra state is kept.
     pub fn update_constraint(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -2545,9 +2541,6 @@ impl Workbench for SketchWorkbench {
         }
     }
 
-    /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
-    /// open for editing. The Edit menu's clipboard entries act on the
-    /// selection of the sketch under edit.
     fn run_command(
         &mut self,
         id: &str,
@@ -2563,6 +2556,9 @@ impl Workbench for SketchWorkbench {
         commands::run(id, args, ctx)
     }
 
+    /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
+    /// open for editing. The Edit menu's clipboard entries act on the
+    /// selection of the sketch under edit.
     fn on_command(
         &mut self,
         id: &str,
@@ -3512,8 +3508,8 @@ impl Workbench for SketchWorkbench {
         true
     }
 
-    /// The Sketcher preferences page: the snap toggle is live, the solver
-    /// automation rows are planned, and the palette shows read-only.
+    /// The Sketcher preferences page: the solver, snap and view switches,
+    /// the minimum wall, and the palette, read-only.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
         use ui_kit::widgets::{PrefRow, pref_group};
@@ -4276,9 +4272,6 @@ impl SketchWorkbench {
         }
     }
 
-    /// Fold a variant into the tool it specialises, applying the variant's
-    /// parameters (polygon sides, spline periodicity). Non-sketch tools
-    /// yield `None`.
     /// The settings a tool variant carries (a hexagon's six sides, a
     /// periodic spline), put in the panel when it is picked.
     fn apply_variant_settings(&mut self, tool: &str) {
@@ -4299,7 +4292,8 @@ impl SketchWorkbench {
     }
 }
 
-/// The tool a variant specialises, as the tool state machine knows it.
+/// The tool a variant specialises, as the tool state machine knows it;
+/// `None` for a tool not the sketcher's.
 fn canonical_tool(tool: &str) -> Option<String> {
     let base = base_tool_id(tool);
     if !base.starts_with("sketch.") {
@@ -4515,8 +4509,6 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
-    /// Select the geometry referenced by the conflicting (or redundant)
-    /// constraints of the last diagnosis.
     /// The grid step on screen: the size chosen, or, following the zoom, a
     /// 1-2-5 step that puts lines about forty pixels apart.
     fn grid_step(&self, units_per_px: f32) -> f32 {
@@ -4614,8 +4606,6 @@ impl SketchWorkbench {
         out
     }
 
-    /// Stray points, constraints that reference missing geometry, and
-    /// whether the sketch closes into profiles: reported and selected.
     /// Selected external geometry counts in profiles, or stops counting:
     /// all of it on when any was off.
     fn toggle_external_defining(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -4682,6 +4672,8 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// Stray points, constraints that reference missing geometry, and
+    /// whether the sketch closes into profiles: reported and selected.
     fn validate(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
@@ -5713,6 +5705,8 @@ impl SketchWorkbench {
         true
     }
 
+    /// Select the conflicting (or redundant) constraints of the last
+    /// diagnosis and the geometry they reference.
     fn select_offenders(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -5783,8 +5777,6 @@ impl SketchWorkbench {
     }
 }
 
-/// Tools that create geometry from clicks, for which object snapping can
-/// be switched off.
 /// The constraints on `elements` (a curve's own points count as the curve).
 fn constraints_on(sketch: &Sketch, elements: &HashSet<Uuid>) -> HashSet<Uuid> {
     let mut touched = elements.clone();
@@ -5844,6 +5836,8 @@ pub(crate) fn text_args(spec: &text::TextSpec, at: Option<Vec2D>) -> serde_json:
     args
 }
 
+/// Tools that create geometry from clicks, for which object snapping can
+/// be switched off.
 pub(crate) fn is_draw_tool(tool: &str) -> bool {
     matches!(
         tool,

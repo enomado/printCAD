@@ -214,8 +214,6 @@ pub fn ellipse_arc_points(
         .collect()
 }
 
-// ---------------------------------------------------------- intersections
-
 /// A trim/extend-capable curve resolved to positions.
 pub(crate) enum Prim {
     Seg { a: Vec2, b: Vec2 },
