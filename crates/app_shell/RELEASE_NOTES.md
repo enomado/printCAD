@@ -4,6 +4,35 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.4.0
+
+### Workbench packages
+- The workbench store: Preferences › Workbench packages › Browse lists the packages of every store you keep, with a word of care about third-party software, and installs one with a click.
+- Stores have a tab of their own: printCAD's store comes first and is removable, and any other can be added by its address.
+
+### Rebuilds
+- Editing a feature rebuilds from that feature on, not the whole history, and an edit that makes the same solid as before stops there.
+- Faces an edit left alone keep their meshes and outlines, and bodies build side by side.
+- While a value is dragged the body meshes coarse and only the latest shape builds; it turns fine once you stop.
+
+### Import and repair
+- Solids with internal voids read, repair and export as they should: a void written the wrong way out reads as a void, repair keeps it in place, and STEP export keeps it.
+- Replace shape from a STEP or IGES file takes the file's exact solid.
+- PLY, glTF and VRML meshes offer Convert to solid.
+- A converted solid still in facets says so, and a feature failing on it says to refine the body first.
+- Repair says when it turns faces or widens tolerances.
+
+### Sketcher
+- An ellipse's minor radius dragged or set past the major becomes the major.
+- A selected corner relates the constraints of every curve meeting there.
+
+### Design
+- A pad's or pocket's custom direction takes formulas.
+
+### Interface
+- The view's toolbar, cards and cube draw under dialogs and menus.
+- The navigation style setting is gone; it had one style to offer.
+
 ## 0.3.0
 
 ### Import and repair

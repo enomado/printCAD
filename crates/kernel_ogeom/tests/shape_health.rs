@@ -277,7 +277,6 @@ fn repair_names_a_swept_drum_as_a_cylinder() {
 /// void written reversed twice, as some exporters do): it reads broken,
 /// and the repair turns the void the right way out where it stands.
 #[test]
-#[ignore = "kernel: fix_shape drops a turned face's location, so a located void moves out of its solid (ogeom-rs#101)"]
 fn a_located_void_inside_out_is_turned_where_it_stands() {
     let blob = cube_with_inside_out_void();
     let mut kernel = OgeomKernel::new();
@@ -372,7 +371,6 @@ fn a_step_void_imports_as_a_void() {
 /// its shell marked reversed besides (as one exporter writes them), still
 /// imports as the cube with a hole it plainly is.
 #[test]
-#[ignore = "kernel: the STEP reader reads a doubly reversed void inside out instead of orienting it by its geometry (ogeom-rs#102)"]
 fn a_step_void_written_the_wrong_way_out_imports_as_a_void() {
     let (health, volume) = void_fixture("void_reversed_twice.step");
     assert_eq!(health.broken, 0, "{}", health.describe());
@@ -381,7 +379,6 @@ fn a_step_void_written_the_wrong_way_out_imports_as_a_void() {
 
 /// A solid with a void, exported to STEP and read back, keeps its void.
 #[test]
-#[ignore = "kernel: the STEP writer writes only a solid's first shell, dropping its voids (ogeom-rs#103)"]
 fn a_void_survives_a_step_export() {
     use kernel_ogeom::export::{ExportBody, ExportFormat, export};
     let (_, model) = import("void_in_step.step");

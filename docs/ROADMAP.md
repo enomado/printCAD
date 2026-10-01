@@ -35,22 +35,9 @@ kernel has it.
 
 ## Waiting on the kernel
 
-Fixed in the kernel's own repository, not yet in a release printCAD
-builds against. When one is released: bump `ogeom` in the workspace
-`Cargo.toml`, take the `#[ignore]` off its tests, run the suite.
-
-- [ ] **A void written the wrong way out is read inside out**
-  (ogeom-rs#102). Some exporters write a solid's cavities reversed twice;
-  the reader should orient a void by its geometry. Twenty-two parts of the
-  Voron Doom 350 assembly read as broken because of it. Test:
-  `kernel_ogeom/tests/shape_health.rs`
-  `a_step_void_written_the_wrong_way_out_imports_as_a_void`.
-- [ ] **The repair moves a placed void out of its solid** (ogeom-rs#101).
-  `fix_shape` turns an inside-out face without its placement. Test:
-  `a_located_void_inside_out_is_turned_where_it_stands`.
-- [ ] **STEP export drops a solid's voids** (ogeom-rs#103). Only a solid's
-  first shell is written, so an internal cavity is lost on export. Test:
-  `a_void_survives_a_step_export`.
+Gaps in the kernel printCAD runs into. When a fix is
+released: bump `ogeom` in the workspace `Cargo.toml`, take the `#[ignore]`
+off its tests, run the suite.
 
 Not yet filed:
 
