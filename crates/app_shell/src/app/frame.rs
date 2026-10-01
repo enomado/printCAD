@@ -170,6 +170,10 @@ const BENCH_CLICK_FRAME: u32 = 191;
 const BENCH_TOOL_FRAME: u32 = 192;
 const BENCH_REPORT_FRAME: u32 = 300;
 
+/// How long after the last input frames keep coming, so egui's reactions
+/// and the pick readbacks land.
+const INPUT_TAIL: Duration = Duration::from_millis(150);
+
 impl PrintCadApp {
     /// The body the tree row under the pointer stands for: a body's row, an
     /// imported part's, or a feature's that builds its body's solid. A
@@ -307,7 +311,7 @@ impl PrintCadApp {
         {
             let input_active = self
                 .last_input_time
-                .is_some_and(|t| t.elapsed() < Duration::from_millis(150));
+                .is_some_and(|t| t.elapsed() < INPUT_TAIL);
             let animating = self.session.camera.is_animating()
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
@@ -924,7 +928,6 @@ impl PrintCadApp {
             // drawn without edges gets one more to restore them; egui's own
             // timed repaints (caret blink) become a timed wake-up. Otherwise
             // the loop sleeps until the next OS event.
-            const INPUT_TAIL: Duration = Duration::from_millis(150);
             let input_active = self
                 .last_input_time
                 .is_some_and(|t| t.elapsed() < INPUT_TAIL);

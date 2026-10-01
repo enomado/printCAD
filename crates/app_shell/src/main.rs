@@ -156,9 +156,8 @@ fn main() -> Result<()> {
         registry,
         event_loop.create_proxy(),
     );
-    let check_updates = user_settings_check_updates;
     app.packages = packages;
-    if check_updates {
+    if user_settings_check_updates {
         app.check_package_updates();
         // The stores' lists, for whoever has a package one took off.
         app.look_at_stores(true);

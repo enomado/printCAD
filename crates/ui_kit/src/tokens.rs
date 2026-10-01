@@ -59,6 +59,13 @@ pub const AXIS_X: Color32 = rgb(0xE86E6E);
 pub const AXIS_Y: Color32 = rgb(0x4FD08F);
 pub const AXIS_Z: Color32 = rgb(0x4FA3E6);
 
+/// The orientation cube: its edge and corner pieces (the faces take the
+/// axis colours), and its outlines, brighter on the piece under the pointer.
+pub const CUBE_EDGE: Color32 = rgb(0xA0A5AF);
+pub const CUBE_CORNER: Color32 = rgb(0x9196A0);
+pub const CUBE_OUTLINE: Color32 = rgb(0x3C3C3C);
+pub const CUBE_OUTLINE_HOVER: Color32 = rgb(0x969696);
+
 // Viewport backdrop.
 pub const VIEWPORT_TOP: Color32 = rgb(0x1A2028);
 pub const VIEWPORT_BOTTOM: Color32 = rgb(0x0D1014);

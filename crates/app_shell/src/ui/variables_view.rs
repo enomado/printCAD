@@ -544,7 +544,7 @@ pub fn configurations_section(
             });
         }
         if is_open {
-            configuration_editor(ui, state, document, &table, r, active, &own, commands);
+            configuration_editor(ui, state, document, &table, r, &own, commands);
         }
     }
 
@@ -578,17 +578,16 @@ pub fn configurations_section(
 
 /// An open configuration: its name and a value per variable it sets,
 /// kept by Apply or Enter; it can be put in effect or removed.
-#[allow(clippy::too_many_arguments)]
 fn configuration_editor(
     ui: &mut egui::Ui,
     state: &mut VariablesState,
     document: &Document,
     table: &Configurations,
     configuration: &Configuration,
-    active: bool,
     own: &dyn Fn(&str) -> String,
     commands: &mut Vec<UiCommand>,
 ) {
+    let active = table.active.as_deref() == Some(configuration.name.as_str());
     let Some((_, draft)) = &mut state.open_configuration else {
         return;
     };

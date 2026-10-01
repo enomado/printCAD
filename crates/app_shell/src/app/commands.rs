@@ -1650,7 +1650,11 @@ impl PrintCadApp {
         let doc = &mut self.session.document;
         match edit {
             FormulaEdit::Formula(text) => {
-                let _ = doc.set_feature_formula(feature, parameter.key.clone(), Some(text));
+                if let Err(why) =
+                    doc.set_feature_formula(feature, parameter.key.clone(), Some(text))
+                {
+                    crate::log_panel::warn(why.to_string());
+                }
             }
             FormulaEdit::Value(v) => {
                 if let Err(why) = self

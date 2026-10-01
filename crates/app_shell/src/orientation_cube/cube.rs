@@ -47,8 +47,8 @@ pub(super) fn draw_cube_interactive(
     let left_color = face_color(axes, Vec3::NEG_X);
     let top_color = face_color(axes, Vec3::Y);
     let bottom_color = face_color(axes, Vec3::NEG_Y);
-    let edge_color = Color32::from_rgb(160, 165, 175);
-    let corner_color = Color32::from_rgb(145, 150, 160);
+    let edge_color = ui_kit::tokens::CUBE_EDGE;
+    let corner_color = ui_kit::tokens::CUBE_CORNER;
 
     // A main face, an octagon with cut corners: x_dir and y_dir are the
     // face's local X and Y axes, z_dir its outward normal.
@@ -380,7 +380,7 @@ pub(super) fn draw_cube_interactive(
             (poly, rotated_normal, transformed_verts, center_z)
         })
         .collect();
-    poly_data.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap());
+    poly_data.sort_by(|a, b| a.3.total_cmp(&b.3));
 
     let click_pos = if response.clicked() {
         response.interact_pointer_pos()
@@ -430,9 +430,9 @@ pub(super) fn draw_cube_interactive(
         );
 
         let stroke_color = if is_hovered && poly.snap_view.is_some() {
-            Color32::from_gray(150)
+            ui_kit::tokens::CUBE_OUTLINE_HOVER
         } else {
-            Color32::from_gray(60)
+            ui_kit::tokens::CUBE_OUTLINE
         };
         painter.add(egui::Shape::convex_polygon(
             points.clone(),

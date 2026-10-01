@@ -159,16 +159,18 @@ pub(super) fn draw_rotation_arrows_interactive(
     let arc_center = Pos2::new(center.x, center.y + arc_y_offset + arc_radius);
 
     draw_arc_arrow(
-        ui,
         painter,
-        arc_center,
-        arc_radius,
-        arc_width,
-        std::f32::consts::PI - 0.3, // Start angle (left side)
-        std::f32::consts::PI + 0.3, // End angle
-        true,                       // Arrow points left (counter-clockwise)
-        RotateAxis::ScreenZ,
-        -45.0,
+        ArcArrow {
+            center: arc_center,
+            radius: arc_radius,
+            width: arc_width,
+            // The left side, its head pointing counter-clockwise.
+            start_angle: std::f32::consts::PI - 0.3,
+            end_angle: std::f32::consts::PI + 0.3,
+            arrow_at_start: true,
+            axis: RotateAxis::ScreenZ,
+            degrees: -45.0,
+        },
         arrow_color,
         hover_color,
         &click_pos,
@@ -177,16 +179,18 @@ pub(super) fn draw_rotation_arrows_interactive(
     );
 
     draw_arc_arrow(
-        ui,
         painter,
-        arc_center,
-        arc_radius,
-        arc_width,
-        -0.3,  // Start angle (right side)
-        0.3,   // End angle
-        false, // Arrow points right (clockwise)
-        RotateAxis::ScreenZ,
-        45.0,
+        ArcArrow {
+            center: arc_center,
+            radius: arc_radius,
+            width: arc_width,
+            // The right side, its head pointing clockwise.
+            start_angle: -0.3,
+            end_angle: 0.3,
+            arrow_at_start: false,
+            axis: RotateAxis::ScreenZ,
+            degrees: 45.0,
+        },
         arrow_color,
         hover_color,
         &click_pos,
@@ -273,24 +277,40 @@ pub(super) fn hit_test_arc_arrow(
 }
 
 /// Draws an arc arrow and sets `result` to its turn when it is clicked.
-#[allow(clippy::too_many_arguments)]
+/// An arc arrow's place and what it does: the arc about `center` from
+/// `start_angle` to `end_angle`, its head at the start or the end, turning
+/// the view `degrees` about `axis` when clicked.
+#[derive(Clone, Copy)]
+pub(super) struct ArcArrow {
+    pub center: Pos2,
+    pub radius: f32,
+    pub width: f32,
+    pub start_angle: f32,
+    pub end_angle: f32,
+    pub arrow_at_start: bool,
+    pub axis: RotateAxis,
+    pub degrees: f32,
+}
+
 pub(super) fn draw_arc_arrow(
-    _ui: &Ui,
     painter: &egui::Painter,
-    center: Pos2,
-    radius: f32,
-    width: f32,
-    start_angle: f32,
-    end_angle: f32,
-    arrow_at_start: bool, // If true, arrow head at start; if false, at end
-    axis: RotateAxis,
-    degrees: f32,
+    arrow: ArcArrow,
     base_color: Color32,
     hover_color: Color32,
     click_pos: &Option<Pos2>,
     hover_pos: &Option<Pos2>,
     result: &mut Option<RotateDelta>,
 ) {
+    let ArcArrow {
+        center,
+        radius,
+        width,
+        start_angle,
+        end_angle,
+        arrow_at_start,
+        axis,
+        degrees,
+    } = arrow;
     // Hit test against the drawn arc band and arrow head.
     let is_hovered = hover_pos
         .map(|p| {

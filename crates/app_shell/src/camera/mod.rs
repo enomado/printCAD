@@ -215,7 +215,7 @@ impl CameraController {
                 ..
             } => {
                 let should_maybe_select = !self.lmb_dragging_scene && !self.lmb_dragging_roll;
-                let did_orbit_drag = self.lmb_dragging_scene;
+                let was_dragging = self.lmb_dragging_scene;
 
                 self.last_cursor_vp_for_drag = None;
                 self.lmb_dragging_roll = false;
@@ -226,7 +226,7 @@ impl CameraController {
                 if should_maybe_select && self.last_cursor_viewport.is_some() {
                     return CameraPointerResult::LmbReleasedMaybeSelect;
                 }
-                if did_orbit_drag {
+                if was_dragging {
                     CameraPointerResult::Redraw
                 } else {
                     CameraPointerResult::None

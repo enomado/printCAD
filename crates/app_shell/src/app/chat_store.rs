@@ -89,12 +89,17 @@ fn store_path() -> Option<PathBuf> {
     settings::SettingsStore::chats_file_path().ok()
 }
 
-fn load(path: &Path) -> Store {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+/// The store at `path`: empty when there is no file yet, an error when
+/// there is one that does not read, which must not be written over.
+fn load(path: &Path) -> Result<Store, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Store::default()),
+        Err(err) => return Err(format!("{} does not read: {err}", path.display())),
+    };
+    serde_json::from_slice::<Value>(&bytes)
         .map(|value| Store::from_json(&value))
-        .unwrap_or_default()
+        .map_err(|err| format!("{} does not read: {err}", path.display()))
 }
 
 /// The chats kept with `file`.
@@ -112,15 +117,25 @@ pub(crate) fn keep(file: &Path, chats: Vec<SavedChat>) {
 }
 
 fn chats_in(store: &Path, file: &Path) -> Vec<SavedChat> {
-    load(store)
-        .documents
-        .get(&key(file))
-        .cloned()
-        .unwrap_or_default()
+    match load(store) {
+        Ok(all) => all.documents.get(&key(file)).cloned().unwrap_or_default(),
+        Err(err) => {
+            crate::log_panel::warn(format!("The document's chats are not restored: {err}"));
+            Vec::new()
+        }
+    }
 }
 
+/// Keep `chats` with `file` in `store`. A store that does not read is left
+/// as it is, rather than written over with this document's chats alone.
 fn keep_in(store: &Path, file: &Path, chats: Vec<SavedChat>) {
-    let mut all = load(store);
+    let mut all = match load(store) {
+        Ok(all) => all,
+        Err(err) => {
+            crate::log_panel::warn(format!("The document's chats are not kept: {err}"));
+            return;
+        }
+    };
     let key = key(file);
     if all.documents.get(&key) == Some(&chats)
         || (chats.is_empty() && !all.documents.contains_key(&key))
@@ -170,6 +185,30 @@ mod tests {
         keep_in(&store, &a, Vec::new());
         assert!(chats_in(&store, &a).is_empty());
         assert_eq!(chats_in(&store, &b).len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A store that does not read is never written over: the chats of
+    /// every other document stay for whoever mends it.
+    #[test]
+    fn a_store_that_does_not_read_is_left_as_it_is() {
+        let dir = std::env::temp_dir().join(format!("printcad-chats-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("chats.json");
+        let file = dir.join("a.prtcad");
+        std::fs::write(&file, "").unwrap();
+        std::fs::write(&store, "{ not json").unwrap();
+        let chat = SavedChat {
+            agent: "Claude".into(),
+            session: "s1".into(),
+            title: "Chat 1".into(),
+        };
+        keep_in(&store, &file, vec![chat]);
+        assert_eq!(std::fs::read_to_string(&store).unwrap(), "{ not json");
+        assert!(chats_in(&store, &file).is_empty());
+        // No file yet is no trouble: the first chats make it.
+        std::fs::remove_file(&store).unwrap();
+        assert!(load(&store).is_ok_and(|s| s.documents.is_empty()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

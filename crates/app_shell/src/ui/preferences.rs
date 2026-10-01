@@ -111,11 +111,6 @@ impl PrefGroup {
             PrefGroup::Updates => &["Updates"],
         }
     }
-
-    /// Groups the app has no settings for yet.
-    fn planned(self) -> bool {
-        false
-    }
 }
 
 /// The dialog's state: what is shown and the uncommitted draft.
@@ -500,13 +495,7 @@ fn draw_rail(ui: &mut Ui, rect: Rect, state: &mut PreferencesState, registry: &D
             rail.painter()
                 .rect_filled(row, RADIUS_SM, with_alpha(BG2, 0.6));
         }
-        let color = if active {
-            TEXT1
-        } else if group.planned() {
-            TEXT3
-        } else {
-            TEXT2
-        };
+        let color = if active { TEXT1 } else { TEXT2 };
         rail.painter().text(
             pos2(row.left() + 26.0, row.center().y),
             egui::Align2::LEFT_CENTER,

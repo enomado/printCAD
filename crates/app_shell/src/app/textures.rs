@@ -51,7 +51,18 @@ impl Pressing {
                         .entry(asset)
                         .or_insert_with(|| {
                             let bytes = document.asset_bytes(asset)?;
-                            HeightMap::from_image(bytes, PICTURE_PX).ok().map(Arc::new)
+                            // Read once, so a picture that does not read is
+                            // said once and its texture lies flat.
+                            match HeightMap::from_image(bytes, PICTURE_PX) {
+                                Ok(map) => Some(Arc::new(map)),
+                                Err(err) => {
+                                    crate::log_panel::warn(format!(
+                                        "A texture's picture does not read, so it presses \
+                                         nothing: {err}"
+                                    ));
+                                    None
+                                }
+                            }
                         })
                         .clone(),
                     _ => None,
@@ -185,10 +196,11 @@ impl crate::PrintCadApp {
                         mesh: Arc::new(placed),
                     });
                 });
-            if spawned.is_err()
-                && let Some(preview) = self.session.textured.get_mut(&body)
-            {
-                preview.making = None;
+            if let Err(err) = spawned {
+                crate::log_panel::warn(format!("The texture preview could not start: {err}"));
+                if let Some(preview) = self.session.textured.get_mut(&body) {
+                    preview.making = None;
+                }
             }
         }
     }
