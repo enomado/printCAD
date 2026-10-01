@@ -138,7 +138,8 @@ pub struct Document {
     /// from JSON because the bytes live as separate entries in the tar archive.
     #[serde(skip)]
     asset_blobs: HashMap<Uuid, std::sync::Arc<Vec<u8>>>,
-    /// Frozen BRep binaries for deferred STEP tessellation / fast re-open (not in JSON).
+    /// Bodies' shape snapshots (ogeom native text), saved as
+    /// `brep/<body>.bin` beside the JSON rather than in it.
     #[serde(skip)]
     imported_brep_blobs: HashMap<BodyId, std::sync::Arc<Vec<u8>>>,
     /// Per-face RGB snapshot parallel to [`Self::imported_brep_blobs`] face order.
@@ -178,7 +179,7 @@ pub struct Document {
     /// and cleared by `Clone`: snapshots carry state, never the outbox.
     #[serde(skip)]
     pending_ops: op::OpBuffer,
-    /// (op, inverse) pairs since the last journal boundary — the raw
+    /// (op, inverse) pairs since the last journal boundary: the raw
     /// material of per-user undo. Same clone-empty rule as the outbox.
     #[serde(skip)]
     journal_pending: op::JournalBuffer,
@@ -693,7 +694,7 @@ impl Document {
     }
 
     /// Record a resolved op into the outbox and apply it. The single path
-    /// every user-edit mutator funnels through — replay and live edits run
+    /// every user-edit mutator funnels through; replay and live edits run
     /// the same `apply_op` code. The inverse is computed from the state the
     /// op is ABOUT to change, so per-user undo can restore it later without
     /// ever snapshotting the document.
@@ -707,8 +708,8 @@ impl Document {
     }
 
     /// Apply an op produced by history traversal (undo/redo): the effect,
-    /// this replica's dirty-marking consequences, and the outbox — peers
-    /// hear an undo as ordinary ops — but never the journal, which is being
+    /// this replica's dirty-marking consequences, and the outbox (peers
+    /// hear an undo as ordinary ops), but never the journal, which is being
     /// walked, not written.
     pub(crate) fn apply_history_op(&mut self, operation: &op::DocumentOp) {
         self.apply_remote_op(operation);
@@ -862,7 +863,7 @@ impl Document {
                 visible: self.imported_objects.get(id)?.visible,
             },
             // History barriers: an import (or raw graph write) is not worth
-            // lying about — clearing undo beats a wrong inverse.
+            // lying about: clearing undo beats a wrong inverse.
             Op::AddAsset { .. }
             | Op::RequestBodyRepair { .. }
             | Op::ReplaceBodyShape { .. }
@@ -887,7 +888,7 @@ impl Document {
         self.journal_pending.take()
     }
 
-    /// Run `f` with journal capture off — history traversal and remote
+    /// Run `f` with journal capture off: history traversal and remote
     /// application drive the document without journaling themselves.
     pub(crate) fn without_journal<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let previous = self.history_suppressed;
@@ -897,7 +898,7 @@ impl Document {
         result
     }
 
-    /// Apply a resolved op **without recording it** — the path a remote or
+    /// Apply a resolved op **without recording it**: the path a remote or
     /// replayed op takes. Every effect here must be a pure function of
     /// (current state, op); anything nondeterministic was resolved into the
     /// op at capture. Dirty-marking is apply-side policy: applying an op
@@ -1376,9 +1377,9 @@ impl Document {
     }
 
     /// The state that must converge across replicas: the serialized document
-    /// minus per-replica derivations — dirty flags, recompute errors,
-    /// revision history, and the imported-geometry sidecars (meshes are
-    /// re-derived from asset bytes on each replica). Determinism tests
+    /// minus per-replica derivations: dirty flags, recompute errors,
+    /// revision history, and the imported-geometry sidecars, whose meshes
+    /// are re-derived from asset bytes on each replica. Determinism tests
     /// compare projections, not raw serializations.
     pub fn replicated_projection(&self) -> serde_json::Value {
         let mut value = serde_json::to_value(self).expect("document serializes");
@@ -1435,7 +1436,7 @@ impl Document {
         name: String,
         body: Option<BodyId>,
     ) -> DocumentResult<FeatureId> {
-        // Everything is resolved here — id, timestamp, seq — so the op is a
+        // Everything is resolved here (id, timestamp, seq), so the op is a
         // pure effect and replays identically on a peer.
         let id = FeatureId::new();
         self.record_and_apply(op::DocumentOp::AddFeature {
@@ -1745,7 +1746,6 @@ impl Document {
         }
     }
 
-    /// Rename a body.
     pub fn rename_body(&mut self, body: BodyId, name: impl Into<String>) {
         let name = name.into();
         if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
@@ -1878,7 +1878,6 @@ impl Document {
         self.mark_dirty();
     }
 
-    /// Whether a body is frozen.
     pub fn body_frozen(&self, body: BodyId) -> bool {
         self.bodies.iter().any(|b| b.id == body && b.frozen)
     }
@@ -1902,7 +1901,6 @@ impl Document {
         !self.bodies.iter().any(|b| b.id == body && b.unselectable)
     }
 
-    /// Say what a body is made of, or `None` for nothing said.
     /// Set the textures pressed into `body`'s faces, all of them at once.
     pub fn set_body_textures(&mut self, body: BodyId, textures: Vec<FaceTexture>) {
         if self
@@ -1914,6 +1912,7 @@ impl Document {
         }
     }
 
+    /// Say what a body is made of, or `None` for nothing said.
     pub fn set_body_material(&mut self, body: BodyId, material: Option<Material>) {
         if self
             .bodies
@@ -2533,7 +2532,6 @@ impl Document {
         true
     }
 
-    /// Get all dirty features.
     pub fn dirty_features(&self) -> Vec<FeatureId> {
         self.feature_tree.dirty_features()
     }
@@ -2544,22 +2542,18 @@ impl Document {
         self.feature_tree.recompute_order(&dirty)
     }
 
-    /// Get workbench storage.
     pub fn get_workbench_storage(&self, wb_id: &WorkbenchId) -> Option<&WorkbenchStorage> {
         self.workbench_storage.get(wb_id.as_str())
     }
 
-    /// Get the feature tree.
     pub fn feature_tree(&self) -> &FeatureTree {
         &self.feature_tree
     }
 
-    /// All document bodies.
     pub fn bodies(&self) -> &[Body] {
         &self.bodies
     }
 
-    /// Returns true if the document contains at least one body.
     pub fn has_bodies(&self) -> bool {
         !self.bodies.is_empty()
     }
@@ -2865,9 +2859,9 @@ impl Document {
         }
     }
 
-    /// Apply one STEP import as a single atomic op: the asset with its
+    /// Apply one file import as a single atomic op: the asset with its
     /// source bytes, the bodies it created (identities resolved by the
-    /// caller), the object hierarchy, and — on a fresh document — the
+    /// caller), the object hierarchy, and, on a fresh document, the
     /// file's display unit. Geometry is derived state and is written
     /// separately by the host; a replica re-derives it from the bytes.
     #[allow(clippy::too_many_arguments)]
@@ -2927,19 +2921,17 @@ impl Document {
         self.asset_blobs.get(&asset_id).map(|v| v.as_slice())
     }
 
-    /// Get all assets.
     pub fn assets(&self) -> impl Iterator<Item = &AssetReference> {
         self.assets.values()
     }
 
-    /// Insert (or replace) the tessellated geometry associated with a body.
-    ///
-    /// The `revision` field on the supplied `ImportedGeometry` is overwritten
-    /// with the next monotonic value for this body so renderers can
-    /// distinguish "this is the same mesh as last frame" from "this body's
-    /// mesh has been replaced" with a cheap u64 comparison.
     /// Store a body's geometry, given in the body's own frame; the scene's
     /// copy is placed where the body sits.
+    ///
+    /// The `revision` field on the supplied `ImportedGeometry` is overwritten
+    /// with the next revision the document hands out, so renderers can
+    /// distinguish "this is the same mesh as last frame" from "this body's
+    /// mesh has been replaced" with a cheap u64 comparison.
     pub fn set_imported_geometry(&mut self, body: BodyId, mut geometry: ImportedGeometry) {
         let next_revision = self
             .imported_meshes
@@ -3018,7 +3010,7 @@ impl Document {
     }
 
     /// Drop a body's computed/imported geometry (mesh, BRep snapshot,
-    /// face colours). Used when a body's last solid feature is deleted.
+    /// face colours). Used when a body's history builds no solid.
     pub fn remove_imported_geometry(&mut self, body: BodyId) {
         let removed = self.imported_meshes.remove(&body).is_some();
         self.local_meshes.remove(&body);
@@ -3067,7 +3059,6 @@ impl Document {
             .map(|v| v.as_slice())
     }
 
-    /// Look up tessellated geometry for a body.
     /// Whether this body's solid came from an import rather than from a
     /// feature history. Only the import path stamps the source asset; a
     /// rebuild's own result leaves it unset.
@@ -3084,6 +3075,7 @@ impl Document {
                 .is_some_and(|geometry| geometry.source_asset.is_some())
     }
 
+    /// Look up tessellated geometry for a body.
     pub fn imported_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
         self.imported_meshes.get(&body)
     }
@@ -3104,7 +3096,7 @@ impl Document {
         self.append_imported_object_graph(roots, nodes);
     }
 
-    /// Append imported hierarchy nodes (used when importing multiple STEP files).
+    /// Append imported hierarchy nodes.
     pub fn append_imported_object_graph(
         &mut self,
         roots: Vec<Uuid>,
@@ -3226,7 +3218,7 @@ impl Document {
         self.save_to_writer(file, compression, None)
     }
 
-    /// Serialize the whole `.prtcad` container into memory — what a client
+    /// Serialize the whole `.prtcad` container into memory: what a client
     /// hands a document server that owns the file but never parses it.
     pub fn save_to_bytes(&mut self, compression: Compression) -> DocumentResult<Vec<u8>> {
         let mut bytes = Vec::new();
@@ -3355,12 +3347,10 @@ impl Document {
     fn open_container(path: &Path) -> DocumentResult<(File, Compression)> {
         let mut file = File::open(path)?;
 
-        // Detect compression via extension and magic bytes.
         let mut magic = [0u8; 4];
         let _n = file.read(&mut magic)?;
         file.rewind()?;
 
-        // Decide compression based on file name and magic bytes.
         let file_name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -3380,7 +3370,7 @@ impl Document {
         Ok((file, compression))
     }
 
-    /// Parse a `.prtcad` container from memory — the client side of a
+    /// Parse a `.prtcad` container from memory: the client side of a
     /// byte-serving document server. Compression is detected from the magic
     /// bytes alone (no filename to consult).
     pub fn load_from_bytes(bytes: Vec<u8>) -> DocumentResult<Self> {
@@ -3411,9 +3401,9 @@ impl Document {
             }
         };
 
-        // First pass: collect document.json plus any asset entries by archive
-        // path. We can't seek inside a streaming archive, so this happens in a
-        // single traversal.
+        // A streaming archive cannot seek, so one traversal collects
+        // document.json, the preview and every asset and snapshot entry by
+        // archive path.
         let mut doc_json: Option<Vec<u8>> = None;
         let mut thumbnail: Option<Vec<u8>> = None;
         let mut blobs_by_path: HashMap<String, Vec<u8>> = HashMap::new();
@@ -3456,10 +3446,10 @@ impl Document {
         }
 
         // Restore shape-snapshot sidecars for imported geometry. Blobs are
-        // ogeom native-format text ("ogeom" magic); snapshots written by the
-        // previous kernel are unreadable now — drop them with a clear log
-        // line rather than failing later with a parse error (the body's mesh
-        // still loads; re-import the STEP source to restore the solid).
+        // ogeom native-format text ("ogeom" magic); any other snapshot is
+        // unreadable, so it is dropped with a clear log line rather than
+        // failing later with a parse error (the body's mesh still loads;
+        // re-importing the source restores the solid).
         for (body_id, geom) in &doc.imported_meshes {
             if let Some(ref brep_path) = geom.brep_blob_path
                 && let Some(bytes) = blobs_by_path.remove(brep_path)
@@ -3545,9 +3535,8 @@ impl Document {
         packed += json.len() as u64;
         report(packed);
 
-        // Emit asset blobs alongside the document so future reloads can recover
-        // the original imported file (e.g. for re-tessellation at a different
-        // detail level).
+        // Asset blobs go beside the document, so a reload still has the
+        // original file every import came from.
         for (asset_id, asset) in &doc.assets {
             let Some(bytes) = doc.asset_blobs.get(asset_id) else {
                 continue;

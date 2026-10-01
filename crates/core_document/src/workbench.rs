@@ -39,11 +39,6 @@ impl From<&str> for WorkbenchId {
     }
 }
 
-/// A screen-space overlay line segment for constant-thickness visualization.
-///
-/// Screen-space overlays are rendered as 2D lines in screen coordinates, maintaining
-/// constant thickness regardless of zoom or camera rotation. Ideal for grid lines,
-/// guides, and reference geometry.
 /// A picture laid over the viewport, under the bench's lines: its pixels
 /// and where its corners land on screen.
 #[derive(Debug, Clone)]
@@ -61,6 +56,8 @@ pub struct ScreenSpaceImage {
     pub opacity: f32,
 }
 
+/// A line segment drawn in viewport pixels, the same thickness at any zoom
+/// or camera rotation.
 #[derive(Debug, Clone)]
 pub struct ScreenSpaceOverlay {
     /// Starting point in screen coordinates (x, y) in pixels, relative to viewport origin.
@@ -772,7 +769,8 @@ pub trait Workbench: Send {
     /// Every derived solid this bench produces is stale.
     fn invalidate_all(&self, _document: &mut Document) {}
 
-    /// Called once at registration to declare tools.
+    /// Called once at registration to declare tools, actions, commands and
+    /// file imports.
     fn configure(&self, context: &mut WorkbenchContext);
 
     /// The bench has work running away from the window (a job) whose end
@@ -801,7 +799,7 @@ pub trait Workbench: Send {
         InputResult::ignored()
     }
 
-    /// Draw custom UI in the left panel (below the tool list).
+    /// Draw custom UI in the left panel, above the feature tree.
     /// Called every frame while this workbench is active.
     #[cfg(feature = "egui")]
     fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
@@ -822,7 +820,6 @@ pub trait Workbench: Send {
         TaskOutcome::Open
     }
 
-    /// Widgets to draw over the viewport this frame.
     /// The keys in effect for this workbench's tools and actions, by id,
     /// after the user's changes; an id with no key is absent. Called once
     /// the workbenches are registered and whenever the keys change, so a
@@ -833,6 +830,7 @@ pub trait Workbench: Send {
     ) {
     }
 
+    /// Widgets to draw over the viewport this frame.
     fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
         None
     }
@@ -867,9 +865,8 @@ pub trait Workbench: Send {
         false
     }
 
-    /// Check if a tool is enabled given the current runtime context.
-    /// Called by the UI to determine if a tool button should be enabled/disabled.
-    /// Default implementation returns true for all tools.
+    /// Whether a tool's button is enabled given the current runtime
+    /// context; every tool is by default.
     fn is_tool_enabled(&self, _tool_id: &str, _ctx: &WorkbenchRuntimeContext) -> bool {
         true
     }
@@ -880,13 +877,13 @@ pub trait Workbench: Send {
         false
     }
 
-    /// Draw custom settings UI in the Settings window.
-    /// Called when the Settings window is open and this workbench's tab is selected.
-    /// `filter` is the dialog's lowercase search text; rows that do not
-    /// match it stay hidden (`ui_kit::widgets::pref_group` applies it).
+    /// Draw this bench's Preferences page, while it is shown. `filter` is
+    /// the dialog's lowercase search text; rows that do not match it stay
+    /// hidden (`ui_kit::widgets::pref_group` applies it). Answers whether a
+    /// setting changed.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, _ui: &mut egui::Ui, _filter: &str) -> bool {
-        false // Return true if settings changed
+        false
     }
 
     /// Finish/close the current editing session (e.g., finish sketch).
@@ -953,21 +950,9 @@ pub trait Workbench: Send {
         Vec::new()
     }
 
-    /// Get screen-space overlays for constant-thickness visualization.
-    /// Called every frame to allow workbenches to contribute visual aids that maintain
-    /// constant screen-space thickness regardless of zoom or camera rotation.
-    ///
-    /// Screen-space overlays are rendered as 2D lines in screen coordinates, making them
-    /// ideal for grid lines, guides, and other reference geometry that should remain visible
-    /// and maintain consistent appearance regardless of camera position.
-    ///
-    /// Returns a vector of screen-space line segments where:
-    /// - start: Starting point in screen coordinates (x, y) in pixels, relative to viewport origin
-    /// - end: Ending point in screen coordinates (x, y) in pixels, relative to viewport origin
-    /// - color: RGB color [r, g, b] in range 0.0-1.0
-    /// - thickness: Line thickness in pixels (constant screen-space)
-    ///
-    /// Default implementation returns empty vector.
+    /// Lines drawn in viewport pixels, relative to the viewport's origin,
+    /// called every frame. They keep their thickness at any zoom or camera
+    /// rotation.
     fn get_screen_space_overlays(
         &self,
         _ctx: &WorkbenchRuntimeContext,
@@ -1137,7 +1122,6 @@ impl FileImport {
 pub enum ToolBehavior {
     /// Radio button behavior: only one tool in the same group can be active at a time.
     /// Clicking an active tool deactivates it. Tools in different groups are independent.
-    /// This is the default.
     #[default]
     Radio,
     /// Check button behavior: independent toggle. Each tool can be on or off independently.
@@ -1153,14 +1137,15 @@ pub enum ToolBehavior {
 pub struct ToolDescriptor {
     pub id: String,
     pub label: String,
-    /// Optional category for grouping/organization (e.g., "drawing", "modeling", "utility").
-    /// This is informational and doesn't affect behavior.
+    /// Optional category (e.g., "drawing", "modeling", "utility"). The toolbar
+    /// makes one group of each run of a category along a row, and menus
+    /// separate where it changes.
     pub category: Option<String>,
     /// How the tool button should behave in the UI.
     pub behavior: ToolBehavior,
     /// Optional group name for Radio tools. Tools in the same group are mutually exclusive.
-    /// Only one tool per group can be active at a time. If None, each tool is its own group.
-    /// Ignored for Check and Action tools.
+    /// Only one tool per group can be active at a time. If None, activating the tool
+    /// deactivates every other active tool. Ignored for Check and Action tools.
     pub group: Option<String>,
     /// Name of the tool's icon in the design system's set.
     pub icon: Option<&'static str>,
@@ -1217,8 +1202,8 @@ pub fn tool_variant(id: &str) -> Option<&str> {
 }
 
 impl ToolDescriptor {
-    /// Create a new tool descriptor with radio button behavior (default).
-    /// Tools in the same group are mutually exclusive.
+    /// Create a new tool descriptor with radio button behavior and no group:
+    /// activating it deactivates every other tool.
     pub fn new(
         id: impl Into<String>,
         label: impl Into<String>,
@@ -1229,7 +1214,7 @@ impl ToolDescriptor {
             label: label.into(),
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Radio,
-            group: None, // Each tool is its own group by default
+            group: None,
             icon: None,
             planned: None,
             variants: Vec::new(),
@@ -1274,7 +1259,7 @@ impl ToolDescriptor {
             label: label.into(),
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Check,
-            group: None, // Groups don't apply to Check tools
+            group: None,
             icon: None,
             planned: None,
             variants: Vec::new(),
@@ -1295,7 +1280,7 @@ impl ToolDescriptor {
             label: label.into(),
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Action,
-            group: None, // Groups don't apply to Action tools
+            group: None,
             icon: None,
             planned: None,
             variants: Vec::new(),

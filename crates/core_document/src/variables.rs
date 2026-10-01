@@ -167,7 +167,6 @@ impl crate::Document {
         out
     }
 
-    /// Whether some object is called `name`.
     pub fn has_object_named(&self, name: &str) -> bool {
         self.feature_tree().all_nodes().any(|(_, n)| n.name == name)
     }
@@ -258,8 +257,9 @@ impl crate::Document {
     }
 
     /// Rewrite every formula in the document with `rewrite`, which answers
-    /// the new text of one it changes: the variables of every set and the
-    /// formulas of every feature. Each change is an ordinary edit.
+    /// the new text of one it changes: the variables of every set, the
+    /// formulas of every feature and the configurations table's cells. Each
+    /// change is an ordinary edit.
     pub fn rewrite_formulas(&mut self, rewrite: impl Fn(&str) -> Option<String>) {
         let mut set_updates = Vec::new();
         let mut formula_updates = Vec::new();

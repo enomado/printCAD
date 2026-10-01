@@ -1,5 +1,5 @@
-//! Core datum features: reference planes, lines, and points shared across
-//! workbenches. A datum is a feature node (`workbench_id = "core.datum"`)
+//! Core datum features: reference planes, lines, points and coordinate
+//! systems shared across workbenches. A datum is a feature node (`workbench_id = "core.datum"`)
 //! whose placement comes from an attachment plus a local offset, so
 //! downstream sketches stay decoupled from generated-face topology churn.
 
@@ -886,7 +886,7 @@ fn stable_x_axis(normal: [f32; 3]) -> [f32; 3] {
     ])
 }
 
-/// A resolved datum placement in world coordinates.
+/// A resolved datum placement, in its body's own frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DatumFrame {
     pub origin: [f32; 3],
@@ -917,7 +917,7 @@ impl DatumFrame {
 }
 
 impl DatumFeature {
-    /// Resolve the attachment + offset into a world placement.
+    /// Resolve the attachment + offset into a placement in the body's frame.
     pub fn frame(&self) -> DatumFrame {
         let (origin, normal, x_axis) = self.attachment.base_frame();
         let mut normal = normalize(normal);
@@ -1322,7 +1322,7 @@ pub fn derive(
     true
 }
 
-/// All datum features of a body, resolved and named.
+/// All datum features of a body with their names, in history order.
 pub fn datums_of_body(
     document: &crate::Document,
     body: crate::BodyId,

@@ -377,9 +377,6 @@ pub const FUNCTIONS: &[(&str, &str)] = &[
 pub const CONSTANTS: &[(&str, f64)] =
     &[("pi", std::f64::consts::PI), ("tau", std::f64::consts::TAU)];
 
-// ---------------------------------------------------------------------------
-// Tokens
-
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
     Number(f64),
@@ -509,9 +506,6 @@ fn tokenize(text: &str) -> Result<Vec<Token>, ExprError> {
     });
     Ok(out)
 }
-
-// ---------------------------------------------------------------------------
-// Parsing
 
 #[derive(Debug, Clone)]
 enum Node {
@@ -776,9 +770,6 @@ fn collect_references(node: &Node, out: &mut Vec<Reference>) {
         Node::Number { .. } | Node::Constant(..) => {}
     }
 }
-
-// ---------------------------------------------------------------------------
-// Evaluation
 
 /// A value while evaluating, and whether it is still a bare number.
 #[derive(Debug, Clone, Copy)]

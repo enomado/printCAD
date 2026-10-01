@@ -1,6 +1,6 @@
 //! The op stream is the document: replaying a session's captured ops onto a
 //! baseline snapshot must land on the same replicated state the live edits
-//! produced. This is the property every future sync transport rests on.
+//! produced. This is the property any sync transport rests on.
 
 use core_document::datum::{DatumAttachment, DatumFeature, DatumShape};
 use core_document::units::Unit;
@@ -90,8 +90,8 @@ fn replaying_captured_ops_reproduces_the_replicated_state() {
     );
 }
 
-/// The op stream survives a serde round-trip unchanged — what the wire and
-/// the on-disk op log will do to it.
+/// The op stream survives a serde round-trip unchanged, which is what the
+/// wire and the on-disk op log do to it.
 #[test]
 fn ops_replay_identically_after_a_serde_round_trip() {
     let mut live = Document::new("Wire");
@@ -182,7 +182,7 @@ fn concurrent_inserts_order_identically_on_every_replica() {
     }
     let body = alice.bodies()[0].id;
 
-    // Each replica inserts one feature without seeing the other's yet —
+    // Each replica inserts one feature without seeing the other's yet:
     // both features get the same seq.
     let _a = alice
         .add_feature_in_body(datum(BasePlane::XY), "From alice".into(), Some(body))

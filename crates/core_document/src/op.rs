@@ -1,7 +1,7 @@
 //! The document's replicated operations.
 //!
 //! Every user edit to a [`Document`](crate::Document) is captured as one
-//! [`DocumentOp`] — a **resolved effect, not an intent**: ids, timestamps and
+//! [`DocumentOp`]: a **resolved effect, not an intent**. Ids, timestamps and
 //! sequence numbers are decided at capture time and carried in the op, so
 //! applying the same op to the same state always produces the same state, on
 //! this machine or a peer's. The public mutators on `Document` all follow the
@@ -12,7 +12,7 @@
 //! Derived state is **never** an op: dirty flags, recompute errors and the
 //! imported-geometry sidecars are per-replica consequences of applying ops
 //! (a peer that applies `UpdateFeatureData` marks the feature dirty itself
-//! and re-derives). The replicated projection — what must converge — is the
+//! and re-derives). The replicated projection, what must converge, is the
 //! serialized document minus those fields; see
 //! [`Document::replicated_projection`](crate::Document::replicated_projection).
 
@@ -31,14 +31,14 @@ pub const OP_PROTOCOL_VERSION: u32 = 1;
 
 /// A blob riding inside an op (asset bytes, import sources).
 ///
-/// Today this serializes the bytes inline; the future wire split (ops carry
-/// a content hash, bytes travel separately) changes this type, not the shape
-/// of any op that uses it.
+/// The bytes serialize inline. Carrying a content hash with the bytes
+/// travelling separately would change this type, not the shape of any op
+/// that uses it.
 #[derive(Debug, Clone)]
 pub struct BlobPayload(pub std::sync::Arc<Vec<u8>>);
 
 // Base64 on the wire and in the op log: a Vec<u8> would serialize as a JSON
-// array of numbers — a 27 MB STEP becoming a ~100 MB digit list. Base64 is
+// array of numbers, a 27 MB STEP becoming a ~100 MB digit list. Base64 is
 // 4/3 the raw size and one string token.
 impl Serialize for BlobPayload {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -232,7 +232,7 @@ pub enum DocumentOp {
         package_source: Option<String>,
     },
     /// Whole-payload feature write (sketch edits, panel editors). Consecutive
-    /// updates to the same feature coalesce in the outbox — nothing observes
+    /// updates to the same feature coalesce in the outbox: nothing observes
     /// the intermediate states, so the final payload is the op.
     UpdateFeatureData {
         id: FeatureId,
@@ -281,8 +281,8 @@ pub enum DocumentOp {
         /// Empty when the asset was registered without loaded bytes.
         bytes: Option<BlobPayload>,
     },
-    /// One STEP import, atomic: the asset, the bodies it created, and the
-    /// object hierarchy. Geometry (meshes, B-rep snapshots) is *derived* —
+    /// One file import, atomic: the asset, the bodies it created, and the
+    /// object hierarchy. Geometry (meshes, B-rep snapshots) is *derived*:
     /// a replica re-derives it from the asset bytes and `detail`, which is
     /// deterministic at any thread count (see CLAUDE.md).
     ImportModel {
@@ -317,7 +317,7 @@ pub enum DocumentOp {
 ///
 /// `#[serde(skip)]` on the document field keeps it out of persistence, and
 /// the manual [`Clone`] **returns an empty buffer**: undo baselines and save
-/// snapshots are copies of *state*, not of the outbox — restoring an old
+/// snapshots are copies of *state*, not of the outbox; restoring an old
 /// snapshot must not resurrect ops that were already drained to the server.
 #[derive(Debug, Default)]
 pub struct OpBuffer(Vec<DocumentOp>);
@@ -369,7 +369,7 @@ impl OpBuffer {
 /// history barrier (the op cannot be inverted; undo history clears).
 ///
 /// Same clone-empty rule as [`OpBuffer`]: snapshots carry state, never
-/// journal material. Coalescing keeps the LAST op with the FIRST inverse —
+/// journal material. Coalescing keeps the LAST op with the FIRST inverse:
 /// a drag undoes to where it started, not to its second-to-last frame.
 #[derive(Debug, Default)]
 pub struct JournalBuffer {

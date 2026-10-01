@@ -220,7 +220,6 @@ impl DocumentService {
         }
     }
 
-    /// Every bench's rebuild jobs, in registration order.
     /// The numeric properties of `node`, from the bench that claimed its
     /// kind.
     pub fn parameters(&self, node: &FeatureNode) -> Vec<crate::evaluate::Parameter> {
@@ -396,10 +395,11 @@ impl DocumentService {
         crate::evaluate::evaluate_formula(document, &|node| self.parameters(node), text, want)
     }
 
-    /// Every bench's rebuilds, after the formulas are worked out. A bench
-    /// that panics while planning costs only its own rebuilds: its dirty
-    /// features are settled, carrying the panic as their error, so it does
-    /// not panic again every frame and the app keeps running.
+    /// Every bench's rebuilds, in registration order, after the formulas
+    /// are worked out. A bench that panics while planning costs only its own
+    /// rebuilds: its dirty features are settled, carrying the panic as their
+    /// error, so it does not panic again every frame and the app keeps
+    /// running.
     pub fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
         self.evaluate(document);
         let mut jobs = Vec::new();

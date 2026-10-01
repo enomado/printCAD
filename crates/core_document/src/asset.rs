@@ -6,11 +6,9 @@ use uuid::Uuid;
 /// Reference to an external file stored in the document archive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetReference {
-    /// Unique identifier for this asset.
     pub id: Uuid,
     /// Path within the .prtcad archive (e.g., "assets/imported_base.step").
     pub path: String,
-    /// Type of asset.
     pub asset_type: AssetType,
     /// Timestamp when asset was imported (epoch milliseconds).
     pub imported_at: i64,
@@ -44,9 +42,7 @@ pub enum AssetType {
     Step,
     /// STL file (stereolithography)
     Stl,
-    /// IGES file
     Iges,
-    /// OBJ file
     Obj,
     /// 3MF package
     ThreeMf,

@@ -375,7 +375,6 @@ impl HookOutcome {
 }
 
 impl<'a> WorkbenchRuntimeContext<'a> {
-    /// Create a new runtime context.
     pub fn new(
         document: &'a mut Document,
         camera_position: [f32; 3],
@@ -749,31 +748,33 @@ mod transform_tests {
 /// Input event passed to workbench on_input hook.
 #[derive(Debug, Clone)]
 pub enum WorkbenchInputEvent {
-    /// Mouse button pressed.
     MousePress {
         button: MouseButton,
         viewport_pos: (f32, f32),
     },
-    /// Mouse button released.
     MouseRelease {
         button: MouseButton,
         viewport_pos: (f32, f32),
     },
-    /// Mouse moved.
-    MouseMove { viewport_pos: (f32, f32) },
-    /// Key pressed.
-    KeyPress { key: KeyCode },
-    /// Key released.
-    KeyRelease { key: KeyCode },
+    MouseMove {
+        viewport_pos: (f32, f32),
+    },
+    KeyPress {
+        key: KeyCode,
+    },
+    KeyRelease {
+        key: KeyCode,
+    },
     /// A tool was activated from the toolbar, a menu or the palette. Action
     /// tools run on this, in the frame the click happened.
     ToolActivated,
     /// A keyboard action the workbench registered
     /// (`WorkbenchContext::register_action`) was triggered by its shortcut.
-    Action { id: String },
+    Action {
+        id: String,
+    },
 }
 
-/// Mouse button identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
@@ -782,7 +783,7 @@ pub enum MouseButton {
     Other(u16),
 }
 
-/// Simplified key code (extend as needed).
+/// The keys a workbench tells apart; any other key arrives as `Unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyCode {
     Escape,
@@ -791,7 +792,6 @@ pub enum KeyCode {
     Delete,
     Backspace,
     Tab,
-    // Letters
     A,
     B,
     C,
@@ -822,7 +822,6 @@ pub enum KeyCode {
     Period,
     Comma,
     Minus,
-    // Numbers
     Key0,
     Key1,
     Key2,
@@ -833,7 +832,6 @@ pub enum KeyCode {
     Key7,
     Key8,
     Key9,
-    // Function keys
     F1,
     F2,
     F3,
@@ -846,7 +844,6 @@ pub enum KeyCode {
     F10,
     F11,
     F12,
-    // Navigation and editing
     ArrowUp,
     ArrowDown,
     ArrowLeft,
@@ -858,11 +855,11 @@ pub enum KeyCode {
     Insert,
     Equals,
     Slash,
-    // Modifiers (for reference; actual modifier state tracked separately)
+    // Modifiers as keys; whether one is held is the context's `ctrl_down`
+    // and `shift_down`.
     Shift,
     Control,
     Alt,
-    // Other
     Unknown,
 }
 

@@ -83,8 +83,8 @@ pub struct FeatureNode {
     pub dirty: bool,
     pub created_at: i64,
     /// Monotonic insertion sequence within the document. THE ordering key
-    /// for build histories — `created_at` has millisecond resolution and
-    /// ties would otherwise order nondeterministically.
+    /// for build histories: `created_at` has millisecond resolution and its
+    /// ties order nondeterministically.
     #[serde(default)]
     pub seq: u64,
     /// Last recompute error for this feature. Derived state: set by the
@@ -183,7 +183,6 @@ pub struct FeatureTree {
 }
 
 impl FeatureTree {
-    /// Create a new empty feature tree.
     pub fn new() -> Self {
         Self::default()
     }
@@ -197,11 +196,11 @@ impl FeatureTree {
             .map_or(0, |m| m + 1)
     }
 
-    /// Add a feature node to the tree.
+    /// Add a feature node to the tree: a root unless dependencies were
+    /// already recorded for its id.
     pub fn add_node(&mut self, node: FeatureNode) -> FeatureId {
         let id = node.id;
 
-        // If feature has no dependencies, it's a root
         if !self.dependencies.contains_key(&id) {
             self.roots.push(id);
         }
@@ -210,40 +209,33 @@ impl FeatureTree {
         id
     }
 
-    /// Get a feature node by ID.
     pub fn get_node(&self, id: FeatureId) -> Option<&FeatureNode> {
         self.features.get(&id)
     }
 
-    /// Get a mutable feature node by ID.
     pub fn get_node_mut(&mut self, id: FeatureId) -> Option<&mut FeatureNode> {
         self.features.get_mut(&id)
     }
 
     /// Add a dependency: `dependent` depends on `dependency`.
     pub fn add_dependency(&mut self, dependent: FeatureId, dependency: FeatureId) {
-        // Add to dependencies
         self.dependencies
             .entry(dependent)
             .or_default()
             .push(dependency);
 
-        // Add to reverse dependencies
         self.dependents
             .entry(dependency)
             .or_default()
             .push(dependent);
 
-        // Remove from roots if it was a root
         self.roots.retain(|&id| id != dependent);
     }
 
-    /// Get all dependencies of a feature.
     pub fn dependencies(&self, feature: FeatureId) -> Vec<FeatureId> {
         self.dependencies.get(&feature).cloned().unwrap_or_default()
     }
 
-    /// Get all features that depend on this one.
     pub fn dependents(&self, feature: FeatureId) -> Vec<FeatureId> {
         self.dependents.get(&feature).cloned().unwrap_or_default()
     }
@@ -258,13 +250,11 @@ impl FeatureTree {
                 && !node.dirty
             {
                 node.dirty = true;
-                // Add all dependents to the queue
                 to_mark.extend(self.dependents(id));
             }
         }
     }
 
-    /// Get all dirty features.
     pub fn dirty_features(&self) -> Vec<FeatureId> {
         self.features
             .iter()
@@ -284,7 +274,6 @@ impl FeatureTree {
         let mut queue = VecDeque::new();
         let mut result = Vec::new();
 
-        // Calculate in-degrees for dirty features and their dependents
         for &feature_id in dirty_features {
             in_degree.insert(feature_id, 0);
             for dep in self.dependencies(feature_id) {
@@ -294,14 +283,12 @@ impl FeatureTree {
             }
         }
 
-        // Add features with no dependencies to queue
         for &feature_id in dirty_features {
             if in_degree.get(&feature_id).copied().unwrap_or(0) == 0 {
                 queue.push_back(feature_id);
             }
         }
 
-        // Topological sort
         while let Some(feature_id) = queue.pop_front() {
             result.push(feature_id);
 
@@ -325,7 +312,6 @@ impl FeatureTree {
         if !self.features.contains_key(&id) {
             return;
         }
-        // Drop old reverse edges.
         for deps in self.dependents.values_mut() {
             deps.retain(|&d| d != id);
         }
@@ -358,12 +344,10 @@ impl FeatureTree {
         true
     }
 
-    /// Get all root features.
     pub fn roots(&self) -> &[FeatureId] {
         &self.roots
     }
 
-    /// Get all feature nodes.
     pub fn all_nodes(&self) -> impl Iterator<Item = (&FeatureId, &FeatureNode)> {
         self.features.iter()
     }
@@ -475,10 +459,8 @@ mod tests {
         assert!(tree.recompute_order(&[]).is_empty());
     }
 
-    /// Pins current behaviour: members of a dependency cycle are silently
-    /// dropped from the recompute order (Kahn's algorithm never reaches
-    /// in-degree 0 for them). If cycles should become a hard error, this
-    /// test is the place that documents the change.
+    /// Members of a dependency cycle are silently dropped from the
+    /// recompute order: Kahn's algorithm never brings their in-degree to 0.
     #[test]
     fn recompute_order_drops_cycle_members() {
         let (x, y) = (FeatureId::new(), FeatureId::new());

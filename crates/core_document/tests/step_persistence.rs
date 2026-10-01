@@ -1,6 +1,10 @@
-//! Verifies that imported STEP geometry survives a `.prtcad` round trip:
-//!   * mesh data is restored from `document.json`,
-//!   * raw STEP bytes are restored from `assets/...` archive entries.
+//! What a `.prtcad` round trip keeps of imported bodies: mesh data (from
+//! `document.json`), raw source bytes (from `assets/...` archive entries),
+//! shape snapshots, the object graph, annotations and layers, repair and
+//! refine requests, visibility and the thumbnail. Also: a save runs from a
+//! worker thread on a cloned document, packing reports its progress, and a
+//! mesh body's request for its solid is one op that stops waiting once the
+//! solid lands.
 
 use core_document::{AssetReference, AssetType, Compression, Document, ImportedGeometry, TriMesh};
 use serde_json::json;
@@ -306,7 +310,7 @@ fn imported_annotations_and_layers_roundtrip() {
 ///
 /// The app hands a clone to a writer thread so the UI keeps rendering. That
 /// only works if the clone is cheap (the payloads sit behind `Arc`s) and
-/// independent — edits to the original while the write runs must not change
+/// independent: edits to the original while the write runs must not change
 /// what lands on disk.
 #[test]
 fn a_cloned_document_saves_independently_from_another_thread() {

@@ -2,12 +2,12 @@
 //!
 //! A full in-memory clone of the document is kept per undo step. This is
 //! cheap in practice: meshes and import blobs are `Arc`-shared (a clone is
-//! refcount bumps plus the feature-tree JSON), and — unlike a serde
-//! round-trip — a memory clone preserves the `#[serde(skip)]` sidecar maps
+//! refcount bumps plus the feature-tree JSON), and, unlike a serde
+//! round-trip, a memory clone preserves the `#[serde(skip)]` sidecar maps
 //! (asset bytes, BRep blobs) that a JSON snapshot would silently drop.
 //!
 //! Change detection rides on [`Document::mutation_seq`], which every
-//! mutation path bumps via `mark_dirty`. The host calls [`UndoHistory::note`]
+//! mutation path bumps via `mark_dirty`. [`UndoHistory::note`] is called
 //! once per frame **while no mouse button is held**, so an entire drag
 //! interaction coalesces into a single undo step and idle frames cost one
 //! integer comparison.
@@ -122,7 +122,7 @@ impl UndoHistory {
     }
 
     /// Drop all history and re-baseline on `doc`. Call when the document is
-    /// replaced wholesale (File > New / Open) — history must not span
+    /// replaced wholesale (File > New / Open): history must not span
     /// documents.
     pub fn reset(&mut self, doc: &Document) {
         self.baseline = doc.clone();
@@ -225,7 +225,7 @@ mod tests {
         let mut doc = Document::new("t");
         let mut history = UndoHistory::new(&doc, 8);
         doc.create_body(Some("A".to_string()));
-        // No note() yet — undo must still see and revert this edit.
+        // No note() yet: undo must still see and revert this edit.
         assert!(history.undo(&mut doc).is_some());
         assert!(doc.bodies().is_empty());
     }

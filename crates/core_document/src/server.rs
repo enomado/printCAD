@@ -3,8 +3,7 @@
 //! printCAD is always-multiplayer in architecture: a *document server* owns
 //! the document's file and its op log, and the app is a client. By default
 //! the server is a local daemon (`printcad-serverd`, one per document, unix
-//! socket); a future plugin replaces the implementation with a remote
-//! transport. The trait is deliberately message-shaped: what
+//! socket). The trait is deliberately message-shaped: what
 //! crosses [`DocumentServer::send`]/[`DocumentServer::poll`] **is** the wire
 //! protocol, serde-serialized verbatim by the socket transport, so promoting
 //! an implementation from in-process to daemon to remote changes transport,
@@ -12,7 +11,7 @@
 //!
 //! The server never deserializes a `Document`. Snapshots cross the boundary
 //! as opaque `.prtcad` container bytes (see `Document::save_to_bytes` /
-//! `load_from_bytes`) and edits as [`DocumentOp`] envelopes — so a daemon
+//! `load_from_bytes`) and edits as [`DocumentOp`] envelopes, so a daemon
 //! keeps serving clients whose document schema it has never seen.
 
 use std::path::PathBuf;
@@ -23,16 +22,13 @@ use crate::op::DocumentOp;
 
 /// Version of the client↔server protocol; the `Hello` handshake refuses a
 /// mismatch loudly rather than misreading frames quietly.
-///
-/// v2: `Hello` carries the client's actor id; the server relays each
-/// client's ops to every *other* client as [`ServerMessage::Ops`].
 pub const SERVER_PROTOCOL_VERSION: u32 = 3;
 
 /// A message whose container bytes travel beside it rather than inside it.
 ///
 /// A document's archive is far too big to encode into the message itself: as
 /// JSON it is an array of decimal numbers, four times the size of what it
-/// carries, and a 420 MB document overran the frame limit outright. The bytes
+/// carries, and a large document overruns the frame limit outright. The bytes
 /// are lifted out before the message is encoded and put back after it is
 /// decoded, so they cross as themselves.
 pub trait Payload {
@@ -76,14 +72,14 @@ impl Payload for ServerMessage {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// First message on a connection; anything else first is an error.
-    /// `actor` identifies this client among the document's editors — it is
+    /// `actor` identifies this client among the document's editors: it is
     /// how relayed ops name their author.
     Hello { protocol: u32, actor: uuid::Uuid },
     /// User edits drained from the document's outbox, in order.
     Ops(Vec<DocumentOp>),
     /// The client's document history jumped (undo/redo/new/open): ops
-    /// recorded before this point no longer describe the client's state.
-    /// The server truncates its log; a future sync server re-baselines.
+    /// recorded before this point do not describe the client's state.
+    /// The server truncates its log.
     Rebase,
     /// Persist a client-serialized `.prtcad` container. `at_seq` is the
     /// client's mutation counter when the snapshot was taken; it rides back
@@ -91,7 +87,7 @@ pub enum ClientMessage {
     /// the document is truly clean (edits may have landed mid-save).
     SaveDocument {
         path: PathBuf,
-        /// Carried beside the message, not inside it — see [`Payload`].
+        /// Carried beside the message, not inside it (see [`Payload`]).
         #[serde(skip)]
         bytes: Vec<u8>,
         at_seq: u64,
@@ -100,15 +96,15 @@ pub enum ClientMessage {
     /// with the request that asked for it (an open may be abandoned by a
     /// newer one).
     OpenDocument { path: PathBuf, token: u64 },
-    /// Ephemeral presence — who this editor is and what they have selected.
+    /// Ephemeral presence: who this editor is and what they have selected.
     /// Relayed to peers, never logged: presence is now-state, not history.
     Presence(PresenceState),
 }
 
-/// What a peer sees of another editor. Deliberately selection-level, not
-/// cursor-level: a selected body is stable, meaningful across viewports,
-/// and cheap; live cursors can layer on later without protocol changes
-/// (this struct just grows fields with serde defaults).
+/// What a peer sees of another editor: chiefly the selection, since a
+/// selected body is stable, meaningful across viewports, and cheap. New
+/// fields take serde defaults, so the struct grows without a protocol
+/// change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresenceState {
     /// Human-facing name (login name by default).
@@ -153,7 +149,7 @@ pub enum ServerMessage {
     Opened {
         token: u64,
         path: PathBuf,
-        /// Carried beside the message, not inside it — see [`Payload`].
+        /// Carried beside the message, not inside it (see [`Payload`]).
         #[serde(skip)]
         bytes: Vec<u8>,
     },
@@ -193,8 +189,7 @@ impl ServerStatus {
 }
 
 /// The replaceable server connection. Implementations: a unix-socket client
-/// to the local `printcad-serverd`, a direct-file fallback, and — later — a
-/// remote transport behind a plugin.
+/// to the local `printcad-serverd` and a direct-file fallback.
 pub trait DocumentServer: Send {
     /// Human-readable implementation name for logs and the status bar.
     fn name(&self) -> &str;
@@ -216,7 +211,6 @@ pub trait DocumentServer: Send {
     fn status(&self) -> ServerStatus;
 
     /// Block until every queued write has been durably handled. Every exit
-    /// path must call this — the process exiting mid-save truncates files
-    /// (the same invariant the old in-app save threads had).
+    /// path must call this: the process exiting mid-save truncates files.
     fn flush(&mut self);
 }

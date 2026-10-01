@@ -44,8 +44,9 @@ impl Chord {
     /// character.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
-        // The key is what follows the last separator, so `Ctrl++` and
-        // `Ctrl+,` keep their key.
+        // The key is what follows the last separator, and a trailing `+`
+        // is the key rather than a separator, so `Ctrl++` and `Ctrl+,` keep
+        // their key.
         let (mods, key) = match text.rfind('+') {
             Some(at) if at + 1 < text.len() => (&text[..at], &text[at + 1..]),
             Some(at) if at > 0 => (&text[..at - 1], "+"),

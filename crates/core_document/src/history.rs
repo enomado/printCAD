@@ -3,7 +3,7 @@
 //! No snapshots: every entry is the (op, inverse) pairs of one user
 //! gesture. Undo applies the inverses in reverse order; redo re-applies the
 //! forward ops. Both go through [`Document::apply_history_op`], so a
-//! history jump IS ordinary ops — it marks the affected features dirty here
+//! history jump IS ordinary ops: it marks the affected features dirty here
 //! and flows to the document server (and any peers) like any other edit.
 //! That is what makes this undo safe in a shared document: it never
 //! replaces state wholesale, it edits forward, and it only edits what THIS
@@ -134,7 +134,7 @@ impl OpJournal {
         Some(label)
     }
 
-    /// Forget everything — a different document is in front of us now.
+    /// Forget everything: the journal goes on with a different document.
     pub fn reset(&mut self, document: &mut Document) {
         let _ = document.take_journal_pairs();
         self.undo.clear();

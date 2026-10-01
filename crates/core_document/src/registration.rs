@@ -15,7 +15,6 @@ macro_rules! define_workbenches {
                 $crate::registration::REGISTERED_WORKBENCHES.lock().unwrap().push(descriptor);
             )*
 
-            // Sort by label
             $crate::registration::REGISTERED_WORKBENCHES.lock().unwrap().sort_by(|a, b| a.label.cmp(&b.label));
 
             Ok(())

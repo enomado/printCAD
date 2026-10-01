@@ -1,8 +1,9 @@
 //! Per-document display units.
 //!
 //! All printCAD geometry is stored internally in **millimetres** (matching
-//! the kernel's STEP import output). This module only describes how to *show* a
-//! length to the user — conversion is purely a formatting concern.
+//! the kernel's STEP import output). This module only describes how a length
+//! is shown to the user and read from what they type; stored values never
+//! change with it.
 
 use std::fmt;
 
@@ -10,8 +11,9 @@ use serde::{Deserialize, Serialize};
 
 /// A length unit that can be picked per document for display purposes.
 ///
-/// Internal storage stays in millimetres; this enum only controls how values
-/// are rendered in the UI (status bar, dimension labels, etc.).
+/// Internal storage stays in millimetres; this enum controls how values are
+/// rendered in the UI (status bar, dimension labels, etc.) and the unit a
+/// bare number in a length formula is taken in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
