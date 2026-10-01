@@ -185,6 +185,18 @@ fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
     assert_eq!(jobs.len(), 1, "the formula marked it for rebuilding");
     let v24 = volume(&jobs.into_iter().next().unwrap().plan.unwrap().ops);
     assert!(v24 > v20 * 1.2, "more teeth, a bigger gear: {v20} → {v24}");
+
+    // A double click on its row opens its task; selecting it does not.
+    let mut ctx =
+        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    let bench = registry.workbench_mut(&id).unwrap();
+    assert!(bench.task(&ctx).is_none());
+    bench.edit_feature(&mut ctx, feature);
+    assert_eq!(
+        bench.task(&ctx).map(|t| t.title),
+        Some("Gear".into()),
+        "a double click opens the gear"
+    );
 }
 
 #[test]
@@ -286,6 +298,100 @@ fn a_bench_changes_only_its_own_kinds() {
     .unwrap_err();
     assert!(refused.contains("does not own"), "{refused}");
     assert_eq!(document.feature_tree().all_nodes().count(), 1);
+}
+
+#[test]
+fn a_bench_removes_the_body_it_made_but_not_one_holding_anothers_feature() {
+    let package = installed("tests/rogue", "rogue.wasm", "rogue-bodies");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("rogue");
+    let made = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.body",
+        json!({}),
+    )
+    .expect("a body with a thing on it");
+    let body = made["body"].as_str().unwrap().to_string();
+    assert_eq!(document.bodies().len(), 1);
+    let removal = |id: &str| json!({"command": "doc.remove_body", "args": {"id": id}});
+    // Its own body, with its own feature on it, goes: what a cancelled
+    // part leaves behind must not stay in the tree.
+    run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.call",
+        removal(&body),
+    )
+    .expect("its own body");
+    assert!(document.bodies().is_empty());
+    assert_eq!(document.feature_tree().all_nodes().count(), 0);
+    let gone = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.call",
+        removal(&body),
+    )
+    .unwrap_err();
+    assert!(gone.contains("no body"), "{gone}");
+
+    // A body holding another workbench's feature is not the package's to
+    // remove.
+    let other = document.create_body(Some("Other".into()));
+    document.add_feature_of_kind(
+        WorkbenchId::new("wb.design"),
+        "Pad".into(),
+        Some(other),
+        Vec::new(),
+        json!({}),
+        core_document::FeatureOrigin::default(),
+    );
+    let refused = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.call",
+        removal(&other.0.to_string()),
+    )
+    .unwrap_err();
+    assert!(refused.contains("does not own"), "{refused}");
+    assert_eq!(document.bodies().len(), 1);
+
+    // Nor is an imported part, which holds no feature at all.
+    let imported = document.create_body(Some("Imported".into()));
+    let asset = document.add_asset_with_data(
+        core_document::AssetReference::new(
+            "assets/part.step",
+            core_document::AssetType::Step,
+            json!({}),
+        ),
+        b"ISO-10303-21;".to_vec(),
+    );
+    document.set_imported_geometry(
+        imported,
+        core_document::ImportedGeometry {
+            mesh: Default::default(),
+            source_asset: Some(asset),
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+    let refused = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.call",
+        removal(&imported.0.to_string()),
+    )
+    .unwrap_err();
+    assert!(refused.contains("an import"), "{refused}");
+    assert_eq!(document.bodies().len(), 2);
 }
 
 #[test]

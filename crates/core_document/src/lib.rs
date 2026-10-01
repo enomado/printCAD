@@ -314,6 +314,35 @@ pub struct Body {
 /// A texture on some faces of a body. Each face is found by its name when
 /// the mesh names it, so the texture follows the face through a rebuild,
 /// else by its index; no faces means every face.
+impl Body {
+    /// A body as `CreateBody` makes it: named, placed where its own frame
+    /// is, holding nothing.
+    pub fn new(id: BodyId, name: String, created_at: i64) -> Self {
+        Self {
+            component: None,
+            frozen: false,
+            unselectable: false,
+            material: None,
+            face_colors: Vec::new(),
+            textures: Vec::new(),
+            link: None,
+            mirror: None,
+            id,
+            name,
+            created_at,
+            tip: None,
+            display: None,
+            repair_requested: false,
+            shape_asset: None,
+            solid_requested: false,
+            refine_requested: false,
+            hidden: false,
+            placement: BodyPlacement::IDENTITY,
+            copy_of: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FaceTexture {
     pub texture: surface_texture::Texture,
@@ -737,7 +766,19 @@ impl Document {
                 id: *id,
                 link: self.bodies.iter().find(|b| b.id == *id)?.link.clone()?,
             },
-            Op::RemoveBody { .. } => return None,
+            // A body as it was made, with nothing on it, comes back as it
+            // was made; one that carried anything cannot.
+            Op::RemoveBody { id } => {
+                let body = self.bodies.iter().find(|b| b.id == *id)?;
+                if !self.body_is_bare(body) {
+                    return None;
+                }
+                Op::CreateBody {
+                    id: *id,
+                    name: body.name.clone(),
+                    created_at: body.created_at,
+                }
+            }
             Op::SetComponent { id, .. } => Op::SetComponent {
                 id: *id,
                 component: self.component(*id).cloned(),
@@ -948,28 +989,7 @@ impl Document {
                 name,
                 created_at,
             } => {
-                self.bodies.push(Body {
-                    component: None,
-                    frozen: false,
-                    unselectable: false,
-                    material: None,
-                    face_colors: Vec::new(),
-                    textures: Vec::new(),
-                    link: None,
-                    mirror: None,
-                    id: *id,
-                    name: name.clone(),
-                    created_at: *created_at,
-                    tip: None,
-                    display: None,
-                    repair_requested: false,
-                    shape_asset: None,
-                    solid_requested: false,
-                    refine_requested: false,
-                    hidden: false,
-                    placement: BodyPlacement::IDENTITY,
-                    copy_of: None,
-                });
+                self.bodies.push(Body::new(*id, name.clone(), *created_at));
             }
             Op::CreateLinkedCopy {
                 id,
@@ -2520,9 +2540,23 @@ impl Document {
         Ok(())
     }
 
+    /// Whether `body` is as `CreateBody` made it: no feature on it, no
+    /// geometry, nothing set since. Its removal undoes; any other body's
+    /// removal is a history barrier.
+    pub fn body_is_bare(&self, body: &Body) -> bool {
+        let fresh = Body::new(body.id, body.name.clone(), body.created_at);
+        serde_json::to_value(body).ok() == serde_json::to_value(&fresh).ok()
+            && !self
+                .feature_tree
+                .all_nodes()
+                .any(|(_, n)| n.body == Some(body.id))
+            && !self.imported_meshes.contains_key(&body.id)
+            && !self.base_solids.contains_key(&body.id)
+    }
+
     /// Remove a body with every feature attached to it and the geometry it
-    /// carried. Deleting a body has no inverse, so the entry it records is
-    /// a history barrier.
+    /// carried. A bare body's removal undoes; any other has no inverse, so
+    /// the entry it records is a history barrier.
     pub fn remove_body(&mut self, body: BodyId) -> bool {
         if !self.bodies.iter().any(|b| b.id == body) {
             return false;

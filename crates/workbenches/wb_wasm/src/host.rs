@@ -247,6 +247,31 @@ impl State {
                 let name = args.get("name").and_then(Value::as_str).map(str::to_string);
                 Ok(json!(document.create_body(name).0.to_string()))
             }
+            calls::REMOVE_BODY => {
+                let text = str_arg(&args, "id")?;
+                let body = body_id(text)?;
+                if !document.bodies().iter().any(|b| b.id == body) {
+                    return Err(format!("no body {text}"));
+                }
+                let foreign = document
+                    .feature_tree()
+                    .all_nodes()
+                    .find(|(_, n)| n.body == Some(body) && !package.owns(n.workbench_id.as_str()))
+                    .map(|(_, n)| n.workbench_id.as_str().to_string());
+                if let Some(kind) = foreign {
+                    return Err(format!(
+                        "body {text} holds a {kind}, which the package does not own"
+                    ));
+                }
+                if document.body_solid_is_imported(body) {
+                    return Err(format!(
+                        "body {text} takes its shape from an import, a link or a copy, \
+                         which the package does not own"
+                    ));
+                }
+                document.remove_body(body);
+                Ok(Value::Null)
+            }
             calls::SET_PLACEMENT => {
                 let body = body_id(str_arg(&args, "body")?)?;
                 let rows: Vec<f64> = args
@@ -268,6 +293,7 @@ impl State {
                     calls::RENAME_FEATURE,
                     calls::SET_FEATURE_VISIBLE,
                     calls::CREATE_BODY,
+                    calls::REMOVE_BODY,
                     calls::SET_PLACEMENT,
                     calls::JOB_START,
                     calls::JOB_CANCEL,

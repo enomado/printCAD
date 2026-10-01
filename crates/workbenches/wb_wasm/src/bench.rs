@@ -825,6 +825,18 @@ impl Workbench for WasmWorkbench {
         }
     }
 
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        let input = bench_api::Input {
+            event: bench_api::Event::EditFeature {
+                feature: id.0.to_string(),
+            },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        self.deliver(&mut inner, ctx, input);
+    }
+
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         let mut inner = self.inner();
         let task = self.refresh(&mut inner, ctx).task.clone()?;

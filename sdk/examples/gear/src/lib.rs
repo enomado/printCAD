@@ -96,8 +96,6 @@ struct Gears {
     editing: Option<(String, Gear)>,
     /// The open gear is one the tool just made: Cancel removes it.
     fresh: bool,
-    /// The active feature last seen, so selecting a gear opens it once.
-    seen_active: Option<String>,
     job: Option<u64>,
     table: Vec<Vec<String>>,
     defaults: Defaults,
@@ -371,6 +369,10 @@ impl Bench for Gears {
                 }
                 true
             }
+            Event::EditFeature { feature } => {
+                self.open(feature);
+                true
+            }
             Event::Key { key, down: true } if key == "Escape" && self.editing.is_some() => {
                 self.task_close(false);
                 true
@@ -379,15 +381,7 @@ impl Bench for Gears {
         }
     }
 
-    fn frame(&mut self, pointer: &Pointer) -> Frame {
-        if pointer.active_feature != self.seen_active {
-            self.seen_active = pointer.active_feature.clone();
-            if self.editing.is_none()
-                && let Some(id) = pointer.active_feature.clone()
-            {
-                self.open(&id);
-            }
-        }
+    fn frame(&mut self, _pointer: &Pointer) -> Frame {
         let mut frame = Frame::default();
         let Some((id, gear)) = self.edited() else {
             self.editing = None;
@@ -594,7 +588,12 @@ impl Bench for Gears {
             return Some("Edit gear".into());
         }
         let result = if self.fresh {
-            host::remove_feature(&id)
+            // The tool made a body for it too; it goes with the gear.
+            let body = host::feature(&id).and_then(|n| n.body);
+            host::remove_feature(&id).and_then(|()| match body {
+                Some(body) => host::remove_body(&body),
+                None => Ok(()),
+            })
         } else {
             host::set_feature_data(&id, opened.to_value())
         };

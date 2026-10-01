@@ -162,7 +162,11 @@ tints them. A tool or feature names one by its file name (`gear` for
 **Features.** A bench owns the feature kinds its manifest lists. It makes
 and changes them only through `host` calls, each an ordinary edit: undone
 with Ctrl+Z, recorded, sent to peers. `host::add_feature`,
-`set_feature_data`, `remove_feature`, `create_body`, and
+`set_feature_data`, `remove_feature`, `create_body`, `remove_body` (a body
+with only the package's own features on it, never an imported, linked or
+copied one; a body removed with features still on it clears the undo
+history, as deleting one in the app does, so a cancelled part removes its
+feature first and then the empty body it made, which undoes), and
 `host::call(api::calls::…)` for the rest. A feature's data is any JSON the
 bench likes.
 
@@ -212,6 +216,8 @@ asks again after an event, a document or selection change, or
 **Input.** `input` gets clicks, key presses, tool activations and actions,
 with what is under the cursor and what is selected (`Pointer`: the ray,
 the point and body hit, the picked face and edges, the active feature).
+A double click on a feature's tree row arrives as `Event::EditFeature`,
+the cue to open its task; selecting a feature alone never opens one.
 
 **Commands.** Commands in `describe` appear to Lua scripts
 (`pc.acme.hello.…`), AI agents and recordings, and run in `run_command`.

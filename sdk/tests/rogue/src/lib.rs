@@ -21,7 +21,7 @@ impl Bench for Rogue {
             label: "Rogue".into(),
             commands: [
                 "count", "spin", "panic", "grow", "files", "job", "helper", "add", "touch",
-                "outside",
+                "outside", "body", "call",
             ]
             .into_iter()
             .map(command)
@@ -70,6 +70,15 @@ impl Bench for Rogue {
             "test.rogue.touch" => {
                 let id = args.get("id").and_then(Value::as_str).ok_or("id")?;
                 host::set_feature_data(id, json!({"touched": true})).map(|_| Value::Null)
+            }
+            "test.rogue.body" => {
+                let body = host::create_body(Some("Rogue"))?;
+                let feature = host::add_feature("test.rogue.thing", "Thing", Some(&body), json!({}))?;
+                Ok(json!({"body": body, "feature": feature}))
+            }
+            "test.rogue.call" => {
+                let command = args.get("command").and_then(Value::as_str).ok_or("command")?;
+                host::call(command, args.get("args").cloned().unwrap_or(json!({})))
             }
             "test.rogue.outside" => {
                 host::add_feature("test.other.kind", "Other", None, json!({})).map(|id| json!(id))

@@ -145,3 +145,57 @@ fn a_move_that_would_split_what_is_shared_is_refused() {
     assert!(doc.move_feature_to_body(pad, from).is_err(), "same body");
     assert_eq!(history(&doc, from), [sketch, pad, pocket]);
 }
+
+/// A body as it was made comes back on undo once removed, so taking away
+/// the empty body a cancelled tool made leaves undo working; one that
+/// carried a feature cannot come back, and its removal clears history.
+#[test]
+fn removing_a_bare_body_undoes_and_a_used_one_is_a_barrier() {
+    let mut doc = Document::new("t");
+    let mut journal = OpJournal::new(16);
+    let kept = doc.create_body(Some("Kept".into()));
+    journal.note(&mut doc);
+    let bare = doc.create_body(Some("Bare".into()));
+    journal.note(&mut doc);
+
+    assert!(doc.remove_body(bare));
+    journal.note(&mut doc);
+    assert!(journal.can_undo(), "a bare body's removal is not a barrier");
+    journal.undo(&mut doc);
+    let back = doc
+        .bodies()
+        .iter()
+        .find(|b| b.id == bare)
+        .expect("it comes back");
+    assert_eq!(back.name, "Bare");
+    journal.undo(&mut doc);
+    journal.undo(&mut doc);
+    assert!(
+        doc.bodies().is_empty(),
+        "the history before it still undoes"
+    );
+    journal.redo(&mut doc);
+    journal.redo(&mut doc);
+    journal.redo(&mut doc);
+    assert!(!doc.bodies().iter().any(|b| b.id == bare));
+
+    // A cancelled tool takes its feature away, then the body it made.
+    let made = doc.create_body(Some("Made".into()));
+    let feature = add(&mut doc, made, "Plane");
+    doc.remove_feature(feature).unwrap();
+    assert!(doc.remove_body(made));
+    journal.note(&mut doc);
+    assert!(
+        journal.can_undo(),
+        "the body is bare once its feature is gone"
+    );
+
+    add(&mut doc, kept, "Plane");
+    journal.note(&mut doc);
+    assert!(doc.remove_body(kept));
+    journal.note(&mut doc);
+    assert!(
+        !journal.can_undo(),
+        "a body with a feature on it cannot come back"
+    );
+}

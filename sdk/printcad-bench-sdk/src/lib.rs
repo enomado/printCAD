@@ -221,6 +221,13 @@ pub mod host {
         call(calls::REMOVE_FEATURE, json!({"id": id})).map(|_| ())
     }
 
+    /// Remove a body that holds nothing of another package's and takes no
+    /// shape from an import, a link or a copy: the empty body a cancelled
+    /// part leaves (its removal undoes), or one of the package's own parts.
+    pub fn remove_body(id: &str) -> Result<(), String> {
+        call(calls::REMOVE_BODY, json!({"id": id})).map(|_| ())
+    }
+
     /// A new body; its id.
     pub fn create_body(name: Option<&str>) -> Result<String, String> {
         let answer = call(calls::CREATE_BODY, json!({"name": name}))?;

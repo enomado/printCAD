@@ -433,6 +433,12 @@ pub enum Event {
         job: u64,
         result: Result<String, String>,
     },
+    /// The user asked to edit a feature of the bench's: a double click on
+    /// its tree row. Selecting a feature alone never opens it; its menu
+    /// may offer to (`menu_items`).
+    EditFeature {
+        feature: String,
+    },
 }
 
 // ------------------------------------------------------------------ frame
@@ -955,6 +961,11 @@ pub mod calls {
     pub const SET_FEATURE_VISIBLE: &str = "doc.set_feature_visible";
     /// `{name?}` → the new body's id.
     pub const CREATE_BODY: &str = "doc.create_body";
+    /// `{id}`: remove a body with the package's own features on it, never
+    /// one holding another package's feature or taking its shape from an
+    /// import, a link or a copy. An empty body's removal undoes, so the
+    /// body a cancelled part made can go without clearing the history.
+    pub const REMOVE_BODY: &str = "doc.remove_body";
     /// `{body, matrix}`: a row-major rigid 4x4.
     pub const SET_PLACEMENT: &str = "doc.set_placement";
     /// `{entry, input}` → the job's number. The result arrives as
