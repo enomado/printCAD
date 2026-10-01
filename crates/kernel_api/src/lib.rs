@@ -71,20 +71,14 @@ pub struct TessellationSettings {
     /// Maximum angle between two face normals at a shared position for them
     /// to be merged into a single welded vertex. Above this angle the kernel
     /// keeps them separate so hard CAD edges stay crisp under shading.
-    /// Defaults to 30° (common cross-face weld preset).
+    /// Defaults to 30°.
     #[serde(default = "default_weld_angle_threshold_deg")]
     pub weld_angle_threshold_deg: f32,
-    /// When true, import serializes each body's shape snapshot into
-    /// `brep_blob` (in memory) and leaves mesh fields empty until a follow-up
-    /// tessellation job runs on the kernel thread. **This is the recommended
-    /// default for large STEP files:** work is split across read/serialize vs
-    /// meshing, the UI can show 0 triangles then a tessellation log line, and
-    /// you avoid a single multi‑minute inline mesh+transfer FFI call.
-    /// When false, the importer tessellates **during** the import call (no
-    /// shape blob); small parts can feel simpler, but huge models block one
-    /// long step.
-    /// Serialization can still take minutes on massive assemblies; the STEP
-    /// asset remains available in the document regardless.
+    /// When true, import keeps each body's shape snapshot in `brep_blob`
+    /// beside its mesh. Meshing happens during the import either way;
+    /// serializing the snapshots is most of the work of reading a large
+    /// assembly, and turning this off skips it. The STEP asset remains
+    /// available in the document regardless.
     #[serde(default = "default_persist_brep_snapshot")]
     pub persist_brep_snapshot: bool,
     /// When true, compute mesh outline / edge segments for the viewport (face
@@ -149,8 +143,8 @@ pub struct TriMesh {
     /// (`indices.len() / 3`), an index into the body's faces in the kernel's
     /// own order. A curved face is many triangles with many normals, and
     /// this is what lets a click on one of them select the whole face.
-    /// Empty when the source has no faces — a sketch, a datum, a mesh saved
-    /// before faces were recorded — and a consumer falls back to geometry.
+    /// Empty when the source has no faces (a sketch, a datum, a mesh saved
+    /// before faces were recorded), and a consumer falls back to geometry.
     #[serde(default)]
     pub faces: Vec<u32>,
     /// Which kernel edge each outline segment belongs to: one entry per
@@ -282,25 +276,25 @@ impl TriMesh {
 
 /// A single body produced by an external import (e.g. STEP).
 ///
-/// The kernel returns one entry per top-level solid/shell encountered in the
-/// source file. With deferred tessellation, [`Self::mesh`] may be empty until
-/// background tessellation finishes; [`Self::brep_blob`] / [`Self::face_colors`]
-/// are populated by the fast STEP read path.
+/// The kernel returns one entry per placed body in the source file, meshed.
+/// [`Self::brep_blob`] is empty when no snapshot was kept:
+/// [`TessellationSettings::persist_brep_snapshot`] off, a full-mesh import,
+/// or a mesh file, which has no shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedBody {
     /// Optional name extracted from the source file (e.g. STEP product label).
     pub name: Option<String>,
-    /// Tessellated mesh ready for the viewport (empty while tessellation is pending).
+    /// Tessellated mesh ready for the viewport.
     #[serde(default)]
     pub mesh: TriMesh,
-    /// Serialized shape snapshot for this body when the fast STEP path was
-    /// used: ogeom native-format text bytes (`ogeom::io::native`, one root
-    /// shape per blob).
+    /// Serialized shape snapshot for this body, when one was kept: ogeom
+    /// native-format text bytes (`ogeom::io::native`, one root shape per
+    /// blob).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub brep_blob: Vec<u8>,
     /// Per-face linear RGB albedo in face-exploration order
     /// (`ogeom::topo::explore` with a Face filter) over the matching shape
-    /// snapshot (used for deferred tessellation).
+    /// snapshot.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_colors: Vec<[f32; 3]>,
     /// Axis-aligned bounds in millimetres from the raw BRep (before tessellation).
@@ -507,7 +501,7 @@ pub struct ImportedAnnotation {
     pub body_index: Option<usize>,
 }
 
-/// One hierarchy node from the imported STEP/XCAF structure.
+/// One hierarchy node from the imported file's product structure.
 ///
 /// Nodes can either be pure containers (`body_index = None`) or reference a
 /// renderable payload in [`ImportedModel::bodies`].
@@ -518,7 +512,7 @@ pub struct ImportedNode {
     /// Parent node id; None means root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<u64>,
-    /// Human-readable name from STEP/XCAF labels when available.
+    /// Human-readable name from the file's product labels when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Structural type of this node.
@@ -564,11 +558,12 @@ pub struct ImportedModel {
     /// past in a terminal.
     #[serde(default)]
     pub report: ImportReport,
-    /// Optional assembly/object tree reconstructed from STEP/XCAF labels.
+    /// Optional assembly/object tree reconstructed from the file's product
+    /// structure.
     #[serde(default)]
     pub nodes: Vec<ImportedNode>,
     /// Length unit declared by the source file, when detectable. Geometry in
-    /// `bodies` is *always* expressed in millimetres regardless — this field
+    /// `bodies` is *always* expressed in millimetres regardless; this field
     /// is purely informational and used by the UI to pick a display unit.
     #[serde(default)]
     pub source_unit: Option<LengthUnit>,
@@ -1245,10 +1240,9 @@ pub enum SolidOp {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         face_names: Vec<TopoName>,
     },
-    /// Merge adjacent faces of the solid that lie on one plane — the split
+    /// Merge adjacent faces of the solid that lie on one plane: the split
     /// a fuse or cut leaves where two pieces meet flush.
     Refine,
-    /// Hollow the solid, removing the faces sampled by `open_faces`.
     /// Offset faces of the running solid along their outward normals by
     /// `distance` (negative into the material), the faces around them
     /// following on their own surfaces.
@@ -1274,6 +1268,7 @@ pub enum SolidOp {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         face_names: Vec<TopoName>,
     },
+    /// Hollow the solid, removing the faces sampled by `open_faces`.
     Thickness {
         value: f64,
         open_faces: Vec<[f64; 3]>,
@@ -1493,8 +1488,6 @@ pub enum DrawingShape {
     },
 }
 
-/// Geometry questions a workbench may ask while it runs, answered by the
-/// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
 /// The solid two shapes share: its volume, its centre and its mesh, in
 /// the first shape's frame.
 #[derive(Debug, Clone)]
@@ -1677,6 +1670,8 @@ pub struct RecognizedHole {
     pub faces: Vec<([f64; 3], [f64; 3])>,
 }
 
+/// Geometry questions a workbench may ask while it runs, answered by the
+/// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
 pub trait KernelQueries: Send + Sync {
     /// The edges bounding the face of `brep` nearest `near`: a point on
     /// each, halfway along, and its direction there, in the shape's own
