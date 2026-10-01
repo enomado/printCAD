@@ -12,6 +12,12 @@ use super::overlays::rgb;
 
 const MARGIN: f32 = 12.0;
 
+/// The layer of what floats on the view (its toolbar, cards and cube):
+/// above the panels, below dialogs, menus and their pop-ups, which share
+/// egui's foreground layer, so a dialog is never drawn under the view's
+/// furniture whichever of them was last brought forward.
+pub(crate) const VIEW_LAYER: Order = Order::Middle;
+
 fn corner(viewport: egui::Rect, id: &str, align: Align2, offset: Vec2) -> Area {
     let anchor = match align {
         Align2::LEFT_TOP => viewport.left_top() + offset,
@@ -20,7 +26,7 @@ fn corner(viewport: egui::Rect, id: &str, align: Align2, offset: Vec2) -> Area {
         _ => viewport.right_bottom() - offset,
     };
     Area::new(egui::Id::new(id))
-        .order(Order::Foreground)
+        .order(VIEW_LAYER)
         .pivot(align)
         .fixed_pos(anchor)
         .interactable(false)
@@ -166,7 +172,7 @@ pub fn draw_viewport_hud(
             viewport.min.y + ovp.anchor[1] / ppp,
         );
         Area::new(egui::Id::new("hud_ovp"))
-            .order(Order::Foreground)
+            .order(VIEW_LAYER)
             .fixed_pos(pos)
             .interactable(false)
             .show(ctx, |ui| {
@@ -279,7 +285,7 @@ pub fn draw_release_notice(
     let mut details = false;
     let mut dismiss = false;
     Area::new(egui::Id::new("release_notice"))
-        .order(Order::Foreground)
+        .order(VIEW_LAYER)
         .pivot(Align2::RIGHT_BOTTOM)
         .fixed_pos(viewport.right_bottom() - Vec2::splat(SPACE_4))
         .show(ctx, |ui| {
@@ -420,7 +426,7 @@ mod tests {
     /// A pill the view toolbar's size, where it stands, under its id.
     fn stand_in_toolbar(ctx: &Context, viewport: egui::Rect) {
         Area::new(egui::Id::new("view_toolbar"))
-            .order(Order::Foreground)
+            .order(VIEW_LAYER)
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(viewport.center_top() + Vec2::new(0.0, 10.0))
             .show(ctx, |ui| {

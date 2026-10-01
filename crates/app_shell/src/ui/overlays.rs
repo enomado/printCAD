@@ -239,7 +239,7 @@ pub fn draw_screen_space_labels(
 /// The orbit pivot marker: a small ringed dot where the next orbit turns.
 pub fn draw_pivot_indicator(ctx: &Context, x: f32, y: f32) {
     let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
+        super::hud::VIEW_LAYER,
         egui::Id::new("pivot_indicator"),
     ));
     let ppp = ctx.pixels_per_point();

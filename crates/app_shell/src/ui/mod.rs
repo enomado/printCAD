@@ -12,6 +12,7 @@ mod export_modal;
 mod feature_tree;
 mod host_ctx;
 mod hud;
+pub(crate) use hud::VIEW_LAYER;
 mod inputs;
 pub(crate) mod keymap;
 mod log_view;

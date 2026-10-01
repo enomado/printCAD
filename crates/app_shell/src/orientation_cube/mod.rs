@@ -256,7 +256,7 @@ pub fn draw(
     // Use Area for floating widget in the viewport
     egui::Area::new(egui::Id::new("orientation_cube"))
         .fixed_pos(pos)
-        .order(egui::Order::Foreground)
+        .order(crate::ui::VIEW_LAYER)
         .show(ctx, |ui| {
             let (response, painter) =
                 ui.allocate_painter(egui::Vec2::new(total_width, total_height), Sense::click());
@@ -318,7 +318,7 @@ pub fn draw(
         );
         egui::Area::new(egui::Id::new("orientation_axes"))
             .fixed_pos(axis_pos)
-            .order(egui::Order::Foreground)
+            .order(crate::ui::VIEW_LAYER)
             .show(ctx, |ui| {
                 let (response, painter) =
                     ui.allocate_painter(egui::Vec2::splat(axis_widget), Sense::hover());

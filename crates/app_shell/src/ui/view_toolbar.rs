@@ -3,7 +3,7 @@
 //! field of view. With the clipping plane on, a second pill under it sets
 //! the plane's axis, position and side.
 
-use egui::{Align2, Area, Context, Order, Vec2};
+use egui::{Align2, Area, Context, Vec2};
 use settings::{DrawStyle, ProjectionMode};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{QtyField, ToolButtonState, tool_button, vseparator};
@@ -236,7 +236,7 @@ pub fn draw_view_toolbar(
     ];
 
     Area::new(egui::Id::new("view_toolbar"))
-        .order(Order::Foreground)
+        .order(super::hud::VIEW_LAYER)
         .pivot(Align2::CENTER_TOP)
         .fixed_pos(viewport.center_top() + Vec2::new(0.0, 10.0))
         .show(ctx, |ui| {
@@ -358,7 +358,7 @@ fn draw_section_bar(
 ) {
     let set = |plane| UiCommand::SetSection(Some(SectionToggle::Set(plane)));
     Area::new(egui::Id::new("view_toolbar_section"))
-        .order(Order::Foreground)
+        .order(super::hud::VIEW_LAYER)
         .pivot(Align2::CENTER_TOP)
         .fixed_pos(viewport.center_top() + Vec2::new(0.0, 10.0 + BUTTON + 14.0))
         .show(ctx, |ui| {
