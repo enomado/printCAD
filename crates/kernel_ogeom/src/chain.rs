@@ -206,6 +206,7 @@ pub fn execute_named(
             message,
         };
         progress::checkpoint().map_err(&err)?;
+        let op_started = std::time::Instant::now();
         let base = current.clone();
         if preview.as_ref().is_some_and(|r| r.start == index) {
             before = base.clone();
@@ -525,6 +526,12 @@ pub fn execute_named(
             }
         };
         current = Some(next);
+        tracing::debug!(
+            target: "printcad.chain",
+            "op {index} {}: {:.1} ms",
+            progress::op_label(solid_op),
+            op_started.elapsed().as_secs_f64() * 1000.0
+        );
         if preview.as_ref().is_some_and(|r| r.end == index + 1) {
             after = current.clone();
         }
@@ -541,6 +548,7 @@ pub fn execute_named(
         &mut answers,
     );
     let names = named.take();
+    let meshing = std::time::Instant::now();
     let mesh = tess::mesh_named(&model, &final_shape, detail, &names).map_err(|e| {
         chain_err(
             ops_list.len() - 1,
@@ -553,6 +561,12 @@ pub fn execute_named(
             "solid-op chain produced an empty render mesh".into(),
         ));
     }
+    tracing::debug!(
+        target: "printcad.chain",
+        "meshing: {:.1} ms",
+        meshing.elapsed().as_secs_f64() * 1000.0
+    );
+    let writing = std::time::Instant::now();
     let brep_blob = tess::write_blob(&model, &final_shape).map_err(|e| {
         chain_err(
             ops_list.len() - 1,
@@ -560,6 +574,11 @@ pub fn execute_named(
         )
     })?;
 
+    tracing::debug!(
+        target: "printcad.chain",
+        "snapshot: {:.1} ms",
+        writing.elapsed().as_secs_f64() * 1000.0
+    );
     let bounds_mm = tess::solid_bounds(&model, &final_shape, &mesh);
     // A preview that cannot be made leaves the build as it is.
     let preview = (!preview_tools.is_empty())
