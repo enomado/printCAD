@@ -29,8 +29,11 @@ Each item is one milestone and one commit.
   (model, solid, face names, pattern tools) at the start of the feature that
   changed last, keyed by everything before it. The next build whose history
   agrees up to there resumes from it instead of from the first feature.
-- [ ] **2. Drop a build nobody needs.** A newer plan for a body whose build
-  is running cancels that build; the newer one goes at once.
+- [x] **2. Drop a build nobody needs.** A newer plan for a body whose build
+  is running cancels that build; the newer one goes at once. A build still
+  in the queue is skipped; a running one stops unless it is past half its
+  body's usual build time, so a stream of edits still shows a shape now and
+  then.
 - [ ] **3. Coarse while dragging, fine at rest.** Builds that follow one
   another faster than they land mesh at a coarser tolerance; once the edits
   settle, the body is built once more at full detail (from the state item 1

@@ -42,6 +42,8 @@ pub enum KernelRequest {
         preview: Option<Uuid>,
         /// What features standing on the solid ask of it part way through.
         probes: Vec<core_document::PlanProbe>,
+        /// Which build this is, for [`KernelWorker::drop_build`].
+        serial: u64,
     },
     /// Measure a body's snapshot: volume, area, centre of mass.
     Measure {
@@ -109,6 +111,9 @@ pub enum KernelResponse {
         elapsed: Duration,
         /// The probes the build was asked, answered in `result.probes`.
         probes: Vec<core_document::PlanProbe>,
+        /// Found among the solids kept, not built: `elapsed` says nothing
+        /// of how long the body takes to build.
+        kept: bool,
     },
     SolidFailed {
         body_id: Uuid,
@@ -182,7 +187,15 @@ struct Activity {
     own_progress: Option<(u64, u64)>,
     /// Stops the job currently running, when there is one.
     canceller: Option<Canceller>,
+    /// The build running (its serial), and since when.
+    building: Option<(u64, Instant)>,
+    /// Builds waiting in the queue that nobody needs, by serial: each is
+    /// answered as cancelled without running. Kept from job to job.
+    superseded: std::collections::HashSet<u64>,
 }
+
+/// What a skipped build answers: a cancellation.
+const SUPERSEDED: &str = "superseded by a newer plan: cancelled";
 
 impl Activity {
     /// The one line worth showing: our label, refined by the kernel's stage.
@@ -219,6 +232,8 @@ pub struct KernelWorker {
     rx: Receiver<KernelResponse>,
     in_flight: u32,
     activity: Arc<Mutex<Activity>>,
+    /// The serial the next build gets.
+    next_serial: u64,
 }
 
 impl KernelWorker {
@@ -242,6 +257,7 @@ impl KernelWorker {
             rx: resp_rx,
             in_flight: 0,
             activity,
+            next_serial: 0,
         }
     }
 
@@ -269,7 +285,9 @@ impl KernelWorker {
         detail: TessellationSettings,
         preview: Option<Uuid>,
         probes: Vec<core_document::PlanProbe>,
-    ) {
+    ) -> u64 {
+        self.next_serial += 1;
+        let serial = self.next_serial;
         if self
             .tx
             .send(KernelRequest::BuildSolid {
@@ -279,11 +297,13 @@ impl KernelWorker {
                 detail,
                 preview,
                 probes,
+                serial,
             })
             .is_ok()
         {
             self.in_flight = self.in_flight.saturating_add(1);
         }
+        serial
     }
 
     /// Submit a repair of an imported body's shape. One response arrives
@@ -448,6 +468,30 @@ impl KernelWorker {
         lock(&self.activity).canceller.is_some()
     }
 
+    /// A newer plan replaced the body's build: the build is dropped. One
+    /// still in the queue is answered as cancelled without running; one
+    /// running stops at the kernel's next checkpoint, unless it has run
+    /// past half of `usual` (the body's last build time), so that a stream
+    /// of edits still shows a shape now and then. Whether it was dropped.
+    pub fn drop_build(&self, serial: u64, usual: Option<Duration>) -> bool {
+        let mut activity = lock(&self.activity);
+        match activity.building {
+            Some((running, since)) if running == serial => {
+                if usual.is_some_and(|usual| since.elapsed() * 2 > usual) {
+                    return false;
+                }
+                if let Some(canceller) = activity.canceller.as_ref() {
+                    canceller.cancel();
+                }
+                true
+            }
+            _ => {
+                activity.superseded.insert(serial);
+                true
+            }
+        }
+    }
+
     /// Ask the running job to stop. It ends at the kernel's next checkpoint
     /// with a cancelled error; queued jobs are unaffected.
     pub fn cancel_current(&self) {
@@ -588,8 +632,10 @@ fn worker_loop(
         let watch = watch_for(&activity);
         {
             let mut activity = lock(&activity);
+            let superseded = std::mem::take(&mut activity.superseded);
             *activity = Activity {
                 canceller: Some(watch.canceller()),
+                superseded,
                 ..Activity::default()
             };
         }
@@ -641,8 +687,20 @@ fn worker_loop(
                 detail,
                 preview,
                 probes,
+                serial,
             } => {
                 let started = Instant::now();
+                {
+                    let mut activity = lock(&activity);
+                    if activity.superseded.remove(&serial) {
+                        return KernelResponse::SolidFailed {
+                            body_id,
+                            failed_feature: None,
+                            error: SUPERSEDED.to_string(),
+                        };
+                    }
+                    activity.building = Some((serial, started));
+                }
                 // The edited feature's ops, first to last.
                 let range = preview.and_then(|feature| {
                     let first = op_features.iter().position(|f| *f == feature)?;
@@ -656,7 +714,9 @@ fn worker_loop(
                     .map(|f| kernel_api::naming::name_of_id(f.as_bytes()))
                     .collect();
                 let key = BuiltSolids::key(&ops, &op_features, &detail, &range, &asked);
-                let outcome = match key.and_then(|key| built.get(body_id, key)) {
+                let found = key.and_then(|key| built.get(body_id, key));
+                let kept = found.is_some();
+                let outcome = match found {
                     Some(result) => Ok(result),
                     None => {
                         let outcome = kernel.execute_solid_chain_cached(
@@ -679,6 +739,7 @@ fn worker_loop(
                         result,
                         elapsed: started.elapsed(),
                         probes,
+                        kept,
                     },
                     Err(err) => KernelResponse::SolidFailed {
                         body_id,
@@ -788,7 +849,14 @@ fn worker_loop(
             }
         });
 
-        *lock(&activity) = Activity::default();
+        {
+            let mut activity = lock(&activity);
+            let superseded = std::mem::take(&mut activity.superseded);
+            *activity = Activity {
+                superseded,
+                ..Activity::default()
+            };
+        }
         if tx.send(response).is_err() {
             return;
         }
@@ -831,7 +899,7 @@ mod tests {
             detail: detail.map(str::to_owned),
             progress: None,
             own_progress: None,
-            canceller: None,
+            ..Activity::default()
         }
     }
 
@@ -932,5 +1000,119 @@ mod tests {
     /// Announce a stage the way the kernel does, to drive the sink under test.
     fn ogeom_stage(name: &str) {
         kernel_ogeom::stage_for_test(name);
+    }
+
+    /// A plate with many holes cut one by one: a build that takes a while.
+    fn slow_chain() -> Vec<SolidOp> {
+        use kernel_api::{BooleanOp, Placement, PrimitiveKind};
+        let mut ops = vec![SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: 200.0,
+                width: 200.0,
+                height: 5.0,
+            },
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        }];
+        for i in 0..40 {
+            ops.push(SolidOp::Primitive {
+                kind: PrimitiveKind::Cylinder {
+                    radius: 2.0,
+                    height: 10.0,
+                    angle_deg: 360.0,
+                },
+                placement: Placement {
+                    origin: [
+                        5.0 + (i % 15) as f64 * 13.0,
+                        5.0 + (i / 15) as f64 * 13.0,
+                        -1.0,
+                    ],
+                    ..Placement::default()
+                },
+                op: BooleanOp::Cut,
+            });
+        }
+        ops
+    }
+
+    /// Every answer the worker gives until `count` have come.
+    fn answers(worker: &mut KernelWorker, count: usize) -> Vec<KernelResponse> {
+        let mut out = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while out.len() < count && Instant::now() < deadline {
+            out.extend(worker.drain());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        out
+    }
+
+    fn cancelled(response: &KernelResponse) -> bool {
+        matches!(response, KernelResponse::SolidFailed { error, .. } if error.contains("cancelled"))
+    }
+
+    /// A build dropped while it waits behind another is answered as
+    /// cancelled without running; the one running is not touched.
+    #[test]
+    fn a_dropped_build_waiting_in_the_queue_never_runs() {
+        let mut worker = KernelWorker::spawn();
+        let detail = TessellationSettings::default();
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        worker.request_build_solid(
+            first,
+            slow_chain(),
+            Vec::new(),
+            detail.clone(),
+            None,
+            Vec::new(),
+        );
+        let waiting =
+            worker.request_build_solid(second, slow_chain(), Vec::new(), detail, None, Vec::new());
+        assert!(worker.drop_build(waiting, None));
+        let out = answers(&mut worker, 2);
+        assert!(
+            matches!(&out[0], KernelResponse::SolidBuilt { body_id, .. } if *body_id == first),
+            "the first build lands"
+        );
+        assert!(
+            matches!(&out[1], KernelResponse::SolidFailed { body_id, error, .. }
+                if *body_id == second && error == SUPERSEDED),
+            "the dropped one is skipped"
+        );
+    }
+
+    /// A build dropped while it runs stops; one past half its body's usual
+    /// time is left to finish.
+    #[test]
+    fn a_dropped_build_running_stops_unless_nearly_done() {
+        let mut worker = KernelWorker::spawn();
+        let detail = TessellationSettings::default();
+        let body = Uuid::new_v4();
+        let running = |worker: &KernelWorker| lock(&worker.activity).building.is_some();
+        let serial = worker.request_build_solid(
+            body,
+            slow_chain(),
+            Vec::new(),
+            detail.clone(),
+            None,
+            Vec::new(),
+        );
+        while !running(&worker) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(worker.drop_build(serial, None));
+        assert!(cancelled(&answers(&mut worker, 1)[0]), "it stopped");
+
+        let serial =
+            worker.request_build_solid(body, slow_chain(), Vec::new(), detail, None, Vec::new());
+        while !running(&worker) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(
+            !worker.drop_build(serial, Some(Duration::from_millis(10))),
+            "past half of its usual time: it finishes"
+        );
+        let out = answers(&mut worker, 1);
+        assert!(matches!(&out[0], KernelResponse::SolidBuilt { .. }));
     }
 }

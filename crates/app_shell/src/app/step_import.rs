@@ -108,9 +108,28 @@ impl PrintCadApp {
     }
 
     fn apply_kernel_response(&mut self, response: KernelResponse) {
+        if let KernelResponse::SolidBuilt {
+            body_id,
+            elapsed,
+            kept: false,
+            ..
+        } = &response
+        {
+            self.session.build_times.insert(*body_id, *elapsed);
+        }
         if let KernelResponse::SolidBuilt { body_id, .. }
         | KernelResponse::SolidFailed { body_id, .. } = &response
         {
+            let dropped = self.session.dropped_builds.remove(body_id);
+            if dropped
+                && let KernelResponse::SolidFailed { error, .. } = &response
+                && Self::is_cancellation(error)
+            {
+                // Dropped for the plan that goes now.
+                self.session.stale_builds.remove(body_id);
+                self.build_landed(*body_id);
+                return;
+            }
             let stale = self.session.stale_builds.remove(body_id);
             self.build_landed(*body_id);
             // Built from a history the body no longer has.
@@ -164,6 +183,7 @@ impl PrintCadApp {
                     result,
                     elapsed,
                     probes,
+                    ..
                 } => {
                     let bid = BodyId(body_id);
                     if !self.session.document.bodies().iter().any(|b| b.id == bid) {

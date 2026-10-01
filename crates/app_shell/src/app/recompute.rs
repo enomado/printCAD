@@ -34,6 +34,7 @@ impl PrintCadApp {
                     if let Some(waiting) = self.session.builds_in_flight.get_mut(&body_id.0) {
                         *waiting = None;
                         self.session.stale_builds.insert(body_id.0);
+                        self.drop_build_out(body_id.0);
                     }
                     // Only geometry the features produced is cleared; an
                     // imported solid outlives an empty history.
@@ -56,7 +57,10 @@ impl PrintCadApp {
                     // One build per body at a time; a newer plan waits in
                     // its place, replacing any older one waiting.
                     match self.session.builds_in_flight.get_mut(&body_id.0) {
-                        Some(waiting) => *waiting = Some(build),
+                        Some(waiting) => {
+                            *waiting = Some(build);
+                            self.drop_build_out(body_id.0);
+                        }
                         None => self.submit_build(body_id.0, build),
                     }
                 }
@@ -98,7 +102,7 @@ impl PrintCadApp {
 
     fn submit_build(&mut self, body: uuid::Uuid, build: QueuedBuild) {
         self.session.builds_in_flight.insert(body, None);
-        self.kernel_worker.request_build_solid(
+        let serial = self.kernel_worker.request_build_solid(
             body,
             build.ops,
             build.op_features,
@@ -106,10 +110,27 @@ impl PrintCadApp {
             build.preview,
             build.probes,
         );
+        self.session.build_serials.insert(body, serial);
+    }
+
+    /// The body's build out on the kernel thread is of a plan nobody needs
+    /// any more: drop it, so the plan waiting goes sooner.
+    fn drop_build_out(&mut self, body: uuid::Uuid) {
+        if self.session.dropped_builds.contains(&body) {
+            return;
+        }
+        let Some(&serial) = self.session.build_serials.get(&body) else {
+            return;
+        };
+        let usual = self.session.build_times.get(&body).copied();
+        if self.kernel_worker.drop_build(serial, usual) {
+            self.session.dropped_builds.insert(body);
+        }
     }
 
     /// A body's build landed: the newest plan made meanwhile goes now.
     pub(crate) fn build_landed(&mut self, body: uuid::Uuid) {
+        self.session.build_serials.remove(&body);
         if let Some(Some(next)) = self.session.builds_in_flight.remove(&body) {
             self.submit_build(body, next);
         }

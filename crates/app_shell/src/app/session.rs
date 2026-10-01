@@ -162,6 +162,13 @@ pub(crate) struct DocumentSession {
     /// Bodies whose build out on the kernel thread no longer stands for
     /// their history (it emptied meanwhile): what lands is left unused.
     pub stale_builds: std::collections::HashSet<Uuid>,
+    /// The serial of each body's build out on the kernel thread.
+    pub build_serials: std::collections::HashMap<Uuid, u64>,
+    /// How long each body's last build took on the kernel thread.
+    pub build_times: std::collections::HashMap<Uuid, std::time::Duration>,
+    /// Bodies whose build out was dropped for a newer plan: its
+    /// cancellation lands quietly.
+    pub dropped_builds: std::collections::HashSet<Uuid>,
     /// Bodies whose new shape is being read, and the asset each failed to
     /// read from, which is not tried again.
     pub shapes_in_flight: std::collections::HashSet<Uuid>,
@@ -273,6 +280,9 @@ impl DocumentSession {
             refines_failed: Default::default(),
             builds_in_flight: Default::default(),
             stale_builds: Default::default(),
+            build_serials: Default::default(),
+            build_times: Default::default(),
+            dropped_builds: Default::default(),
             shapes_in_flight: Default::default(),
             shapes_failed: Default::default(),
             solids_in_flight: Default::default(),
