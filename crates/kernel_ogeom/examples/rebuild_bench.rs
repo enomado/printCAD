@@ -9,7 +9,9 @@
 //! ```
 //!
 //! `--ops` prints each feature's time and the meshing as the chain logs
-//! them (target `printcad.chain`).
+//! them (target `printcad.chain`). `--before` builds as the application
+//! did before it kept anything between builds: every build from the first
+//! feature, the whole history while a task is open, at full detail.
 //!
 //! Then an imported part (the bundled `drive_frame_upper.step`) as a
 //! body's base, a boss beside it whose height is edited: the history is short,
@@ -83,6 +85,7 @@ last = pc.design.pad{sketch = t, length = 4}
 "#;
 
 fn main() {
+    let before = std::env::args().any(|a| a == "--before");
     if std::env::args().any(|a| a == "--ops") {
         tracing_subscriber::fmt()
             .with_env_filter("printcad.chain=debug")
@@ -121,6 +124,7 @@ fn main() {
     };
     let detail = TessellationSettings::default();
     let mut cache = ChainCache::default();
+    let full = detail.clone();
 
     let build =
         |host: &mut Benches, cache: &mut ChainCache, label: &str, detail: &TessellationSettings| {
@@ -128,7 +132,7 @@ fn main() {
             let mut plan = wb_design::body_build_ops(&host.document, body).unwrap();
             // "…, up to <feature>" builds as an open task does: up to the end
             // of the feature it edits.
-            if let Some(name) = label.split(", up to ").nth(1) {
+            if let Some(name) = label.split(", up to ").nth(1).filter(|_| !before) {
                 let feature = named(name);
                 let end = plan
                     .op_features
@@ -146,7 +150,14 @@ fn main() {
                 .collect();
             let started = std::time::Instant::now();
             let built: SolidBuildResult = OgeomKernel::new()
-                .execute_solid_chain_cached(&plan.ops, &tags, detail, None, &[], Some(cache))
+                .execute_solid_chain_cached(
+                    &plan.ops,
+                    &tags,
+                    if before { &full } else { detail },
+                    None,
+                    &[],
+                    (!before).then_some(&mut *cache),
+                )
                 .unwrap();
             println!(
                 "{label:<28} {:>4} ops, {:>2} kept{:<13}  {:>8.1} ms  {} triangles",
@@ -201,11 +212,11 @@ fn main() {
     set_field(&mut host, hole, "depth", 14.0);
     build(&mut host, &mut cache, "deeper, the same hole", &detail);
 
-    imported_part(&detail);
+    imported_part(&detail, before);
 }
 
 /// An imported part as the base, a boss beside it, edited.
-fn imported_part(detail: &TessellationSettings) {
+fn imported_part(detail: &TessellationSettings, before: bool) {
     use kernel_api::{BooleanOp, Kernel, Placement, PrimitiveKind, SolidOp};
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/drive_frame_upper.step");
@@ -244,7 +255,7 @@ fn imported_part(detail: &TessellationSettings) {
                 detail,
                 None,
                 &[],
-                Some(&mut cache),
+                (!before).then_some(&mut cache),
             )
             .unwrap();
         println!(

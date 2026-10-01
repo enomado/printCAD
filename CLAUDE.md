@@ -736,6 +736,23 @@ place, a newer one replacing it, and goes when the build lands
 (`build_landed`), so a drag that changes a feature every frame builds only
 the latest shape rather than replaying each step. A history that changed shape goes through
 `invalidate_body`; a history jump or Recompute All through `invalidate_all`.
+Builds skip what an edit did not change (`docs/RECOMPUTE.md`):
+`kernel_ogeom::ChainCache` (one per body on the worker) keeps the chain's
+state (model clone, solid, face names, pattern tools, probe answers) at the
+start of the op that differed from the last build and at the end, and the
+next build whose ops agree up to there resumes from it; an edited op that
+makes the same solid as before (`fingerprint`: geometry, not snapshot text)
+returns the last result; faces and edges whose geometry, deflection and
+chords are unchanged keep their triangulation, outline and bounds
+(`reuse.rs`, keyed by geometry since every op renumbers its faces). The
+app drops a build a newer plan replaced (`KernelWorker::drop_build`: a
+queued one never runs, a running one stops unless past half its body's
+usual time), meshes a body coarse while plans outrun builds (`moving`,
+`coarse`) and finely 300 ms after they stop, builds an open task's body only
+up to the edited feature (`QueuedBuild::up_to_edited`, the rest once
+settled, `preview_rest`), and builds bodies on a pool of 2 to 4 threads
+(`build_loop`) beside the worker thread for everything else.
+`examples/rebuild_bench.rs` (`--ops`, `--before`) measures it.
 
 Import performance: the per-solid work and each mesh's face pass go through
 `ogeom_core::parallel::map_ordered` (order-preserving, so output is identical

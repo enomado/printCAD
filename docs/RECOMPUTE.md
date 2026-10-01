@@ -72,28 +72,36 @@ Each item is one milestone and one commit.
 
 `rebuild_bench` (release build): a 160 x 100 mm plate, 12 pockets, 6 bosses,
 a slot patterned 6 times, a fillet round the bottom and a last boss, 45
-kernel ops. Each line is one build after the change it names.
+kernel ops; then an imported part (`drive_frame_upper.step`, 406 faces) as a
+body's base with a boss beside it. Each line is one build after the change
+it names. `--before` builds as the application did before any of this:
+from the first feature every time, the whole history while a task is open,
+always at full detail. The two columns were run back to back on a busy
+machine (load 8 to 10), so read them against each other; on a quiet
+machine the plate builds from scratch in about 580 ms.
 
-| Build | Before | 1 |
+| Build | Before | After |
 |---|---|---|
-| From scratch | 577 ms | 578 ms |
-| Last feature edited | 596 ms | 59 ms |
-| Last feature edited again | 563 ms | 53 ms |
-| A middle feature edited | 581 ms | 588 ms |
-| The same one again | 571 ms | 447 ms |
-| Nothing changed (worker cache aside) | 585 ms | 26 ms |
+| From scratch | 713 ms | 799 ms |
+| Last feature edited | 688 ms | 72 ms |
+| Last feature edited again | 718 ms | 78 ms |
+| A middle feature edited | 743 ms | 739 ms |
+| The same one again | 1196 ms | 698 ms |
+| Nothing changed (worker cache aside) | 1059 ms | 16 ms |
+| Dragged, coarse | 863 ms | 587 ms |
+| Settled, full detail | 691 ms | 19 ms |
+| Task open on the middle feature, first edit | 1223 ms | 237 ms |
+| Task open, next edit | 1040 ms | 40 ms |
+| Task settled, the rest of the history | 1097 ms | 510 ms |
+| A pocket made through the plate | 1337 ms | 751 ms |
+| Deeper, the same hole | 1030 ms | 8 ms |
+| Imported part, from scratch | 173 ms | 147 ms |
+| Imported part, boss edited | 180 ms | 101 ms |
+| Imported part, boss edited again | 169 ms | 91 ms |
 
-Every build replays all 45 ops whatever changed. Of a build: the fillet
-233 ms, the pattern 43 ms, the pads, pockets and their refines 2 to 24 ms
-each and growing with the solid, meshing 5 ms and the snapshot 6 ms (a
-flat part: meshing grows with curved faces).
-
-After 1, a build from scratch also keeps the state at its last feature, so
-the first edit there resumes too; the first edit of a middle feature still
-replays everything (nothing was kept there), the next resumes at it and
-pays only for what follows, here the pattern and the fillet. Resuming
-costs a clone of the kept model, 2 to 3 ms on this part.
-
-After 3, a dragged body meshes coarse (here 1952 triangles in place of
-3282) and, once it settles, is built at full detail from the state kept at
-the end of the chain: 31 ms, the meshing and the snapshot alone.
+What is left: the first edit of a feature nothing was kept at replays the
+history before it (the next resumes); what follows an edited feature is
+built again unless it makes the same solid; on a large solid, carrying the
+faces' names through each op (about 60 ms on the imported part) and
+writing the snapshot are now the larger part of a small edit. Item 8 is the
+way to make the ops themselves cheaper.
