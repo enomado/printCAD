@@ -196,9 +196,9 @@ impl Default for AxisSystem {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AxisPreset {
-    /// X right, Y up, Z forward (right-handed, default CAD layout)
+    /// X right, Y up, Z forward (right-handed)
     RightHandedZForward,
-    /// X right, Y up, Z backward (right-handed, OpenGL-style forward)
+    /// X right, Y up, Z backward (right-handed)
     RightHandedZBackward,
     /// X right, Z up, -Y forward (right-handed, Z-up workflows)
     #[default]
