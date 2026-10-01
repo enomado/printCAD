@@ -736,7 +736,7 @@ place, a newer one replacing it, and goes when the build lands
 (`build_landed`), so a drag that changes a feature every frame builds only
 the latest shape rather than replaying each step. A history that changed shape goes through
 `invalidate_body`; a history jump or Recompute All through `invalidate_all`.
-Builds skip what an edit did not change (`docs/RECOMPUTE.md`):
+Builds skip what an edit did not change (what is left, the ops themselves, is `docs/LOCAL_KERNEL_OPS.md`):
 `kernel_ogeom::ChainCache` (one per body on the worker) keeps the chain's
 state (model clone, solid, face names, pattern tools, probe answers) at the
 start of the op that differed from the last build and at the end, and the
