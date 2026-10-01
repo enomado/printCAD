@@ -1,6 +1,6 @@
 //! The no-daemon fallback: the same `DocumentServer` contract served by
 //! plain worker threads doing file I/O in-process. Behaviorally identical
-//! to the daemon path from the app's point of view — which is the proof the
+//! to the daemon path from the app's point of view, which is the proof the
 //! trait actually seals the seam. Ops are counted and dropped: with no
 //! server process there is nowhere durable to log them, and pretending
 //! otherwise would be worse than saying so.

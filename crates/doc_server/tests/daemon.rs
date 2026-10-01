@@ -225,10 +225,9 @@ fn a_session_round_trips_through_the_daemon() {
     assert_eq!(saved_seq, doc.mutation_seq());
     assert!(home.document().is_file(), "the daemon wrote the file");
 
-    // The op log lives beside the document and holds our two envelopes.
+    // The op log lives beside the document: the save carries the ops sent
+    // before it over from the unhomed log, and later ones append to it.
     let oplog = home.document().with_extension("oplog.jsonl");
-    // Ops sent before the first save land in the unhomed log; send more now
-    // that the log has a home and verify they arrive.
     doc.rename_body(body, "Renamed again");
     client.send(ClientMessage::Ops(doc.take_pending_ops()));
     let log_deadline = Instant::now() + Duration::from_secs(30);
@@ -415,8 +414,7 @@ fn large_blobs_are_extracted_and_deduplicated() {
     }
 }
 
-/// Presence relays to peers and dies with its author — and never touches
-/// the op log.
+/// Presence relays to peers and dies with its author.
 #[test]
 fn presence_relays_and_dies_with_its_author() {
     daemon_env();
@@ -456,7 +454,7 @@ fn presence_relays_and_dies_with_its_author() {
 }
 
 /// A client joining mid-session gets the saved file PLUS the ops since the
-/// save — the unsaved present — and converges with the live editor.
+/// save (the unsaved present) and converges with the live editor.
 #[test]
 fn a_late_joiner_catches_up_to_the_unsaved_present() {
     daemon_env();

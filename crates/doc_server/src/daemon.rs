@@ -2,9 +2,9 @@
 //!
 //! Responsibilities: own the document's file (reads on `OpenDocument`,
 //! atomic writes on `SaveDocument`), append every op frame to a sidecar log
-//! (`<file>.oplog.jsonl` — one JSON envelope per line, truncated on
+//! (`<file>.oplog.jsonl`: one JSON envelope per line, truncated on
 //! `Rebase`), and **relay** each client's ops to every other client in the
-//! order they arrived — the server's receive order is the document's total
+//! order they arrived: the server's receive order is the document's total
 //! order. A client never hears its own ops back, so applying relayed ops
 //! verbatim is echo-safe. Everything stored or relayed is opaque bytes or
 //! op envelopes, so daemon and app can be versions apart and still
@@ -21,7 +21,7 @@ use core_document::server::{ClientMessage, SERVER_PROTOCOL_VERSION, ServerMessag
 
 use crate::framing::{read_frame, write_frame};
 
-/// Everyone currently connected. Writes to a client go through its mutex —
+/// Everyone currently connected. Writes to a client go through its mutex:
 /// its own replies and relays from other clients' threads interleave here.
 #[derive(Default, Clone)]
 struct Roster {
@@ -133,7 +133,7 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
     roster.announce_peers();
     tracing::info!(%actor, peers = peers_at_join, "client joined");
 
-    // Serve until disconnect (or a broken frame — no resync point here).
+    // Serve until disconnect, or a broken frame: there is no resync point.
     while let Ok(message) = read_frame::<_, ClientMessage>(&mut reader) {
         match message {
             ClientMessage::Hello { .. } => {
@@ -242,17 +242,17 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 // Ops since the last saved snapshot, in receive order. A client that joins
-// mid-session gets the file's bytes plus this tail — the unsaved present.
+// mid-session gets the file's bytes plus this tail, the unsaved present.
 // Cleared on save (the snapshot then embodies the tail) and on rebase. An
 // op racing a save may be cleared from the tail before the snapshot truly
-// contains it; the convergence milestone owns that window.
+// contains it.
 static OP_TAIL: Mutex<Vec<(uuid::Uuid, Vec<core_document::op::DocumentOp>)>> =
     Mutex::new(Vec::new());
 
 // The op log lives beside the document once we know where the document is.
-// Before the first save/open of a session it accumulates next to the socket.
+// Before the first save/open of a session it accumulates in the unhomed log.
 static OPLOG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
-/// Appends and truncations serialize here — ops arrive from N client threads.
+/// Appends and truncations serialize here: ops arrive from N client threads.
 static OPLOG_WRITE: Mutex<()> = Mutex::new(());
 
 /// Where this daemon's ops live until its document has a file.
@@ -369,7 +369,7 @@ fn append_ops(actor: uuid::Uuid, ops: &[core_document::op::DocumentOp]) -> std::
 
 /// Pull large payload strings out of an op's JSON into the blob store,
 /// leaving a `blob:sha256:<hex>` marker. A generic walk over fields named
-/// `bytes`, not op knowledge — the daemon stays schema-blind, and two
+/// `bytes`, not op knowledge: the daemon stays schema-blind, and two
 /// imports of the same file share one stored blob.
 fn extract_blobs(value: &mut serde_json::Value, blob_dir: &Path) {
     match value {

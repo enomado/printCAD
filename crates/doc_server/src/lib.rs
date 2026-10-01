@@ -3,11 +3,12 @@
 //! Three pieces, all speaking the protocol defined in
 //! `core_document::server`:
 //!
-//! - [`framing`] — length-prefixed JSON frames over any `Read`/`Write`.
-//! - [`daemon`] — the `printcad-serverd` logic: one document, one unix
-//!   socket, one client; stores opaque snapshot bytes and an op log. It
-//!   never deserializes a `Document`, so an old daemon serves new clients.
-//! - [`DaemonClient`] / [`DirectFiles`] — the two `DocumentServer`
+//! - [`framing`]: length-prefixed JSON frames over any `Read`/`Write`.
+//! - [`daemon`]: the `printcad-serverd` logic: one document, one unix
+//!   socket, any number of clients; stores opaque snapshot bytes and an op
+//!   log. It never deserializes a `Document`, so an old daemon serves new
+//!   clients.
+//! - [`DaemonClient`] / [`DirectFiles`]: the two `DocumentServer`
 //!   implementations the app chooses between: the socket client (spawning
 //!   the daemon on demand), and a direct-file fallback with the same
 //!   observable behavior for when no daemon can run.
@@ -23,7 +24,7 @@ pub use direct::DirectFiles;
 use std::path::PathBuf;
 
 /// Where a document's daemon listens. One socket per document, keyed by a
-/// hash of its canonical path, under the user's runtime dir — so any client
+/// hash of its canonical path, under the user's runtime dir, so any client
 /// that knows the document knows its server.
 pub fn socket_path_for(document: &std::path::Path) -> PathBuf {
     use std::collections::hash_map::DefaultHasher;

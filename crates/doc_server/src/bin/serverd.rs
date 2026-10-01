@@ -1,11 +1,11 @@
-//! `printcad-serverd` — the local document server, one instance per
+//! `printcad-serverd`: the local document server, one instance per
 //! document. Spawned by the app (or by hand for debugging):
 //!
 //! ```text
 //! printcad-serverd --socket /run/user/1000/printcad/<key>.sock
 //! ```
 //!
-//! Serves exactly one client and exits when it disconnects.
+//! Serves every client that connects and exits when the last one leaves.
 
 fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt()

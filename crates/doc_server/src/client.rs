@@ -1,6 +1,6 @@
 //! The socket client: spawn-or-connect to `printcad-serverd`, then speak
 //! frames. A reader thread turns the socket into an mpsc the UI drains once
-//! per frame — the same shape as the kernel worker, so the app's frame loop
+//! per frame, the same shape as the kernel worker, so the app's frame loop
 //! treats both alike.
 
 use local_ipc::Stream as UnixStream;
@@ -27,7 +27,7 @@ pub struct DaemonClient {
     rx: Receiver<ServerMessage>,
     /// Messages queued for the writer thread. A save carries the whole
     /// document, so encoding and writing it must not happen on the caller's
-    /// thread — that thread is the one drawing the window.
+    /// thread: that thread is the one drawing the window.
     tx_out: Sender<ClientMessage>,
     /// Keeps the child handle so a daemon we spawned is reaped on drop.
     child: Option<std::process::Child>,
@@ -231,7 +231,7 @@ impl DocumentServer for DaemonClient {
 impl Drop for DaemonClient {
     fn drop(&mut self) {
         // Closing the stream tells the daemon we left. Reap it briefly if
-        // we spawned it — but only briefly: other clients may be keeping it
+        // we spawned it, but only briefly: other clients may be keeping it
         // alive, and blocking here would deadlock the spawner on its own
         // daemon. An unreaped child that exits later is a zombie until our
         // process ends; with one daemon per document that stays a handful.
