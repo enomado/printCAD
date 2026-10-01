@@ -135,7 +135,6 @@ impl JobBoard {
             .unwrap_or_default()
     }
 
-    /// A job runs.
     pub(crate) fn running(&self) -> bool {
         self.board.lock().is_ok_and(|b| !b.running.is_empty())
     }
