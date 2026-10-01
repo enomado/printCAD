@@ -33,18 +33,6 @@ pub enum KernelRequest {
     /// Rebuild a body's solid from its Design feature chain.
     /// `op_features` maps each op index to its owning feature id so a
     /// failure can be pinned on the culprit in the tree.
-    BuildSolid {
-        body_id: Uuid,
-        ops: Vec<SolidOp>,
-        op_features: Vec<Uuid>,
-        detail: TessellationSettings,
-        /// The feature being edited, whose preview the result carries.
-        preview: Option<Uuid>,
-        /// What features standing on the solid ask of it part way through.
-        probes: Vec<core_document::PlanProbe>,
-        /// Which build this is, for [`KernelWorker::drop_build`].
-        serial: u64,
-    },
     /// Measure a body's snapshot: volume, area, centre of mass.
     Measure {
         body_id: Uuid,
@@ -86,6 +74,20 @@ pub enum KernelRequest {
         face_colors: Vec<[f32; 3]>,
         detail: TessellationSettings,
     },
+}
+
+/// A body's build, for the build threads.
+struct BuildRequest {
+    body_id: Uuid,
+    ops: Vec<SolidOp>,
+    op_features: Vec<Uuid>,
+    detail: TessellationSettings,
+    /// The feature being edited, whose preview the result carries.
+    preview: Option<Uuid>,
+    /// What features standing on the solid ask of it part way through.
+    probes: Vec<core_document::PlanProbe>,
+    /// Which build this is, for [`KernelWorker::drop_build`].
+    serial: u64,
 }
 
 /// Result delivered from the worker back to the UI thread.
@@ -187,11 +189,33 @@ struct Activity {
     own_progress: Option<(u64, u64)>,
     /// Stops the job currently running, when there is one.
     canceller: Option<Canceller>,
-    /// The build running (its serial), and since when.
-    building: Option<(u64, Instant)>,
+}
+
+/// The builds out on the build threads.
+#[derive(Default)]
+struct BuildBook {
+    /// The builds running, by serial: when each began, and how to stop it.
+    running: std::collections::HashMap<u64, (Instant, Canceller)>,
     /// Builds waiting in the queue that nobody needs, by serial: each is
-    /// answered as cancelled without running. Kept from job to job.
+    /// answered as cancelled without running.
     superseded: std::collections::HashSet<u64>,
+}
+
+/// What the build threads share: the solids kept, each body's chain
+/// states, and the builds out.
+#[derive(Default)]
+struct BuildShared {
+    built: Mutex<BuiltSolids>,
+    chains: Mutex<Chains>,
+    book: Mutex<BuildBook>,
+}
+
+/// How many bodies build at once: a few, each build's own work going wide
+/// on the kernel's threads besides.
+fn build_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| (n.get() / 4).clamp(2, 4))
+        .unwrap_or(2)
 }
 
 /// What a skipped build answers: a cancellation.
@@ -217,10 +241,8 @@ impl Activity {
     }
 }
 
-fn lock(activity: &Mutex<Activity>) -> std::sync::MutexGuard<'_, Activity> {
-    activity
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock<T>(slot: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// UI-side handle to the worker thread. `in_flight` is incremented by
@@ -229,9 +251,13 @@ fn lock(activity: &Mutex<Activity>) -> std::sync::MutexGuard<'_, Activity> {
 /// imports are pending.
 pub struct KernelWorker {
     tx: Sender<KernelRequest>,
+    build_tx: Sender<BuildRequest>,
     rx: Receiver<KernelResponse>,
     in_flight: u32,
     activity: Arc<Mutex<Activity>>,
+    /// Each build thread's own activity, for the status bar.
+    build_activities: Vec<Arc<Mutex<Activity>>>,
+    builds: Arc<BuildShared>,
     /// The serial the next build gets.
     next_serial: u64,
 }
@@ -247,6 +273,26 @@ impl KernelWorker {
         let activity = Arc::new(Mutex::new(Activity::default()));
         let worker_activity = Arc::clone(&activity);
 
+        let (build_tx, build_rx) = channel::<BuildRequest>();
+        let build_rx = Arc::new(Mutex::new(build_rx));
+        let builds = Arc::new(BuildShared::default());
+        let build_activities: Vec<_> = (0..build_threads())
+            .map(|n| {
+                let activity = Arc::new(Mutex::new(Activity::default()));
+                let (rx, tx, shared, slot) = (
+                    Arc::clone(&build_rx),
+                    resp_tx.clone(),
+                    Arc::clone(&builds),
+                    Arc::clone(&activity),
+                );
+                thread::Builder::new()
+                    .name(format!("printcad-build-{n}"))
+                    .spawn(move || build_loop(&rx, &tx, &shared, &slot))
+                    .expect("failed to spawn a build thread");
+                activity
+            })
+            .collect();
+
         thread::Builder::new()
             .name("printcad-kernel-worker".to_string())
             .spawn(move || worker_loop(req_rx, resp_tx, worker_activity))
@@ -254,9 +300,12 @@ impl KernelWorker {
 
         Self {
             tx: req_tx,
+            build_tx,
             rx: resp_rx,
             in_flight: 0,
             activity,
+            build_activities,
+            builds,
             next_serial: 0,
         }
     }
@@ -289,8 +338,8 @@ impl KernelWorker {
         self.next_serial += 1;
         let serial = self.next_serial;
         if self
-            .tx
-            .send(KernelRequest::BuildSolid {
+            .build_tx
+            .send(BuildRequest {
                 body_id,
                 ops,
                 op_features,
@@ -454,18 +503,23 @@ impl KernelWorker {
     /// What the kernel is doing right now, for the status bar. `None` between
     /// jobs, or before the running job has announced its first stage.
     pub fn status(&self) -> Option<String> {
-        lock(&self.activity).status()
+        self.activities().find_map(|a| lock(a).status())
+    }
+
+    /// The worker's activity, then each build thread's.
+    fn activities(&self) -> impl Iterator<Item = &Arc<Mutex<Activity>>> {
+        std::iter::once(&self.activity).chain(&self.build_activities)
     }
 
     /// `(done, total)` to draw: our counted stage's when running, else the
     /// kernel's current stage's.
     pub fn progress(&self) -> Option<(u64, u64)> {
-        lock(&self.activity).progress()
+        self.activities().find_map(|a| lock(a).progress())
     }
 
     /// Whether a running job can be stopped — i.e. one is running at all.
     pub fn is_cancellable(&self) -> bool {
-        lock(&self.activity).canceller.is_some()
+        self.activities().any(|a| lock(a).canceller.is_some())
     }
 
     /// A newer plan replaced the body's build: the build is dropped. One
@@ -474,29 +528,29 @@ impl KernelWorker {
     /// past half of `usual` (the body's last build time), so that a stream
     /// of edits still shows a shape now and then. Whether it was dropped.
     pub fn drop_build(&self, serial: u64, usual: Option<Duration>) -> bool {
-        let mut activity = lock(&self.activity);
-        match activity.building {
-            Some((running, since)) if running == serial => {
+        let mut book = lock(&self.builds.book);
+        match book.running.get(&serial) {
+            Some((since, canceller)) => {
                 if usual.is_some_and(|usual| since.elapsed() * 2 > usual) {
                     return false;
                 }
-                if let Some(canceller) = activity.canceller.as_ref() {
-                    canceller.cancel();
-                }
+                canceller.cancel();
                 true
             }
-            _ => {
-                activity.superseded.insert(serial);
+            None => {
+                book.superseded.insert(serial);
                 true
             }
         }
     }
 
-    /// Ask the running job to stop. It ends at the kernel's next checkpoint
-    /// with a cancelled error; queued jobs are unaffected.
+    /// Ask the running jobs to stop. Each ends at the kernel's next
+    /// checkpoint with a cancelled error; queued jobs are unaffected.
     pub fn cancel_current(&self) {
-        if let Some(canceller) = lock(&self.activity).canceller.as_ref() {
-            canceller.cancel();
+        for activity in self.activities() {
+            if let Some(canceller) = lock(activity).canceller.as_ref() {
+                canceller.cancel();
+            }
         }
     }
 }
@@ -605,18 +659,129 @@ struct Chains {
 }
 
 impl Chains {
-    /// The body's cache, made when it has none; the body built longest ago
-    /// gives its up when too many keep one.
-    fn of(&mut self, body: Uuid) -> &mut kernel_ogeom::ChainCache {
-        let cache = match self.bodies.iter().position(|(b, _)| *b == body) {
+    /// The body's cache, taken out while its build runs; a fresh one when
+    /// it has none.
+    fn take(&mut self, body: Uuid) -> kernel_ogeom::ChainCache {
+        match self.bodies.iter().position(|(b, _)| *b == body) {
             Some(at) => self.bodies.remove(at).map(|(_, c)| c).unwrap_or_default(),
             None => kernel_ogeom::ChainCache::default(),
-        };
+        }
+    }
+
+    /// Put the body's cache back after its build; the body built longest
+    /// ago gives its up when too many keep one.
+    fn put(&mut self, body: Uuid, cache: kernel_ogeom::ChainCache) {
         self.bodies.push_back((body, cache));
         while self.bodies.len() > CHAINS_KEPT {
             self.bodies.pop_front();
         }
-        &mut self.bodies.back_mut().expect("just pushed").1
+    }
+}
+
+/// A build thread: takes the next build from the queue, one at a time.
+fn build_loop(
+    rx: &Mutex<Receiver<BuildRequest>>,
+    tx: &Sender<KernelResponse>,
+    shared: &BuildShared,
+    activity: &Arc<Mutex<Activity>>,
+) {
+    let mut kernel = OgeomKernel::new();
+    loop {
+        let Ok(request) = lock(rx).recv() else {
+            return;
+        };
+        let watch = watch_for(activity);
+        *lock(activity) = Activity {
+            canceller: Some(watch.canceller()),
+            ..Activity::default()
+        };
+        let serial = request.serial;
+        let response =
+            kernel_ogeom::watched(&watch, || build(&mut kernel, shared, &watch, request));
+        lock(&shared.book).running.remove(&serial);
+        *lock(activity) = Activity::default();
+        if tx.send(response).is_err() {
+            return;
+        }
+    }
+}
+
+/// Build one body's solid: from the solids kept when it was built alike
+/// before, else through the body's chain states.
+fn build(
+    kernel: &mut OgeomKernel,
+    shared: &BuildShared,
+    watch: &Watch,
+    request: BuildRequest,
+) -> KernelResponse {
+    let BuildRequest {
+        body_id,
+        ops,
+        op_features,
+        detail,
+        preview,
+        probes,
+        serial,
+    } = request;
+    let started = Instant::now();
+    {
+        let mut book = lock(&shared.book);
+        if book.superseded.remove(&serial) {
+            return KernelResponse::SolidFailed {
+                body_id,
+                failed_feature: None,
+                error: SUPERSEDED.to_string(),
+            };
+        }
+        book.running.insert(serial, (started, watch.canceller()));
+    }
+    // The edited feature's ops, first to last.
+    let range = preview.and_then(|feature| {
+        let first = op_features.iter().position(|f| *f == feature)?;
+        let last = op_features.iter().rposition(|f| *f == feature)?;
+        Some(first..last + 1)
+    });
+    let asked: Vec<kernel_api::ChainProbe> = probes.iter().map(|p| p.probe).collect();
+    // Each op's faces are named after the feature it builds.
+    let tags: Vec<kernel_api::TopoName> = op_features
+        .iter()
+        .map(|f| kernel_api::naming::name_of_id(f.as_bytes()))
+        .collect();
+    let key = BuiltSolids::key(&ops, &op_features, &detail, &range, &asked);
+    let found = key.and_then(|key| lock(&shared.built).get(body_id, key));
+    let kept = found.is_some();
+    let outcome = match found {
+        Some(result) => Ok(result),
+        None => {
+            let mut chain = lock(&shared.chains).take(body_id);
+            let outcome = kernel.execute_solid_chain_cached(
+                &ops,
+                &tags,
+                &detail,
+                range,
+                &asked,
+                Some(&mut chain),
+            );
+            lock(&shared.chains).put(body_id, chain);
+            if let (Ok(result), Some(key)) = (&outcome, key) {
+                lock(&shared.built).keep(body_id, key, result);
+            }
+            outcome
+        }
+    };
+    match outcome {
+        Ok(result) => KernelResponse::SolidBuilt {
+            body_id,
+            result,
+            elapsed: started.elapsed(),
+            probes,
+            kept,
+        },
+        Err(err) => KernelResponse::SolidFailed {
+            body_id,
+            failed_feature: op_features.get(err.op_index).copied(),
+            error: err.message,
+        },
     }
 }
 
@@ -626,16 +791,12 @@ fn worker_loop(
     activity: Arc<Mutex<Activity>>,
 ) {
     let mut kernel = OgeomKernel::new();
-    let mut built = BuiltSolids::default();
-    let mut chains = Chains::default();
     while let Ok(request) = rx.recv() {
         let watch = watch_for(&activity);
         {
             let mut activity = lock(&activity);
-            let superseded = std::mem::take(&mut activity.superseded);
             *activity = Activity {
                 canceller: Some(watch.canceller()),
-                superseded,
                 ..Activity::default()
             };
         }
@@ -677,74 +838,6 @@ fn worker_loop(
                     Err(err) => KernelResponse::StepFailed {
                         path,
                         error: err.to_string(),
-                    },
-                }
-            }
-            KernelRequest::BuildSolid {
-                body_id,
-                ops,
-                op_features,
-                detail,
-                preview,
-                probes,
-                serial,
-            } => {
-                let started = Instant::now();
-                {
-                    let mut activity = lock(&activity);
-                    if activity.superseded.remove(&serial) {
-                        return KernelResponse::SolidFailed {
-                            body_id,
-                            failed_feature: None,
-                            error: SUPERSEDED.to_string(),
-                        };
-                    }
-                    activity.building = Some((serial, started));
-                }
-                // The edited feature's ops, first to last.
-                let range = preview.and_then(|feature| {
-                    let first = op_features.iter().position(|f| *f == feature)?;
-                    let last = op_features.iter().rposition(|f| *f == feature)?;
-                    Some(first..last + 1)
-                });
-                let asked: Vec<kernel_api::ChainProbe> = probes.iter().map(|p| p.probe).collect();
-                // Each op's faces are named after the feature it builds.
-                let tags: Vec<kernel_api::TopoName> = op_features
-                    .iter()
-                    .map(|f| kernel_api::naming::name_of_id(f.as_bytes()))
-                    .collect();
-                let key = BuiltSolids::key(&ops, &op_features, &detail, &range, &asked);
-                let found = key.and_then(|key| built.get(body_id, key));
-                let kept = found.is_some();
-                let outcome = match found {
-                    Some(result) => Ok(result),
-                    None => {
-                        let outcome = kernel.execute_solid_chain_cached(
-                            &ops,
-                            &tags,
-                            &detail,
-                            range,
-                            &asked,
-                            Some(chains.of(body_id)),
-                        );
-                        if let (Ok(result), Some(key)) = (&outcome, key) {
-                            built.keep(body_id, key, result);
-                        }
-                        outcome
-                    }
-                };
-                match outcome {
-                    Ok(result) => KernelResponse::SolidBuilt {
-                        body_id,
-                        result,
-                        elapsed: started.elapsed(),
-                        probes,
-                        kept,
-                    },
-                    Err(err) => KernelResponse::SolidFailed {
-                        body_id,
-                        failed_feature: op_features.get(err.op_index).copied(),
-                        error: err.message,
                     },
                 }
             }
@@ -849,14 +942,7 @@ fn worker_loop(
             }
         });
 
-        {
-            let mut activity = lock(&activity);
-            let superseded = std::mem::take(&mut activity.superseded);
-            *activity = Activity {
-                superseded,
-                ..Activity::default()
-            };
-        }
+        *lock(&activity) = Activity::default();
         if tx.send(response).is_err() {
             return;
         }
@@ -1050,34 +1136,66 @@ mod tests {
         matches!(response, KernelResponse::SolidFailed { error, .. } if error.contains("cancelled"))
     }
 
-    /// A build dropped while it waits behind another is answered as
-    /// cancelled without running; the one running is not touched.
+    /// A build dropped while it waits behind others is answered as
+    /// cancelled without running; the ones running are not touched.
     #[test]
     fn a_dropped_build_waiting_in_the_queue_never_runs() {
         let mut worker = KernelWorker::spawn();
         let detail = TessellationSettings::default();
-        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
-        worker.request_build_solid(
-            first,
-            slow_chain(),
-            Vec::new(),
-            detail.clone(),
-            None,
-            Vec::new(),
-        );
+        let busy = worker.build_activities.len();
+        let bodies: Vec<Uuid> = (0..busy).map(|_| Uuid::new_v4()).collect();
+        for body in &bodies {
+            worker.request_build_solid(
+                *body,
+                slow_chain(),
+                Vec::new(),
+                detail.clone(),
+                None,
+                Vec::new(),
+            );
+        }
+        let last = Uuid::new_v4();
         let waiting =
-            worker.request_build_solid(second, slow_chain(), Vec::new(), detail, None, Vec::new());
+            worker.request_build_solid(last, slow_chain(), Vec::new(), detail, None, Vec::new());
         assert!(worker.drop_build(waiting, None));
-        let out = answers(&mut worker, 2);
+        let out = answers(&mut worker, busy + 1);
+        let built = out
+            .iter()
+            .filter(|r| matches!(r, KernelResponse::SolidBuilt { body_id, .. } if bodies.contains(body_id)))
+            .count();
+        assert_eq!(built, busy, "the builds running land");
         assert!(
-            matches!(&out[0], KernelResponse::SolidBuilt { body_id, .. } if *body_id == first),
-            "the first build lands"
-        );
-        assert!(
-            matches!(&out[1], KernelResponse::SolidFailed { body_id, error, .. }
-                if *body_id == second && error == SUPERSEDED),
+            out.iter().any(
+                |r| matches!(r, KernelResponse::SolidFailed { body_id, error, .. }
+                if *body_id == last && error == SUPERSEDED)
+            ),
             "the dropped one is skipped"
         );
+    }
+
+    /// Two bodies build at the same time.
+    #[test]
+    fn two_bodies_build_at_once() {
+        let mut worker = KernelWorker::spawn();
+        let detail = TessellationSettings::default();
+        for _ in 0..2 {
+            worker.request_build_solid(
+                Uuid::new_v4(),
+                slow_chain(),
+                Vec::new(),
+                detail.clone(),
+                None,
+                Vec::new(),
+            );
+        }
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut together = false;
+        while !together && Instant::now() < deadline {
+            together = lock(&worker.builds.book).running.len() == 2;
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(together, "both ran at once");
+        assert_eq!(answers(&mut worker, 2).len(), 2);
     }
 
     /// A build dropped while it runs stops; one past half its body's usual
@@ -1087,7 +1205,7 @@ mod tests {
         let mut worker = KernelWorker::spawn();
         let detail = TessellationSettings::default();
         let body = Uuid::new_v4();
-        let running = |worker: &KernelWorker| lock(&worker.activity).building.is_some();
+        let running = |worker: &KernelWorker| !lock(&worker.builds.book).running.is_empty();
         let serial = worker.request_build_solid(
             body,
             slow_chain(),

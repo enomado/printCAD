@@ -59,8 +59,12 @@ Each item is one milestone and one commit.
   per meshing. Edges keep their outlines the same way, and the solid's
   bounds are the union of its faces', each kept with its face: measuring a
   curved solid's bounds whole cost more than meshing it.
-- [ ] **7. Bodies in parallel.** Builds of different bodies run on several
-  threads; a body still has one build at a time.
+- [x] **7. Bodies in parallel.** Builds of different bodies run on several
+  threads; a body still has one build at a time. Builds go to a pool of two
+  to four threads (a quarter of the machine's), sharing the solids kept and
+  each body's chain states; imports, repairs and the rest keep their own
+  thread. The status bar shows the first job that has something to say,
+  and Cancel stops every job running.
 - 8. Local kernel operations (booleans and dress-ups that work only near
   the change) are kernel work, for a later pass.
 

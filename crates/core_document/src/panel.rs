@@ -4,8 +4,8 @@
 //! built-in ones, formulas included.
 
 use bench_api::{
-    Bind, ButtonStyle, Callout, DiagramShape, DiagramStroke, Dim, Dimension, NoteKind,
-    PanelEvent, Widget,
+    Bind, ButtonStyle, Callout, DiagramShape, DiagramStroke, Dim, Dimension, NoteKind, PanelEvent,
+    Widget,
 };
 use egui::{RichText, Ui};
 use ui_kit::tokens::*;
@@ -445,7 +445,11 @@ fn diagram(
                 stroke,
                 fill,
             } => {
-                let fill = if *fill { BG3 } else { egui::Color32::TRANSPARENT };
+                let fill = if *fill {
+                    BG3
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
                 painter.circle(at(*center), radius * scale, fill, stroke_of(*stroke));
             }
             DiagramShape::Text { at: p, text, mono } => {
@@ -479,7 +483,12 @@ fn diagram(
         painter.line_segment([p1, p2], stroke);
         arrow(&painter, p1, dir, color);
         arrow(&painter, p2, -dir, color);
-        pill(&painter, p1 + (p2 - p1) / 2.0, &dimension.text, dimension.emphasis);
+        pill(
+            &painter,
+            p1 + (p2 - p1) / 2.0,
+            &dimension.text,
+            dimension.emphasis,
+        );
     }
     for callout in callouts {
         let anchor = at(callout.anchor);
@@ -655,6 +664,49 @@ mod tests {
                 label: "Working".into(),
                 fraction: Some(0.5),
                 job: None,
+            },
+            Widget::Diagram {
+                id: "d".into(),
+                width: 100.0,
+                height: 50.0,
+                shapes: vec![
+                    DiagramShape::Path {
+                        points: vec![[10.0, 10.0], [90.0, 10.0], [90.0, 40.0], [10.0, 40.0]],
+                        closed: true,
+                        stroke: DiagramStroke::Outline,
+                        fill: true,
+                    },
+                    DiagramShape::Path {
+                        points: vec![[0.0, 25.0], [100.0, 25.0]],
+                        closed: false,
+                        stroke: DiagramStroke::Axis,
+                        fill: false,
+                    },
+                    DiagramShape::Circle {
+                        center: [50.0, 25.0],
+                        radius: 5.0,
+                        stroke: DiagramStroke::Hidden,
+                        fill: false,
+                    },
+                    DiagramShape::Text {
+                        at: [50.0, 45.0],
+                        text: "top".into(),
+                        mono: false,
+                    },
+                ],
+                dimensions: vec![Dimension {
+                    from: [10.0, 10.0],
+                    to: [90.0, 10.0],
+                    offset: -6.0,
+                    text: "L 80".into(),
+                    emphasis: true,
+                }],
+                callouts: vec![Callout {
+                    anchor: [50.0, 25.0],
+                    at: [75.0, 45.0],
+                    text: "bore".into(),
+                    emphasis: false,
+                }],
             },
         ]
     }
