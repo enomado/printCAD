@@ -4384,6 +4384,19 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
             .iter()
             .any(|c| c.id == related[0] && matches!(c.kind, ConstraintKind::Horizontal { .. }))
     );
+    // Its corner: the constraints of both edges meeting there.
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.click(2.0, 2.0, "sketch.select");
+    h.release(2.0, 2.0, "sketch.select");
+    let related = listed(&mut h, ConstraintFilter::Related);
+    let sketch = h.sketch();
+    let kinds: Vec<_> = related
+        .iter()
+        .filter_map(|id| sketch.constraints.iter().find(|c| c.id == *id))
+        .map(|c| std::mem::discriminant(&c.kind))
+        .collect();
+    assert_eq!(related.len(), 2, "the bottom and left edges' constraints");
+    assert_ne!(kinds[0], kinds[1], "one level, one upright");
     // Selected picks out the selected constraints alone.
     assert!(listed(&mut h, ConstraintFilter::Selected).is_empty());
 }

@@ -104,7 +104,8 @@ pub enum ConstraintFilter {
     Reference,
     /// The selected constraints.
     Selected,
-    /// Those on the selected geometry, a curve's own points included.
+    /// Those on the selected geometry, a curve's own points included, and
+    /// on the curves meeting at a selected corner.
     Related,
     /// Those on the parked layer.
     Parked,
@@ -139,17 +140,65 @@ impl ConstraintFilter {
             ConstraintFilter::Reference => c.kind.is_dimensional() && !c.driving,
             ConstraintFilter::Selected => selected_constraints.contains(&c.id),
             ConstraintFilter::Related => {
-                let mut reach: HashSet<Uuid> = selected.clone();
-                for id in selected {
-                    if let Some(element) = sketch.get_geometry(*id) {
-                        reach.extend(Sketch::curve_point_ids(element));
-                    }
-                }
+                let reach = related_reach(sketch, selected);
                 sketch::constraint_refs(&c.kind)
                     .iter()
                     .any(|id| reach.contains(id))
             }
             ConstraintFilter::Parked => c.parked,
+        }
+    }
+}
+
+/// What the selection reaches, for the Related filter: the selected
+/// geometry and a selected curve's own points; and a selected point is a
+/// corner, reaching every curve that ends or centres there. Points held
+/// together by a Coincident constraint are one point, so a corner joined
+/// by a constraint rather than a shared point reaches both sides. A curve
+/// selected reaches its own constraints, not its neighbours'.
+fn related_reach(sketch: &Sketch, selected: &HashSet<Uuid>) -> HashSet<Uuid> {
+    let mut corners: HashSet<Uuid> = HashSet::new();
+    let mut ends: HashSet<Uuid> = HashSet::new();
+    for id in selected {
+        match sketch.get_geometry(*id) {
+            Some(GeometryElement::Point(_)) => {
+                corners.insert(*id);
+            }
+            Some(element) => ends.extend(Sketch::curve_point_ids(element)),
+            None => {}
+        }
+    }
+    let corners = coincident_with(sketch, corners);
+    let ends = coincident_with(sketch, ends);
+    let mut reach: HashSet<Uuid> = selected.clone();
+    reach.extend(corners.iter().chain(&ends).copied());
+    for element in &sketch.geometry {
+        if Sketch::curve_point_ids(element)
+            .iter()
+            .any(|p| corners.contains(p))
+        {
+            reach.insert(element.id());
+        }
+    }
+    reach
+}
+
+/// `points` and every point a chain of Coincident constraints holds to one
+/// of them.
+fn coincident_with(sketch: &Sketch, mut points: HashSet<Uuid>) -> HashSet<Uuid> {
+    loop {
+        let before = points.len();
+        for c in &sketch.constraints {
+            if let sketch::ConstraintKind::Coincident { point1, point2 } = c.kind {
+                if points.contains(&point1) {
+                    points.insert(point2);
+                } else if points.contains(&point2) {
+                    points.insert(point1);
+                }
+            }
+        }
+        if points.len() == before {
+            return points;
         }
     }
 }
@@ -6162,13 +6211,50 @@ mod constraint_filter {
         assert_eq!(listed(ConstraintFilter::Reference, &[], &[]), [measured]);
         assert_eq!(listed(ConstraintFilter::Parked, &[], &[]), [measured]);
         assert_eq!(listed(ConstraintFilter::Selected, &[], &[level]), [level]);
-        // The first line reaches its length, and through its end at `a` the
-        // distance; the second line's constraint is not its.
+        // The first line reaches its length and, through its end at `a`,
+        // the distance; the second line's level is not its.
         assert_eq!(
             listed(ConstraintFilter::Related, &[first], &[]),
             [width, measured]
         );
-        assert_eq!(listed(ConstraintFilter::Related, &[c], &[]), [measured]);
+        // A corner brings the constraints of the curves meeting there.
+        assert_eq!(listed(ConstraintFilter::Related, &[b], &[]), [level, width]);
+        assert_eq!(
+            listed(ConstraintFilter::Related, &[c], &[]),
+            [level, measured]
+        );
+    }
+
+    /// A corner held by a Coincident constraint, not a shared point, is a
+    /// corner too: selecting one side's end reaches the other side's
+    /// constraints.
+    #[test]
+    fn related_reaches_across_a_coincident_corner() {
+        let mut sketch = Sketch::new("s");
+        let point = |sketch: &mut Sketch, x: f32, y: f32| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+        };
+        let (a, b) = (point(&mut sketch, 0.0, 0.0), point(&mut sketch, 5.0, 0.0));
+        let (c, d) = (point(&mut sketch, 5.0, 0.0), point(&mut sketch, 5.0, 4.0));
+        let first = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let second = sketch.add_geometry(GeometryElement::Line(Line::new(c, d)));
+        let joined = sketch.add_constraint(ConstraintKind::Coincident {
+            point1: b,
+            point2: c,
+        });
+        let upright = sketch.add_constraint(ConstraintKind::Vertical { element: second });
+        let width = sketch.add_constraint(ConstraintKind::Length {
+            line: first,
+            length: 5.0,
+        });
+        let selected: HashSet<Uuid> = [b].into_iter().collect();
+        let related: Vec<Uuid> = sketch
+            .constraints
+            .iter()
+            .filter(|k| ConstraintFilter::Related.accepts(&sketch, k, &selected, &HashSet::new()))
+            .map(|k| k.id)
+            .collect();
+        assert_eq!(related, [joined, upright, width]);
     }
 }
 

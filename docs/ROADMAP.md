@@ -27,8 +27,6 @@ kernel has it.
 
 ## Sketcher
 
-- [ ] **Related constraints across a corner** (S). The constraint list's
-  "related" filter does not reach constraints through a shared corner.
 - [ ] **Ellipse ratio above one** (S). A dragged minor radius stops at the
   major one.
 
