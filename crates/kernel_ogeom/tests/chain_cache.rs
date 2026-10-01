@@ -170,6 +170,11 @@ fn same(fresh: &SolidBuildResult, cached: &SolidBuildResult, what: &str) {
     };
     let (a, b) = (volume(fresh), volume(cached));
     assert!((a - b).abs() < 1e-9 * a.max(1.0), "{what}: {a} against {b}");
+    assert_eq!(fresh.bounds_mm, cached.bounds_mm, "{what}: the same bounds");
+    assert_eq!(
+        fresh.mesh.edges, cached.mesh.edges,
+        "{what}: the same outline"
+    );
 }
 
 #[test]

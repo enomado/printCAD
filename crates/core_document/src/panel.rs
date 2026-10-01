@@ -3,7 +3,10 @@
 //! package's task panel and Preferences page look and behave like the
 //! built-in ones, formulas included.
 
-use bench_api::{Bind, ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
+use bench_api::{
+    Bind, ButtonStyle, Callout, DiagramShape, DiagramStroke, Dim, Dimension, NoteKind,
+    PanelEvent, Widget,
+};
 use egui::{RichText, Ui};
 use ui_kit::tokens::*;
 use ui_kit::widgets;
@@ -354,7 +357,164 @@ fn show_one(
         Widget::Separator => {
             ui.separator();
         }
+        Widget::Diagram {
+            width,
+            height,
+            shapes,
+            dimensions,
+            callouts,
+            ..
+        } => diagram(ui, *width, *height, shapes, dimensions, callouts),
     }
+}
+
+/// The tallest a diagram grows, in pixels; a wide one takes the panel's
+/// width instead.
+const DIAGRAM_MAX_HEIGHT: f32 = 220.0;
+
+/// Draw a [`Widget::Diagram`]: its space fitted to the panel's width,
+/// strokes, arrows and text at their pixel sizes whatever the fit.
+fn diagram(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    shapes: &[DiagramShape],
+    dimensions: &[Dimension],
+    callouts: &[Callout],
+) {
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let available = ui.available_width().max(1.0);
+    let scale = (available / width).min(DIAGRAM_MAX_HEIGHT / height);
+    let size = egui::vec2(width * scale, height * scale);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(available, size.y), egui::Sense::hover());
+    let origin = egui::pos2(rect.center().x - size.x / 2.0, rect.bottom());
+    let at = |p: [f32; 2]| egui::pos2(origin.x + p[0] * scale, origin.y - p[1] * scale);
+    let painter = ui.painter_at(rect);
+    let stroke_of = |stroke: DiagramStroke| match stroke {
+        DiagramStroke::Outline => egui::Stroke::new(1.5, TEXT1),
+        DiagramStroke::Hidden => egui::Stroke::new(1.0, TEXT2),
+        DiagramStroke::Axis | DiagramStroke::Thin => egui::Stroke::new(1.0, TEXT3),
+        DiagramStroke::Accent => egui::Stroke::new(1.5, ACCENT),
+    };
+    let dashes = |stroke: DiagramStroke| match stroke {
+        DiagramStroke::Hidden => Some((4.0, 3.0)),
+        DiagramStroke::Axis => Some((10.0, 4.0)),
+        _ => None,
+    };
+    for shape in shapes {
+        match shape {
+            DiagramShape::Path {
+                points,
+                closed,
+                stroke,
+                fill,
+            } => {
+                let mut points: Vec<egui::Pos2> = points.iter().map(|p| at(*p)).collect();
+                if points.len() < 2 {
+                    continue;
+                }
+                if *fill && points.len() >= 3 {
+                    painter.add(egui::Shape::convex_polygon(
+                        points.clone(),
+                        BG3,
+                        egui::Stroke::NONE,
+                    ));
+                }
+                if *closed {
+                    points.push(points[0]);
+                }
+                match dashes(*stroke) {
+                    Some((dash, gap)) => {
+                        painter.extend(egui::Shape::dashed_line(
+                            &points,
+                            stroke_of(*stroke),
+                            dash,
+                            gap,
+                        ));
+                    }
+                    None => {
+                        painter.add(egui::Shape::line(points, stroke_of(*stroke)));
+                    }
+                }
+            }
+            DiagramShape::Circle {
+                center,
+                radius,
+                stroke,
+                fill,
+            } => {
+                let fill = if *fill { BG3 } else { egui::Color32::TRANSPARENT };
+                painter.circle(at(*center), radius * scale, fill, stroke_of(*stroke));
+            }
+            DiagramShape::Text { at: p, text, mono } => {
+                let font = if *mono {
+                    ui_kit::theme::mono(FONT_XS)
+                } else {
+                    ui_kit::theme::sans(FONT_XS)
+                };
+                painter.text(at(*p), egui::Align2::CENTER_CENTER, text, font, TEXT2);
+            }
+        }
+    }
+    for dimension in dimensions {
+        let from = at(dimension.from);
+        let to = at(dimension.to);
+        let run = to - from;
+        if run.length() < 0.5 {
+            continue;
+        }
+        let dir = run.normalized();
+        // The drawing's left of `from → to` is the screen's right, as y
+        // flips; the offset is in the drawing's space.
+        let normal = egui::vec2(dir.y, -dir.x);
+        let offset = normal * dimension.offset * scale;
+        let (p1, p2) = (from + offset, to + offset);
+        let color = if dimension.emphasis { ACCENT } else { TEXT2 };
+        let stroke = egui::Stroke::new(1.0, color);
+        let overshoot = normal * 4.0 * dimension.offset.signum();
+        painter.line_segment([from, p1 + overshoot], egui::Stroke::new(1.0, TEXT3));
+        painter.line_segment([to, p2 + overshoot], egui::Stroke::new(1.0, TEXT3));
+        painter.line_segment([p1, p2], stroke);
+        arrow(&painter, p1, dir, color);
+        arrow(&painter, p2, -dir, color);
+        pill(&painter, p1 + (p2 - p1) / 2.0, &dimension.text, dimension.emphasis);
+    }
+    for callout in callouts {
+        let anchor = at(callout.anchor);
+        let label = at(callout.at);
+        let color = if callout.emphasis { ACCENT } else { TEXT2 };
+        painter.line_segment([anchor, label], egui::Stroke::new(1.0, color));
+        painter.circle_filled(anchor, 2.5, color);
+        pill(&painter, label, &callout.text, callout.emphasis);
+    }
+}
+
+/// An arrowhead at `tip`, pointing along `dir`.
+fn arrow(painter: &egui::Painter, tip: egui::Pos2, dir: egui::Vec2, color: egui::Color32) {
+    let side = egui::vec2(-dir.y, dir.x);
+    let base = tip + dir * 7.0;
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, base + side * 2.5, base - side * 2.5],
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// Text centred at `center` on a rounded backing, so it reads over lines.
+fn pill(painter: &egui::Painter, center: egui::Pos2, text: &str, emphasis: bool) {
+    let color = if emphasis { ACCENT } else { TEXT1 };
+    let font = if emphasis {
+        ui_kit::theme::mono_medium(FONT_XS)
+    } else {
+        ui_kit::theme::mono(FONT_XS)
+    };
+    let galley = painter.layout_no_wrap(text.to_string(), font, color);
+    let pad = egui::vec2(PILL_PAD[0], PILL_PAD[1]);
+    let rect = egui::Rect::from_center_size(center, galley.size() + pad * 2.0);
+    painter.rect_filled(rect, RADIUS_SM, if emphasis { ACCENT_DIM } else { BG2 });
+    painter.galley(rect.min + pad, galley, color);
 }
 
 /// A labelled row: the label column, then the control.

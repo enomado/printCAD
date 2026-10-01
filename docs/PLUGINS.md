@@ -160,7 +160,9 @@ kernel runs them natively; a failing op marks its feature.
 
 **Panels.** A bench declares its task panel and Preferences page as
 widgets (`Widget`): numbers, choices, toggles, text fields, buttons, pick
-rows, lists, tables, groups, progress, notes. A number bound to a feature's
+rows, lists, tables, groups, progress, notes, and diagrams (a schematic
+drawn in coordinates of its own, with dimension lines and callouts beside
+the parts they size, one of them emphasised). A number bound to a feature's
 parameter (`bind`) takes formulas like any field of the app's own. Changes
 come back as `panel_event`; OK and Cancel as `task_close`. A bench whose
 Preferences page declares no widgets gets no page.

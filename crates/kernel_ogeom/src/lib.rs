@@ -21,6 +21,7 @@ mod ops;
 mod probe;
 mod profile;
 mod queries;
+mod reuse;
 pub use queries::{OgeomQueries, QUERIES};
 pub mod progress;
 mod tess;

@@ -10,6 +10,10 @@
 //!
 //! `--ops` prints each feature's time and the meshing as the chain logs
 //! them (target `printcad.chain`).
+//!
+//! Then an imported part (the bundled `drive_frame_upper.step`) as a
+//! body's base, a boss beside it whose height is edited: the history is short,
+//! the solid large and curved, so meshing is most of a build.
 
 use core_document::{
     CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, FeatureId,
@@ -196,4 +200,59 @@ fn main() {
     build(&mut host, &mut cache, "a pocket made through", &detail);
     set_field(&mut host, hole, "depth", 14.0);
     build(&mut host, &mut cache, "deeper, the same hole", &detail);
+
+    imported_part(&detail);
+}
+
+/// An imported part as the base, a boss beside it, edited.
+fn imported_part(detail: &TessellationSettings) {
+    use kernel_api::{BooleanOp, Kernel, Placement, PrimitiveKind, SolidOp};
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/drive_frame_upper.step");
+    let model = OgeomKernel::new().import_step(&path, detail).unwrap();
+    let body = &model.bodies[0];
+    let (lo, hi) = body.bounds_mm.unwrap();
+    let boss = |height: f64| SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 3.0,
+            height,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            // Beside the part: the whole of it is meshed either way.
+            origin: [f64::from(hi[0]) + 10.0, f64::from(lo[1]), f64::from(lo[2])],
+            ..Placement::default()
+        },
+        op: BooleanOp::Fuse,
+    };
+    let base = SolidOp::Shape {
+        brep: body.brep_blob.clone(),
+    };
+    let tags = [1, 2];
+    let mut cache = ChainCache::default();
+    println!();
+    for (label, height) in [
+        ("imported, from scratch", 4.0),
+        ("imported, boss edited", 5.0),
+        ("imported, boss edited again", 6.0),
+    ] {
+        let started = std::time::Instant::now();
+        let built = OgeomKernel::new()
+            .execute_solid_chain_cached(
+                &[base.clone(), boss(height)],
+                &tags,
+                detail,
+                None,
+                &[],
+                Some(&mut cache),
+            )
+            .unwrap();
+        println!(
+            "{label:<28} {:>4} ops, {:>2} kept  {:>8.1} ms  {} triangles",
+            2,
+            cache.resumed(),
+            started.elapsed().as_secs_f64() * 1000.0,
+            built.mesh.indices.len() / 3
+        );
+    }
 }

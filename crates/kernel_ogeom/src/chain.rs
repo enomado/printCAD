@@ -71,6 +71,8 @@ pub struct ChainCache {
     /// The last build's edited op made the solid the build before's did,
     /// and the rest of its result was that build's.
     reused: bool,
+    /// The meshes of the faces the last build drew.
+    faces: crate::reuse::FaceMeshes,
 }
 
 /// What a build made of its edited op (the first that differs from the
@@ -132,6 +134,11 @@ impl ChainCache {
     /// solid the build before's did, and took the rest from that build.
     pub fn reused(&self) -> bool {
         self.reused
+    }
+
+    /// How many faces' meshes the last build left for the next.
+    pub fn faces_kept(&self) -> usize {
+        self.faces.len()
     }
 
     /// How many states it keeps.
@@ -793,7 +800,8 @@ pub fn execute_cached(
     );
     let names = named.take();
     let meshing = std::time::Instant::now();
-    let mesh = tess::mesh_named(&model, &final_shape, detail, &names).map_err(|e| {
+    let reuse = cache.as_deref_mut().map(|c| &mut c.faces);
+    let mesh = tess::mesh_named(&model, &final_shape, detail, &names, reuse).map_err(|e| {
         chain_err(
             ops_list.len() - 1,
             format!("meshing the result failed: {e}"),
@@ -825,7 +833,17 @@ pub fn execute_cached(
         "snapshot: {:.1} ms",
         snapshot_took.as_secs_f64() * 1000.0
     );
-    let bounds_mm = tess::solid_bounds(&model, &final_shape, &mesh);
+    // The box the faces kept and measured make, else the solid measured.
+    let bounds_mm = cache
+        .as_deref_mut()
+        .and_then(|c| c.faces.take_bounds())
+        .map(|(lo, hi)| {
+            (
+                [lo.x as f32, lo.y as f32, lo.z as f32],
+                [hi.x as f32, hi.y as f32, hi.z as f32],
+            )
+        })
+        .or_else(|| tess::solid_bounds(&model, &final_shape, &mesh));
     // A preview that cannot be made leaves the build as it is.
     let preview = (!preview_tools.is_empty())
         .then(|| {

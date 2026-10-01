@@ -51,8 +51,14 @@ Each item is one milestone and one commit.
   each edit builds only that far, and once the edits settle the whole
   history is built (from the state kept at the feature) for when the task
   closes. A task closed before that rebuilds the body.
-- [ ] **6. Mesh only what changed.** Faces a build left as they were keep
+- [x] **6. Mesh only what changed.** Faces a build left as they were keep
   their meshes from the build before; only new and changed faces are meshed.
+  An op rebuilds every face of its solid, so faces are known by their
+  geometry (surface, edge curves and ranges, vertices, placement, the
+  deflection and their edges' chords), each surface and curve read once
+  per meshing. Edges keep their outlines the same way, and the solid's
+  bounds are the union of its faces', each kept with its face: measuring a
+  curved solid's bounds whole cost more than meshing it.
 - [ ] **7. Bodies in parallel.** Builds of different bodies run on several
   threads; a body still has one build at a time.
 - 8. Local kernel operations (booleans and dress-ups that work only near

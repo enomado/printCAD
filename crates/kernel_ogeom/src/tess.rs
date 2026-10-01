@@ -17,7 +17,6 @@ use ogeom::geom::SurfaceGeometry;
 use ogeom::math::Point;
 use ogeom::mesh::{Deflection, edge_chords_for, polyline_of_edge, triangulate_face_with};
 use ogeom::topo::NodeData;
-use ogeom::topo::Triangulation;
 use ogeom::topo::{Filter, Model, Shape, ShapeType, explore, explore_unique};
 use tracing::warn;
 
@@ -37,7 +36,7 @@ pub enum Faces {
 /// the spot so the parallel pass stays pure and every message is reported in
 /// face order.
 enum FaceWork {
-    Meshed(Box<Triangulation>),
+    Meshed(std::sync::Arc<crate::reuse::FaceDrawn>),
     /// This face alone could not be triangulated; the rest still mesh.
     Failed(String),
     /// The whole job was cancelled.
@@ -173,7 +172,15 @@ pub fn mesh_shape_with(
     detail: &TessellationSettings,
     faces_threading: Faces,
 ) -> KernelResult<TriMesh> {
-    mesh_faces(model, root, face_colors, detail, faces_threading, None)
+    mesh_faces(
+        model,
+        root,
+        face_colors,
+        detail,
+        faces_threading,
+        None,
+        None,
+    )
 }
 
 /// As [`mesh_shape`], each face carrying its name from `names` and each
@@ -183,8 +190,9 @@ pub(crate) fn mesh_named(
     root: &Shape,
     detail: &TessellationSettings,
     names: &crate::naming::NameMap,
+    reuse: Option<&mut crate::reuse::FaceMeshes>,
 ) -> KernelResult<TriMesh> {
-    mesh_faces(model, root, &[], detail, Faces::Wide, Some(names))
+    mesh_faces(model, root, &[], detail, Faces::Wide, Some(names), reuse)
 }
 
 fn mesh_faces(
@@ -194,6 +202,7 @@ fn mesh_faces(
     detail: &TessellationSettings,
     faces_threading: Faces,
     names: Option<&crate::naming::NameMap>,
+    mut reuse: Option<&mut crate::reuse::FaceMeshes>,
 ) -> KernelResult<TriMesh> {
     let tol = tolerances();
     let deflection = deflection_for(model, root, detail);
@@ -210,22 +219,90 @@ fn mesh_faces(
     // display hundreds of times a second.
     crate::progress::detail(format_args!("Meshing {} faces", faces.len()));
 
+    // A face the build before drew as it is now keeps its mesh.
+    let mut keys_of = reuse.as_ref().map(|_| crate::reuse::Keys::new(model));
+    let keys: Vec<Option<u64>> = match keys_of.as_mut() {
+        Some(keys_of) => faces
+            .iter()
+            .map(|face| keys_of.face(face, deflection, &chords))
+            .collect(),
+        None => vec![None; faces.len()],
+    };
+    let kept: Vec<Option<std::sync::Arc<crate::reuse::FaceDrawn>>> = keys
+        .iter()
+        .map(|key| key.and_then(|k| reuse.as_ref().and_then(|meshes| meshes.face(k))))
+        .collect();
+
     // Triangulating a face only reads the model, so the faces go wide; the
     // buffers are then filled in face order, which is what keeps the output
     // identical at any thread count.
-    let one_face = |face: &Shape| -> FaceWork {
+    let one_face = |i: usize, face: &Shape| -> FaceWork {
+        if let Some(tri) = &kept[i] {
+            return FaceWork::Meshed(std::sync::Arc::clone(tri));
+        }
         if let Err(e) = crate::progress::checkpoint() {
             return FaceWork::Cancelled(e);
         }
         match triangulate_face_with(model, face, deflection, &chords, tol) {
-            Ok(tri) => FaceWork::Meshed(Box::new(tri)),
+            Ok(triangles) => {
+                // Kept for the next build, the face's box comes with it.
+                let bounds = reuse
+                    .is_some()
+                    .then(|| ogeom::algo::tight_bounds(model, face, tol).ok())
+                    .flatten()
+                    .and_then(|b| Some((b.low()?, b.high()?)));
+                FaceWork::Meshed(std::sync::Arc::new(crate::reuse::FaceDrawn {
+                    triangles,
+                    bounds,
+                }))
+            }
             Err(e) => FaceWork::Failed(e.to_string()),
         }
     };
     let computed: Vec<FaceWork> = match faces_threading {
-        Faces::Wide => map_ordered(&faces, |_, face| one_face(face)),
-        Faces::Inline => faces.iter().map(one_face).collect(),
+        Faces::Wide => map_ordered(&faces, |i, face| one_face(i, face)),
+        Faces::Inline => faces
+            .iter()
+            .enumerate()
+            .map(|(i, f)| one_face(i, f))
+            .collect(),
     };
+    if let Some(meshes) = reuse.as_mut() {
+        // The shape's box, the union of its faces'.
+        let mut bounds: Option<(Point, Point)> = None;
+        let mut whole = true;
+        for work in &computed {
+            match work {
+                FaceWork::Meshed(drawn) if drawn.bounds.is_some() => {
+                    let (lo, hi) = drawn.bounds.expect("checked");
+                    bounds = Some(match bounds {
+                        None => (lo, hi),
+                        Some((a, b)) => (
+                            Point::new(a.x.min(lo.x), a.y.min(lo.y), a.z.min(lo.z)),
+                            Point::new(b.x.max(hi.x), b.y.max(hi.y), b.z.max(hi.z)),
+                        ),
+                    });
+                }
+                _ => whole = false,
+            }
+        }
+        meshes.set_bounds(bounds.filter(|_| whole));
+        let drawn = computed
+            .iter()
+            .zip(&keys)
+            .filter_map(|(work, key)| match (work, key) {
+                (FaceWork::Meshed(tri), Some(key)) => Some((*key, std::sync::Arc::clone(tri))),
+                _ => None,
+            })
+            .collect();
+        let reused = kept.iter().filter(|k| k.is_some()).count();
+        tracing::debug!(
+            target: "printcad.chain",
+            "meshing kept {reused} of {} faces",
+            faces.len()
+        );
+        meshes.replace_faces(drawn);
+    }
 
     let mut mesh = TriMesh::default();
     // Per successfully meshed face: average normal and the id each vertex
@@ -239,8 +316,8 @@ fn mesh_faces(
 
     for (i, work) in computed.into_iter().enumerate() {
         let face_shape = &faces[i];
-        let tri = match work {
-            FaceWork::Meshed(tri) => *tri,
+        let drawn = match work {
+            FaceWork::Meshed(drawn) => drawn,
             FaceWork::Failed(e) => {
                 if skipped == 0 {
                     warn!(target: "printcad.kernel", face = i, "face failed to triangulate: {e}");
@@ -254,6 +331,7 @@ fn mesh_faces(
                 return Err(KernelError::Other(anyhow::anyhow!("meshing stopped: {e}")));
             }
         };
+        let tri = &drawn.triangles;
         if tri.triangles.is_empty() || tri.positions.is_empty() {
             continue;
         }
@@ -338,7 +416,8 @@ fn mesh_faces(
     // the edges does the outline fall back to the triangle boundaries,
     // which name nothing.
     if detail.generate_boundary_edges {
-        match kernel_edge_outline(model, root, &chords, deflection, tol) {
+        let outlines = keys_of.as_mut().zip(reuse);
+        match kernel_edge_outline(model, root, &chords, deflection, tol, outlines) {
             Ok(outline) if !outline.positions.is_empty() => {
                 let base = mesh.positions.len() as u32;
                 let count = outline.positions.len();
@@ -380,13 +459,17 @@ struct EdgeOutline {
     edge_ids: Vec<u32>,
 }
 
+/// With `reuse`, an edge drawn alike by the build before keeps its
+/// polyline, and the edges drawn now are kept for the next.
 fn kernel_edge_outline(
     model: &Model,
     root: &Shape,
     chords: &ogeom::mesh::EdgeChords,
     deflection: Deflection,
     tol: Tolerances,
+    mut reuse: Option<(&mut crate::reuse::Keys<'_>, &mut crate::reuse::FaceMeshes)>,
 ) -> KernelResult<EdgeOutline> {
+    let mut drawn = std::collections::HashMap::new();
     let edges = explore_unique(model, root, ShapeType::Edge)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("edge exploration failed: {e}")))?;
     let mut outline = EdgeOutline {
@@ -399,21 +482,27 @@ fn kernel_edge_outline(
             .get(&edge.node().index())
             .copied()
             .unwrap_or(deflection.chord);
-        let points = match polyline_of_edge(
-            model,
-            edge,
-            Deflection {
-                chord: chord.min(deflection.chord),
-                ..deflection
-            },
-            tol,
-        ) {
-            Ok(points) => points,
-            Err(e) => {
-                warn!(target: "printcad.kernel", edge = edge_id, "edge polyline failed: {e}");
-                continue;
-            }
+        let drawn_to = Deflection {
+            chord: chord.min(deflection.chord),
+            ..deflection
         };
+        let key = reuse
+            .as_mut()
+            .and_then(|(keys, _)| keys.edge(edge, drawn_to));
+        let kept = key.and_then(|k| reuse.as_ref().and_then(|(_, m)| m.edge(k)));
+        let points = match kept {
+            Some(points) => points,
+            None => match polyline_of_edge(model, edge, drawn_to, tol) {
+                Ok(points) => std::sync::Arc::new(points),
+                Err(e) => {
+                    warn!(target: "printcad.kernel", edge = edge_id, "edge polyline failed: {e}");
+                    continue;
+                }
+            },
+        };
+        if let Some(key) = key {
+            drawn.insert(key, std::sync::Arc::clone(&points));
+        }
         if points.len() < 2 {
             continue;
         }
@@ -426,6 +515,9 @@ fn kernel_edge_outline(
             outline.segments.push(base + i);
             outline.edge_ids.push(edge_id as u32);
         }
+    }
+    if let Some((_, meshes)) = reuse {
+        meshes.replace_edges(drawn);
     }
     Ok(outline)
 }

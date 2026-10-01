@@ -704,6 +704,98 @@ pub enum Widget {
         job: Option<u64>,
     },
     Separator,
+    /// A drawing: a schematic of what the panel edits, with its measures
+    /// marked beside the parts they size. It is drawn in a space of its
+    /// own, `[0, width] × [0, height]` with y up, which the host fits to
+    /// the panel's width; strokes and text keep their pixel size.
+    Diagram {
+        id: String,
+        width: f32,
+        height: f32,
+        #[serde(default)]
+        shapes: Vec<DiagramShape>,
+        #[serde(default)]
+        dimensions: Vec<Dimension>,
+        #[serde(default)]
+        callouts: Vec<Callout>,
+    },
+}
+
+/// A line of a [`Widget::Diagram`]: what it stands for, not its colour,
+/// so the host draws it in the design's own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagramStroke {
+    /// The outline of the part.
+    #[default]
+    Outline,
+    /// An edge behind the surface, dashed.
+    Hidden,
+    /// An axis or a centre line, long-dashed and faint.
+    Axis,
+    /// A faint line: a hatch, a reference.
+    Thin,
+    /// Drawn in the accent colour.
+    Accent,
+}
+
+/// A shape of a [`Widget::Diagram`], in its coordinates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DiagramShape {
+    /// A run of straight lines; `fill` shades it, and reads only a convex
+    /// outline right.
+    Path {
+        points: Vec<[f32; 2]>,
+        #[serde(default)]
+        closed: bool,
+        #[serde(default)]
+        stroke: DiagramStroke,
+        #[serde(default)]
+        fill: bool,
+    },
+    Circle {
+        center: [f32; 2],
+        radius: f32,
+        #[serde(default)]
+        stroke: DiagramStroke,
+        #[serde(default)]
+        fill: bool,
+    },
+    /// Text at a point, centred on it.
+    Text {
+        at: [f32; 2],
+        text: String,
+        #[serde(default)]
+        mono: bool,
+    },
+}
+
+/// A measure of a [`Widget::Diagram`]: the distance from `from` to `to`,
+/// drawn as a dimension line `offset` away from them (to the left of the
+/// way from `from` to `to`; negative for the right), its ends led out to
+/// the points, with `text` on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Dimension {
+    pub from: [f32; 2],
+    pub to: [f32; 2],
+    #[serde(default)]
+    pub offset: f32,
+    pub text: String,
+    /// Drawn in the accent colour: the one being edited.
+    #[serde(default)]
+    pub emphasis: bool,
+}
+
+/// A note of a [`Widget::Diagram`] pointing at a feature of it: a dot at
+/// `anchor`, a leader to `at`, and `text` there.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Callout {
+    pub anchor: [f32; 2],
+    pub at: [f32; 2],
+    pub text: String,
+    #[serde(default)]
+    pub emphasis: bool,
 }
 
 fn two() -> usize {
