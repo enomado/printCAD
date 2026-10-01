@@ -510,6 +510,101 @@ mod tests {
         assert!(aligned(&sketch, e));
     }
 
+    /// The minor axis's end dragged past the major radius, the centre held
+    /// and the foci not shown: the axes trade places (that line now holds
+    /// the major axis, the other runs the other way as the minor), the
+    /// ellipse goes through the dragged end, and solving again changes
+    /// nothing.
+    #[test]
+    fn a_minor_axis_dragged_past_the_major_becomes_the_major() {
+        let mut sketch = Sketch::new("t");
+        let e = ellipse(&mut sketch);
+        let centre = match sketch.get_geometry(e) {
+            Some(GeometryElement::Ellipse(el)) => el.center,
+            _ => panic!(),
+        };
+        sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: centre,
+            position: v(1.0, 2.0),
+        });
+        show(&mut sketch, e);
+        let foci = [
+            role(&sketch, e, InternalRole::Focus1),
+            role(&sketch, e, InternalRole::Focus2),
+        ];
+        sketch.remove_geometry_cascade(&foci);
+        let minor = role(&sketch, e, InternalRole::MinorAxis);
+        let Some(GeometryElement::Line(line)) = sketch.get_geometry(minor) else {
+            panic!()
+        };
+        // The end above the centre at (1, 2).
+        let end = [line.start, line.end]
+            .into_iter()
+            .max_by(|a, b| {
+                let y = |id| sketch.point_position(id).unwrap().y;
+                y(*a).total_cmp(&y(*b))
+            })
+            .unwrap();
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(end) {
+            p.position = v(1.0, 10.0);
+        }
+        crate::solver::solve_holding(&mut sketch, &[end]);
+        let shape = |sketch: &Sketch| {
+            let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
+                panic!()
+            };
+            (el.major, el.ratio)
+        };
+        let (major, ratio) = shape(&sketch);
+        assert!(
+            major.x.abs() < 1e-3,
+            "the major axis stands upright: {major:?}"
+        );
+        assert!((major.to_glam().length() - 8.0).abs() < 1e-3, "{major:?}");
+        assert!((ratio - 5.0 / 8.0).abs() < 1e-3, "{ratio}");
+        assert!(near(sketch.point_position(end).unwrap(), v(1.0, 10.0)));
+        assert_eq!(role(&sketch, e, InternalRole::MajorAxis), minor);
+        assert!(aligned(&sketch, e));
+        crate::solver::solve_holding(&mut sketch, &[end]);
+        let (again, ratio_again) = shape(&sketch);
+        assert!(near(again, major) && (ratio_again - ratio).abs() < 1e-5);
+    }
+
+    /// A minor radius dimensioned past the major: the axes trade places
+    /// and the dimensions name the axes they now hold.
+    #[test]
+    fn a_minor_radius_set_past_the_major_turns_the_dimensions_with_it() {
+        let mut sketch = Sketch::new("t");
+        let e = ellipse(&mut sketch);
+        let long = sketch.add_constraint(ConstraintKind::EllipseRadius {
+            ellipse: e,
+            major: true,
+            radius: 5.0,
+        });
+        let short = sketch.add_constraint(ConstraintKind::EllipseRadius {
+            ellipse: e,
+            major: false,
+            radius: 8.0,
+        });
+        crate::solver::solve(&mut sketch);
+        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
+            panic!()
+        };
+        assert!((el.major.to_glam().length() - 8.0).abs() < 1e-3);
+        assert!((el.ratio - 5.0 / 8.0).abs() < 1e-3);
+        let names = |sketch: &Sketch| {
+            [long, short].map(|id| {
+                match sketch.constraints.iter().find(|c| c.id == id).unwrap().kind {
+                    ConstraintKind::EllipseRadius { major, radius, .. } => (major, radius),
+                    _ => panic!(),
+                }
+            })
+        };
+        assert_eq!(names(&sketch), [(false, 5.0), (true, 8.0)]);
+        crate::solver::solve(&mut sketch);
+        assert_eq!(names(&sketch), [(false, 5.0), (true, 8.0)], "settled");
+    }
+
     #[test]
     fn a_dragged_focus_reshapes_the_ellipse_and_the_rest_follows() {
         let mut sketch = Sketch::new("t");

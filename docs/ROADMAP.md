@@ -27,8 +27,13 @@ kernel has it.
 
 ## Sketcher
 
-- [ ] **Ellipse ratio above one** (S). A dragged minor radius stops at the
-  major one.
+- [ ] **An ellipse with its foci shown, dragged through a circle** (M). A
+  minor radius dragged past the major makes it the major, but not while
+  the ellipse shows its foci: a focus stands √(a² − b²) from the centre,
+  which changes infinitely fast as the radii meet, so the solve grows both
+  radii into a circle instead. Wants a focus constraint with no such point
+  (along · across = 0 and along² − across² = a² − b²) and one keeping the
+  two foci on opposite sides as they cross.
 
 ## Waiting on the kernel
 

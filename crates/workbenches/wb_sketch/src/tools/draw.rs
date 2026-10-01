@@ -944,7 +944,9 @@ pub(super) fn ellipse(
             if minor < 1e-6 {
                 return ToolEffect::none(); // click on the axis: degenerate
             }
-            let ratio = (minor / major_len).min(1.0);
+            // A second radius longer than the first makes it the major.
+            let (major, ratio) = crate::geom2d::ellipse_axes(major, minor);
+            let major_len = major.length();
             let center_id = materialize(sketch, center);
             sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
                 center_id,

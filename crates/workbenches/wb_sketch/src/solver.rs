@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::sketch::{
-    AxisDirection, ConstraintKind, GeometryElement, ORIGIN_ID, Reference, Sketch, Vec2D, X_AXIS_ID,
-    Y_AXIS_ID, constraint_refs,
+    AxisDirection, ConstraintKind, GeometryElement, InternalRole, ORIGIN_ID, Reference, Sketch,
+    Vec2D, X_AXIS_ID, Y_AXIS_ID, constraint_refs,
 };
 
 /// Maximum damping retries per outer iteration before declaring a stall.
@@ -795,9 +795,11 @@ impl CurveShape {
 enum Offset {
     /// `sign · a` along: an ellipse's major vertices, a conic's axis end.
     Major(f64),
-    /// `sign · b` across (`b` no more than `a` for an ellipse).
-    Minor { sign: f64, ellipse: bool },
-    /// `sign · √(a² − b²)` along: an ellipse's foci.
+    /// `sign · b` across.
+    Minor(f64),
+    /// An ellipse's foci: `sign · √(a² − b²)` along, or across when the
+    /// minor radius has grown past the major in a solve (the axes trade
+    /// places when the solve is written back).
     EllipseFocus(f64),
     /// `√(a² + b²)` along: a hyperbola's focus.
     HyperbolaFocus,
@@ -809,9 +811,8 @@ impl Offset {
         let (u, w) = ((x / a, y / a), (-y / a, x / a));
         let (along, across) = match self {
             Offset::Major(sign) => (sign * a, 0.0),
-            Offset::Minor { sign, ellipse } => {
-                (0.0, sign * if ellipse { minor.min(a) } else { minor })
-            }
+            Offset::Minor(sign) => (0.0, sign * minor),
+            Offset::EllipseFocus(sign) if minor > a => (0.0, sign * (minor * minor - a * a).sqrt()),
             Offset::EllipseFocus(sign) => (sign * (a * a - minor * minor).max(0.0).sqrt(), 0.0),
             Offset::HyperbolaFocus => (a.hypot(minor), 0.0),
         };
@@ -1000,7 +1001,8 @@ impl ResidualSpec {
             ResidualSpec::PointOnEllipse { p, c, shape } => {
                 let (major_x, major_y, minor) = shape.get(v);
                 let a = (major_x * major_x + major_y * major_y).sqrt().max(MIN_LEN);
-                let b = minor.min(a).max(MIN_LEN);
+                // Either radius may be the longer part way through a solve.
+                let b = minor.abs().max(MIN_LEN);
                 // Rotate the point into the ellipse frame.
                 let (cos_t, sin_t) = (major_x / a, major_y / a);
                 let dx = v[p] - v[c];
@@ -2218,16 +2220,9 @@ fn internal_residuals(
                 }
                 ends
             }
-            (InternalRole::MinorAxis, Some(GeometryElement::Line(l))) => vec![
-                (
-                    l.start,
-                    Offset::Minor {
-                        sign: -1.0,
-                        ellipse,
-                    },
-                ),
-                (l.end, Offset::Minor { sign: 1.0, ellipse }),
-            ],
+            (InternalRole::MinorAxis, Some(GeometryElement::Line(l))) => {
+                vec![(l.start, Offset::Minor(-1.0)), (l.end, Offset::Minor(1.0))]
+            }
             _ => Vec::new(),
         };
         for (point, at) in targets {
@@ -2429,6 +2424,7 @@ fn cap_step(step: &mut [f64], scale: f64) {
 
 /// Write the solved variables back into the sketch geometry.
 fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
+    let mut turned = std::collections::HashSet::new();
     for element in &mut sketch.geometry {
         match element {
             GeometryElement::Point(p) => {
@@ -2446,15 +2442,20 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
                     a.radius = x[i] as f32;
                 }
             }
-            // A minor radius past the major one would make the major axis
-            // the minor: the ratio stays at most 1, a circle.
+            // A minor radius dragged past the major one makes it the major:
+            // the axes trade places, the same ellipse.
             GeometryElement::Ellipse(e) => {
                 if let Some(&k) = sys.shape_vars.get(&e.id) {
                     let major = Vec2D::new(x[k] as f32, x[k + 1] as f32);
                     let a = major.to_glam().length();
+                    let b = (x[k + 2] as f32).abs();
                     if a > 1e-9 {
-                        e.major = major;
-                        e.ratio = ((x[k + 2] as f32) / a).clamp(1e-6, 1.0);
+                        let (axis, ratio) = crate::geom2d::ellipse_axes(major.to_glam(), b);
+                        if b > a {
+                            turned.insert(e.id);
+                        }
+                        e.major = Vec2D::new(axis.x, axis.y);
+                        e.ratio = ratio;
                     }
                 }
             }
@@ -2468,6 +2469,37 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
                 }
             }
             GeometryElement::Line(_) | GeometryElement::BSpline(_) => {}
+        }
+    }
+    // What named an axis of an ellipse whose axes traded places names the
+    // other now: its radius dimensions and its shown axis lines, so the
+    // next solve holds the same ellipse rather than trading them back. The
+    // frame turned a quarter, so the old major axis runs the other way as
+    // the minor: its line's ends trade too.
+    let mut reversed = Vec::new();
+    for c in &mut sketch.constraints {
+        match &mut c.kind {
+            ConstraintKind::EllipseRadius { ellipse, major, .. } if turned.contains(ellipse) => {
+                *major = !*major;
+            }
+            ConstraintKind::InternalAlignment {
+                curve,
+                role,
+                element,
+            } if turned.contains(curve) => match role {
+                InternalRole::MajorAxis => {
+                    *role = InternalRole::MinorAxis;
+                    reversed.push(*element);
+                }
+                InternalRole::MinorAxis => *role = InternalRole::MajorAxis,
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    for id in reversed {
+        if let Some(GeometryElement::Line(l)) = sketch.get_geometry_mut(id) {
+            std::mem::swap(&mut l.start, &mut l.end);
         }
     }
 }

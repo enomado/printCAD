@@ -1045,7 +1045,7 @@ fn push_preview(
                     0.0
                 };
                 if minor > 1e-6 {
-                    let ratio = (minor / major.length()).min(1.0);
+                    let (major, ratio) = geom2d::ellipse_axes(major, minor);
                     push_polyline(
                         &mut out.lines,
                         proj,

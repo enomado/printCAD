@@ -113,6 +113,20 @@ pub fn wrap_positive(a: f32) -> f32 {
     a
 }
 
+/// An ellipse from one axis vector and the other radius, as the sketch
+/// keeps it: the major vector and the minor-to-major ratio, at most 1.
+/// When the other radius is the longer, it is the major: the axes trade
+/// places, the same ellipse.
+pub fn ellipse_axes(axis: glam::Vec2, other: f32) -> (glam::Vec2, f32) {
+    let a = axis.length();
+    let b = other.abs();
+    if b > a && a > 1e-9 {
+        (axis.perp() * (b / a), (a / b).clamp(1e-6, 1.0))
+    } else {
+        (axis, (b / a.max(1e-9)).clamp(1e-6, 1.0))
+    }
+}
+
 /// Polyline sampling of an ellipse (`center`, center→major-vertex vector,
 /// minor/major `ratio`), closed (first == last point).
 pub fn ellipse_points(center: Vec2D, major: Vec2D, ratio: f32, segments: usize) -> Vec<Vec2D> {
@@ -359,5 +373,17 @@ mod tests {
             let r = (dx / 4.0).powi(2) + (dy / 2.0).powi(2);
             assert!((r - 1.0).abs() < 1e-4, "off-ellipse point {p:?}");
         }
+    }
+
+    #[test]
+    fn the_longer_radius_is_the_major() {
+        let (major, ratio) = ellipse_axes(glam::Vec2::new(4.0, 0.0), 2.0);
+        assert_eq!((major, ratio), (glam::Vec2::new(4.0, 0.0), 0.5));
+        let (major, ratio) = ellipse_axes(glam::Vec2::new(4.0, 0.0), 8.0);
+        assert!(
+            (major - glam::Vec2::new(0.0, 8.0)).length() < 1e-5,
+            "{major:?}"
+        );
+        assert!((ratio - 0.5).abs() < 1e-6);
     }
 }
