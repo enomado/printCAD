@@ -25,11 +25,13 @@ impl PrintCadApp {
                 }
             }
         }
+        self.settle_coarse_builds();
         for job in self.registry.rebuild_jobs(&mut self.session.document) {
             let body_id = job.body;
             self.session.document.clear_body_feature_errors(body_id);
             match job.plan {
                 Ok(plan) if plan.ops.is_empty() => {
+                    self.session.coarse.remove(&body_id.0);
                     // A build still out is of a history that is gone.
                     if let Some(waiting) = self.session.builds_in_flight.get_mut(&body_id.0) {
                         *waiting = None;
@@ -56,9 +58,16 @@ impl PrintCadApp {
                     };
                     // One build per body at a time; a newer plan waits in
                     // its place, replacing any older one waiting.
+                    // A plan that replaces one still building means the
+                    // body is being changed faster than it builds: it is
+                    // moving, and builds coarse until it settles.
+                    self.session.coarse.remove(&body_id.0);
                     match self.session.builds_in_flight.get_mut(&body_id.0) {
                         Some(waiting) => {
                             *waiting = Some(build);
+                            self.session
+                                .moving
+                                .insert(body_id.0, std::time::Instant::now());
                             self.drop_build_out(body_id.0);
                         }
                         None => self.submit_build(body_id.0, build),
@@ -82,7 +91,12 @@ impl PrintCadApp {
     }
 }
 
+/// How long a body's plans must stop changing before a coarse solid is
+/// built again at full detail.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// A body's build plan, as it goes to the kernel thread.
+#[derive(Clone)]
 pub(crate) struct QueuedBuild {
     ops: Vec<kernel_api::SolidOp>,
     op_features: Vec<uuid::Uuid>,
@@ -102,15 +116,54 @@ impl PrintCadApp {
 
     fn submit_build(&mut self, body: uuid::Uuid, build: QueuedBuild) {
         self.session.builds_in_flight.insert(body, None);
+        // A moving body is meshed coarse, and its plan kept to build again
+        // finely once it settles.
+        let moving = self
+            .session
+            .moving
+            .get(&body)
+            .is_some_and(|at| at.elapsed() < SETTLE);
+        let detail = if moving {
+            self.session.coarse.insert(body, build.clone());
+            coarse(self.solid_detail())
+        } else {
+            self.session.coarse.remove(&body);
+            self.session.moving.remove(&body);
+            self.solid_detail()
+        };
         let serial = self.kernel_worker.request_build_solid(
             body,
             build.ops,
             build.op_features,
-            self.solid_detail(),
+            detail,
             build.preview,
             build.probes,
         );
         self.session.build_serials.insert(body, serial);
+    }
+
+    /// Build at full detail every body shown coarse whose plans have
+    /// stopped changing.
+    fn settle_coarse_builds(&mut self) {
+        let settled: Vec<uuid::Uuid> = self
+            .session
+            .coarse
+            .keys()
+            .filter(|body| !self.session.builds_in_flight.contains_key(*body))
+            .filter(|body| {
+                self.session
+                    .moving
+                    .get(*body)
+                    .is_none_or(|at| at.elapsed() >= SETTLE)
+            })
+            .copied()
+            .collect();
+        for body in settled {
+            if let Some(build) = self.session.coarse.remove(&body) {
+                self.session.moving.remove(&body);
+                self.submit_build(body, build);
+            }
+        }
     }
 
     /// The body's build out on the kernel thread is of a plan nobody needs
@@ -687,6 +740,17 @@ impl PrintCadApp {
     }
 }
 
+/// Mesh settings for a body being changed faster than it builds: about
+/// four times coarser along curves, at most 45° a step round them.
+fn coarse(fine: TessellationSettings) -> TessellationSettings {
+    TessellationSettings {
+        mesh_deviation: fine.mesh_deviation * 4.0,
+        chord_tolerance: fine.chord_tolerance * 4.0,
+        angular_tolerance_deg: (fine.angular_tolerance_deg * 3.0).min(45.0),
+        ..fine
+    }
+}
+
 /// Put a body's rebuilt solid in the document: its shape and the mesh drawn
 /// from it.
 pub(crate) fn store_built_solid(
@@ -708,4 +772,25 @@ pub(crate) fn store_built_solid(
             health: None,
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A moving body's mesh is coarser along and round its curves, and
+    /// keeps everything else of the fine settings.
+    #[test]
+    fn coarse_settings_are_coarser_and_otherwise_the_same() {
+        let fine = TessellationSettings {
+            angular_tolerance_deg: 10.0,
+            ..TessellationSettings::default()
+        };
+        let rough = coarse(fine.clone());
+        assert!(rough.angular_tolerance_deg > fine.angular_tolerance_deg);
+        assert!(rough.mesh_deviation > fine.mesh_deviation);
+        assert!(rough.chord_tolerance > fine.chord_tolerance);
+        assert_eq!(rough.weld_cross_face, fine.weld_cross_face);
+        assert!(coarse(TessellationSettings::default()).angular_tolerance_deg <= 45.0);
+    }
 }

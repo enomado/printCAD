@@ -169,6 +169,12 @@ pub(crate) struct DocumentSession {
     /// Bodies whose build out was dropped for a newer plan: its
     /// cancellation lands quietly.
     pub dropped_builds: std::collections::HashSet<Uuid>,
+    /// Bodies being changed faster than they build: when a plan last
+    /// replaced one still building.
+    pub moving: std::collections::HashMap<Uuid, std::time::Instant>,
+    /// Bodies shown meshed coarse while moving, with the plan to build
+    /// again at full detail once they settle.
+    pub coarse: std::collections::HashMap<Uuid, crate::app::recompute::QueuedBuild>,
     /// Bodies whose new shape is being read, and the asset each failed to
     /// read from, which is not tried again.
     pub shapes_in_flight: std::collections::HashSet<Uuid>,
@@ -283,6 +289,8 @@ impl DocumentSession {
             build_serials: Default::default(),
             build_times: Default::default(),
             dropped_builds: Default::default(),
+            moving: Default::default(),
+            coarse: Default::default(),
             shapes_in_flight: Default::default(),
             shapes_failed: Default::default(),
             solids_in_flight: Default::default(),
@@ -319,6 +327,7 @@ impl DocumentSession {
             || self.document_open_rx.is_some()
             || self.step_import_pending.is_some()
             || self.links.busy()
+            || !self.coarse.is_empty()
     }
 }
 

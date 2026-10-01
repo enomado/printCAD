@@ -317,6 +317,8 @@ impl PrintCadApp {
                         return;
                     }
                     self.drop_failed_preview(BodyId(body_id));
+                    // Built again finely, it would fail the same way.
+                    self.session.coarse.remove(&body_id);
                     // Pin the failure on the culprit feature; the panel and
                     // tree surface it. Downstream keeps the last good solid.
                     if let Some(feature) = failed_feature {

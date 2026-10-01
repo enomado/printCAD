@@ -38,7 +38,7 @@ impl ToolSnapshot {
 }
 
 /// How many states a [`ChainCache`] keeps.
-const KEPT_STATES: usize = 3;
+const KEPT_STATES: usize = 4;
 
 /// The chain as it stood at the start of one of its ops: what a later
 /// build whose history agrees up to there resumes from.

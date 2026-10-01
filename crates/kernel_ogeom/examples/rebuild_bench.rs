@@ -109,26 +109,27 @@ fn main() {
     let detail = TessellationSettings::default();
     let mut cache = ChainCache::default();
 
-    let build = |host: &mut Benches, cache: &mut ChainCache, label: &str| {
-        host.registry.evaluate(&mut host.document);
-        let plan = wb_design::body_build_ops(&host.document, body).unwrap();
-        let tags: Vec<_> = plan
-            .op_features
-            .iter()
-            .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
-            .collect();
-        let started = std::time::Instant::now();
-        let built: SolidBuildResult = OgeomKernel::new()
-            .execute_solid_chain_cached(&plan.ops, &tags, &detail, None, &[], Some(cache))
-            .unwrap();
-        println!(
-            "{label:<28} {:>4} ops, {:>2} kept  {:>8.1} ms  {} triangles",
-            plan.ops.len(),
-            cache.resumed(),
-            started.elapsed().as_secs_f64() * 1000.0,
-            built.mesh.indices.len() / 3
-        );
-    };
+    let build =
+        |host: &mut Benches, cache: &mut ChainCache, label: &str, detail: &TessellationSettings| {
+            host.registry.evaluate(&mut host.document);
+            let plan = wb_design::body_build_ops(&host.document, body).unwrap();
+            let tags: Vec<_> = plan
+                .op_features
+                .iter()
+                .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+                .collect();
+            let started = std::time::Instant::now();
+            let built: SolidBuildResult = OgeomKernel::new()
+                .execute_solid_chain_cached(&plan.ops, &tags, detail, None, &[], Some(cache))
+                .unwrap();
+            println!(
+                "{label:<28} {:>4} ops, {:>2} kept  {:>8.1} ms  {} triangles",
+                plan.ops.len(),
+                cache.resumed(),
+                started.elapsed().as_secs_f64() * 1000.0,
+                built.mesh.indices.len() / 3
+            );
+        };
     let mut set = |host: &mut Benches, feature: FeatureId, length: f64| {
         let out = engine.run_script(
             &format!(
@@ -141,14 +142,24 @@ fn main() {
         assert_eq!(out.error, None);
     };
 
-    build(&mut host, &mut cache, "from scratch");
+    build(&mut host, &mut cache, "from scratch", &detail);
     set(&mut host, last, 5.0);
-    build(&mut host, &mut cache, "last feature edited");
+    build(&mut host, &mut cache, "last feature edited", &detail);
     set(&mut host, last, 6.0);
-    build(&mut host, &mut cache, "last feature edited again");
+    build(&mut host, &mut cache, "last feature edited again", &detail);
     set(&mut host, middle, 9.0);
-    build(&mut host, &mut cache, "a middle feature edited");
+    build(&mut host, &mut cache, "a middle feature edited", &detail);
     set(&mut host, middle, 10.0);
-    build(&mut host, &mut cache, "the same one again");
-    build(&mut host, &mut cache, "nothing changed");
+    build(&mut host, &mut cache, "the same one again", &detail);
+    build(&mut host, &mut cache, "nothing changed", &detail);
+    // As the application builds a body being dragged, then settled.
+    let coarse = TessellationSettings {
+        mesh_deviation: detail.mesh_deviation * 4.0,
+        chord_tolerance: detail.chord_tolerance * 4.0,
+        angular_tolerance_deg: (detail.angular_tolerance_deg * 3.0).min(45.0),
+        ..detail.clone()
+    };
+    set(&mut host, last, 7.0);
+    build(&mut host, &mut cache, "dragged, coarse", &coarse);
+    build(&mut host, &mut cache, "settled, full detail", &detail);
 }

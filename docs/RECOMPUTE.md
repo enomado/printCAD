@@ -34,7 +34,7 @@ Each item is one milestone and one commit.
   in the queue is skipped; a running one stops unless it is past half its
   body's usual build time, so a stream of edits still shows a shape now and
   then.
-- [ ] **3. Coarse while dragging, fine at rest.** Builds that follow one
+- [x] **3. Coarse while dragging, fine at rest.** Builds that follow one
   another faster than they land mesh at a coarser tolerance; once the edits
   settle, the body is built once more at full detail (from the state item 1
   kept, so only the meshing is repeated).
@@ -76,3 +76,7 @@ the first edit there resumes too; the first edit of a middle feature still
 replays everything (nothing was kept there), the next resumes at it and
 pays only for what follows, here the pattern and the fillet. Resuming
 costs a clone of the kept model, 2 to 3 ms on this part.
+
+After 3, a dragged body meshes coarse (here 1952 triangles in place of
+3282) and, once it settles, is built at full detail from the state kept at
+the end of the chain: 31 ms, the meshing and the snapshot alone.
