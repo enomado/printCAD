@@ -204,6 +204,12 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
         .map(|(_, n)| n.data.clone())
         .unwrap();
     assert_eq!(d["offset"]["translation"][2], serde_json::json!(20.0));
+    host.registry.evaluate(&mut host.document);
+    let (min, max) = build(&host.document);
+    assert!(
+        (min[2] - 20.0).abs() < 1e-3 && (max[2] - 23.0).abs() < 1e-3,
+        "the pad follows its datum: {min:?} {max:?}"
+    );
 }
 
 /// A script drills a tapped UNC hole with a pointed bottom and a

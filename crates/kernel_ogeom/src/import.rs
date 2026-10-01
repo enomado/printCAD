@@ -57,10 +57,6 @@ pub fn import_step(
     let document = &document;
     let model = document.model();
 
-    // Mesh here, from the model already in memory. Deferring it would mean
-    // parsing every snapshot back afterwards, and re-parsing costs several
-    // times what the meshing itself does.
-    let want_mesh = true;
     let want_blob = detail.persist_brep_snapshot && !force_inline_mesh;
 
     let sources = body_sources(document, &solids);
@@ -93,15 +89,14 @@ pub fn import_step(
         } else {
             Vec::new()
         };
-        let mesh = if want_mesh {
-            tess::mesh_shape_with(model, shape, &face_colors, detail, tess::Faces::Inline)
-                .unwrap_or_else(|e| {
-                    warn!(target: "printcad.kernel", body = i, "inline mesh failed: {e}");
-                    TriMesh::default()
-                })
-        } else {
-            TriMesh::default()
-        };
+        // Meshed here, from the model already in memory. Deferring it would
+        // mean parsing every snapshot back afterwards, and re-parsing costs
+        // several times what the meshing itself does.
+        let mesh = tess::mesh_shape_with(model, shape, &face_colors, detail, tess::Faces::Inline)
+            .unwrap_or_else(|e| {
+                warn!(target: "printcad.kernel", body = i, "inline mesh failed: {e}");
+                TriMesh::default()
+            });
 
         let bounds_mm = tess::robust_bounds(model, shape).map(|(lo, hi)| {
             (

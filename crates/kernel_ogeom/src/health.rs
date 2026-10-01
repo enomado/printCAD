@@ -162,7 +162,10 @@ pub fn repair_blob(
 fn swept_faces(model: &Model, shape: &Shape) -> usize {
     use ogeom::geom::SurfaceGeometry;
     explore(model, shape, Filter::OfType(ShapeType::Face))
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!(target: "printcad.kernel", "the faces do not read: {e}");
+            Vec::new()
+        })
         .iter()
         .filter(|face| {
             let Some(node) = model.node(face) else {

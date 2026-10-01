@@ -388,23 +388,6 @@ impl Sketch {
         self.external.retain(|id, _| !doomed.contains(id));
         removed
     }
-
-    /// Ids of every point that no remaining curve references. A delete
-    /// leaves them, since standalone points are legitimate sketch geometry.
-    pub fn orphan_point_ids(&self) -> Vec<Uuid> {
-        use std::collections::HashSet;
-        let mut referenced: HashSet<Uuid> = HashSet::new();
-        for geom in &self.geometry {
-            referenced.extend(Self::curve_point_ids(geom));
-        }
-        self.geometry
-            .iter()
-            .filter_map(|g| match g {
-                GeometryElement::Point(p) if !referenced.contains(&p.id) => Some(p.id),
-                _ => None,
-            })
-            .collect()
-    }
 }
 
 /// The reference geometry every sketch carries: the origin and the two

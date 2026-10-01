@@ -337,7 +337,6 @@ pub(super) fn copy_selection(
 /// `dx` and `dy`, the original in the corner. `linked`, every copy stays
 /// the original's size and one pitch along the rows and one down the
 /// columns space them.
-#[allow(clippy::too_many_arguments)]
 pub fn array(
     sketch: &mut Sketch,
     selected: &HashSet<Uuid>,

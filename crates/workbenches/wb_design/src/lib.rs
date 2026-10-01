@@ -986,7 +986,9 @@ pub(crate) fn take_base(ctx: &mut WorkbenchRuntimeContext, body: BodyId) -> Opti
         .ok()?;
     // First in the body's history, before any sketch already on it: the
     // body's shape starts there.
-    let _ = ctx.document.move_feature_after(id, None);
+    if let Err(why) = ctx.document.move_feature_after(id, None) {
+        ctx.log_warn(format!("The base could not go first in the body: {why:?}"));
+    }
     ctx.document.mark_feature_dirty(id);
     Some(id)
 }
@@ -1946,7 +1948,7 @@ impl Workbench for DesignWorkbench {
 
     /// The Design preferences page.
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
         use ui_kit::widgets::{PrefRow, pref_group};
         pref_group(
             ui,
@@ -1967,7 +1969,6 @@ impl Workbench for DesignWorkbench {
             ],
             filter,
         );
-        false
     }
 
     /// Under the tree the bench only orients a new user; features are

@@ -116,7 +116,10 @@ pub fn solids_of(model: &Model, shape: &Shape) -> Vec<Shape> {
     match model.kind_of(shape) {
         Ok(ShapeType::Solid) => vec![shape.clone()],
         Ok(ShapeType::Compound | ShapeType::CompSolid) => {
-            explore(model, shape, Filter::OfType(ShapeType::Solid)).unwrap_or_default()
+            explore(model, shape, Filter::OfType(ShapeType::Solid)).unwrap_or_else(|e| {
+                tracing::warn!(target: "printcad.kernel", "a compound's solids do not read: {e}");
+                Vec::new()
+            })
         }
         _ => vec![shape.clone()],
     }

@@ -279,7 +279,6 @@ impl WasmWorkbench {
             ctx.active_document_object,
         ));
         if inner.stale || inner.frame_key != Some(key) {
-            inner.stale = false;
             inner.frame_key = Some(key);
             let id = self.id().to_string();
             let pointer = serde_json::to_string(&convert::pointer(ctx, None)).unwrap_or_default();
@@ -892,7 +891,7 @@ impl Workbench for WasmWorkbench {
     }
 
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, _filter: &str) -> bool {
+    fn ui_settings(&mut self, ui: &mut egui::Ui, _filter: &str) {
         let panel = self.settings_panel();
         let mut inner = self.inner();
         let out = core_document::panel::show(
@@ -913,7 +912,6 @@ impl Workbench for WasmWorkbench {
         if changed {
             inner.settings_panel = None;
         }
-        changed
     }
 
     fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {

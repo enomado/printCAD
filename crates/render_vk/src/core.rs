@@ -1826,7 +1826,10 @@ fn load_vulkan() -> Result<Entry, RenderError> {
 /// Vulkan-over-Metal device is not listed.
 fn portability_enumeration(entry: &Entry) -> bool {
     unsafe { entry.enumerate_instance_extension_properties(None) }
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!(target: "printcad.vulkan", "instance extensions do not list: {e}");
+            Vec::new()
+        })
         .iter()
         .any(|ext| ext.extension_name_as_c_str() == Ok(ash::khr::portability_enumeration::NAME))
 }
@@ -1960,7 +1963,10 @@ fn create_logical_device(
     let mut device_extensions = vec![ash::khr::swapchain::NAME.as_ptr()];
     // A device that is a portability subset (Vulkan over Metal) must say so.
     let subset = unsafe { instance.enumerate_device_extension_properties(physical_device) }
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!(target: "printcad.vulkan", "device extensions do not list: {e}");
+            Vec::new()
+        })
         .iter()
         .any(|ext| ext.extension_name_as_c_str() == Ok(ash::khr::portability_subset::NAME));
     if subset {

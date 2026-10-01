@@ -121,7 +121,7 @@ pub fn draw_step_import_modal(
                         });
                     }
                     check_row(ui, &mut draft.persist_brep_snapshot, "Keep shape snapshots")
-                        .on_hover_text("Serialize each body's shape and mesh it in the background; recommended for large files");
+                        .on_hover_text("Keep each body's exact shape, which features, repair, measuring and STEP export read");
                     check_row(ui, &mut draft.generate_boundary_edges, "Boundary edges")
                         .on_hover_text("Draw face boundaries as edge lines");
                     if !draft.persist_brep_snapshot {
@@ -129,7 +129,7 @@ pub fn draw_step_import_modal(
                             ui,
                             Note::Warning,
                             None,
-                            "Without shape snapshots every body is meshed inside the import itself, one long step with no rebuild later.",
+                            "Without shape snapshots the bodies keep only their meshes: they draw and pick, but nothing that reads an exact shape (features, repair, measuring, STEP export) works on them.",
                         );
                     }
                 });

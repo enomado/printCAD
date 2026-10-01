@@ -156,7 +156,12 @@ impl OgeomKernel {
         path: &Path,
         detail: &TessellationSettings,
     ) -> KernelResult<kernel_api::MeshSolidResult> {
-        let model = self.import_step_full_mesh(path, detail)?;
+        self.initialize()?;
+        let keep_snapshot = TessellationSettings {
+            persist_brep_snapshot: true,
+            ..detail.clone()
+        };
+        let model = import::import_step(path, &keep_snapshot, false)?;
         let count = model.bodies.len();
         let Some(body) = model.bodies.into_iter().next() else {
             return Err(KernelError::Other(anyhow::anyhow!(

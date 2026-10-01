@@ -731,8 +731,8 @@ impl Default for LightingSettings {
             ambient_color: [1.0, 1.0, 1.0],
             specular_shininess: default_specular_shininess(),
             specular_intensity: default_specular_intensity(),
-            edge_line_color: [0.08, 0.08, 0.08],
-            edge_line_width: 3.0,
+            edge_line_color: default_edge_line_color(),
+            edge_line_width: default_edge_line_width(),
         }
     }
 }
@@ -1021,6 +1021,7 @@ impl Clone for SettingsStore {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn a_selection_colour_only_ever_the_default_takes_today_s() {
@@ -1042,8 +1043,6 @@ mod tests {
         chosen.retire_former_defaults();
         assert_eq!(chosen.selection_color, [1.0, 0.2, 0.6]);
     }
-
-    use super::*;
 
     #[test]
     fn diagnostics_are_off_until_asked_for() {

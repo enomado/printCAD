@@ -302,10 +302,14 @@ impl crate::Document {
             }
         }
         for (id, data) in set_updates.into_iter().chain(table_update) {
-            let _ = self.update_feature_data(id, data);
+            if let Err(why) = self.update_feature_data(id, data) {
+                tracing::warn!("a renamed reference in {id:?} was not rewritten: {why}");
+            }
         }
         for (id, key, text) in formula_updates {
-            let _ = self.set_feature_formula(id, key, Some(text));
+            if let Err(why) = self.set_feature_formula(id, key.clone(), Some(text)) {
+                tracing::warn!("the formula {key} of {id:?} was not rewritten: {why}");
+            }
         }
     }
 }

@@ -231,7 +231,7 @@ fn a_linked_part_is_read_from_its_file() {
     assert!(doc.body_solid_is_imported(part));
 
     let bytes = doc.save_to_bytes(Compression::None).unwrap();
-    let mut loaded = Document::load_from_bytes(bytes).unwrap();
+    let loaded = Document::load_from_bytes(bytes).unwrap();
     assert!(
         loaded.imported_brep_blob(part).is_none(),
         "its shape is its file's, read again"
@@ -248,7 +248,6 @@ fn a_linked_part_is_read_from_its_file() {
     journal.note(&mut doc);
     assert!(!doc.link_stale(part));
     assert_eq!(doc.links_awaiting_geometry()[0].1.stamp, 9);
-    let _ = &mut loaded;
 }
 
 /// A pick a hair off a flat face lands on the face's exact plane.

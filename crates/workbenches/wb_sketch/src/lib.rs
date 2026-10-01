@@ -3511,7 +3511,7 @@ impl Workbench for SketchWorkbench {
     /// The Sketcher preferences page: the solver, snap and view switches,
     /// the minimum wall, and the palette, read-only.
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
         use ui_kit::widgets::{PrefRow, pref_group};
         let mut snap = !self.snap_off;
         let changed = pref_group(
@@ -3547,7 +3547,7 @@ impl Workbench for SketchWorkbench {
         if changed {
             self.snap_off = !snap;
         }
-        let changed = pref_group(
+        pref_group(
             ui,
             "Printing",
             vec![
@@ -3562,7 +3562,7 @@ impl Workbench for SketchWorkbench {
                 .hint("The wall thickness check marks walls thinner than this"),
             ],
             filter,
-        ) || changed;
+        );
         let pal = core_document::SketchPalette::default();
         pref_group(
             ui,
@@ -3579,7 +3579,6 @@ impl Workbench for SketchWorkbench {
             ],
             filter,
         );
-        changed
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {

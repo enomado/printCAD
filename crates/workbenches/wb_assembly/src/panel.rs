@@ -1556,9 +1556,12 @@ impl AssemblyWorkbench {
         if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = &mut joint.kind {
             drive.to = drive.to.map(|_| play.start);
         }
-        let _ = ctx
+        if let Err(why) = ctx
             .document
-            .update_feature_data(play.joint, joint.to_json());
+            .update_feature_data(play.joint, joint.to_json())
+        {
+            ctx.log_warn(why.to_string());
+        }
         ctx.document.clear_feature_dirty(play.joint);
         self.solve_and_apply(ctx);
     }
@@ -1577,11 +1580,15 @@ impl AssemblyWorkbench {
             self.playing = None;
             match &before {
                 Some(data) => {
-                    let _ = ctx.document.update_feature_data(id, data.clone());
+                    if let Err(why) = ctx.document.update_feature_data(id, data.clone()) {
+                        ctx.log_warn(why.to_string());
+                    }
                     ctx.document.clear_feature_dirty(id);
                 }
                 None => {
-                    let _ = ctx.document.remove_feature(id);
+                    if let Err(why) = ctx.document.remove_feature(id) {
+                        ctx.log_warn(why.to_string());
+                    }
                     ctx.active_document_object = None;
                 }
             }
@@ -1946,10 +1953,14 @@ impl AssemblyWorkbench {
             }
         });
         for (key, formula) in formula_edits {
-            let _ = ctx.document.set_feature_formula(id, &key, formula);
+            if let Err(why) = ctx.document.set_feature_formula(id, &key, formula) {
+                ctx.log_warn(why.to_string());
+            }
         }
         if changed {
-            let _ = ctx.document.update_feature_data(id, joint.to_json());
+            if let Err(why) = ctx.document.update_feature_data(id, joint.to_json()) {
+                ctx.log_warn(why.to_string());
+            }
             ctx.document.clear_feature_dirty(id);
             self.solve_and_apply(ctx);
         }
@@ -2213,11 +2224,15 @@ impl AssemblyWorkbench {
         if request.cancel {
             match &before {
                 Some(data) => {
-                    let _ = ctx.document.update_feature_data(id, data.clone());
+                    if let Err(why) = ctx.document.update_feature_data(id, data.clone()) {
+                        ctx.log_warn(why.to_string());
+                    }
                     ctx.document.clear_feature_dirty(id);
                 }
                 None => {
-                    let _ = ctx.document.remove_feature(id);
+                    if let Err(why) = ctx.document.remove_feature(id) {
+                        ctx.log_warn(why.to_string());
+                    }
                     ctx.active_document_object = None;
                 }
             }
@@ -2369,7 +2384,9 @@ impl AssemblyWorkbench {
             );
         });
         for (key, formula) in formula_edits {
-            let _ = ctx.document.set_feature_formula(id, &key, formula);
+            if let Err(why) = ctx.document.set_feature_formula(id, &key, formula) {
+                ctx.log_warn(why.to_string());
+            }
         }
         if !args.is_empty() {
             args.insert("joint".into(), id.0.to_string().into());

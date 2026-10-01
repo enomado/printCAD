@@ -471,11 +471,14 @@ pub(crate) fn tool_names(
             f.names = Vec::new();
             continue;
         }
-        f.names = segments
+        let walls: Vec<TopoName> = segments
             .iter()
             .filter(|(_, p)| drawn.holds(*p, 0.0))
             .map(|(name, _)| naming::child(feature, &name.to_le_bytes()))
             .collect();
+        if !walls.is_empty() {
+            f.names = walls;
+        }
     }
     for (along, index) in ends {
         let end: &[u8] = if along.abs() <= 2.0 * map.faces[index].drawing(model).chord + SLACK {
@@ -487,8 +490,6 @@ pub(crate) fn tool_names(
         };
         map.faces[index].names = vec![naming::child(feature, end)];
     }
-    // What sweeping named neither a wall nor an end (the tool is not a
-    // plain sweep) is left without a name here.
     for f in &mut map.faces {
         f.names.retain(|n| *n != 0);
     }

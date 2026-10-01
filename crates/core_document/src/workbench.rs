@@ -879,12 +879,10 @@ pub trait Workbench: Send {
 
     /// Draw this bench's Preferences page, while it is shown. `filter` is
     /// the dialog's lowercase search text; rows that do not match it stay
-    /// hidden (`ui_kit::widgets::pref_group` applies it). Answers whether a
-    /// setting changed.
+    /// hidden (`ui_kit::widgets::pref_group` applies it). The settings it
+    /// changes are saved through `settings_json`.
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, _ui: &mut egui::Ui, _filter: &str) -> bool {
-        false
-    }
+    fn ui_settings(&mut self, _ui: &mut egui::Ui, _filter: &str) {}
 
     /// Finish/close the current editing session (e.g., finish sketch).
     /// Called when the user requests to finish editing (e.g., via UI button).

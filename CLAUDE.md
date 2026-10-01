@@ -93,8 +93,9 @@ cargo fmt --all                   # CI enforces --check
   The CI's `platforms` job runs clippy and the tests on Windows and macOS.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
-  `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step` is an
-  OCCT-flavoured file kept for the ignored SURFACE_CURVE interop test.)
+  `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step`, from
+  another exporter, writes its edges as SURFACE_CURVE wrappers, which
+  `imports_a_step_file_with_surface_curves` reads.)
 - `[profile.dev.package."*"] opt-level = 3` in the workspace `Cargo.toml` is
   load-bearing, not tidiness: the kernel is numeric code and runs ~26x slower
   unoptimized, which made a large STEP import look like a hang. Our own crates
@@ -182,8 +183,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   instancing. Tests marked `#[ignore]` document kernel-side gaps; grep for
   `kernel:` in `tests/` before assuming a feature is wired wrong.
 - `core_document`: Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
-  persistence), `Workbench` trait + runtime context, snapshot undo
-  (`undo.rs`), workbench registry (`service.rs`), core datums (`datum.rs`:
+  persistence), `Workbench` trait + runtime context,
+  workbench registry (`service.rs`), core datums (`datum.rs`:
   plane/line/point/coordinate system + attachment + offset, shared across workbenches;
   an attachment on its own body's solid (a face, edge or point picked, a
   circle's centre, the centre of mass and axes of inertia) keeps its picks
@@ -877,7 +878,8 @@ hacks, no silently degraded feature). Instead:
 - **The app is a client of a document server, one connection per tab**
   (`core_document/src/server.rs` trait = the wire protocol; `crates/doc_server`
   has the `printcad-serverd` daemon (one per document, unix socket under
-  `$XDG_RUNTIME_DIR/printcad`, single client, exits on disconnect) plus the
+  `$XDG_RUNTIME_DIR/printcad`, any number of clients, relaying ops among
+  them, exits when the last leaves) plus the
   `DirectFiles` fallback). The daemon stores opaque `.prtcad` bytes and op
   envelopes (`<file>.oplog.jsonl`), never deserializing a `Document`. Ops
   recorded before a document has a file go to `unhomed-<socket hash>.oplog.jsonl`,
@@ -899,7 +901,7 @@ hacks, no silently degraded feature). Instead:
   never send `Rebase`, and never replace the document. Non-invertible ops
   (imports, asset adds) are barriers that clear history. Coalescing keeps
   the LAST op with the FIRST inverse. `Document::clone` still preserves the
-  `#[serde(skip)]` sidecars (save snapshots depend on it; `undo.rs` tests
+  `#[serde(skip)]` sidecars (save snapshots depend on it; `step_persistence.rs` tests
   pin it). Solids stay derived: `after_history_jump` re-marks part features
   dirty.
 - Kernel shapes are plain `Send + Sync` data; tests run in parallel with no

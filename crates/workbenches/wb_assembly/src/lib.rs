@@ -2690,7 +2690,7 @@ impl Workbench for AssemblyWorkbench {
         InputResult::consumed()
     }
 
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+    fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.collect_interference(ctx);
         self.collect_mass(ctx);
         self.collect_sweep(ctx);
@@ -2700,7 +2700,7 @@ impl Workbench for AssemblyWorkbench {
             && let Some(count) = studying.frames.as_ref().map(Vec::len).filter(|n| *n > 0)
         {
             // Frames at the study's own pace, round again at the end.
-            studying.clock += _dt.min(0.1);
+            studying.clock += dt.min(0.1);
             let step = studying.draft.step.max(1e-3);
             while studying.clock >= step {
                 studying.clock -= step;
@@ -2720,7 +2720,7 @@ impl Workbench for AssemblyWorkbench {
                 .filter(|n| *n > 0.0)
         {
             // A step a second, round again once through.
-            steps.at += _dt.min(0.1);
+            steps.at += dt.min(0.1);
             if steps.at > count {
                 steps.at = 0.0;
             }

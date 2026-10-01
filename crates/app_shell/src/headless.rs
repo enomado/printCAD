@@ -97,8 +97,11 @@ pub fn run(invocation: &Invocation, registry: DocumentService) -> Result<bool> {
     host.rebuild();
     let mut engine = scripting::ScriptEngine::new();
     engine.set_time_limit(std::time::Duration::from_secs(3600));
-    engine.set_args(&invocation.args);
     let name = invocation.script.display().to_string();
+    if let Err(why) = engine.set_args(&invocation.args) {
+        eprintln!("{name}: its arguments could not be set: {why}");
+        return Ok(false);
+    }
     let out = engine.run_script(&source, &name, &mut host);
     for line in &out.printed {
         println!("{line}");

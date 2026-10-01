@@ -559,7 +559,6 @@ pub fn snap_at(state: &ToolState, sketch: &Sketch, cursor: Vec2D, tol: f32) -> s
 /// coords). `snap_tol` is in sketch units; `params` carries the
 /// panel-editable tool settings; `selected` is the current selection (used
 /// by the offset and transform tools).
-#[allow(clippy::too_many_arguments)]
 pub fn handle_click(
     state: &mut ToolState,
     tool: &str,

@@ -46,6 +46,10 @@ pub enum AssetType {
     Obj,
     /// 3MF package
     ThreeMf,
+    Ply,
+    /// glTF, as JSON (`.gltf`) or binary (`.glb`)
+    Gltf,
+    Vrml,
     /// Other/unknown format
     Other,
 }
@@ -59,6 +63,9 @@ impl AssetType {
             AssetType::Iges => "iges",
             AssetType::Obj => "obj",
             AssetType::ThreeMf => "3mf",
+            AssetType::Ply => "ply",
+            AssetType::Gltf => "gltf",
+            AssetType::Vrml => "wrl",
             AssetType::Other => "bin",
         }
     }
@@ -71,6 +78,9 @@ impl AssetType {
             "iges" | "igs" => AssetType::Iges,
             "obj" => AssetType::Obj,
             "3mf" => AssetType::ThreeMf,
+            "ply" => AssetType::Ply,
+            "gltf" | "glb" => AssetType::Gltf,
+            "wrl" | "vrml" => AssetType::Vrml,
             _ => AssetType::Other,
         }
     }
@@ -78,6 +88,31 @@ impl AssetType {
     /// A format of triangles only: its bodies draw and pick, and take
     /// features once converted to a solid.
     pub fn is_mesh(&self) -> bool {
-        matches!(self, AssetType::Stl | AssetType::Obj | AssetType::ThreeMf)
+        matches!(
+            self,
+            AssetType::Stl
+                | AssetType::Obj
+                | AssetType::ThreeMf
+                | AssetType::Ply
+                | AssetType::Gltf
+                | AssetType::Vrml
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AssetType;
+
+    #[test]
+    fn every_mesh_format_the_importer_reads_is_a_mesh() {
+        for ext in [
+            "stl", "obj", "3mf", "ply", "gltf", "glb", "wrl", "vrml", "PLY",
+        ] {
+            assert!(AssetType::from_extension(ext).is_mesh(), "{ext}");
+        }
+        for ext in ["step", "stp", "iges", "igs", "dxf"] {
+            assert!(!AssetType::from_extension(ext).is_mesh(), "{ext}");
+        }
     }
 }

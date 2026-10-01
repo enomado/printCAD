@@ -152,6 +152,19 @@ impl ChainCache {
     }
 }
 
+/// Hash a value by its JSON. One that did not serialize hashes as a
+/// number never used before, so its key matches nothing cached.
+fn hash_json(json: serde_json::Result<Vec<u8>>, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    static UNMATCHED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    match json {
+        Ok(bytes) => bytes.hash(hasher),
+        Err(_) => UNMATCHED
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .hash(hasher),
+    }
+}
+
 /// Each op's key: the op and its tag.
 fn op_keys(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<u64> {
     use std::hash::{Hash, Hasher};
@@ -160,7 +173,7 @@ fn op_keys(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<u64> {
         .zip(tags)
         .map(|(op, tag)| {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            serde_json::to_vec(op).unwrap_or_default().hash(&mut hasher);
+            hash_json(serde_json::to_vec(op), &mut hasher);
             tag.hash(&mut hasher);
             hasher.finish()
         })
@@ -387,9 +400,7 @@ pub fn execute_cached(
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             keys[edited + 1..].hash(&mut hasher);
-            serde_json::to_vec(&(detail, probes))
-                .unwrap_or_default()
-                .hash(&mut hasher);
+            hash_json(serde_json::to_vec(&(detail, probes)), &mut hasher);
             edit = Some((edited, hasher.finish()));
         }
         cache.last = keys;

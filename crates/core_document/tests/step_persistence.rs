@@ -739,3 +739,19 @@ fn the_thumbnail_is_the_first_entry_and_reads_on_its_own() {
         let _ = std::fs::remove_file(&tmp);
     }
 }
+
+/// A save serializes a clone of the document, so the clone keeps the
+/// `#[serde(skip)]` maps (asset bytes, shape snapshots) a JSON round trip
+/// would drop.
+#[test]
+fn a_clone_keeps_the_sidecar_bytes() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body1".to_string()));
+    let asset = AssetReference::new("assets/x.step", AssetType::Step, json!({}));
+    let asset_id = doc.add_asset_with_data(asset, vec![1, 2, 3]);
+    doc.set_imported_brep_data(body, vec![9, 9], vec![[1.0, 0.0, 0.0]]);
+
+    let copy = doc.clone();
+    assert_eq!(copy.asset_bytes(asset_id), Some(&[1u8, 2, 3][..]));
+    assert_eq!(copy.imported_brep_blob(body), Some(&[9u8, 9][..]));
+}

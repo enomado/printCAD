@@ -1527,7 +1527,8 @@ fn load(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Result<SketchFeature, C
         .document
         .get_feature_data(id)
         .ok_or_else(|| CommandError::bad("sketch", "is not a feature of this document"))?;
-    SketchFeature::from_json(data).map_err(|_| CommandError::bad("sketch", "is not a sketch"))
+    SketchFeature::from_json(data)
+        .map_err(|why| CommandError::bad("sketch", format!("is not a sketch: {why}")))
 }
 
 fn vec(x: f64, y: f64) -> Vec2D {
@@ -1586,19 +1587,26 @@ fn polyline(
     Ok(ids)
 }
 
+/// Where a sketch on a datum stands, and the plane that puts it there now.
+type OnDatum = (DatumSupport, SketchPlane);
+
 /// A sketch's place on datum `id`: a datum plane, or one of a coordinate
 /// system's three (`which`, XY when left out), `offset` along its normal;
 /// with the plane that puts it on now and the body the datum is in.
-#[allow(clippy::type_complexity)]
 fn datum_support(
     ctx: &WorkbenchRuntimeContext,
     id: FeatureId,
     which: Option<&str>,
     offset: f32,
-) -> Result<((DatumSupport, SketchPlane), Option<BodyId>), CommandError> {
+) -> Result<(OnDatum, Option<BodyId>), CommandError> {
     let not_a_plane = || CommandError::bad("on", "is not a datum plane or coordinate system");
     let node = ctx.document.get_feature_meta(id).ok_or_else(not_a_plane)?;
-    let datum = DatumFeature::from_json(&node.data).map_err(|_| not_a_plane())?;
+    let datum = DatumFeature::from_json(&node.data).map_err(|why| {
+        CommandError::bad(
+            "on",
+            format!("is not a datum plane or coordinate system: {why}"),
+        )
+    })?;
     let plane = match datum.shape {
         DatumShape::Plane { .. } => None,
         DatumShape::CoordinateSystem { .. } => {

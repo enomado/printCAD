@@ -222,14 +222,10 @@ impl AxisPreset {
 
     pub const fn description(&self) -> &'static str {
         match self {
-            AxisPreset::RightHandedZForward => {
-                "Y points up, camera looks along -Z (WebGPU / Metal / D3D style)"
-            }
-            AxisPreset::RightHandedZBackward => {
-                "Y points up, camera looks along +Z (legacy OpenGL / Maya tooling)"
-            }
+            AxisPreset::RightHandedZForward => "Y points up, the camera looks along -Z",
+            AxisPreset::RightHandedZBackward => "Y points up, the camera looks along +Z",
             AxisPreset::ZUpRightHanded => {
-                "Z points up, camera looks along +Y (engineering CAD / STEP-style)"
+                "Z points up, the camera looks along +Y, as engineering drawings do"
             }
         }
     }

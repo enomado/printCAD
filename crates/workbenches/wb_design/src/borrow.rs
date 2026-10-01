@@ -750,7 +750,7 @@ pub(crate) fn borrows_of_body(document: &Document, body: BodyId) -> Vec<(Feature
 }
 
 /// The faces `body` borrows, each named for a choice list.
-#[cfg_attr(not(feature = "egui"), allow(dead_code))]
+#[cfg(feature = "egui")]
 pub(crate) fn faces_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedRef, String)> {
     let mut out = Vec::new();
     for (id, borrow) in borrows_of_body(document, body) {
@@ -773,7 +773,7 @@ pub(crate) fn faces_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedR
 }
 
 /// The edges `body` borrows, each named for a choice list.
-#[cfg_attr(not(feature = "egui"), allow(dead_code))]
+#[cfg(feature = "egui")]
 pub(crate) fn edges_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedRef, String)> {
     let mut out = Vec::new();
     for (id, borrow) in borrows_of_body(document, body) {
@@ -795,6 +795,7 @@ pub(crate) fn edges_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedR
     out
 }
 
+#[cfg(feature = "egui")]
 fn feature_name(document: &Document, id: FeatureId) -> String {
     document
         .get_feature_meta(id)

@@ -32,13 +32,13 @@ fn locate_sample() -> PathBuf {
 /// `SURFACE_CURVE`/`SEAM_CURVE` wrappers; the reader unwraps them, so such a
 /// file imports as any other.
 #[test]
-fn imports_occt_flavoured_step_file() {
+fn imports_a_step_file_with_surface_curves() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/box.step");
     let mut kernel = OgeomKernel::new();
     kernel.initialize().expect("initialize ogeom kernel");
     let imported = kernel
         .import_step(&fixture, &TessellationSettings::default())
-        .expect("OCCT-flavoured STEP import");
+        .expect("STEP import with SURFACE_CURVE edges");
     assert_eq!(imported.bodies.len(), 1);
 }
 
@@ -323,7 +323,7 @@ fn assembly_parts_arrive_in_world_space() {
     );
     assert!(
         distinct_origins < imported.bodies.len() / 2,
-        "{distinct_origins} of {} bodies sit at the origin — parts are being \
+        "{distinct_origins} of {} bodies sit at the origin: parts are being \
          imported in part-local coordinates instead of placed",
         imported.bodies.len()
     );
@@ -408,7 +408,7 @@ END-ISO-10303-21;
     assert_eq!(imported.bodies.len(), 1);
     assert!(
         !imported.bodies[0].mesh.positions.is_empty(),
-        "the healed face must triangulate — an empty mesh means the gap survived"
+        "the healed face must triangulate; an empty mesh means the gap survived"
     );
 }
 

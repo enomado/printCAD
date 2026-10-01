@@ -277,7 +277,8 @@ fn claim_unhomed_oplog(socket: &Path) {
 }
 
 fn unhomed_oplog() -> PathBuf {
-    lock(&UNHOMED_PATH).clone().unwrap_or_else(unhomed_oplog)
+    let claimed = lock(&UNHOMED_PATH).clone();
+    claimed.unwrap_or_else(|| crate::runtime_dir_for_logs().join("unhomed.oplog.jsonl"))
 }
 
 fn set_oplog_home(document: &Path) {
@@ -308,11 +309,20 @@ fn set_oplog_home(document: &Path) {
                 let orphan_blobs = orphan.with_extension("blobs");
                 let home_blobs = home.with_extension("blobs");
                 if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
-                    let _ = std::fs::create_dir_all(&home_blobs);
-                    for entry in entries.flatten() {
-                        let _ = std::fs::rename(entry.path(), home_blobs.join(entry.file_name()));
+                    let moved = std::fs::create_dir_all(&home_blobs).and_then(|()| {
+                        entries.flatten().try_for_each(|entry| {
+                            std::fs::rename(entry.path(), home_blobs.join(entry.file_name()))
+                        })
+                    });
+                    match moved {
+                        Ok(()) => {
+                            let _ = std::fs::remove_dir(&orphan_blobs);
+                        }
+                        Err(err) => tracing::warn!(
+                            "the op log's blobs did not all move to {}: {err}",
+                            home_blobs.display()
+                        ),
                     }
-                    let _ = std::fs::remove_dir(&orphan_blobs);
                 }
             }
             Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
@@ -343,8 +353,10 @@ fn append_ops(actor: uuid::Uuid, ops: &[core_document::op::DocumentOp]) -> std::
     }
     // Rotation before append: a single import op can be large, but the cap
     // is about unbounded sessions, not about splitting one op.
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() > OPLOG_ROTATE_BYTES) {
-        let _ = std::fs::rename(&path, path.with_extension("jsonl.1"));
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > OPLOG_ROTATE_BYTES)
+        && let Err(err) = std::fs::rename(&path, path.with_extension("jsonl.1"))
+    {
+        tracing::warn!("the op log did not rotate, so it grows past its cap: {err}");
     }
     let blob_dir = path.with_extension("blobs");
     let mut file = std::fs::OpenOptions::new()

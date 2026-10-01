@@ -179,6 +179,20 @@ fn a_step_file_reads_as_its_first_solid() {
     assert!(read.mesh.bounds().is_some());
 }
 
+/// A STEP file's solid is read as it is, not converted from its mesh: a
+/// screw keeps its cylinders.
+#[test]
+fn a_step_file_with_curved_faces_reads_exact() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/M5x16_BHCS_original_encoding.step");
+    let read = OgeomKernel::new()
+        .read_solid(&path, &TessellationSettings::default())
+        .unwrap();
+    assert!(!read.health.faceted, "read as facets: {:?}", read.summary);
+    let text = String::from_utf8_lossy(&read.brep_blob);
+    assert!(text.contains("Cylinder") || text.contains("cylinder"));
+}
+
 #[test]
 fn deleting_a_bore_closes_it_again() {
     let (document, body, lo, hi) = imported_box();

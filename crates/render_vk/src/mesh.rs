@@ -988,7 +988,7 @@ impl MeshRenderer {
                 };
                 stats.bodies_drawn += 1;
                 stats.triangle_indices += u64::from(cached.index_count);
-                self.draw_body(command_buffer, cached, body, false);
+                self.draw_body(command_buffer, cached, body);
             }
         }
 
@@ -1075,7 +1075,7 @@ impl MeshRenderer {
                 };
                 stats.bodies_drawn += 1;
                 stats.triangle_indices += u64::from(cached.index_count);
-                self.draw_body(command_buffer, cached, body, true);
+                self.draw_body(command_buffer, cached, body);
             }
         }
 
@@ -1108,7 +1108,7 @@ impl MeshRenderer {
                 };
                 stats.bodies_drawn += 1;
                 stats.triangle_indices += u64::from(cached.index_count);
-                self.draw_body(command_buffer, cached, body, false);
+                self.draw_body(command_buffer, cached, body);
             }
         }
         let late_edges = |b: &BodySubmission| translucent(b) && edges_later(b);
@@ -1162,7 +1162,7 @@ impl MeshRenderer {
                 };
                 stats.bodies_drawn += 1;
                 stats.triangle_indices += u64::from(cached.index_count);
-                self.draw_body(command_buffer, cached, body, false);
+                self.draw_body(command_buffer, cached, body);
             }
         }
 
@@ -1214,7 +1214,6 @@ impl MeshRenderer {
         command_buffer: vk::CommandBuffer,
         cached: &CachedMesh,
         body: &BodySubmission,
-        _is_wireframe: bool,
     ) {
         let final_color = apply_highlight_color(body.color, body.highlight);
         let draw_pc = MeshDrawPushConstants {

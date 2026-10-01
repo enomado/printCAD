@@ -286,17 +286,22 @@ impl DesignWorkbench {
                     .map(|n| (n.name.clone(), n.formulas.clone()));
                 if let Some((name, formulas)) = now {
                     for key in formulas.keys().filter(|k| !task.formulas.contains_key(*k)) {
-                        let _ = ctx
-                            .document
-                            .set_feature_formula(task.feature, key.clone(), None);
+                        if let Err(why) =
+                            ctx.document
+                                .set_feature_formula(task.feature, key.clone(), None)
+                        {
+                            ctx.log_warn(why.to_string());
+                        }
                     }
                     for (key, formula) in &task.formulas {
-                        if formulas.get(key) != Some(formula) {
-                            let _ = ctx.document.set_feature_formula(
+                        if formulas.get(key) != Some(formula)
+                            && let Err(why) = ctx.document.set_feature_formula(
                                 task.feature,
                                 key.clone(),
                                 Some(formula.clone()),
-                            );
+                            )
+                        {
+                            ctx.log_warn(why.to_string());
                         }
                     }
                     if name != task.name {
@@ -407,7 +412,9 @@ impl DesignWorkbench {
             (changed, std::mem::take(&mut fx.edits))
         };
         for (key, formula) in formula_edits {
-            let _ = ctx.document.set_feature_formula(feature_id, key, formula);
+            if let Err(why) = ctx.document.set_feature_formula(feature_id, key, formula) {
+                ctx.log_warn(why.to_string());
+            }
         }
         if changed {
             self.apply_part_edit(ctx, feature_id, &deps_before, sketch_before, &feature);
@@ -516,13 +523,17 @@ impl DesignWorkbench {
             (changed, std::mem::take(&mut fx.edits))
         };
         for (key, formula) in formula_edits {
-            let _ = ctx.document.set_feature_formula(datum_id, key, formula);
+            if let Err(why) = ctx.document.set_feature_formula(datum_id, key, formula) {
+                ctx.log_warn(why.to_string());
+            }
         }
         if changed {
             // A sketch drawn on this datum follows it (`Workbench::derive`),
             // and what stands on the sketch rebuilds.
-            let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
-            crate::datum_refs::sync_dependencies(ctx, datum_id, &datum);
+            match ctx.document.update_feature_data(datum_id, datum.to_json()) {
+                Ok(()) => crate::datum_refs::sync_dependencies(ctx, datum_id, &datum),
+                Err(why) => ctx.log_warn(why.to_string()),
+            }
         }
         ui.add_space(SPACE_1);
         Card::new().padding(SPACE_2).show(ui, |ui| {

@@ -102,35 +102,6 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
     out
 }
 
-/// Convert sketch geometry to a renderable mesh of thin quads.
-pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
-    let plane_normal = glam::Vec3::from_array(plane.normal).normalize();
-    let mut vertex_offset = 0u32;
-    for polyline in sketch_polylines(sketch, plane) {
-        for pair in polyline.windows(2) {
-            add_line_quad(
-                &mut positions,
-                &mut normals,
-                &mut indices,
-                &mut vertex_offset,
-                pair[0],
-                pair[1],
-                0.1,
-                plane_normal,
-            );
-        }
-    }
-    TriMesh {
-        positions,
-        normals,
-        indices,
-        ..TriMesh::default()
-    }
-}
-
 /// The sketch as a line list: no triangles, every segment an edge pair, so
 /// the renderer draws it at a constant pixel width whatever the zoom.
 pub fn sketch_to_lines(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
@@ -153,66 +124,6 @@ pub fn sketch_to_lines(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
         edges,
         ..TriMesh::default()
     }
-}
-
-/// Add a line segment as a thin quad (two triangles) to the mesh.
-#[allow(clippy::too_many_arguments)]
-fn add_line_quad(
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
-    vertex_offset: &mut u32,
-    start: [f32; 3],
-    end: [f32; 3],
-    thickness: f32,
-    plane_normal: glam::Vec3,
-) {
-    let dir = glam::Vec3::from_array([end[0] - start[0], end[1] - start[1], end[2] - start[2]]);
-    let length = dir.length();
-    if length < 1e-6 {
-        return;
-    }
-
-    let dir_norm = dir / length;
-
-    let up = glam::Vec3::new(0.0, 0.0, 1.0);
-    let perp = if (dir_norm.dot(up)).abs() > 0.9 {
-        // If line is nearly vertical, use a different vector
-        glam::Vec3::new(1.0, 0.0, 0.0).cross(dir_norm)
-    } else {
-        up.cross(dir_norm)
-    }
-    .normalize()
-        * thickness;
-
-    // Use the plane normal instead of calculating from the line direction
-    // This ensures consistent lighting for all geometry on the same plane
-    let normal = plane_normal;
-
-    let v0 = glam::Vec3::from_array(start) - perp;
-    let v1 = glam::Vec3::from_array(start) + perp;
-    let v2 = glam::Vec3::from_array(end) + perp;
-    let v3 = glam::Vec3::from_array(end) - perp;
-
-    let base = *vertex_offset;
-    positions.push(v0.to_array());
-    positions.push(v1.to_array());
-    positions.push(v2.to_array());
-    positions.push(v3.to_array());
-
-    normals.push(normal.to_array());
-    normals.push(normal.to_array());
-    normals.push(normal.to_array());
-    normals.push(normal.to_array());
-
-    indices.push(base);
-    indices.push(base + 1);
-    indices.push(base + 2);
-    indices.push(base);
-    indices.push(base + 2);
-    indices.push(base + 3);
-
-    *vertex_offset += 4;
 }
 
 #[cfg(test)]

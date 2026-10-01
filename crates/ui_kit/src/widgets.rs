@@ -476,7 +476,6 @@ pub fn tool_button(
     }
     let response = match state.planned {
         Some(note) => response.on_hover_text(format!("{label} (planned)\n{note}")),
-        None if !enabled => response.on_hover_text(label),
         None => response.on_hover_text(label),
     };
     if enabled {
