@@ -46,15 +46,20 @@ cargo fmt --all                   # CI enforces --check
   `UserSettings.packages` allows (Preferences › Workbench packages
   installs from a file or a GitHub address, updates, removes, turns off
   and grants, all while the app runs; its Browse tab is the workbench
-  store: `wb_wasm::store` reads the index the registry repository
-  `PrintCAD-wb-repo` publishes (`UserSettings.packages.store`, kept for
-  offline in `settings::store_cache`, fetched as `PackageNews::Store`,
-  quietly at start with the update check), and `install_listed` installs a
-  listing's release checked against the index's sha256, recording its
-  repository so it updates as any GitHub install; the page opens on a
-  third-party warning, installed packages the store lists show Listed, and
-  one it took off is warned of once a run; `PRINTCAD_STORE_INDEX` points
-  it elsewhere). Network work and compiling
+  store: `wb_wasm::store` reads registries' indexes, each a store the user
+  keeps (`UserSettings.packages.stores`, a new install starting with the
+  registry repository `PrintCAD-wb-repo`'s, removable like any;
+  `app/packages.rs::StoreView`, one `StoreState` per address, each kept
+  for offline in `settings::store_cache(url)`, fetched as
+  `PackageNews::Store`, quietly at start with the update check and again
+  when the list changes), and `install_listed` installs a listing's
+  release checked against the index's sha256, recording its repository so
+  it updates as any GitHub install; the page opens on a third-party
+  warning, lists every store's packages (a store filter, each card naming
+  its store when there are several), and ends in the Stores list;
+  installed packages a store lists show Listed, and one taken off is
+  warned of once a run; `PRINTCAD_STORE_INDEX` (`;`-separated) stands in
+  for the list). Network work and compiling
   (installs, update checks at start, updates, turning one on) runs on
   threads reporting through `app/packages.rs::PackageNews`, drained each
   frame; the registry then changes on the UI thread: `unload_bench` moves

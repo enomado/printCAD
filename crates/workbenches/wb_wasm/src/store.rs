@@ -20,6 +20,9 @@ pub const SCHEMA: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Index {
     pub schema: u32,
+    /// The store's name, as its registry calls itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// When the registry built it.
     #[serde(default)]
     pub generated: String,

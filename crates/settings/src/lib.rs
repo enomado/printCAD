@@ -113,11 +113,12 @@ pub struct PackageSettings {
     /// What each package may reach, by id; a package missing here may ask
     /// where to save a file and nothing more.
     pub grants: std::collections::BTreeMap<String, PackageGrant>,
-    /// The address of the workbench store's index; empty for no store.
-    pub store: String,
+    /// The workbench stores whose lists Browse shows: each the address of
+    /// a registry's index. A new install starts with printCAD's own.
+    pub stores: Vec<String>,
 }
 
-/// Where the workbench registry publishes the store's index.
+/// Where printCAD's own workbench registry publishes its index.
 pub const STORE_INDEX: &str = "https://gilbertorconde.github.io/PrintCAD-wb-repo/index.json";
 
 /// What one package may reach beyond its own folder.
@@ -148,7 +149,7 @@ impl Default for PackageSettings {
             check_updates: true,
             disabled: Vec::new(),
             grants: Default::default(),
-            store: STORE_INDEX.to_string(),
+            stores: vec![STORE_INDEX.to_string()],
         }
     }
 }
@@ -928,10 +929,18 @@ pub fn workbenches_dir() -> Option<PathBuf> {
         .map(|dirs| dirs.data_dir().join("workbenches"))
 }
 
-/// The workbench store's index as last fetched, for browsing offline.
-pub fn store_cache() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.data_dir().join("workbench-store.json"))
+/// The index of the workbench store at `url` as last fetched, for
+/// browsing offline: one file per store, named after its address.
+pub fn store_cache(url: &str) -> Option<PathBuf> {
+    // FNV-1a: the same name for the same address in every run and build.
+    let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION).map(|dirs| {
+        dirs.data_dir()
+            .join("stores")
+            .join(format!("{hash:016x}.json"))
+    })
 }
 
 /// Where autosaved copies of edited documents wait, until saved, closed

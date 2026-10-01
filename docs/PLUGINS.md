@@ -15,15 +15,18 @@ a package from, with CI and releases on tags already set up, is
 ## Installing one
 
 Preferences › Workbench packages › Browse is the workbench store: the
-packages the [workbench registry](https://github.com/gilbertorconde/PrintCAD-wb-repo)
-lists, to search, read about (what each asks to reach beyond its own
-folder comes first) and install. The registry reviews each listing and
+packages every store you keep lists, to search, read about (what each asks
+to reach beyond its own folder comes first) and install. A store is a
+registry's index; a new install keeps one,
+[printCAD's own](https://github.com/gilbertorconde/PrintCAD-wb-repo), and
+the Stores list at the page's foot adds others by their index's address or
+removes any, printCAD's included. A registry reviews each listing and
 checks that the package is what it says it is; it does not audit the
-code, so install what you trust. A package installed from the store comes
-from its repository's latest release, checked against the list's
-checksum, and updates as any package from GitHub does; one the registry
-takes off its list is marked, and whoever has it is told why. The store's
-address can be changed, or emptied for no store, at the page's foot.
+code, so install what you trust, from stores you trust. A package
+installed from a store comes from its repository's latest release, checked
+against the list's checksum, and updates as any package from GitHub does;
+one a store takes off its list is marked, and whoever has it is told why.
+Anyone can run a store: the registry's README says how.
 
 Installing does not need the store: the Installed page installs a `.pcbench` file (Install from
 a file…) or a package published on GitHub: type the repository's address

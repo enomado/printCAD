@@ -228,10 +228,14 @@ pub enum UiCommand {
     InstallPackageFromGithub(String),
     /// Look for newer releases of packages installed from GitHub.
     CheckPackageUpdates,
-    /// Fetch the workbench store's list again.
-    LookAtStore,
-    /// Install the package the workbench store lists with this id.
-    InstallListed(String),
+    /// Fetch the workbench stores' lists again.
+    LookAtStores,
+    /// Install the package a workbench store lists.
+    InstallListed {
+        /// The store's index address.
+        store: String,
+        id: String,
+    },
     /// Update the package with this id to its latest release.
     UpdatePackage(String),
     /// Stop the running script.

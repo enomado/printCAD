@@ -159,10 +159,8 @@ fn main() -> Result<()> {
     app.packages = packages;
     if check_updates {
         app.check_package_updates();
-        // The store's list, for whoever has a package it took off.
-        if !app.user_settings.packages.store.trim().is_empty() {
-            app.look_at_store(true);
-        }
+        // The stores' lists, for whoever has a package one took off.
+        app.look_at_stores(true);
     }
     if app.user_settings.updates.check_at_start {
         app.check_app_release(true);
@@ -360,7 +358,7 @@ struct PrintCadApp {
     packages: Vec<workbenches::PackageStatus>,
     /// Package installs, update checks and updates running on threads.
     package_work: app::packages::PackageWork,
-    /// The workbench store's index, and whether it is being fetched.
+    /// The workbench stores' indexes, and which are being fetched.
     store: app::packages::StoreView,
     /// What the last look for a newer printCAD found.
     release_check: app::updates::ReleaseCheck,

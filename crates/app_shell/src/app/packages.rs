@@ -34,56 +34,112 @@ pub(crate) enum PackageNews {
         found: crate::app::updates::ReleaseCheck,
         quiet: bool,
     },
-    /// The workbench store's index; `quiet` for the look at start.
+    /// The index of the workbench store at `url`; `quiet` for the look
+    /// at start.
     Store {
+        url: String,
         found: Result<workbenches::StoreIndex, String>,
         quiet: bool,
     },
 }
 
-/// What the app knows of the workbench store.
+/// One workbench store as the app knows it.
 #[derive(Default)]
-pub(crate) struct StoreView {
-    /// The index as last fetched, or as kept from a run before.
+pub(crate) struct StoreState {
+    /// Its index as last fetched, or as kept from a run before.
     pub index: Option<workbenches::StoreIndex>,
     /// A fetch is out.
     pub looking: bool,
     /// Why the last fetch failed.
     pub error: Option<String>,
-    /// A fetch was asked for in this run: the Browse page asks once by
-    /// itself.
+    /// A fetch was asked for in this run.
     pub looked: bool,
-    /// Installed packages already warned of as taken off the list.
+}
+
+/// What the app knows of the workbench stores the user keeps.
+#[derive(Default)]
+pub(crate) struct StoreView {
+    /// Each store by its index's address, in the user's order.
+    pub stores: Vec<(String, StoreState)>,
+    /// Installed packages already warned of as taken off a list.
     warned: std::collections::HashSet<String>,
 }
 
+/// A store's name: what its index calls it, else its address's host.
+pub(crate) fn store_name(url: &str, index: Option<&workbenches::StoreIndex>) -> String {
+    index
+        .and_then(|i| i.name.clone())
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| {
+            url.split("://")
+                .nth(1)
+                .unwrap_or(url)
+                .split('/')
+                .next()
+                .unwrap_or(url)
+                .to_string()
+        })
+}
+
 impl StoreView {
-    /// The listing of package `id`.
-    pub fn listing(&self, id: &str) -> Option<&workbenches::Listing> {
-        self.index.as_ref()?.packages.iter().find(|l| l.id == id)
+    /// Every listing of every store, each with its store's address.
+    pub fn listings(&self) -> impl Iterator<Item = (&str, &workbenches::Listing)> {
+        self.stores.iter().flat_map(|(url, state)| {
+            state
+                .index
+                .iter()
+                .flat_map(|i| i.packages.iter())
+                .map(move |l| (url.as_str(), l))
+        })
     }
 
-    /// Whether an installed package is the one the store lists: the same
-    /// id from the same repository.
+    /// Store `url`'s listing of package `id`.
+    pub fn listing(&self, url: &str, id: &str) -> Option<&workbenches::Listing> {
+        self.listings()
+            .find(|(u, l)| *u == url && l.id == id)
+            .map(|(_, l)| l)
+    }
+
+    /// The listing of an installed package: the same id from the same
+    /// repository, in any store.
     pub fn lists(&self, status: &PackageStatus) -> Option<&workbenches::Listing> {
-        let listing = self.listing(&status.id)?;
         let source = status.source.as_ref()?;
-        source
-            .repo
-            .eq_ignore_ascii_case(&listing.repository)
-            .then_some(listing)
+        self.listings()
+            .map(|(_, l)| l)
+            .find(|l| l.id == status.id && source.repo.eq_ignore_ascii_case(&l.repository))
+    }
+
+    /// Whether a store has not been fetched in this run.
+    pub fn unlooked(&self) -> bool {
+        self.stores.iter().any(|(_, s)| !s.looked)
+    }
+
+    /// Follow the user's list: a store added is kept from a run before
+    /// where it can be, one removed goes.
+    fn follow(&mut self, urls: &[String]) {
+        let mut before = std::mem::take(&mut self.stores);
+        for url in urls {
+            let state = match before.iter().position(|(u, _)| u == url) {
+                Some(at) => before.remove(at).1,
+                None => StoreState {
+                    index: kept_store(url),
+                    ..StoreState::default()
+                },
+            };
+            self.stores.push((url.clone(), state));
+        }
     }
 }
 
-/// The store's index as the last run kept it.
-fn kept_store() -> Option<workbenches::StoreIndex> {
-    let text = std::fs::read_to_string(settings::store_cache()?).ok()?;
+/// The index of store `url` as the last run kept it.
+fn kept_store(url: &str) -> Option<workbenches::StoreIndex> {
+    let text = std::fs::read_to_string(settings::store_cache(url)?).ok()?;
     workbenches::read_store(&text).ok()
 }
 
-/// Keep the store's index for the next run, and for browsing offline.
-fn keep_store(index: &workbenches::StoreIndex) {
-    let Some(path) = settings::store_cache() else {
+/// Keep store `url`'s index for the next run, and for browsing offline.
+fn keep_store(url: &str, index: &workbenches::StoreIndex) {
+    let Some(path) = settings::store_cache(url) else {
         return;
     };
     let written = serde_json::to_string(index)
@@ -250,39 +306,62 @@ impl PrintCadApp {
         });
     }
 
-    /// Fetch the workbench store's index, showing the one kept from the
-    /// last run meanwhile; `quiet` keeps a failure out of the log.
-    pub(crate) fn look_at_store(&mut self, quiet: bool) {
-        self.store.looked = true;
-        if self.store.index.is_none() {
-            self.store.index = kept_store();
+    /// The stores the user keeps, by their indexes' addresses.
+    pub(crate) fn store_urls(&self) -> Vec<String> {
+        // Dev/bench hook: `PRINTCAD_STORE_INDEX` stands in for the list
+        // (addresses `;`-separated), such as registries served on this
+        // machine.
+        if let Ok(urls) = std::env::var("PRINTCAD_STORE_INDEX") {
+            return urls.split(';').map(str::to_string).collect();
         }
-        // Dev/bench hook: `PRINTCAD_STORE_INDEX` reads the list from
-        // another address, such as a registry served on this machine.
-        let url = std::env::var("PRINTCAD_STORE_INDEX")
-            .unwrap_or_else(|_| self.user_settings.packages.store.trim().to_string());
-        if url.is_empty() {
-            self.store.error = Some("No store address is set".into());
-            return;
-        }
-        if self.store.looking {
-            return;
-        }
-        self.store.looking = true;
-        self.package_thread(move || PackageNews::Store {
-            found: workbenches::fetch_store(&url),
-            quiet,
-        });
+        self.user_settings
+            .packages
+            .stores
+            .iter()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .collect()
     }
 
-    fn take_store(&mut self, found: Result<workbenches::StoreIndex, String>, quiet: bool) {
-        self.store.looking = false;
+    /// Fetch every store's index, showing the one kept from the last run
+    /// meanwhile; `quiet` keeps failures out of the log.
+    pub(crate) fn look_at_stores(&mut self, quiet: bool) {
+        let urls = self.store_urls();
+        self.store.follow(&urls);
+        let mut fetch = Vec::new();
+        for (url, state) in &mut self.store.stores {
+            state.looked = true;
+            if !state.looking {
+                state.looking = true;
+                fetch.push(url.clone());
+            }
+        }
+        for url in fetch {
+            self.package_thread(move || PackageNews::Store {
+                found: workbenches::fetch_store(&url),
+                url,
+                quiet,
+            });
+        }
+    }
+
+    fn take_store(
+        &mut self,
+        url: String,
+        found: Result<workbenches::StoreIndex, String>,
+        quiet: bool,
+    ) {
+        let Some((_, state)) = self.store.stores.iter_mut().find(|(u, _)| *u == url) else {
+            // Removed from the list while it was fetched.
+            return;
+        };
+        state.looking = false;
         match found {
             Ok(index) => {
-                keep_store(&index);
-                self.store.index = Some(index);
-                self.store.error = None;
-                // Whoever has a package the store took off its list hears
+                keep_store(&url, &index);
+                state.index = Some(index);
+                state.error = None;
+                // Whoever has a package a store took off its list hears
                 // why, once a run.
                 for status in &self.packages {
                     let Some(why) = self.store.lists(status).and_then(|l| l.removed.clone()) else {
@@ -298,16 +377,19 @@ impl PrintCadApp {
             }
             Err(e) => {
                 if !quiet {
-                    app_log::warn(format!("Could not read the workbench store: {e}"));
+                    app_log::warn(format!(
+                        "Could not read the workbench store {}: {e}",
+                        store_name(&url, state.index.as_ref())
+                    ));
                 }
-                self.store.error = Some(e);
+                state.error = Some(e);
             }
         }
     }
 
-    /// Install the package the store lists as `id`.
-    pub(crate) fn install_listed(&mut self, id: String) {
-        let Some(listing) = self.store.listing(&id).cloned() else {
+    /// Install the package store `store` lists as `id`.
+    pub(crate) fn install_listed(&mut self, store: String, id: String) {
+        let Some(listing) = self.store.listing(&store, &id).cloned() else {
             app_log::error(format!("The workbench store lists no package {id}"));
             return;
         };
@@ -341,7 +423,7 @@ impl PrintCadApp {
                 PackageNews::Failed(e) => app_log::error(e),
                 PackageNews::Checked(found) => self.take_checked(found),
                 PackageNews::AppRelease { found, quiet } => self.take_app_release(found, quiet),
-                PackageNews::Store { found, quiet } => self.take_store(found, quiet),
+                PackageNews::Store { url, found, quiet } => self.take_store(url, found, quiet),
             }
         }
     }
@@ -553,6 +635,9 @@ impl PrintCadApp {
     /// given different grants.
     pub(crate) fn packages_changed(&mut self, before: &PackageSettings) {
         let now = self.user_settings.packages.clone();
+        if before.stores != now.stores {
+            self.look_at_stores(false);
+        }
         let packages: Vec<(String, std::path::PathBuf)> = self
             .packages
             .iter()

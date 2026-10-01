@@ -143,6 +143,10 @@ pub struct PreferencesState {
     /// category picked (0 for every one).
     store_query: String,
     store_category: usize,
+    /// The store picked to narrow the list to (0 for every one), and the
+    /// address typed to add one.
+    store_pick: usize,
+    store_add: String,
 }
 
 impl Default for PreferencesState {
@@ -162,6 +166,8 @@ impl Default for PreferencesState {
             package_repo: String::new(),
             store_query: String::new(),
             store_category: 0,
+            store_pick: 0,
+            store_add: String::new(),
         }
     }
 }
@@ -1750,57 +1756,75 @@ fn packages_page(
     );
 }
 
-/// The workbench store: every package its list holds, to read about and
-/// install, under a word of care about software from other people.
+/// The workbench stores: every package their lists hold, to read about
+/// and install, under a word of care about software from other people;
+/// and the stores themselves, added and removed.
 fn browse_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
     packages: &[workbenches::PackageStatus],
     store: &crate::app::packages::StoreView,
 ) {
-    // The page on screen with nothing fetched yet fetches by itself.
-    if !store.looked {
-        state.package_request = Some(super::UiCommand::LookAtStore);
+    use crate::app::packages::store_name;
+    // The page on screen with a store not fetched yet fetches by itself.
+    if store.unlooked() {
+        state.package_request = Some(super::UiCommand::LookAtStores);
     }
     ui_kit::widgets::note_card(
         ui,
         ui_kit::widgets::Note::Warning,
         Some("Software from other people"),
-        "These workbenches are made by people outside printCAD. The store checks that each \
+        "These workbenches are made by people outside printCAD. A store checks that each \
          is what it says it is; it does not check what its code does. Install the ones you \
-         trust, and allow each only what it needs: the network lets it reach the internet, \
-         and running its own programs takes it outside its sandbox.",
+         trust, from stores you trust, and allow each only what it needs: the network lets it \
+         reach the internet, and running its own programs takes it outside its sandbox.",
     );
     ui.add_space(SPACE_1);
 
-    let listings: Vec<&workbenches::Listing> = store
-        .index
-        .iter()
-        .flat_map(|index| index.packages.iter())
-        // A package taken off the list shows only to whoever has it.
-        .filter(|l| l.removed.is_none() || packages.iter().any(|p| p.id == l.id))
+    let listings: Vec<(&str, &workbenches::Listing)> = store
+        .listings()
+        // A package taken off a list shows only to whoever has it.
+        .filter(|(_, l)| l.removed.is_none() || packages.iter().any(|p| p.id == l.id))
         .collect();
     let mut categories: Vec<&str> = listings
         .iter()
-        .flat_map(|l| l.categories.iter().map(String::as_str))
+        .flat_map(|(_, l)| l.categories.iter().map(String::as_str))
         .collect();
     categories.sort_unstable();
     categories.dedup();
     let category_names: Vec<String> = std::iter::once("Every category".to_string())
         .chain(categories.iter().map(|c| c.replace('-', " ")))
         .collect();
-    let options: Vec<(usize, &str)> = category_names
+    let category_options: Vec<(usize, &str)> = category_names
         .iter()
         .enumerate()
         .map(|(i, name)| (i, name.as_str()))
         .collect();
-    if state.store_category >= options.len() {
+    let names: Vec<String> = std::iter::once("Every store".to_string())
+        .chain(
+            store
+                .stores
+                .iter()
+                .map(|(url, s)| store_name(url, s.index.as_ref())),
+        )
+        .collect();
+    let store_options: Vec<(usize, &str)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (i, name.as_str()))
+        .collect();
+    if state.store_category >= category_options.len() {
         state.store_category = 0;
     }
+    if state.store_pick >= store_options.len() {
+        state.store_pick = 0;
+    }
+    let several = store.stores.len() > 1;
+    let looking = store.stores.iter().any(|(_, s)| s.looking);
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut state.store_query)
-                .hint_text("Search the store")
+                .hint_text("Search the stores")
                 .font(sans(FONT_SM))
                 .desired_width(220.0),
         );
@@ -1808,69 +1832,171 @@ fn browse_page(
             ui,
             "store_category",
             &mut state.store_category,
-            &options,
-            160.0,
+            &category_options,
+            150.0,
         );
+        if several {
+            ui_kit::widgets::select_field(
+                ui,
+                "store_pick",
+                &mut state.store_pick,
+                &store_options,
+                150.0,
+            );
+        }
         let refresh = ui
-            .add_enabled_ui(!store.looking, |ui| {
+            .add_enabled_ui(!looking && !store.stores.is_empty(), |ui| {
                 ui_kit::widgets::small_secondary_button(ui, "Refresh")
             })
             .inner;
         if refresh.clicked() {
-            state.package_request = Some(super::UiCommand::LookAtStore);
+            state.package_request = Some(super::UiCommand::LookAtStores);
         }
     });
-    let status = match (&store.error, store.looking, &store.index) {
-        (_, true, _) => ("Reading the store's list…".to_string(), TEXT3),
-        (Some(e), _, Some(_)) => (format!("Showing the list as last read: {e}"), WARNING),
-        (Some(e), _, None) => (e.clone(), WARNING),
-        (None, _, Some(index)) => (
-            format!(
-                "{} package{} listed, as of {}",
-                listings.len(),
-                if listings.len() == 1 { "" } else { "s" },
-                index.generated.replace('T', " ").trim_end_matches('Z')
-            ),
-            TEXT3,
-        ),
-        (None, _, None) => (String::new(), TEXT3),
+    let status = if store.stores.is_empty() {
+        "No stores: add one below".to_string()
+    } else if looking {
+        "Reading the stores' lists…".to_string()
+    } else {
+        format!(
+            "{} package{} listed by {} store{}",
+            listings.len(),
+            if listings.len() == 1 { "" } else { "s" },
+            store.stores.len(),
+            if several { "s" } else { "" }
+        )
     };
-    ui.label(RichText::new(status.0).font(sans(FONT_XS)).color(status.1));
+    ui.label(RichText::new(status).font(sans(FONT_XS)).color(TEXT3));
     ui.add_space(SPACE_1);
 
     let query = state.store_query.trim().to_lowercase();
     let category = (state.store_category > 0).then(|| categories[state.store_category - 1]);
-    let shown = listings.iter().filter(|l| {
+    let picked = (state.store_pick > 0).then(|| store.stores[state.store_pick - 1].0.as_str());
+    let shown = listings.iter().filter(|(url, l)| {
         let words = format!("{} {} {}", l.name, l.id, l.description).to_lowercase();
         (query.is_empty() || words.contains(&query))
             && category.is_none_or(|c| l.categories.iter().any(|lc| lc == c))
+            && picked.is_none_or(|p| p == *url)
     });
-    for listing in shown {
-        listing_card(ui, state, packages, listing);
+    for (url, listing) in shown {
+        let from = several.then(|| {
+            let index = store
+                .stores
+                .iter()
+                .find(|(u, _)| u == url)
+                .and_then(|(_, s)| s.index.as_ref());
+            store_name(url, index)
+        });
+        listing_card(ui, state, packages, url, from.as_deref(), listing);
         ui.add_space(SPACE_1);
     }
 
     ui.add_space(SPACE_2);
-    pref_group(
-        ui,
-        "Store",
-        vec![
-            PrefRow::new("List address", |ui| {
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut state.draft.packages.store)
-                        .font(mono(FONT_XS))
-                        .desired_width(320.0),
-                );
-                let default = state.draft.packages.store == settings::STORE_INDEX;
-                if !default && ui_kit::widgets::small_secondary_button(ui, "Default").clicked() {
-                    state.draft.packages.store = settings::STORE_INDEX.to_string();
-                }
-                field.changed()
-            })
-            .hint("The workbench registry's index; empty for no store"),
-        ],
-        "",
+    stores_section(ui, state, store);
+}
+
+/// The stores Browse reads, as the draft keeps them: each with what its
+/// last read found and a Remove, an address to add, and printCAD's own
+/// to put back when it was removed.
+fn stores_section(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    store: &crate::app::packages::StoreView,
+) {
+    use crate::app::packages::store_name;
+    ui.label(
+        RichText::new("Stores")
+            .font(sans_semibold(FONT_SM))
+            .color(TEXT1),
     );
+    ui.label(
+        RichText::new(
+            "Each is the address of a registry's index; Browse lists the packages of all of \
+             them. Changes take effect when you apply.",
+        )
+        .font(sans(FONT_XS))
+        .color(TEXT3),
+    );
+    let mut remove = None;
+    for (at, url) in state.draft.packages.stores.iter().enumerate() {
+        let known = store.stores.iter().find(|(u, _)| u == url).map(|(_, s)| s);
+        Card::new().padding(8.0).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(store_name(url, known.and_then(|s| s.index.as_ref())))
+                        .font(sans_semibold(FONT_SM))
+                        .color(TEXT1),
+                );
+                if url == settings::STORE_INDEX {
+                    ui_kit::widgets::badge(ui, "printCAD's", ACCENT);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
+                        remove = Some(at);
+                    }
+                });
+            });
+            ui.label(RichText::new(url).font(mono(FONT_XS)).color(TEXT3));
+            let (said, color) = match known {
+                None => ("Read when you apply".to_string(), TEXT3),
+                Some(s) if s.looking => ("Reading…".to_string(), TEXT3),
+                Some(s) => match (&s.error, &s.index) {
+                    (Some(e), Some(_)) => (format!("Showing the list as last read: {e}"), WARNING),
+                    (Some(e), None) => (e.clone(), WARNING),
+                    (None, Some(index)) => (
+                        format!(
+                            "{} package{}, as of {}",
+                            index.packages.len(),
+                            if index.packages.len() == 1 { "" } else { "s" },
+                            index.generated.replace('T', " ").trim_end_matches('Z')
+                        ),
+                        TEXT3,
+                    ),
+                    (None, None) => ("Not read yet".to_string(), TEXT3),
+                },
+            };
+            ui.label(RichText::new(said).font(sans(FONT_XS)).color(color));
+        });
+        ui.add_space(SPACE_1);
+    }
+    if let Some(at) = remove {
+        state.draft.packages.stores.remove(at);
+    }
+    let typed = state.store_add.trim().to_string();
+    let valid = (typed.starts_with("https://") || typed.starts_with("http://"))
+        && !state.draft.packages.stores.contains(&typed);
+    ui.horizontal(|ui| {
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut state.store_add)
+                .hint_text("https://…/index.json")
+                .font(mono(FONT_XS))
+                .desired_width(320.0),
+        );
+        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let add = ui
+            .add_enabled_ui(valid, |ui| secondary_button(ui, "Add store"))
+            .inner
+            .clicked();
+        if valid && (add || enter) {
+            state.draft.packages.stores.push(typed.clone());
+            state.store_add.clear();
+        }
+    });
+    if !state
+        .draft
+        .packages
+        .stores
+        .iter()
+        .any(|u| u == settings::STORE_INDEX)
+        && ui_kit::widgets::small_secondary_button(ui, "Add printCAD's store").clicked()
+    {
+        state
+            .draft
+            .packages
+            .stores
+            .insert(0, settings::STORE_INDEX.to_string());
+    }
 }
 
 /// One package the store lists: what it is, what it asks to reach, and
@@ -1879,6 +2005,8 @@ fn listing_card(
     ui: &mut Ui,
     state: &mut PreferencesState,
     packages: &[workbenches::PackageStatus],
+    url: &str,
+    from: Option<&str>,
     listing: &workbenches::Listing,
 ) {
     let installed = packages.iter().find(|p| p.id == listing.id);
@@ -1919,8 +2047,10 @@ fn listing_card(
                     }
                     (None, Ok(_)) => {
                         if primary_button(ui, "Install").clicked() {
-                            state.package_request =
-                                Some(super::UiCommand::InstallListed(listing.id.clone()));
+                            state.package_request = Some(super::UiCommand::InstallListed {
+                                store: url.to_string(),
+                                id: listing.id.clone(),
+                            });
                         }
                     }
                     (None, Err(_)) => {}
@@ -1967,6 +2097,9 @@ fn listing_card(
             }
             for category in &listing.categories {
                 ui_kit::widgets::badge(ui, &category.replace('-', " "), TEXT3);
+            }
+            if let Some(from) = from {
+                ui_kit::widgets::badge(ui, &format!("from {from}"), ACCENT);
             }
         });
         let by = if listing.maintainers.is_empty() {
