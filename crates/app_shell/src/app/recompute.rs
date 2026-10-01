@@ -32,6 +32,7 @@ impl PrintCadApp {
             match job.plan {
                 Ok(plan) if plan.ops.is_empty() => {
                     self.session.coarse.remove(&body_id.0);
+                    self.session.preview_rest.remove(&body_id.0);
                     // A build still out is of a history that is gone.
                     if let Some(waiting) = self.session.builds_in_flight.get_mut(&body_id.0) {
                         *waiting = None;
@@ -50,12 +51,21 @@ impl PrintCadApp {
                         .preview_feature
                         .filter(|f| plan.op_features.contains(f))
                         .map(|f| f.0);
-                    let build = QueuedBuild {
+                    let mut build = QueuedBuild {
                         ops: plan.ops,
                         op_features: plan.op_features.iter().map(|id| id.0).collect(),
                         preview,
                         probes: plan.probes,
+                        partial: false,
                     };
+                    // The edited feature first: what follows it waits
+                    // until the edits settle.
+                    self.session.preview_rest.remove(&body_id.0);
+                    if let Some(first) = build.up_to_edited() {
+                        self.session
+                            .preview_rest
+                            .insert(body_id.0, std::mem::replace(&mut build, first));
+                    }
                     // One build per body at a time; a newer plan waits in
                     // its place, replacing any older one waiting.
                     // A plan that replaces one still building means the
@@ -102,6 +112,29 @@ pub(crate) struct QueuedBuild {
     op_features: Vec<uuid::Uuid>,
     preview: Option<uuid::Uuid>,
     probes: Vec<core_document::PlanProbe>,
+    /// It stops at the edited feature.
+    partial: bool,
+}
+
+impl QueuedBuild {
+    /// The build of the history up to the end of the edited feature, when
+    /// features follow it: what the open task shows, built first.
+    fn up_to_edited(&self) -> Option<QueuedBuild> {
+        let feature = self.preview?;
+        let end = self.op_features.iter().rposition(|f| *f == feature)? + 1;
+        (end < self.ops.len()).then(|| QueuedBuild {
+            ops: self.ops[..end].to_vec(),
+            op_features: self.op_features[..end].to_vec(),
+            preview: self.preview,
+            probes: self
+                .probes
+                .iter()
+                .filter(|p| p.probe.after_op <= end)
+                .copied()
+                .collect(),
+            partial: true,
+        })
+    }
 }
 
 impl PrintCadApp {
@@ -131,6 +164,11 @@ impl PrintCadApp {
             self.session.moving.remove(&body);
             self.solid_detail()
         };
+        if build.partial {
+            self.session.partial_out.insert(body);
+        } else {
+            self.session.partial_out.remove(&body);
+        }
         let serial = self.kernel_worker.request_build_solid(
             body,
             build.ops,
@@ -143,12 +181,14 @@ impl PrintCadApp {
     }
 
     /// Build at full detail every body shown coarse whose plans have
-    /// stopped changing.
+    /// stopped changing, and the whole history of every body whose edited
+    /// feature was built alone.
     fn settle_coarse_builds(&mut self) {
         let settled: Vec<uuid::Uuid> = self
             .session
             .coarse
             .keys()
+            .chain(self.session.preview_rest.keys())
             .filter(|body| !self.session.builds_in_flight.contains_key(*body))
             .filter(|body| {
                 self.session
@@ -159,7 +199,10 @@ impl PrintCadApp {
             .copied()
             .collect();
         for body in settled {
-            if let Some(build) = self.session.coarse.remove(&body) {
+            // The whole history, when the edited feature was built alone;
+            // it is built at full detail and brings the preview with it.
+            let coarse = self.session.coarse.remove(&body);
+            if let Some(build) = self.session.preview_rest.remove(&body).or(coarse) {
                 self.session.moving.remove(&body);
                 self.submit_build(body, build);
             }
@@ -231,11 +274,19 @@ impl PrintCadApp {
             if !self.session.document.bodies().iter().any(|b| b.id == body) {
                 continue;
             }
-            if gone {
+            if gone || !preview.complete {
                 self.registry
                     .invalidate_body(&mut self.session.document, body);
             } else {
                 store_built_solid(&mut self.session.document, body, preview.full);
+            }
+        }
+        // A body shown at the feature, its history after it still to build.
+        for body in std::mem::take(&mut self.session.preview_rest).into_keys() {
+            let body = core_document::BodyId(body);
+            if self.session.document.bodies().iter().any(|b| b.id == body) {
+                self.registry
+                    .invalidate_body(&mut self.session.document, body);
             }
         }
     }
@@ -255,6 +306,7 @@ impl PrintCadApp {
         body: core_document::BodyId,
         full: kernel_api::SolidBuildResult,
         preview: kernel_api::FeaturePreview,
+        complete: bool,
     ) {
         let document = &mut self.session.document;
         match preview.shown {
@@ -275,6 +327,7 @@ impl PrintCadApp {
             body,
             crate::app::session::BodyPreview {
                 full,
+                complete,
                 tool: std::sync::Arc::new(tool),
                 id,
                 revision,
@@ -792,5 +845,44 @@ mod tests {
         assert!(rough.chord_tolerance > fine.chord_tolerance);
         assert_eq!(rough.weld_cross_face, fine.weld_cross_face);
         assert!(coarse(TessellationSettings::default()).angular_tolerance_deg <= 45.0);
+    }
+
+    /// The edited feature's build stops at its last op; with nothing after
+    /// it, or no feature edited, there is no shorter build.
+    #[test]
+    fn the_edited_feature_is_built_up_to_its_end() {
+        use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+        let op = |op| SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: 1.0,
+                width: 1.0,
+                height: 1.0,
+            },
+            placement: Placement::default(),
+            op,
+        };
+        let [a, b, c] = [
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        ];
+        let build = |preview| QueuedBuild {
+            ops: vec![
+                op(BooleanOp::NewSolid),
+                op(BooleanOp::Fuse),
+                op(BooleanOp::Fuse),
+                op(BooleanOp::Cut),
+            ],
+            op_features: vec![a, b, b, c],
+            preview,
+            probes: Vec::new(),
+            partial: false,
+        };
+        let first = build(Some(b)).up_to_edited().expect("a feature follows");
+        assert_eq!(first.ops.len(), 3, "up to the edited feature's last op");
+        assert_eq!(first.op_features, vec![a, b, b]);
+        assert!(first.partial);
+        assert!(build(Some(c)).up_to_edited().is_none(), "the last feature");
+        assert!(build(None).up_to_edited().is_none(), "nothing edited");
     }
 }

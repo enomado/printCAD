@@ -175,6 +175,11 @@ pub(crate) struct DocumentSession {
     /// Bodies shown meshed coarse while moving, with the plan to build
     /// again at full detail once they settle.
     pub coarse: std::collections::HashMap<Uuid, crate::app::recompute::QueuedBuild>,
+    /// Bodies whose open task's feature is built alone first, with the
+    /// whole history to build once the edits settle.
+    pub preview_rest: std::collections::HashMap<Uuid, crate::app::recompute::QueuedBuild>,
+    /// Bodies whose build out stops at the edited feature.
+    pub partial_out: std::collections::HashSet<Uuid>,
     /// Bodies whose new shape is being read, and the asset each failed to
     /// read from, which is not tried again.
     pub shapes_in_flight: std::collections::HashSet<Uuid>,
@@ -291,6 +296,8 @@ impl DocumentSession {
             dropped_builds: Default::default(),
             moving: Default::default(),
             coarse: Default::default(),
+            preview_rest: Default::default(),
+            partial_out: Default::default(),
             shapes_in_flight: Default::default(),
             shapes_failed: Default::default(),
             solids_in_flight: Default::default(),
@@ -328,6 +335,7 @@ impl DocumentSession {
             || self.step_import_pending.is_some()
             || self.links.busy()
             || !self.coarse.is_empty()
+            || !self.preview_rest.is_empty()
     }
 }
 
@@ -342,6 +350,9 @@ pub(crate) struct TabSlot {
 pub struct BodyPreview {
     /// The whole solid, stored back when the preview ends.
     pub full: kernel_api::SolidBuildResult,
+    /// `full` is the body's whole history; otherwise it stops at the
+    /// edited feature, and the body is built again when the preview ends.
+    pub complete: bool,
     /// The feature's tool, placed where the body sits.
     pub tool: std::sync::Arc<kernel_api::TriMesh>,
     /// The tool's id and revision for the renderer.

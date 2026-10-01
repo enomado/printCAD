@@ -117,9 +117,13 @@ impl PrintCadApp {
         {
             self.session.build_times.insert(*body_id, *elapsed);
         }
+        // Whether the build landing stopped at the edited feature, read
+        // before the next build goes and says so of itself.
+        let mut partial = false;
         if let KernelResponse::SolidBuilt { body_id, .. }
         | KernelResponse::SolidFailed { body_id, .. } = &response
         {
+            partial = self.session.partial_out.remove(body_id);
             let dropped = self.session.dropped_builds.remove(body_id);
             if dropped
                 && let KernelResponse::SolidFailed { error, .. } = &response
@@ -194,9 +198,10 @@ impl PrintCadApp {
                         .document
                         .store_probe_answers(&probes, &result.probes);
                     let mut result = result;
+                    let complete = !partial;
                     match result.preview.take() {
                         Some(preview) if self.session.preview_feature.is_some() => {
-                            self.show_feature_preview(bid, result, *preview);
+                            self.show_feature_preview(bid, result, *preview, complete);
                         }
                         _ => {
                             self.session.previews.remove(&bid);

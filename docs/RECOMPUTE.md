@@ -45,9 +45,12 @@ Each item is one milestone and one commit.
   their snapshots, which also record parameter ranges; the comparison is
   made only where the ops after the edited one took more than twice as long
   as writing a snapshot.
-- [ ] **5. The edited feature first.** While a task edits a feature with
+- [x] **5. The edited feature first.** While a task edits a feature with
   features after it, the body is shown at that feature first, then the rest
-  of its history is built.
+  of its history is built. The task shows the body at its feature anyway;
+  each edit builds only that far, and once the edits settle the whole
+  history is built (from the state kept at the feature) for when the task
+  closes. A task closed before that rebuilds the body.
 - [ ] **6. Mesh only what changed.** Faces a build left as they were keep
   their meshes from the build before; only new and changed faces are meshed.
 - [ ] **7. Bodies in parallel.** Builds of different bodies run on several

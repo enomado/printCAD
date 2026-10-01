@@ -111,13 +111,30 @@ fn main() {
     );
     let feature = |i: usize| FeatureId(ids.printed[i].trim().parse().expect("a feature id"));
     let (last, middle, hole) = (feature(0), feature(1), feature(2));
+    let named = |name: &str| match name {
+        "middle" => middle,
+        _ => last,
+    };
     let detail = TessellationSettings::default();
     let mut cache = ChainCache::default();
 
     let build =
         |host: &mut Benches, cache: &mut ChainCache, label: &str, detail: &TessellationSettings| {
             host.registry.evaluate(&mut host.document);
-            let plan = wb_design::body_build_ops(&host.document, body).unwrap();
+            let mut plan = wb_design::body_build_ops(&host.document, body).unwrap();
+            // "…, up to <feature>" builds as an open task does: up to the end
+            // of the feature it edits.
+            if let Some(name) = label.split(", up to ").nth(1) {
+                let feature = named(name);
+                let end = plan
+                    .op_features
+                    .iter()
+                    .rposition(|f| *f == feature)
+                    .unwrap()
+                    + 1;
+                plan.ops.truncate(end);
+                plan.op_features.truncate(end);
+            }
             let tags: Vec<_> = plan
                 .op_features
                 .iter()
@@ -168,6 +185,12 @@ fn main() {
     set_field(&mut host, last, "length", 7.0);
     build(&mut host, &mut cache, "dragged, coarse", &coarse);
     build(&mut host, &mut cache, "settled, full detail", &detail);
+    // A task open on a middle feature: built up to it, then the rest.
+    set_field(&mut host, middle, "length", 11.0);
+    build(&mut host, &mut cache, "task edit, up to middle", &detail);
+    set_field(&mut host, middle, "length", 12.0);
+    build(&mut host, &mut cache, "next edit, up to middle", &detail);
+    build(&mut host, &mut cache, "settled, the rest", &detail);
     // A pocket cut through the plate, then deeper: the same hole.
     set_field(&mut host, hole, "depth", 12.0);
     build(&mut host, &mut cache, "a pocket made through", &detail);
