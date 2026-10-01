@@ -521,8 +521,8 @@ fn spawn(agent: &Program) -> Result<Pipes, String> {
 /// shown.
 const SETTLE: Duration = Duration::from_secs(1);
 
-/// How long the agent has to answer `initialize` and `session/new`: a
-/// program fetched on first use can take a while.
+/// How long the agent has to answer `initialize` and the request that
+/// opens the session: a program fetched on first use can take a while.
 const START_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn run(
@@ -835,8 +835,8 @@ struct Shared {
     pushed: u64,
 }
 
-/// The options a new session offers: its `configOptions`, or else the
-/// older `modes` and `models`.
+/// The options a session offers as it opens: its `configOptions`, or
+/// else the older `modes` and `models`.
 fn session_options(session: &Value) -> Vec<SessionOption> {
     if let Some(list) = session.get("configOptions") {
         return config_options(list);
