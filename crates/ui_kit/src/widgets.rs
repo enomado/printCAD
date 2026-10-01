@@ -485,6 +485,25 @@ pub fn tool_button(
     }
 }
 
+/// A frameless icon the size of a line of small text, lit on hover: for
+/// actions that sit beside content (copy, jump) rather than in a toolbar.
+pub fn icon_button(ui: &mut Ui, name: &str, hint: &str) -> Response {
+    let size = 14.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size + 6.0), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered();
+        if hovered {
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(RADIUS_SM as u8), BG3);
+        }
+        let tint = if hovered { TEXT1 } else { TEXT3 };
+        if let Some(image) = icon::image(ui.ctx(), name, size, tint) {
+            image.paint_at(ui, rect.shrink(3.0));
+        }
+    }
+    response.on_hover_text(hint)
+}
+
 /// A collapsible section title with a chevron and an optional count. Returns
 /// whether the body is open.
 pub fn section_header(

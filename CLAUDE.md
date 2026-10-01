@@ -230,11 +230,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   set under `icons/`, vendored by `scripts/vendor-icons.mjs` into a
   generated `icon_table.rs`; `icon::texture/draw` rasterize with a
   font-free usvg, since the system-font scan is far too slow for 200 icons;
-  `select.svg` and `expression.svg` are hand-authored locals). The same
+  `select.svg`, `expression.svg` and `chevrons-down.svg` are
+  hand-authored locals). The same
   table carries the `motion-*` drawings (200×200, their own colours, one
   per movement of a 6-DoF mouse), drawn through `icon::drawing`, which
   rasterizes for the size it is shown at rather than the icon size. A test
-  fails when the table and the directory disagree.
+  fails when the table and the directory disagree. `markdown` draws the
+  chat's messages: `pulldown-cmark` into a small block tree, each run of
+  text one selectable label whose links are found from where a click lands
+  in the laid-out text, code blocks with a copy button.
 - `workbenches/wb_sketch`: sketcher: `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
@@ -659,7 +663,10 @@ the next one after they change. `app/chats.rs` keeps
 (every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
 client that defers tools behind a search has them in its first turn;
 `read_only` becomes `readOnlyHint`);
-`ui/assistant.rs` draws them and answers with `UiCommand`s; a message
+`ui/assistant.rs` draws them and answers with `UiCommand`s (the agent's
+text as markdown, a copy button on a hovered message, the header's jumps
+between the user's messages kept in `ChatScroll` from the last frame's
+layout); a message
 sent while the agent is on a turn waits in `Chat::queued` (edited or
 dropped from the panel) and goes when the chat is ready again, one per
 turn, the rules added as it goes; Stop sets `Chat::held` until the user

@@ -44,6 +44,7 @@ const LOCAL = new Set([
   "sketch-text",
   "assistant",
   "log",
+  "chevrons-down",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

@@ -82,6 +82,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("chevron-down", include_str!("../icons/chevron-down.svg")),
     ("chevron-right", include_str!("../icons/chevron-right.svg")),
     ("chevron-up", include_str!("../icons/chevron-up.svg")),
+    ("chevrons-down", include_str!("../icons/chevrons-down.svg")),
     ("circle", include_str!("../icons/circle.svg")),
     ("circle-3pt", include_str!("../icons/circle-3pt.svg")),
     (

@@ -5,12 +5,17 @@
 //! OK. In the chat: the conversation (the agent's message, its thinking
 //! folded away, the tools it called, its plan, its requests for
 //! permission), and a box to write in: Enter sends, Shift+Enter starts a
-//! new line.
+//! new line, Up in an empty box brings back the last message sent. The
+//! agent's messages are markdown; each message copies from a button shown
+//! on hover, and the header (or Alt+Up and Alt+Down) jumps between the
+//! user's own messages.
 
 use egui::RichText;
+use ui_kit::markdown;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Card, Tab, primary_button, secondary_button, small_secondary_button, tab_plus, toggle,
+    Card, Tab, icon_button, primary_button, secondary_button, small_secondary_button, tab_plus,
+    toggle,
 };
 use ui_kit::{mono, sans, sans_medium};
 
@@ -31,6 +36,50 @@ pub struct AssistantState {
     drafts: std::collections::HashMap<String, String>,
     /// The rules of the document on screen, while they are being edited.
     rules_draft: Option<String>,
+    /// Where each chat's conversation was scrolled to, last frame.
+    scroll: std::collections::HashMap<String, ChatScroll>,
+}
+
+/// A conversation's scroll as last drawn: where the user's messages sit in
+/// it, how far down it is, and a jump asked for.
+#[derive(Debug, Default)]
+struct ChatScroll {
+    /// Each user message's entry and its top, from the top of the
+    /// conversation.
+    user_tops: Vec<(usize, f32)>,
+    offset: f32,
+    at_bottom: bool,
+    jump: Option<Jump>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Jump {
+    Previous,
+    Next,
+    Latest,
+}
+
+impl ChatScroll {
+    /// The entry a jump lands on: the user's message above (or below) the
+    /// top of the view, or the conversation's end.
+    fn target(&self, jump: Jump, last: usize) -> Option<usize> {
+        // A message whose top is at the view's top already counts as seen.
+        const SLACK: f32 = 4.0;
+        match jump {
+            Jump::Previous => self
+                .user_tops
+                .iter()
+                .rev()
+                .find(|(_, top)| *top < self.offset - SLACK)
+                .map(|(i, _)| *i),
+            Jump::Next => self
+                .user_tops
+                .iter()
+                .find(|(_, top)| *top > self.offset + SLACK)
+                .map(|(i, _)| *i),
+            Jump::Latest => Some(last),
+        }
+    }
 }
 
 impl AssistantState {
@@ -126,7 +175,21 @@ pub fn draw_assistant(
             if chat.status == ChatStatus::Resting {
                 commands.push(UiCommand::WakeChat(chat.id.clone()));
             }
-            chat_header(ui, chat, commands);
+            let scroll = state.scroll.entry(chat.id.clone()).or_default();
+            chat_header(ui, chat, scroll, commands);
+            // Alt+Up and Alt+Down jump while the panel is in use.
+            if ui.rect_contains_pointer(panel)
+                || ui.memory(|m| m.focused().is_some_and(|f| f == input_id(chat)))
+            {
+                ui.input_mut(|i| {
+                    if i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp) {
+                        scroll.jump = Some(Jump::Previous);
+                    }
+                    if i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown) {
+                        scroll.jump = Some(Jump::Next);
+                    }
+                });
+            }
             ui.add_space(SPACE_1);
             let draft = state.drafts.entry(chat.id.clone()).or_default();
             // The box to write in keeps the bottom; the conversation
@@ -142,19 +205,40 @@ pub fn draw_assistant(
                     queued_list(ui, chat, draft, commands);
                     input(ui, chat, draft, commands);
                 });
+            let scroll = state.scroll.entry(chat.id.clone()).or_default();
+            let land_on = scroll
+                .jump
+                .take()
+                .and_then(|jump| scroll.target(jump, chat.entries.len().saturating_sub(1)));
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
+                    let out = egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .show(ui, |ui| {
                             ui.set_max_width(ui.available_width());
                             ui.spacing_mut().item_spacing.y = SPACE_2;
+                            let origin = ui.min_rect().top();
+                            let mut user_tops = Vec::new();
                             for (index, entry) in chat.entries.iter().enumerate() {
-                                draw_entry(ui, chat, index, entry, commands);
+                                let rect = ui
+                                    .scope(|ui| draw_entry(ui, chat, index, entry, commands))
+                                    .response
+                                    .rect;
+                                if matches!(entry, ChatEntry::User { .. }) {
+                                    user_tops.push((index, rect.top() - origin));
+                                }
+                                if land_on == Some(index) {
+                                    ui.scroll_to_rect(rect, Some(egui::Align::TOP));
+                                }
                             }
+                            user_tops
                         });
+                    scroll.user_tops = out.inner;
+                    scroll.offset = out.state.offset.y;
+                    scroll.at_bottom =
+                        out.state.offset.y + out.inner_rect.height() >= out.content_size.y - 4.0;
                 });
         });
     result
@@ -437,7 +521,12 @@ fn approval_card(
     ui.add_space(SPACE_2);
 }
 
-fn chat_header(ui: &mut egui::Ui, chat: &Chat, commands: &mut Vec<UiCommand>) {
+fn chat_header(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    scroll: &mut ChatScroll,
+    commands: &mut Vec<UiCommand>,
+) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(&chat.agent)
@@ -471,6 +560,21 @@ fn chat_header(ui: &mut egui::Ui, chat: &Chat, commands: &mut Vec<UiCommand>) {
                         ask,
                     });
                 }
+                if !scroll.at_bottom
+                    && icon_button(ui, "chevrons-down", "Jump to the latest").clicked()
+                {
+                    scroll.jump = Some(Jump::Latest);
+                }
+                if scroll.target(Jump::Next, 0).is_some()
+                    && icon_button(ui, "chevron-down", "Your next message (Alt+Down)").clicked()
+                {
+                    scroll.jump = Some(Jump::Next);
+                }
+                if scroll.target(Jump::Previous, 0).is_some()
+                    && icon_button(ui, "chevron-up", "Your previous message (Alt+Up)").clicked()
+                {
+                    scroll.jump = Some(Jump::Previous);
+                }
             },
         );
     });
@@ -492,11 +596,12 @@ fn draw_entry(
 ) {
     match entry {
         ChatEntry::User { text, attachments } => {
-            egui::Frame::new()
+            let rect = egui::Frame::new()
                 .fill(BG3)
                 .corner_radius(RADIUS_MD as u8)
                 .inner_margin(egui::Margin::symmetric(8, 6))
                 .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     if !text.is_empty() {
                         ui.add(
                             egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
@@ -511,17 +616,27 @@ fn draw_entry(
                             }
                         });
                     }
-                });
+                })
+                .response
+                .rect;
+            copy_on_hover(ui, rect, text, BG3);
         }
         ChatEntry::Agent {
             text,
             thought: false,
         } => {
-            ui.add(
-                egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
-                    .selectable(true)
-                    .wrap(),
-            );
+            let rect = ui
+                .scope(|ui| {
+                    markdown::show(
+                        ui,
+                        egui::Id::new(("chat_message", &chat.id, index)),
+                        text,
+                        markdown::Style::default(),
+                    )
+                })
+                .response
+                .rect;
+            copy_on_hover(ui, rect, text, BG1);
         }
         ChatEntry::Agent {
             text,
@@ -530,10 +645,14 @@ fn draw_entry(
             egui::CollapsingHeader::new(RichText::new("Thinking").font(sans(FONT_XS)).color(TEXT3))
                 .id_salt((&chat.id, index))
                 .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(RichText::new(text).font(sans(FONT_XS)).color(TEXT3))
-                            .selectable(true)
-                            .wrap(),
+                    markdown::show(
+                        ui,
+                        egui::Id::new(("chat_thought", &chat.id, index)),
+                        text,
+                        markdown::Style {
+                            size: FONT_XS,
+                            color: TEXT3,
+                        },
                     );
                 });
         }
@@ -665,6 +784,27 @@ fn draw_entry(
     }
 }
 
+/// A copy button at the top right of a message, while the pointer is over
+/// it; `fill` matches what it sits on so the text under it does not show
+/// through.
+fn copy_on_hover(ui: &mut egui::Ui, rect: egui::Rect, text: &str, fill: egui::Color32) {
+    if text.is_empty() || !ui.rect_contains_pointer(rect) {
+        return;
+    }
+    let size = egui::vec2(20.0, 20.0);
+    let top = rect.top().max(ui.clip_rect().top());
+    let spot = egui::Rect::from_min_size(egui::pos2(rect.right() - size.x, top), size);
+    ui.painter().rect_filled(spot, RADIUS_SM as u8, fill);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(spot));
+    if icon_button(&mut child, "copy", "Copy the message").clicked() {
+        ui.ctx().copy_text(text.to_string());
+    }
+}
+
+fn input_id(chat: &Chat) -> egui::Id {
+    egui::Id::new(("assistant_input", &chat.id))
+}
+
 /// The messages waiting for the agent's turn to end, above the box to
 /// write in: each can be taken back into the box to edit, or dropped.
 /// After Stop they wait for the user to let them go.
@@ -784,8 +924,26 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
     );
     let busy = chat.status == ChatStatus::Busy;
     let sendable = !draft.trim().is_empty() || !chat.attachments.is_empty();
-    let id = egui::Id::new(("assistant_input", &chat.id));
+    let id = input_id(chat);
     let mut send = false;
+    // Up in an empty box brings back the last message sent, to edit.
+    if open && draft.is_empty() && ui.memory(|m| m.has_focus(id)) {
+        let last = chat.entries.iter().rev().find_map(|e| match e {
+            ChatEntry::User { text, .. } if !text.is_empty() => Some(text),
+            _ => None,
+        });
+        if let Some(last) = last
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp))
+        {
+            draft.clone_from(last);
+            if let Some(mut edit) = egui::TextEdit::load_state(ui.ctx(), id) {
+                let end = egui::text::CCursor::new(draft.chars().count());
+                edit.cursor
+                    .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                edit.store(ui.ctx(), id);
+            }
+        }
+    }
     if open && ui.memory(|m| m.has_focus(id)) {
         let mut pasted_files = Vec::new();
         send = ui.input_mut(|i| {

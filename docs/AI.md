@@ -30,9 +30,15 @@ Windows › Assistant opens the panel on the right.
 New chat starts one with a configured agent; each chat is a tab with its
 own agent and history, and several can run at once.
 
-- Enter sends, Shift+Enter starts a new line. While the agent works, the
-  red square under the box stops its turn; Close ends the chat and its
-  agent.
+- Enter sends, Shift+Enter starts a new line, and Up in an empty box
+  brings back your last message to edit. While the agent works, the red
+  square under the box stops its turn; Close ends the chat and its agent.
+- The agent's replies show as formatted text: headings, lists, tables,
+  links and code, each code block with its own copy button. Hovering a
+  message shows a button that copies it (a reply as the markdown it was
+  written in), and any text can be selected and copied.
+- The arrows at the top of the chat jump to your previous or next
+  message (Alt+Up, Alt+Down), and the double arrow back to the latest.
 - A message sent while the agent works waits above the box, marked
   Queued, and goes when the turn ends, one per turn. Edit takes it back
   into the box with its attachments, and the cross drops it. Stop holds
