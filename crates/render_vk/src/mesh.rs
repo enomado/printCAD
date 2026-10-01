@@ -166,7 +166,7 @@ impl MeshFramePushConstants {
 #[derive(Clone, Copy)]
 struct MeshDrawPushConstants {
     /// xyz = base × highlight color (precomputed CPU-side via
-    /// `apply_highlight_color`); w is reserved for future highlight flag bits.
+    /// `apply_highlight_color`); w = opacity.
     draw_color: [f32; 4],
 }
 
@@ -179,9 +179,6 @@ const MESH_TOTAL_PUSH_SIZE: u32 = MESH_FRAME_PUSH_SIZE + MESH_DRAW_PUSH_SIZE;
 /// Below it the rayon dispatch overhead dominates the actual memcpy.
 const PARALLEL_PACK_THRESHOLD: usize = 16_384;
 
-/// GPU buffers for a single body, kept alive across frames so a static mesh
-/// only ever uploads once. Keyed by `BodySubmission::id` and invalidated when
-/// `BodySubmission::revision` advances.
 /// The six clip planes of a column-vector `view_proj`, Gribb–Hartmann form:
 /// each plane is `[a, b, c, d]` with `a·x + b·y + c·z + d >= 0` inside.
 /// Works for any convention baked into the matrix (including our Y-flip),
@@ -205,7 +202,7 @@ fn frustum_planes(m: &[[f32; 4]; 4]) -> [[f32; 4]; 6] {
 
 /// Approximate on-screen extent of an AABB, in pixels: the NDC spread of its
 /// corners scaled by the viewport. Corners behind the camera make the answer
-/// conservative (large), never small — a body near the eye keeps its edges.
+/// conservative (large), never small: a body near the eye keeps its edges.
 fn aabb_screen_px(
     m: &[[f32; 4]; 4],
     lo: [f32; 3],
@@ -258,6 +255,9 @@ pub struct DrawStats {
     pub edge_indices: u64,
 }
 
+/// GPU buffers for a single body, kept alive across frames so a static mesh
+/// only ever uploads once. Keyed by `BodySubmission::id` and invalidated when
+/// `BodySubmission::revision` advances.
 pub(crate) struct CachedMesh {
     /// Object-space AABB of the uploaded positions, for frustum culling.
     /// `None` for an empty mesh.
@@ -329,7 +329,7 @@ pub(crate) struct MeshCache {
     entries: HashMap<Uuid, CachedMesh>,
     /// Buffers replaced by a regrow or dropped by GC. Destroyed
     /// MAX_FRAMES_IN_FLIGHT frames later in [`Self::begin_frame`], once no
-    /// in-flight command buffer can still reference them — deferral is what
+    /// in-flight command buffer can still reference them; deferral is what
     /// lets a regrow or GC pass run without a device_wait_idle stall.
     retired: Vec<RetiredBuffer>,
     /// Monotonic frame counter advanced by [`Self::begin_frame`].
@@ -379,10 +379,8 @@ impl MeshCache {
         self.entries.get(id)
     }
 
-    /// Upload (or refresh) a body's GPU buffers. Returns the cached entry's
-    /// counts so the caller can issue a draw immediately. Reuses existing
-    /// buffer allocations when capacity permits to avoid the allocator hit on
-    /// hover/select transitions in degenerate cases.
+    /// Upload (or refresh) a body's GPU buffers, reusing the existing
+    /// allocations when their capacity permits.
     fn upload_body(
         &mut self,
         device: &ash::Device,
@@ -456,8 +454,8 @@ impl MeshCache {
         )?;
 
         // Pack the vertex stream in parallel for big bodies. The work is
-        // embarrassingly parallel — each output vertex depends only on the
-        // matching position/normal — so rayon's `par_chunks_mut` over the
+        // embarrassingly parallel (each output vertex depends only on the
+        // matching position, normal and colour), so rayon's iterator over the
         // mapped HOST_VISIBLE memory wins ~linearly with cores. For small
         // bodies the chunk-by-chunk overhead is wasted, so we keep a
         // sequential fast path under PARALLEL_PACK_THRESHOLD vertices.
@@ -572,8 +570,8 @@ impl MeshCache {
     }
 
     /// True if at least one cache entry is no longer in the alive set. The
-    /// renderer uses this to short-circuit the wait-idle + retain pair on
-    /// the common no-deletion path so panning a stable scene stays free.
+    /// renderer uses this to skip `retain_only` on the common no-deletion
+    /// path so panning a stable scene stays free.
     pub(crate) fn has_dead_entries(&self, alive: &[Uuid]) -> bool {
         if alive.len() == self.entries.len() {
             // Same count → check whether every cached id is in `alive`.
@@ -873,7 +871,6 @@ impl MeshRenderer {
         draw_edges: bool,
         clip_plane: Option<[f32; 4]>,
     ) -> Result<DrawStats, RenderError> {
-        // Make sure every body has fresh GPU buffers in the cache.
         for body in bodies {
             cache.ensure_uploaded(&self.device, &self.memory_properties, body)?;
         }
@@ -964,9 +961,9 @@ impl MeshRenderer {
             })
             .collect();
 
-        // Solid pass: bind solid pipeline once, draw every non-wireframe body
-        // sequentially. Wireframes get a second pass with the depth-biased
-        // pipeline, edges a third with line-list topology.
+        // Solid pass: the solid pipeline bound once, every opaque body drawn
+        // in turn. Edges, wireframes, translucent and on-top bodies follow,
+        // each in its own pipeline.
         let opaque = |b: &BodySubmission| !b.is_wireframe && !b.on_top && b.opacity >= 1.0;
         let has_solid = bodies.iter().zip(&visible).any(|(b, v)| *v && opaque(b));
         if has_solid {
@@ -1001,8 +998,8 @@ impl MeshRenderer {
         // The frame says whether edges draw (the draw style); the
         // experiment hook PRINTCAD_NO_EDGES=1 forces them off so the pass's
         // cost can be measured. The pass itself is cheap next to the
-        // solids — a 9 M-index assembly with 400 k edge indices spends
-        // about 1.5 ms of a 25 ms frame on it — so it runs every frame,
+        // solids (a 9 M-index assembly with 400 k edge indices spends
+        // about 1.5 ms of a 25 ms frame on it), so it runs every frame,
         // moving or still.
         let force_off = !draw_edges || std::env::var_os("PRINTCAD_NO_EDGES").is_some();
         // A line body (a sketch, a guide) is nothing but its edges and
@@ -1250,8 +1247,8 @@ impl MeshRenderer {
         body: &BodySubmission,
         lighting: &LightingData,
     ) {
-        // Face-boundary edges take the global edge color; a line body has
-        // nothing else to show its own color with.
+        // Face-boundary edges take the body's edge color, else the scene's;
+        // a line body has nothing else to show its own color with.
         let c = if cached.index_count == 0 {
             apply_highlight_color(body.color, body.highlight)
         } else {
@@ -1291,13 +1288,14 @@ impl MeshRenderer {
     }
 }
 
-/// Variant selector for `create_mesh_pipeline`. The three pipelines all share
-/// the same vertex format, push-constant block, and pipeline layout — they
-/// only differ in shaders, topology, polygon mode, culling, and depth state.
+/// Variant selector for `create_mesh_pipeline`. The pipelines all share
+/// the same vertex format, push-constant block, and pipeline layout; they
+/// only differ in shaders, topology, polygon mode, culling, blending and
+/// depth state.
 #[derive(Clone, Copy)]
 pub(crate) enum MeshPipelineMode {
-    /// Standard solid mesh pass (triangle list, fill, back-face culling on,
-    /// depth write on).
+    /// Standard solid mesh pass (triangle list, fill, no culling, depth
+    /// write on).
     Solid,
     /// Triangle wireframe overlay drawn on top of the solid pass with depth
     /// bias toward the camera.
@@ -1443,7 +1441,7 @@ fn create_mesh_pipeline(
     //
     // STEP files from mainstream CAD exporters regularly contain
     // faces whose triangulation is wound inward instead of outward, and we
-    // can't reliably detect that from `face.Orientation()` alone (the
+    // can't reliably detect that from the face's orientation flag alone (the
     // parametric → 3D mapping plus shell composition can flip the winding
     // independently). Culling such faces creates the "see-through holes"
     // symptom (back faces poking through the front) that we observe on real

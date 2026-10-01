@@ -27,7 +27,7 @@ layout(push_constant) uniform PushConstants {
     vec4 ambient;
     vec4 shading;
     vec4 clip_plane;        // keeps dot(xyz, p) + w >= 0; (0,0,0,1) keeps all
-    vec4 draw_color;        // xyz = base color; w = highlight flags as float
+    vec4 draw_color;        // xyz = body color; w = opacity
 } pc;
 
 out gl_PerVertex {

@@ -48,7 +48,7 @@ struct PickPushConstants {
 
 /// GPU-based picking renderer that renders object IDs to an offscreen buffer.
 ///
-/// It owns no vertex/index buffers of its own — it draws straight out of
+/// It owns no vertex/index buffers of its own: it draws straight out of
 /// the same `MeshCache` the solid pass uses, so geometry lives on the GPU
 /// once and is packed and uploaded once per change, not once per pass.
 pub(crate) struct PickRenderer {
@@ -64,10 +64,8 @@ pub(crate) struct PickRenderer {
     // Staging buffer for CPU readback
     staging_buffer: vk::Buffer,
     staging_memory: vk::DeviceMemory,
-    // Pipeline
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
-    // Extent
     extent: vk::Extent2D,
 }
 
@@ -94,7 +92,6 @@ impl PickRenderer {
         let id_image_view =
             create_image_view(device, id_image, id_format, vk::ImageAspectFlags::COLOR)?;
 
-        // Create depth image for picking
         let (depth_image, depth_image_memory) = create_image(
             device,
             extent.width,
@@ -113,10 +110,8 @@ impl PickRenderer {
             vk::ImageAspectFlags::DEPTH,
         )?;
 
-        // Create render pass
         let render_pass = Self::create_render_pass(device, id_format, depth_format)?;
 
-        // Create framebuffer
         let attachments = [id_image_view, depth_image_view];
         let framebuffer_info = vk::FramebufferCreateInfo::default()
             .render_pass(render_pass)
@@ -138,7 +133,6 @@ impl PickRenderer {
             memory_properties,
         )?;
 
-        // Create pipeline
         let pipeline_layout = Self::create_pipeline_layout(device)?;
         let pipeline = Self::create_pipeline(device, render_pass, pipeline_layout)?;
 
@@ -355,7 +349,6 @@ impl PickRenderer {
         Ok(pipeline)
     }
 
-    /// Encode a UUID as 4 u32 values
     fn uuid_to_u32s(uuid: Uuid) -> [u32; 4] {
         let bytes = uuid.as_bytes();
         [
@@ -366,7 +359,6 @@ impl PickRenderer {
         ]
     }
 
-    /// Decode 4 u32 values back to a UUID
     fn u32s_to_uuid(values: [u32; 4]) -> Uuid {
         let mut bytes = [0u8; 16];
         bytes[0..4].copy_from_slice(&values[0].to_le_bytes());
@@ -379,8 +371,8 @@ impl PickRenderer {
     /// Record commands to render picking pass.
     ///
     /// `cache` must already contain freshly uploaded buffers for every body
-    /// passed in — the mesh renderer's `draw` is responsible for keeping it
-    /// up to date and is called before this in `RendererCore::record_command_buffer`.
+    /// passed in: `RendererCore::record_command_buffer` uploads them before
+    /// recording this pass.
     pub(crate) fn record_commands(
         &mut self,
         device: &ash::Device,
@@ -392,7 +384,6 @@ impl PickRenderer {
         let view_proj = frame.view_proj;
         let viewport_rect = frame.viewport_rect.as_ref();
         let clip_plane = frame.clip_plane;
-        // Begin render pass
         let clear_values = [
             vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -423,7 +414,6 @@ impl PickRenderer {
                 vk::SubpassContents::INLINE,
             );
 
-            // Set viewport and scissor
             let (vp_x, vp_y, vp_width, vp_height) = match viewport_rect {
                 Some(rect) => (
                     rect.x as f32,
@@ -508,8 +498,9 @@ impl PickRenderer {
         Ok(())
     }
 
-    /// Record the two 1-pixel readback copies into the frame's command
-    /// buffer, targeting staging slot `slot` (one per in-flight frame).
+    /// Record the readback copies (the pixel's ID and depth, and the depth
+    /// window around it) into the frame's command buffer, targeting staging
+    /// slot `slot` (one per in-flight frame).
     /// Must be recorded after [`Self::record_commands`]: the barriers order
     /// the copies against the pick pass's attachment writes.
     ///
@@ -535,7 +526,7 @@ impl PickRenderer {
 
         // The render pass leaves both attachments in TRANSFER_SRC_OPTIMAL,
         // but the implicit external dependency does not make the writes
-        // visible to transfer reads — do that explicitly.
+        // visible to transfer reads, so this barrier does.
         let image_barriers = [
             vk::ImageMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
@@ -756,16 +747,14 @@ impl PickRenderer {
         // Convert to NDC (-1 to 1) within the viewport. Vulkan rasterizes
         // with framebuffer Y running downward, and the camera's `view_proj`
         // applies the Y-flip needed to match that, so NDC also runs Y-down
-        // here — top of the viewport is NDC -1, bottom is NDC +1.
+        // here: top of the viewport is NDC -1, bottom is NDC +1.
         let ndc_x = (vp_x / vp_width) * 2.0 - 1.0;
         let ndc_y = (vp_y / vp_height) * 2.0 - 1.0;
         let ndc_z = depth; // Vulkan depth is 0 to 1
 
-        // Build inverse view-projection matrix
         let vp = glam::Mat4::from_cols_array_2d(&view_proj);
         let inv_vp = vp.inverse();
 
-        // Unproject
         let clip = glam::Vec4::new(ndc_x, ndc_y, ndc_z, 1.0);
         let world = inv_vp * clip;
         let world = world / world.w;

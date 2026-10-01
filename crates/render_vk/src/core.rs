@@ -26,8 +26,7 @@ use crate::{
     util::find_memory_type,
 };
 
-/// Background color for the 3D viewport (RGBA in range 0.0-1.0).
-/// Dark blue-gray color: [R, G, B, A]
+/// Clear color of the 3D scene, RGBA in 0.0 to 1.0.
 const VIEWPORT_BACKGROUND_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
 pub(crate) struct RendererCore {
@@ -158,7 +157,6 @@ impl RendererCore {
 
         let surface = surface::create_surface(&entry, &instance, window)?;
 
-        // Construct extension loaders
         let surface_loader = SurfaceLoader::new(&entry, &instance);
 
         let candidates = enumerate_suitable_devices(&instance, &surface_loader, surface)?;
@@ -214,7 +212,6 @@ impl RendererCore {
         };
         info!("Using MSAA: {}x", msaa_samples.as_raw());
 
-        // Find depth format
         let depth_format = find_depth_format(&instance, physical_device)
             .ok_or_else(|| RenderError::Initialization("No suitable depth format found".into()))?;
         info!("Using depth format: {}", depth_format.as_raw());
@@ -317,7 +314,6 @@ impl RendererCore {
             core.msaa_samples,
         )?);
 
-        // Initialize picking renderer
         core.pick_renderer = Some(PickRenderer::new(
             &core.device,
             core.swapchain_extent,
@@ -603,7 +599,7 @@ impl RendererCore {
 
         // Mesh-cache GC: drop GPU buffers for any body that's no longer in
         // the live submission set. Dead entries go onto the retire queue and
-        // are destroyed a couple of frames later — no stall.
+        // are destroyed a couple of frames later, with no stall.
         let alive_ids: Vec<Uuid> = frame.bodies.iter().map(|b| b.id).collect();
         if self.mesh_cache.has_dead_entries(&alive_ids) {
             self.mesh_cache.retain_only(&alive_ids);
@@ -1047,7 +1043,7 @@ impl RendererCore {
         let color_attachment = vk::AttachmentDescription::default()
             .format(self.swapchain_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::LOAD) // Load existing content from 3D pass
+            .load_op(vk::AttachmentLoadOp::LOAD) // Keeps the scene copied in before the pass
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
@@ -1215,7 +1211,7 @@ impl RendererCore {
         }
 
         // Make sure every body has fresh GPU buffers in the shared cache
-        // *before* the picking pass runs — both passes draw out of the same
+        // *before* the picking pass runs: both passes draw out of the same
         // buffers, so we upload exactly once per body per revision.
         if let Some(mesh_renderer) = self.mesh_renderer.as_ref() {
             for body in &frame.bodies {
@@ -1227,7 +1223,7 @@ impl RendererCore {
             }
         }
 
-        // Record the picking pass + 1-pixel readback only when the app asked
+        // Record the picking pass and its readback only when the app asked
         // for a pick this frame; idle frames skip the offscreen pass
         // entirely. The readback lands in this frame's staging slot and is
         // resolved after this frame's fence wait (a stable
@@ -1693,8 +1689,8 @@ impl Drop for RendererCore {
         }
         // The egui renderer owns pipelines, per-frame buffers and textures
         // created on our device, and frees them in its own Drop through a
-        // handle it holds. As a plain field it would drop AFTER this body —
-        // after `destroy_device` — freeing objects on a dead device: a
+        // handle it holds. As a plain field it would drop AFTER this body,
+        // after `destroy_device`, freeing objects on a dead device: a
         // segfault at exit, and every one of its allocations reported as
         // leaked by the validation layer. Take it down first, explicitly.
         drop(self.egui_renderer.take());
@@ -1826,8 +1822,8 @@ fn load_vulkan() -> Result<Entry, RenderError> {
     )))
 }
 
-/// Instance extensions that are offered and wanted when they are: portability
-/// enumeration, without which a Vulkan-over-Metal device is not listed.
+/// Whether the instance offers portability enumeration, without which a
+/// Vulkan-over-Metal device is not listed.
 fn portability_enumeration(entry: &Entry) -> bool {
     unsafe { entry.enumerate_instance_extension_properties(None) }
         .unwrap_or_default()

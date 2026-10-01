@@ -59,7 +59,7 @@ fn msaa_samples_to_vk(samples: u8) -> vk::SampleCountFlags {
         2 => vk::SampleCountFlags::TYPE_2,
         4 => vk::SampleCountFlags::TYPE_4,
         8 => vk::SampleCountFlags::TYPE_8,
-        _ => vk::SampleCountFlags::TYPE_4, // Default to 4x
+        _ => vk::SampleCountFlags::TYPE_4,
     }
 }
 
@@ -190,8 +190,9 @@ pub trait RenderBackend {
     fn render(&mut self, frame: &mut FrameSubmission) -> Result<(), RenderError>;
     fn resize(&mut self, new_size: PhysicalSize<u32>);
     /// Most recent GPU pick readback. Picks are requested via
-    /// `VulkanRenderer::request_pick` and resolved during `render`, so the
-    /// result trails the request by a frame.
+    /// `VulkanRenderer::request_pick` and resolved during `render` once the
+    /// frame that recorded them is fence-waited, so the result trails the
+    /// request by `MAX_FRAMES_IN_FLIGHT` frames.
     fn latest_pick_result(&self) -> PickResult;
 }
 
@@ -227,7 +228,7 @@ pub enum HighlightState {
     Hovered,
     Selected,
     HoveredAndSelected,
-    /// Another editor has this body selected — a cool tint, visually
+    /// Another editor has this body selected: a cool tint, visually
     /// subordinate to the local selection.
     PeerSelected,
 }
@@ -246,7 +247,7 @@ pub struct BodySubmission {
     pub mesh: Arc<TriMesh>,
     pub color: [f32; 3],
     /// 1.0 draws opaque in the solid pass; anything under it draws after
-    /// everything opaque, blended over it, without writing depth — a
+    /// everything opaque, blended over it, without writing depth: a
     /// selection highlight that lets the face show through.
     pub opacity: f32,
     pub highlight: HighlightState,
@@ -285,7 +286,6 @@ pub struct ViewportRect {
     pub height: u32,
 }
 
-/// Minimal scene data required to emit a frame.
 /// A picture of the scene, row by row from the top, RGBA.
 #[derive(Debug, Clone)]
 pub struct CapturedImage {
@@ -294,6 +294,7 @@ pub struct CapturedImage {
     pub rgba: Vec<u8>,
 }
 
+/// Minimal scene data required to emit a frame.
 pub struct FrameSubmission {
     pub bodies: Vec<BodySubmission>,
     pub view_proj: [[f32; 4]; 4],
@@ -451,7 +452,6 @@ impl RenderBackend for VulkanRenderer {
 }
 
 impl VulkanRenderer {
-    /// Request a pick at the given screen coordinates (will be processed next frame)
     /// Whether the last frame re-rendered the 3D scene or reused the cached
     /// scene image under fresh UI.
     pub fn scene_redrawn_last_frame(&self) -> bool {
@@ -468,6 +468,8 @@ impl VulkanRenderer {
             .unwrap_or_default()
     }
 
+    /// Request a pick at the given window coordinates, recorded into the
+    /// next frame; the answer arrives through `latest_pick_result`.
     pub fn request_pick(&mut self, x: u32, y: u32) {
         if let Some(core) = self.core.as_mut() {
             core.request_pick(x, y);
@@ -551,5 +553,3 @@ impl From<vk::Result> for RenderError {
         RenderError::Vk(err)
     }
 }
-
-// ============================================================================
