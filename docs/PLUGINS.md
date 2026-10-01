@@ -178,12 +178,30 @@ kernel runs them natively; a failing op marks its feature.
 
 **Panels.** A bench declares its task panel and Preferences page as
 widgets (`Widget`): numbers, choices, toggles, text fields, buttons, pick
-rows, lists, tables, groups, progress, notes, and diagrams (a schematic
-drawn in coordinates of its own, with dimension lines and callouts beside
-the parts they size, one of them emphasised). A number bound to a feature's
-parameter (`bind`) takes formulas like any field of the app's own. Changes
-come back as `panel_event`; OK and Cancel as `task_close`. A bench whose
-Preferences page declares no widgets gets no page.
+rows, lists, tables, groups, progress, notes and diagrams. A number bound
+to a feature's parameter (`bind`) takes formulas like any field of the
+app's own. Changes come back as `panel_event`; OK and Cancel as
+`task_close`. A bench whose Preferences page declares no widgets gets no
+page.
+
+**Diagrams.** `Widget::Diagram` is a schematic of what the panel edits,
+with its measures marked beside the parts they size. The bench draws it in
+a space of its own, `[0, width] × [0, height]` with y up, in whatever unit
+suits (a part's millimetres); the host fits that space to the panel's
+width, at most 220 px tall, and keeps strokes, arrowheads and text at
+their pixel size whatever the fit, so leave a margin for the labels.
+`shapes` are paths and circles with a `DiagramStroke` naming their role
+(`outline`, `hidden` dashed, `axis` long-dashed, `thin`, `accent`) rather
+than a colour, so they follow the theme; a filled path is shaded, which
+reads right only for a convex outline, so shade a part as several convex
+pieces. A `Dimension` measures `from` to `to`: its line stands `offset`
+away, to the left of the way from `from` to `to` (negative for the right),
+led out to the two points, with `text` on it. A `Callout` puts `text` at
+`at` with a leader to a dot at `anchor`. Either drawn with `emphasis` takes
+the accent colour: the bench sets it on the measure of the field last
+changed, since the host does not know which field is being edited.
+[PrintCAD-hardware-lib-wb](https://github.com/gilbertorconde/PrintCAD-hardware-lib-wb)
+draws every part this way.
 
 **Drawing.** `frame` answers everything the bench shows: the task, the
 panel, the viewport's hint, badge and footer, the status bar's items,
