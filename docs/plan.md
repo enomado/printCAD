@@ -49,7 +49,6 @@ and macOS and is written in Rust.
 
 ## What comes next
 
-[What is left to build](FEATURE_GAPS.md) lists what the workbenches still
-lack. How the command API, scripts, AI agents and formulas work is in
+The [roadmap](ROADMAP.md) lists everything still open. How the command API, scripts, AI agents and formulas work is in
 [Scripting](SCRIPTING.md), [AI agents](AI.md) and
 [Variables and formulas](VARIABLES.md).

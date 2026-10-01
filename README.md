@@ -303,14 +303,14 @@ More detail in [docs](docs/):
 - [Holes](docs/HOLES.md)
 - [Workbench packages](docs/PLUGINS.md)
 - [AI agents](docs/AI.md)
-- [What is left to build](docs/FEATURE_GAPS.md)
+- [Roadmap](docs/ROADMAP.md)
 - [Camera](camera_system.md)
 
 ## Roadmap
 
-What each workbench still lacks, feature by feature, is in
-[docs/FEATURE_GAPS.md](docs/FEATURE_GAPS.md). Features for printing
-(filament use, print layout, nut traps) come next.
+Everything still open (what the workbenches lack, what waits on the
+kernel, faster kernel operations, the printing features) is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## License
 
