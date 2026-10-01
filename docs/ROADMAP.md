@@ -96,14 +96,6 @@ bench numbers and an acceptance test (the time follows the touched region,
 the result the same as now). A and B first: together they are most of the
 cost.
 
-## Workbench store
-
-- [ ] **Who may list a package** (S, to decide). Anyone can propose an
-  entry, and whoever adds it must be among its maintainers; nothing yet
-  ties them to the package's repository. Options: the check notes when
-  the submitter is not the repository's owner, for the reviewer; or the
-  owner must be among the maintainers.
-
 ## Printing
 
 Features that matter only for printing, for once the modelling is
