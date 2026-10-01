@@ -58,7 +58,8 @@ const PART: &str = r#"
 for i = 0, 11 do
     local h = pc.sketch.new{body = "BODY", plane = "XY", offset = 10}
     pc.sketch.circle{sketch = h, x = 15 + (i % 6) * 26, y = 15 + math.floor(i / 6) * 70, radius = 4}
-    pc.design.pocket{sketch = h, depth = 6}
+    local pocket = pc.design.pocket{sketch = h, depth = 6}
+    if i == 5 then hole = pocket end
 end
 middle = nil
 for i = 0, 5 do
@@ -103,9 +104,13 @@ fn main() {
     let part = PART.replace("BODY", &body.0.to_string());
     let out = engine.run_script(&part, "part.lua", &mut host);
     assert_eq!(out.error, None, "the part builds");
-    let ids = engine.run_script("print(last) print(middle)", "ids.lua", &mut host);
+    let ids = engine.run_script(
+        "print(last) print(middle) print(hole)",
+        "ids.lua",
+        &mut host,
+    );
     let feature = |i: usize| FeatureId(ids.printed[i].trim().parse().expect("a feature id"));
-    let (last, middle) = (feature(0), feature(1));
+    let (last, middle, hole) = (feature(0), feature(1), feature(2));
     let detail = TessellationSettings::default();
     let mut cache = ChainCache::default();
 
@@ -123,17 +128,18 @@ fn main() {
                 .execute_solid_chain_cached(&plan.ops, &tags, detail, None, &[], Some(cache))
                 .unwrap();
             println!(
-                "{label:<28} {:>4} ops, {:>2} kept  {:>8.1} ms  {} triangles",
+                "{label:<28} {:>4} ops, {:>2} kept{:<13}  {:>8.1} ms  {} triangles",
                 plan.ops.len(),
                 cache.resumed(),
+                if cache.reused() { ", rest reused" } else { "" },
                 started.elapsed().as_secs_f64() * 1000.0,
                 built.mesh.indices.len() / 3
             );
         };
-    let mut set = |host: &mut Benches, feature: FeatureId, length: f64| {
+    let mut set_field = |host: &mut Benches, feature: FeatureId, field: &str, value: f64| {
         let out = engine.run_script(
             &format!(
-                "pc.design.set{{feature = \"{}\", length = {length}}}",
+                "pc.design.set{{feature = \"{}\", {field} = {value}}}",
                 feature.0
             ),
             "set.lua",
@@ -143,13 +149,13 @@ fn main() {
     };
 
     build(&mut host, &mut cache, "from scratch", &detail);
-    set(&mut host, last, 5.0);
+    set_field(&mut host, last, "length", 5.0);
     build(&mut host, &mut cache, "last feature edited", &detail);
-    set(&mut host, last, 6.0);
+    set_field(&mut host, last, "length", 6.0);
     build(&mut host, &mut cache, "last feature edited again", &detail);
-    set(&mut host, middle, 9.0);
+    set_field(&mut host, middle, "length", 9.0);
     build(&mut host, &mut cache, "a middle feature edited", &detail);
-    set(&mut host, middle, 10.0);
+    set_field(&mut host, middle, "length", 10.0);
     build(&mut host, &mut cache, "the same one again", &detail);
     build(&mut host, &mut cache, "nothing changed", &detail);
     // As the application builds a body being dragged, then settled.
@@ -159,7 +165,12 @@ fn main() {
         angular_tolerance_deg: (detail.angular_tolerance_deg * 3.0).min(45.0),
         ..detail.clone()
     };
-    set(&mut host, last, 7.0);
+    set_field(&mut host, last, "length", 7.0);
     build(&mut host, &mut cache, "dragged, coarse", &coarse);
     build(&mut host, &mut cache, "settled, full detail", &detail);
+    // A pocket cut through the plate, then deeper: the same hole.
+    set_field(&mut host, hole, "depth", 12.0);
+    build(&mut host, &mut cache, "a pocket made through", &detail);
+    set_field(&mut host, hole, "depth", 14.0);
+    build(&mut host, &mut cache, "deeper, the same hole", &detail);
 }

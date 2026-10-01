@@ -38,9 +38,13 @@ Each item is one milestone and one commit.
   another faster than they land mesh at a coarser tolerance; once the edits
   settle, the body is built once more at full detail (from the state item 1
   kept, so only the meshing is repeated).
-- [ ] **4. Stop when nothing changed.** When a rebuilt feature makes the
+- [x] **4. Stop when nothing changed.** When a rebuilt feature makes the
   same solid as before, everything after it is the same too: the previous
-  result is used.
+  result is used. Solids are compared by their geometry (every vertex,
+  points along every edge, a point and normal inside every face), not by
+  their snapshots, which also record parameter ranges; the comparison is
+  made only where the ops after the edited one took more than twice as long
+  as writing a snapshot.
 - [ ] **5. The edited feature first.** While a task edits a feature with
   features after it, the body is shown at that feature first, then the rest
   of its history is built.

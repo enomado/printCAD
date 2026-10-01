@@ -147,15 +147,29 @@ fn cache_len(part: &mut Part) -> usize {
 }
 
 fn same(fresh: &SolidBuildResult, cached: &SolidBuildResult, what: &str) {
-    assert_eq!(fresh.brep_blob, cached.brep_blob, "{what}: the same solid");
-    assert_eq!(
-        fresh.mesh.positions, cached.mesh.positions,
+    // The geometry, not the snapshot's text: a curve can record a longer
+    // parameter range for the same edge.
+    assert!(
+        fresh.mesh.positions == cached.mesh.positions,
         "{what}: the same mesh"
     );
-    assert_eq!(
-        fresh.mesh.face_names, cached.mesh.face_names,
+    assert!(
+        fresh.mesh.indices == cached.mesh.indices,
+        "{what}: the same triangles"
+    );
+    assert!(
+        fresh.mesh.face_names == cached.mesh.face_names,
         "{what}: the same names"
     );
+    let volume = |r: &SolidBuildResult| {
+        OgeomKernel::new()
+            .physical_properties(&r.brep_blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap()
+    };
+    let (a, b) = (volume(fresh), volume(cached));
+    assert!((a - b).abs() < 1e-9 * a.max(1.0), "{what}: {a} against {b}");
 }
 
 #[test]
@@ -208,4 +222,30 @@ fn a_resumed_build_is_the_build_from_scratch() {
     let (fresh, cached) = part.build(&mut cache);
     same(&fresh, &cached, "nothing changed");
     assert_eq!(cache.resumed(), ops, "nothing to build again");
+}
+
+/// A pocket already through the plate, made deeper, cuts the same hole:
+/// the build stops there and takes the rest of the last build's result,
+/// which is what a build from scratch makes. A change that does alter the
+/// solid builds on.
+#[test]
+fn an_edit_that_makes_the_same_solid_takes_the_rest_as_built() {
+    let mut part = Part::new();
+    let mut cache = ChainCache::default();
+    part.build(&mut cache);
+    let pocket = part.id("pocket");
+    part.set(pocket, "depth", 10.0);
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "through the plate");
+    assert!(!cache.reused(), "a new hole: built on");
+
+    part.set(pocket, "depth", 12.0);
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "deeper, still through");
+    assert!(cache.reused(), "the same hole: the rest as built");
+
+    part.set(pocket, "depth", 2.0);
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "shallower");
+    assert!(!cache.reused(), "a different hole: built on");
 }

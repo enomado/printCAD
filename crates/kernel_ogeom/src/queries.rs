@@ -421,7 +421,11 @@ fn face_section(
 
 /// Points of `edge` at fractions of its parameter range, in the model's
 /// frame.
-fn edge_samples(model: &Model, edge: &Shape, fractions: &[f64]) -> KernelResult<Vec<Point>> {
+pub(crate) fn edge_samples(
+    model: &Model,
+    edge: &Shape,
+    fractions: &[f64],
+) -> KernelResult<Vec<Point>> {
     let tol = tess::tolerances();
     let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
         return Err(other("not an edge"));

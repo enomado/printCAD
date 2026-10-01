@@ -66,6 +66,26 @@ pub struct ChainCache {
     last: Vec<u64>,
     /// How many ops the last build took from a kept state.
     resumed: usize,
+    /// The last build's edited op, what came of it and what followed.
+    after_edit: Option<AfterEdit>,
+    /// The last build's edited op made the solid the build before's did,
+    /// and the rest of its result was that build's.
+    reused: bool,
+}
+
+/// What a build made of its edited op (the first that differs from the
+/// build before) and of everything after it: when the next build's same op
+/// makes the same solid and nothing after it differs, the rest is the same
+/// too, and its result is this one's.
+struct AfterEdit {
+    at: usize,
+    /// The ops after `at`, the meshing settings and the probes.
+    tail: u64,
+    /// The snapshot of the solid the op made, hashed; `None` when the ops
+    /// after it took less than twice as long as writing a snapshot, too
+    /// little to be worth the comparison.
+    solid: Option<u64>,
+    result: SolidBuildResult,
 }
 
 impl ChainCache {
@@ -106,6 +126,12 @@ impl ChainCache {
     /// building them: zero for a build from the first op.
     pub fn resumed(&self) -> usize {
         self.resumed
+    }
+
+    /// Whether the last build stopped at its edited op, which made the
+    /// solid the build before's did, and took the rest from that build.
+    pub fn reused(&self) -> bool {
+        self.reused
     }
 
     /// How many states it keeps.
@@ -318,6 +344,7 @@ pub fn execute_cached(
     // before, the last feature is the likeliest.
     let mut start = 0;
     let mut keep_at = None;
+    let mut edit: Option<(usize, u64)> = None;
     let keys = cache.as_ref().map(|_| op_keys(ops_list, &op_tags));
     let prefix = keys.as_deref().map(prefix_keys);
     if let (Some(cache), Some(prefix), Some(keys)) = (cache.as_deref_mut(), prefix.as_ref(), keys) {
@@ -339,6 +366,7 @@ pub fn execute_cached(
             );
         }
         cache.resumed = start;
+        cache.reused = false;
         let edited = if cache.last.is_empty() {
             last_feature_start(tags, ops_list.len())
         } else {
@@ -348,8 +376,20 @@ pub fn execute_cached(
                 .unwrap_or_else(|| keys.len().min(cache.last.len()))
         };
         keep_at = Some(edited).filter(|&at| at > start && at < ops_list.len());
+        if edited < ops_list.len() && preview.is_none() {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            keys[edited + 1..].hash(&mut hasher);
+            serde_json::to_vec(&(detail, probes))
+                .unwrap_or_default()
+                .hash(&mut hasher);
+            edit = Some((edited, hasher.finish()));
+        }
         cache.last = keys;
     }
+    // The edited op's solid, and when the ops after it began.
+    let mut edit_solid: Option<Shape> = None;
+    let mut tail_started: Option<std::time::Instant> = None;
 
     for (index, solid_op) in ops_list.iter().enumerate().skip(start) {
         if keep_at == Some(index)
@@ -712,6 +752,29 @@ pub fn execute_cached(
             progress::op_label(solid_op),
             op_started.elapsed().as_secs_f64() * 1000.0
         );
+        if let Some((at, tail)) = edit
+            && at == index
+        {
+            // The edited op made the solid the last build's did, and what
+            // follows is the same: so is the result.
+            let earlier = cache.as_deref().and_then(|c| c.after_edit.as_ref());
+            if let Some(earlier) = earlier.filter(|e| e.at == at && e.tail == tail)
+                && let Some(solid) = earlier.solid
+                && current.as_ref().and_then(|s| fingerprint(&model, s)) == Some(solid)
+            {
+                tracing::debug!(
+                    target: "printcad.chain",
+                    "op {index} made the same solid as before: the rest is as built"
+                );
+                let result = earlier.result.clone();
+                if let Some(cache) = cache.as_deref_mut() {
+                    cache.reused = true;
+                }
+                return Ok(result);
+            }
+            edit_solid = current.clone();
+            tail_started = Some(std::time::Instant::now());
+        }
         if preview.as_ref().is_some_and(|r| r.end == index + 1) {
             after = current.clone();
         }
@@ -747,6 +810,7 @@ pub fn execute_cached(
         "meshing: {:.1} ms",
         meshing.elapsed().as_secs_f64() * 1000.0
     );
+    let tail_took = tail_started.map(|t| t.elapsed());
     let writing = std::time::Instant::now();
     let brep_blob = tess::write_blob(&model, &final_shape).map_err(|e| {
         chain_err(
@@ -755,10 +819,11 @@ pub fn execute_cached(
         )
     })?;
 
+    let snapshot_took = writing.elapsed();
     tracing::debug!(
         target: "printcad.chain",
         "snapshot: {:.1} ms",
-        writing.elapsed().as_secs_f64() * 1000.0
+        snapshot_took.as_secs_f64() * 1000.0
     );
     let bounds_mm = tess::solid_bounds(&model, &final_shape, &mesh);
     // A preview that cannot be made leaves the build as it is.
@@ -769,12 +834,30 @@ pub fn execute_cached(
         })
         .flatten()
         .map(Box::new);
+    let result = SolidBuildResult {
+        brep_blob,
+        mesh,
+        bounds_mm,
+        preview,
+        probes: answers,
+    };
+    if let (Some(cache), Some((at, tail))) = (cache.as_deref_mut(), edit) {
+        let worth = tail_took.is_some_and(|t| t > snapshot_took * 2);
+        cache.after_edit = Some(AfterEdit {
+            at,
+            tail,
+            solid: edit_solid
+                .filter(|_| worth)
+                .and_then(|s| fingerprint(&model, &s)),
+            result: result.clone(),
+        });
+    }
     // The state at the end, for a build that changes nothing but the
     // meshing, or adds a feature after it.
     if let (Some(cache), Some(prefix), Some(names)) = (cache, prefix.as_ref(), kept_names)
         && start < ops_list.len()
     {
-        let answered = answered_before(probes, &answers, ops_list.len());
+        let answered = answered_before(probes, &result.probes, ops_list.len());
         cache.keep(Saved {
             at: ops_list.len(),
             key: prefix[ops_list.len()],
@@ -785,13 +868,59 @@ pub fn execute_cached(
             answered,
         });
     }
-    Ok(SolidBuildResult {
-        brep_blob,
-        mesh,
-        bounds_mm,
-        preview,
-        probes: answers,
-    })
+    Ok(result)
+}
+
+/// A solid's geometry, hashed: every vertex, three points along every
+/// edge, and a point inside every face with its normal there, each to a
+/// micrometre. Equal for the same solid however its curves and surfaces
+/// record their parameter ranges, which a snapshot would tell apart.
+fn fingerprint(model: &Model, shape: &Shape) -> Option<u64> {
+    use ogeom::mesh::{Deflection, triangulate_face};
+    use ogeom::topo::{NodeData, ShapeType, explore_unique};
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let micrometres = |p: Point| [p.x, p.y, p.z].map(|c| (c * 1e3).round() as i64);
+    for vertex in explore_unique(model, shape, ShapeType::Vertex).ok()? {
+        let Some(NodeData::Vertex(data)) = model.node(&vertex).map(|n| n.data()) else {
+            return None;
+        };
+        let placement = vertex.transform(model.datums()).ok()?;
+        micrometres(placement.apply(data.point)).hash(&mut hasher);
+    }
+    for edge in explore_unique(model, shape, ShapeType::Edge).ok()? {
+        // A degenerate edge (a cone's apex) has no curve to sample.
+        if let Ok(points) = crate::queries::edge_samples(model, &edge, &[0.25, 0.5, 0.75]) {
+            for p in points {
+                micrometres(p).hash(&mut hasher);
+            }
+        }
+    }
+    let tol = tess::tolerances();
+    for face in explore_unique(model, shape, ShapeType::Face).ok()? {
+        let chord = tess::robust_bounds(model, &face)
+            .map_or(0.25, |(lo, hi)| (hi - lo).magnitude() * 0.05)
+            .clamp(0.01, 0.25);
+        let mesh = triangulate_face(model, &face, Deflection::with_chord(chord).ok()?, tol).ok()?;
+        let largest = mesh.triangles.iter().max_by(|a, b| {
+            let area = |t: &[u32; 3]| {
+                let [p, q, r] = t.map(|i| mesh.positions[i as usize]);
+                (q - p).cross(r - p).magnitude()
+            };
+            area(a).total_cmp(&area(b))
+        })?;
+        let [p, q, r] = largest.map(|i| mesh.positions[i as usize]);
+        micrometres(Point::new(
+            (p.x + q.x + r.x) / 3.0,
+            (p.y + q.y + r.y) / 3.0,
+            (p.z + q.z + r.z) / 3.0,
+        ))
+        .hash(&mut hasher);
+        let n = (q - p).cross(r - p);
+        let n = n * (1e3 / n.magnitude());
+        [n.x, n.y, n.z].map(|c| c.round() as i64).hash(&mut hasher);
+    }
+    Some(hasher.finish())
 }
 
 /// Where the last feature's ops start: the trailing run of one tag.
