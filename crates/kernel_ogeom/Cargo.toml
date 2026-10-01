@@ -11,6 +11,7 @@ ogeom = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+serde_json.workspace = true
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
@@ -18,4 +19,3 @@ core_document = { path = "../core_document" }
 wb_design = { path = "../workbenches/wb_design" }
 wb_sketch = { path = "../workbenches/wb_sketch" }
 scripting = { path = "../scripting" }
-serde_json.workspace = true

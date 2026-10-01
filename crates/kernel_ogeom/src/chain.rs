@@ -15,6 +15,7 @@ use crate::naming::{self, NameMap};
 use crate::ops::{self, pattern};
 use crate::{progress, tess};
 
+#[derive(Clone)]
 struct ToolSnapshot {
     op: SolidOp,
     subtractive: bool,
@@ -34,6 +35,118 @@ impl ToolSnapshot {
             solid,
         })
     }
+}
+
+/// How many states a [`ChainCache`] keeps.
+const KEPT_STATES: usize = 3;
+
+/// The chain as it stood at the start of one of its ops: what a later
+/// build whose history agrees up to there resumes from.
+struct Saved {
+    /// How many ops came before, and their key (see [`prefix_keys`]).
+    at: usize,
+    key: u64,
+    model: Model,
+    current: Option<Shape>,
+    names: NameMap,
+    tools: Vec<Option<ToolSnapshot>>,
+    /// The probes asked of the solid before `at`, with their answers.
+    answered: Vec<(ChainProbe, Result<ProbeAnswer, String>)>,
+}
+
+/// What one body's builds keep between them, so the next build replays
+/// only the history after what changed: the chain's state at the start of
+/// the op the last edit changed, and at the end of the chain. A build
+/// whose ops agree with a kept state's up to its point resumes there.
+#[derive(Default)]
+pub struct ChainCache {
+    /// Newest last.
+    saved: Vec<Saved>,
+    /// Each op's key in the last build.
+    last: Vec<u64>,
+    /// How many ops the last build took from a kept state.
+    resumed: usize,
+}
+
+impl ChainCache {
+    /// Where a build of `prefix` (see [`prefix_keys`]) can resume: the
+    /// kept state furthest along that agrees with it, no later than the
+    /// previewed feature's start and with every probe asked before it
+    /// answered.
+    fn resume_point(
+        &self,
+        prefix: &[u64],
+        preview: Option<&std::ops::Range<usize>>,
+        probes: &[ChainProbe],
+    ) -> Option<&Saved> {
+        self.saved
+            .iter()
+            .filter(|s| s.at > 0 && prefix.get(s.at) == Some(&s.key))
+            .filter(|s| preview.is_none_or(|r| s.at <= r.start))
+            .filter(|s| {
+                probes
+                    .iter()
+                    .filter(|p| p.after_op < s.at)
+                    .all(|p| s.answered.iter().any(|(q, _)| q == p))
+            })
+            .max_by_key(|s| s.at)
+    }
+
+    /// Keep `state`, in place of one with the same key; the oldest goes
+    /// when there are too many.
+    fn keep(&mut self, state: Saved) {
+        self.saved.retain(|s| s.key != state.key);
+        self.saved.push(state);
+        if self.saved.len() > KEPT_STATES {
+            self.saved.remove(0);
+        }
+    }
+
+    /// How many ops the last build took from a kept state rather than
+    /// building them: zero for a build from the first op.
+    pub fn resumed(&self) -> usize {
+        self.resumed
+    }
+
+    /// How many states it keeps.
+    pub fn len(&self) -> usize {
+        self.saved.len()
+    }
+
+    /// Whether it keeps none.
+    pub fn is_empty(&self) -> bool {
+        self.saved.is_empty()
+    }
+}
+
+/// Each op's key: the op and its tag.
+fn op_keys(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<u64> {
+    use std::hash::{Hash, Hasher};
+    ops_list
+        .iter()
+        .zip(tags)
+        .map(|(op, tag)| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            serde_json::to_vec(op).unwrap_or_default().hash(&mut hasher);
+            tag.hash(&mut hasher);
+            hasher.finish()
+        })
+        .collect()
+}
+
+/// The key of every prefix of a chain: `[k]` stands for its first `k`
+/// ops, one more entry than ops.
+fn prefix_keys(op_keys: &[u64]) -> Vec<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut keys = Vec::with_capacity(op_keys.len() + 1);
+    keys.push(0);
+    for op in op_keys {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        keys.last().hash(&mut hasher);
+        op.hash(&mut hasher);
+        keys.push(hasher.finish());
+    }
+    keys
 }
 
 pub fn execute(
@@ -133,6 +246,21 @@ pub fn execute_named(
     preview: Option<std::ops::Range<usize>>,
     probes: &[ChainProbe],
 ) -> Result<SolidBuildResult, ChainError> {
+    execute_cached(ops_list, tags, detail, preview, probes, None)
+}
+
+/// [`execute_named`], resuming from the state `cache` kept where the
+/// history agrees with the last builds', and keeping the states the next
+/// build may resume from: at the start of the first op that differs from
+/// the last build's (where the user is editing) and at the end.
+pub fn execute_cached(
+    ops_list: &[SolidOp],
+    tags: &[TopoName],
+    detail: &TessellationSettings,
+    preview: Option<std::ops::Range<usize>>,
+    probes: &[ChainProbe],
+    mut cache: Option<&mut ChainCache>,
+) -> Result<SolidBuildResult, ChainError> {
     let chain_err = |op_index: usize, message: String| ChainError { op_index, message };
 
     if ops_list.is_empty() {
@@ -184,7 +312,59 @@ pub fn execute_named(
         })
         .collect();
 
-    for (index, solid_op) in ops_list.iter().enumerate() {
+    // Where the last builds left a state this one agrees with, it starts
+    // there. The op that differs from the last build's is where the next
+    // edit most likely is, so the state there is kept; with no build
+    // before, the last feature is the likeliest.
+    let mut start = 0;
+    let mut keep_at = None;
+    let keys = cache.as_ref().map(|_| op_keys(ops_list, &op_tags));
+    let prefix = keys.as_deref().map(prefix_keys);
+    if let (Some(cache), Some(prefix), Some(keys)) = (cache.as_deref_mut(), prefix.as_ref(), keys) {
+        if let Some(saved) = cache.resume_point(prefix, preview.as_ref(), probes) {
+            start = saved.at;
+            model = saved.model.clone();
+            current = saved.current.clone();
+            names = saved.names.clone();
+            tools = saved.tools.clone();
+            for (probe, answer) in probes.iter().zip(answers.iter_mut()) {
+                if let Some((_, known)) = saved.answered.iter().find(|(q, _)| q == probe) {
+                    *answer = known.clone();
+                }
+            }
+            tracing::debug!(
+                target: "printcad.chain",
+                "resumed after {start} of {} ops",
+                ops_list.len()
+            );
+        }
+        cache.resumed = start;
+        let edited = if cache.last.is_empty() {
+            last_feature_start(tags, ops_list.len())
+        } else {
+            keys.iter()
+                .zip(&cache.last)
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| keys.len().min(cache.last.len()))
+        };
+        keep_at = Some(edited).filter(|&at| at > start && at < ops_list.len());
+        cache.last = keys;
+    }
+
+    for (index, solid_op) in ops_list.iter().enumerate().skip(start) {
+        if keep_at == Some(index)
+            && let (Some(cache), Some(prefix)) = (cache.as_deref_mut(), prefix.as_ref())
+        {
+            cache.keep(Saved {
+                at: index,
+                key: prefix[index],
+                model: model.clone(),
+                current: current.clone(),
+                names: names.clone(),
+                tools: tools.clone(),
+                answered: answered_before(probes, &answers, index),
+            });
+        }
         let tag = op_tags[index];
         // What the op and the probes asked before it look up by name is
         // found in the solid as it stands.
@@ -539,6 +719,7 @@ pub fn execute_named(
     }
 
     let final_shape = current.expect("chain validated non-empty");
+    let kept_names = cache.is_some().then(|| names.clone());
     let named = naming::set_current(names);
     ask(
         &mut model,
@@ -588,6 +769,22 @@ pub fn execute_named(
         })
         .flatten()
         .map(Box::new);
+    // The state at the end, for a build that changes nothing but the
+    // meshing, or adds a feature after it.
+    if let (Some(cache), Some(prefix), Some(names)) = (cache, prefix.as_ref(), kept_names)
+        && start < ops_list.len()
+    {
+        let answered = answered_before(probes, &answers, ops_list.len());
+        cache.keep(Saved {
+            at: ops_list.len(),
+            key: prefix[ops_list.len()],
+            model,
+            current: Some(final_shape),
+            names,
+            tools,
+            answered,
+        });
+    }
     Ok(SolidBuildResult {
         brep_blob,
         mesh,
@@ -595,6 +792,28 @@ pub fn execute_named(
         preview,
         probes: answers,
     })
+}
+
+/// Where the last feature's ops start: the trailing run of one tag.
+fn last_feature_start(tags: &[TopoName], ops: usize) -> usize {
+    match tags.get(..ops).and_then(<[_]>::last) {
+        Some(last) => ops - tags[..ops].iter().rev().take_while(|t| *t == last).count(),
+        None => ops,
+    }
+}
+
+/// The probes asked of the solid before op `at`, with their answers.
+fn answered_before(
+    probes: &[ChainProbe],
+    answers: &[Result<ProbeAnswer, String>],
+    at: usize,
+) -> Vec<(ChainProbe, Result<ProbeAnswer, String>)> {
+    probes
+        .iter()
+        .zip(answers)
+        .filter(|(p, _)| p.after_op < at)
+        .map(|(p, a)| (*p, a.clone()))
+        .collect()
 }
 
 /// Answer the probes asked of the solid after `after_op` ops.

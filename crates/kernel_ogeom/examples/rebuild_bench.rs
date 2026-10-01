@@ -16,7 +16,7 @@ use core_document::{
     WorkbenchId, WorkbenchRuntimeContext,
 };
 use kernel_api::{SolidBuildResult, TessellationSettings};
-use kernel_ogeom::OgeomKernel;
+use kernel_ogeom::{ChainCache, OgeomKernel};
 use scripting::ScriptEngine;
 
 struct Benches {
@@ -107,8 +107,9 @@ fn main() {
     let feature = |i: usize| FeatureId(ids.printed[i].trim().parse().expect("a feature id"));
     let (last, middle) = (feature(0), feature(1));
     let detail = TessellationSettings::default();
+    let mut cache = ChainCache::default();
 
-    let build = |host: &mut Benches, label: &str| {
+    let build = |host: &mut Benches, cache: &mut ChainCache, label: &str| {
         host.registry.evaluate(&mut host.document);
         let plan = wb_design::body_build_ops(&host.document, body).unwrap();
         let tags: Vec<_> = plan
@@ -118,11 +119,12 @@ fn main() {
             .collect();
         let started = std::time::Instant::now();
         let built: SolidBuildResult = OgeomKernel::new()
-            .execute_solid_chain_named(&plan.ops, &tags, &detail, None, &[])
+            .execute_solid_chain_cached(&plan.ops, &tags, &detail, None, &[], Some(cache))
             .unwrap();
         println!(
-            "{label:<28} {:>4} ops  {:>8.1} ms  {} triangles",
+            "{label:<28} {:>4} ops, {:>2} kept  {:>8.1} ms  {} triangles",
             plan.ops.len(),
+            cache.resumed(),
             started.elapsed().as_secs_f64() * 1000.0,
             built.mesh.indices.len() / 3
         );
@@ -139,14 +141,14 @@ fn main() {
         assert_eq!(out.error, None);
     };
 
-    build(&mut host, "from scratch");
+    build(&mut host, &mut cache, "from scratch");
     set(&mut host, last, 5.0);
-    build(&mut host, "last feature edited");
+    build(&mut host, &mut cache, "last feature edited");
     set(&mut host, last, 6.0);
-    build(&mut host, "last feature edited again");
+    build(&mut host, &mut cache, "last feature edited again");
     set(&mut host, middle, 9.0);
-    build(&mut host, "a middle feature edited");
+    build(&mut host, &mut cache, "a middle feature edited");
     set(&mut host, middle, 10.0);
-    build(&mut host, "the same one again");
-    build(&mut host, "nothing changed");
+    build(&mut host, &mut cache, "the same one again");
+    build(&mut host, &mut cache, "nothing changed");
 }

@@ -25,7 +25,7 @@ Each item is one milestone and one commit.
 - [x] **0. Measure.** `crates/kernel_ogeom/examples/rebuild_bench.rs` times
   each feature of a long history and the meshing, so the items below are
   checked against numbers.
-- [ ] **1. Resume from the edited feature.** The chain keeps its state
+- [x] **1. Resume from the edited feature.** The chain keeps its state
   (model, solid, face names, pattern tools) at the start of the feature that
   changed last, keyed by everything before it. The next build whose history
   agrees up to there resumes from it instead of from the first feature.
@@ -54,16 +54,22 @@ Each item is one milestone and one commit.
 a slot patterned 6 times, a fillet round the bottom and a last boss, 45
 kernel ops. Each line is one build after the change it names.
 
-| Build | Before |
-|---|---|
-| From scratch | 577 ms |
-| Last feature edited | 596 ms |
-| Last feature edited again | 563 ms |
-| A middle feature edited | 581 ms |
-| The same one again | 571 ms |
-| Nothing changed (worker cache aside) | 585 ms |
+| Build | Before | 1 |
+|---|---|---|
+| From scratch | 577 ms | 578 ms |
+| Last feature edited | 596 ms | 59 ms |
+| Last feature edited again | 563 ms | 53 ms |
+| A middle feature edited | 581 ms | 588 ms |
+| The same one again | 571 ms | 447 ms |
+| Nothing changed (worker cache aside) | 585 ms | 26 ms |
 
 Every build replays all 45 ops whatever changed. Of a build: the fillet
 233 ms, the pattern 43 ms, the pads, pockets and their refines 2 to 24 ms
 each and growing with the solid, meshing 5 ms and the snapshot 6 ms (a
 flat part: meshing grows with curved faces).
+
+After 1, a build from scratch also keeps the state at its last feature, so
+the first edit there resumes too; the first edit of a middle feature still
+replays everything (nothing was kept there), the next resumes at it and
+pays only for what follows, here the pattern and the fillet. Resuming
+costs a clone of the kept model, 2 to 3 ms on this part.

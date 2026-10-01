@@ -549,6 +549,33 @@ impl BuiltSolids {
     }
 }
 
+/// How many bodies keep their chain's states between builds.
+const CHAINS_KEPT: usize = 12;
+
+/// What each body's builds keep between them (`kernel_ogeom::ChainCache`),
+/// for the bodies built last.
+#[derive(Default)]
+struct Chains {
+    /// Most recently built last.
+    bodies: std::collections::VecDeque<(Uuid, kernel_ogeom::ChainCache)>,
+}
+
+impl Chains {
+    /// The body's cache, made when it has none; the body built longest ago
+    /// gives its up when too many keep one.
+    fn of(&mut self, body: Uuid) -> &mut kernel_ogeom::ChainCache {
+        let cache = match self.bodies.iter().position(|(b, _)| *b == body) {
+            Some(at) => self.bodies.remove(at).map(|(_, c)| c).unwrap_or_default(),
+            None => kernel_ogeom::ChainCache::default(),
+        };
+        self.bodies.push_back((body, cache));
+        while self.bodies.len() > CHAINS_KEPT {
+            self.bodies.pop_front();
+        }
+        &mut self.bodies.back_mut().expect("just pushed").1
+    }
+}
+
 fn worker_loop(
     rx: Receiver<KernelRequest>,
     tx: Sender<KernelResponse>,
@@ -556,6 +583,7 @@ fn worker_loop(
 ) {
     let mut kernel = OgeomKernel::new();
     let mut built = BuiltSolids::default();
+    let mut chains = Chains::default();
     while let Ok(request) = rx.recv() {
         let watch = watch_for(&activity);
         {
@@ -631,8 +659,14 @@ fn worker_loop(
                 let outcome = match key.and_then(|key| built.get(body_id, key)) {
                     Some(result) => Ok(result),
                     None => {
-                        let outcome =
-                            kernel.execute_solid_chain_named(&ops, &tags, &detail, range, &asked);
+                        let outcome = kernel.execute_solid_chain_cached(
+                            &ops,
+                            &tags,
+                            &detail,
+                            range,
+                            &asked,
+                            Some(chains.of(body_id)),
+                        );
                         if let (Ok(result), Some(key)) = (&outcome, key) {
                             built.keep(body_id, key, result);
                         }

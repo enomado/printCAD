@@ -12,6 +12,7 @@ pub mod export;
 mod health;
 mod holes;
 mod import;
+pub use chain::ChainCache;
 pub use import::is_iges;
 mod mesh;
 mod naming;
@@ -241,6 +242,25 @@ impl OgeomKernel {
             message: e.to_string(),
         })?;
         chain::execute_probing(ops, detail, preview, probes)
+    }
+
+    /// [`Self::execute_solid_chain_named`], resuming from what `cache`
+    /// kept of this body's last builds where the history agrees, and
+    /// keeping what the next build may resume from.
+    pub fn execute_solid_chain_cached(
+        &mut self,
+        ops: &[SolidOp],
+        tags: &[kernel_api::TopoName],
+        detail: &TessellationSettings,
+        preview: Option<std::ops::Range<usize>>,
+        probes: &[kernel_api::ChainProbe],
+        cache: Option<&mut ChainCache>,
+    ) -> Result<SolidBuildResult, ChainError> {
+        self.initialize().map_err(|e| ChainError {
+            op_index: 0,
+            message: e.to_string(),
+        })?;
+        chain::execute_cached(ops, tags, detail, preview, probes, cache)
     }
 
     /// [`Self::execute_solid_chain_probing`], naming the faces the ops make
