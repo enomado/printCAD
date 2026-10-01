@@ -838,7 +838,6 @@ pub fn register(context: &mut WorkbenchContext) {
     );
 }
 
-/// Run command `id`.
 pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
     match id {
@@ -2131,7 +2130,6 @@ pub(crate) fn record_coupling(
     }
 }
 
-/// A JSON object as named arguments.
 /// The `bodies` a command is limited to, when it names any.
 fn body_list(a: &Args) -> Result<Option<Vec<BodyId>>, CommandError> {
     let bad = || CommandError::bad("bodies", "must be a list of ids");
@@ -2152,6 +2150,7 @@ fn body_list(a: &Args) -> Result<Option<Vec<BodyId>>, CommandError> {
     }
 }
 
+/// A JSON object as named arguments.
 pub(crate) fn object(value: Value) -> CommandArgs {
     match value {
         Value::Object(map) => map,
@@ -2159,7 +2158,6 @@ pub(crate) fn object(value: Value) -> CommandArgs {
     }
 }
 
-/// Solve, and answer `value` when every joint holds.
 /// The `bodies` named, every one a body of the document.
 fn existing_bodies(a: &Args, ctx: &WorkbenchRuntimeContext) -> Result<Vec<BodyId>, CommandError> {
     let bodies = body_list(a)?.unwrap_or_default();
@@ -2183,6 +2181,7 @@ pub(crate) fn next_component_name(document: &core_document::Document) -> String 
         .unwrap_or_default()
 }
 
+/// Solve, and answer `value` when every joint holds.
 fn solved(ctx: &mut WorkbenchRuntimeContext, value: Value) -> CommandResult {
     crate::apply_solve(ctx).map_err(CommandError::failed)?;
     Ok(value)
@@ -2290,8 +2289,8 @@ fn quaternion(value: &Value) -> Result<Quat, CommandError> {
 pub(crate) const DEFAULT_DENSITY: f32 = 1.0;
 
 /// The first joint of an assembly grounds the body it holds against (the
-/// world needs none), when nothing is grounded yet: the assembly then stands on it, and what its
-/// joints leave free reads true from the start.
+/// world needs none), when nothing is grounded yet: the assembly then
+/// stands on it, and what its joints leave free reads true from the start.
 pub(crate) fn ground_first(ctx: &mut WorkbenchRuntimeContext, other: BodyId) -> Option<FeatureId> {
     let all = crate::joints(ctx.document);
     if all.is_empty() && other != crate::WORLD {

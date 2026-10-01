@@ -1,5 +1,7 @@
 //! The Assembly task panels: the prompt while a joint's faces are picked,
-//! a joint's settings, and a body moved by numbers.
+//! a joint's or a coupling's settings, a body moved by numbers, and the
+//! assembly's own tasks (interference, exploded views, motion over time,
+//! linked copies, replacing a body, rigid groups, mass, the parts list).
 
 use core_document::{
     BodyId, BodyPlacement, FeatureId, TaskOutcome, TaskRequest, WorkbenchFeature,
@@ -2504,9 +2506,6 @@ impl AssemblyWorkbench {
     }
 }
 
-/// A joint's number as a formula field: a value typed or dragged goes into
-/// `value`; a formula goes into `edits` and what it comes to into `value`,
-/// so the body moves while the panel is open.
 /// A hinge's or a slider's drive: held at a value, kept within limits,
 /// and, while held, swept through its range to show the motion.
 fn drive_rows(
@@ -2687,6 +2686,9 @@ fn note(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT2));
 }
 
+/// A joint's number as a formula field: a value typed or dragged goes into
+/// `value`; a formula goes into `edits` and what it comes to into `value`,
+/// so the body moves while the panel is open.
 fn formula_field(
     ui: &mut egui::Ui,
     document: &core_document::Document,

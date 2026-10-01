@@ -192,8 +192,9 @@ fn unturned() -> [f64; 4] {
     DQuat::IDENTITY.to_array()
 }
 
-/// A joint's kind as stored: a plain word for a kind with no settings,
-/// which an alignment was before it took drives.
+/// A joint's kind as stored. A bare `"Align"` reads as an alignment with
+/// nothing held, so documents that store the alignment as a plain word
+/// keep loading.
 fn kind_or_word<'de, D: serde::Deserializer<'de>>(de: D) -> Result<JointKind, D::Error> {
     let value = serde_json::Value::deserialize(de)?;
     if value.as_str() == Some("Align") {
@@ -515,8 +516,6 @@ impl JointFeature {
         }
     }
 
-    /// How far the joint is from holding with the two bodies placed so: a
-    /// list of mismatches, each zero when it holds, in millimetres.
     /// Where a hinge or a slider has got to: the hinge's angle in degrees
     /// (-180 to 180) or the slider's position in millimetres.
     pub fn travel(&self, moving: &Rigid, fixed: &Rigid) -> Option<f64> {
@@ -645,6 +644,8 @@ impl JointFeature {
         Some((self.turned(zero, moving, fixed), (pm - pf).dot(df)))
     }
 
+    /// How far the joint is from holding with the two bodies placed so: a
+    /// list of mismatches, each zero when it holds, in millimetres.
     pub fn residuals(&self, moving: &Rigid, fixed: &Rigid, out: &mut Vec<f64>) {
         let (pm, dm) = self.moving.placed(moving);
         let (pf, df) = self.fixed.placed(fixed);
@@ -801,7 +802,7 @@ pub enum Takes {
     PointAndFace,
 }
 
-/// A tool that makes a joint from a face on each of two bodies.
+/// A tool that makes a joint from a pick on each of two bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JointTool {
     Mate,
@@ -898,7 +899,7 @@ impl JointTool {
         }
     }
 
-    /// Whether it takes these two anchors, in this order or the other.
+    /// Whether it takes `a` on the moving body, then `b` on the other.
     pub fn fits(self, a: &Anchor, b: &Anchor) -> bool {
         self.takes_anchor(a, None) && self.takes_anchor(b, Some(*a))
     }
@@ -1092,7 +1093,7 @@ impl JointTool {
     /// The joint made from two anchors where the bodies sit now: settings
     /// the tool does not ask for start at what the bodies make now, so
     /// making the joint moves nothing it need not. `radius` is the round
-    /// face's, for a tangent.
+    /// face's for a tangent, the roller's for a cam.
     pub fn joint(
         self,
         moving: &Anchor,

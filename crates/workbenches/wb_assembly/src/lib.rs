@@ -370,7 +370,8 @@ fn drive_parameters(
 }
 
 /// The same for a drive stored at `base`, its keys and labels starting
-/// with `prefix`.
+/// with `key` and `label` (the bare words, capitalized, when `key` is
+/// empty).
 fn named_drive_parameters(
     base: &str,
     (key, label): (&str, &str),
@@ -667,8 +668,9 @@ impl AssemblyWorkbench {
 }
 
 impl AssemblyWorkbench {
-    /// A body clicked while a group's bodies are picked goes in, or out
-    /// when it is in.
+    /// A body clicked while a task picks bodies: a point of it to trace in
+    /// a motion study, the body in or out of an exploded view's next step
+    /// or a group, or the body to take a replaced one's place.
     fn take_group_pick(&mut self, ctx: &WorkbenchRuntimeContext) {
         if let Some(Task::Motion(studying)) = &mut self.task {
             let clicked = ctx.selected_face.map(|f| f.point);
@@ -1071,8 +1073,9 @@ impl AssemblyWorkbench {
         }
     }
 
-    /// A press on a body its joints move takes hold of it; the press still
-    /// goes on to the host, which selects on a click.
+    /// A press on a body its joints move, or on one no joint places and
+    /// nothing grounds, takes hold of it; the press still goes on to the
+    /// host, which selects on a click.
     fn take_hold(&mut self, ctx: &WorkbenchRuntimeContext, at: (f32, f32)) {
         self.grab = None;
         if self.picking.is_some()
@@ -2064,7 +2067,8 @@ impl Workbench for AssemblyWorkbench {
         changed
     }
 
-    /// A joint whose offset or angle a formula moved: the bodies follow.
+    /// A joint or coupling whose numbers a formula moved: the bodies
+    /// follow.
     fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
         let joint_moved = moved.iter().any(|id| {
             ctx.document
@@ -2454,8 +2458,8 @@ impl Workbench for AssemblyWorkbench {
         })
     }
 
-    /// A check or a measuring running away from the window: its answer
-    /// shows once it comes.
+    /// A check or a measuring running away from the window, its answer
+    /// shown once it comes, or a motion study or exploded view playing.
     fn busy(&self) -> bool {
         self.checking.is_some()
             || self.measuring.is_some()
@@ -2946,7 +2950,8 @@ impl Workbench for AssemblyWorkbench {
     }
 
     /// Each pair nearer than the clearance, joined between its nearest
-    /// points.
+    /// points; the joint drawn, the move handles, the motion's traced
+    /// points and the explode lines.
     fn get_screen_space_overlays(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -3012,7 +3017,8 @@ impl Workbench for AssemblyWorkbench {
         lines
     }
 
-    /// Each clash found, marked where it is.
+    /// Each clash found, marked where it is; the joint drawn's ends and
+    /// the centre of mass.
     fn get_screen_space_marks(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -3051,7 +3057,8 @@ impl Workbench for AssemblyWorkbench {
         marks
     }
 
-    /// How much each clash shares, beside its mark.
+    /// How much each clash shares, beside its mark; the centre of mass,
+    /// each near pair's distance and the joint drawn's name.
     fn get_screen_space_labels(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -4137,8 +4144,6 @@ mod tests {
 
     static CUBES: Cubes = Cubes;
 
-    /// Two 10 mm cubes, the second on a slider along X, 20 mm along; the
-    /// second dragged from its middle to `to`, and where it ends up.
     /// A slider swept from where the cube stands (20 mm off) down to
     /// nothing runs into the other cube for the steps under 10 mm.
     #[test]
@@ -4227,6 +4232,8 @@ mod tests {
         assert!(!found.is_empty());
     }
 
+    /// Two 10 mm cubes, the second on a slider along X, 20 mm along; the
+    /// second dragged from its middle to `to`, and where it ends up.
     fn slide_cube_to(to: [f32; 3], collisions_off: bool) -> f32 {
         use glam::{Mat4, Vec3};
         let mut doc = Document::new("t");
