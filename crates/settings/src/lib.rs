@@ -319,19 +319,20 @@ impl Default for UserSettings {
     }
 }
 
-/// Files the app writes for a developer rather than for the user — off by
+/// Files the app writes for a developer rather than for the user: off by
 /// default, since they are only worth having when there is someone to send
 /// them to.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DiagnosticsSettings {
-    /// Every STEP import writes what the reader had to say — the warnings by
-    /// kind and in full, the faces that will draw with gaps, what was skipped
-    /// — to a file in the temp dir, for the kernel's or printCAD's developers.
+    /// A STEP or IGES import writes what the reader had to say (the warnings
+    /// by kind and in full, the faces that will draw with gaps, what was
+    /// skipped) to a file in the temp dir, for the kernel's or printCAD's
+    /// developers.
     pub import_report: bool,
 }
 
-/// How a 6-DoF mouse — a six-axis navigation puck — drives the view.
+/// How a 6-DoF mouse (a six-axis navigation puck) drives the view.
 ///
 /// Readings arrive in the device's own units and are divided by
 /// [`SixDofSettings::full_scale`] before anything else, so the speeds below
@@ -394,7 +395,7 @@ impl Default for SixDofSettings {
 /// What pressing a button on a 6-DoF mouse does.
 ///
 /// These are the app's own actions. The daemon has button actions of its own
-/// — hold rotation or translation at zero, pass only the dominant axis — that
+/// (hold rotation or translation at zero, pass only the dominant axis) that
 /// act before anything reaches the app, and belong to it rather than here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SixDofButtonAction {
@@ -648,7 +649,7 @@ impl RenderingSettings {
 impl Default for RenderingSettings {
     fn default() -> Self {
         Self {
-            msaa_samples: 4, // 4x MSAA by default
+            msaa_samples: 4,
             show_log_panel: false,
             selection_color: default_selection_color(),
             selection_opacity: default_selection_opacity(),
@@ -690,8 +691,8 @@ pub struct LightingSettings {
     /// shaded modes land visually in roughly the 40-96 range for machined metal.
     #[serde(default = "default_specular_shininess")]
     pub specular_shininess: f32,
-    /// Specular strength (0 = matte Lambert like before; ~0.3-0.5 matches
-    /// default shape specular channel in many CAD viewers).
+    /// Specular strength (0 = matte Lambert; ~0.3-0.5 matches the default
+    /// shape specular channel in many CAD viewers).
     #[serde(default = "default_specular_intensity")]
     pub specular_intensity: f32,
     /// RGB color (0–1) for face-boundary edge lines drawn over solid bodies.
@@ -764,7 +765,7 @@ impl LightSource {
         ]
     }
 
-    /// World-space direction for the active axis preset (`UserSettings.axis_preset`).
+    /// World-space direction for the active axis preset (`CameraSettings::axis_preset`).
     pub fn direction_world(&self, axis_preset: AxisPreset) -> [f32; 3] {
         AxisSystem::from_preset(axis_preset).canonical_light_direction_world_array(self.direction())
     }
@@ -788,8 +789,8 @@ pub struct CameraSettings {
     pub wheel_zoom_factor: f32,
     #[serde(default)]
     pub orbit_sensitivity: f32,
-    /// Orbit rotates about the GPU-picked point under the cursor when an LMB orbit drag begins,
-    /// without reframing (no jump to frame center).
+    /// Orbit rotates about the GPU-picked point under the cursor when a middle-button orbit drag
+    /// begins, without reframing (no jump to frame center).
     #[serde(default)]
     pub orbit_pivot_pick: bool,
     #[serde(default = "default_pan_sensitivity")]
@@ -896,7 +897,7 @@ impl Default for CameraSettings {
 pub enum NavigationStyle {
     #[default]
     Gesture,
-    /// Reserved for future remappable styles.
+    /// Navigates as `Gesture` does: no binding reads the style.
     Cad,
 }
 
