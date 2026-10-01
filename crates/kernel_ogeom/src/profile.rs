@@ -1,9 +1,9 @@
 //! `kernel_api::Profile` → ogeom wires and faces.
 //!
-//! Mirrors the previous kernel's profile pipeline: segments become edges on
-//! exact curves, wires group by containment (even nesting depth = outer
-//! boundary, odd = hole of its immediate container), and each group becomes
-//! one planar face — a multi-region sketch yields several faces.
+//! Segments become edges on exact curves, wires group by containment (even
+//! nesting depth = outer boundary, odd = hole of its immediate container),
+//! and each group becomes one planar face, so a multi-region sketch yields
+//! several faces.
 
 use std::f64::consts::PI;
 
@@ -392,7 +392,7 @@ fn segment_endpoints(seg: &ProfileSegment) -> Option<([f64; 2], [f64; 2])> {
 /// One wire from a profile wire description. `require_closed` is relaxed for
 /// spine paths.
 ///
-/// Consecutive segments share endpoint *vertices* — ogeom wires connect by
+/// Consecutive segments share endpoint *vertices*: ogeom wires connect by
 /// shared topology, not coincident positions, the same invariant printCAD's
 /// sketch endpoint snapping maintains.
 pub fn build_wire(

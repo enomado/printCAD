@@ -35,8 +35,8 @@ fn whole_turn(model: &mut Model, y0: f64, y1: f64, z0: f64, z1: f64, seam: f64) 
 }
 
 /// A cylinder r 10, h 20 and a collar over its top rim (r 8..14, z
-/// 18..24), both whole turns with their seams at one angle: at 0 they
-/// fuse and cut; at 1 radian both fail.
+/// 18..24), both whole turns with their seams at one angle, at 0 and at 1
+/// radian: either way they fuse and cut.
 #[test]
 fn whole_revolutions_with_seams_together_fuse_and_cut() {
     let tol = Tolerances::default();

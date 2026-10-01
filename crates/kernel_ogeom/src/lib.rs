@@ -1,6 +1,6 @@
 //! ogeom-backed implementation of the [`Kernel`] trait.
 //!
-//! Pure-Rust kernel adapter: STEP import, deferred
+//! Pure-Rust kernel adapter: STEP, IGES and mesh import, deferred
 //! tessellation of persisted shape snapshots, and solid-op chain execution
 //! all go through the `ogeom` kernel. Persisted shape blobs are ogeom
 //! native-format text bytes (`ogeom::io::native`).
@@ -83,8 +83,8 @@ impl OgeomKernel {
     /// Tessellate many snapshots at once, spreading the *bodies* across
     /// threads and keeping each body's faces on one.
     ///
-    /// An assembly is usually many small bodies, where per-body overhead —
-    /// parsing the snapshot above all — dominates the face work, so this is
+    /// An assembly is usually many small bodies, where per-body overhead
+    /// (parsing the snapshot above all) dominates the face work, so this is
     /// the pass that matters for large imports. Results come back in input
     /// order, one per job, so a failure is attributed to its own body.
     pub fn tessellate_step_breps(
@@ -185,8 +185,8 @@ impl OgeomKernel {
         Ok(result)
     }
 
-    /// Read + tessellate in one synchronous shot (legacy path). Useful for
-    /// tests comparing meshes against the deferred pipeline.
+    /// Read and mesh in one synchronous shot, keeping no shape snapshot:
+    /// every body's `brep_blob` is empty.
     pub fn import_step_full_mesh(
         &mut self,
         path: &Path,

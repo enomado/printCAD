@@ -50,8 +50,8 @@ fn health_of(diagnosis: &Diagnosis, repaired: bool) -> ShapeHealth {
 /// Run the kernel's repair on a snapshot and mesh the result.
 ///
 /// The colours carry over face for face when the repair kept the face
-/// count, which it does unless it sewed loose faces together; otherwise
-/// the mended shape draws in the default material.
+/// count, which sewing loose faces together or collapsing tiny ones
+/// changes; otherwise the mended shape draws in the default material.
 pub fn repair_blob(
     brep_blob: &[u8],
     face_colors: &[[f32; 3]],

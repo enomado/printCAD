@@ -202,7 +202,7 @@ fn a_converted_mesh_is_drilled_and_measured() {
             "drilled-rod.stl",
             cylinder(10.0, 20.0, 64),
             [4.0, 0.0, -5.0],
-            // The 64-gon's own area, whatever the converter makes of it.
+            // The 64-gon prism's own volume, whatever the converter makes of it.
             0.5 * 64.0 * 100.0 * (std::f64::consts::TAU / 64.0).sin() * 20.0,
         ),
     ] {
@@ -283,8 +283,8 @@ fn ply_and_vrml_scenes_import_as_mesh_bodies() {
 }
 
 /// A closed STL with fillets and bores converts to a sound solid of its
-/// own size, curved regions recognised. The file is named by
-/// `PRINTCAD_TEST_RECOGNIZE_STL` (a printed part's mesh, not bundled).
+/// own size. The file is named by `PRINTCAD_TEST_RECOGNIZE_STL` (a printed
+/// part's mesh, not bundled).
 #[test]
 fn a_filleted_mesh_converts_to_a_sound_solid_of_its_size() {
     let Some(path) = std::env::var_os("PRINTCAD_TEST_RECOGNIZE_STL") else {

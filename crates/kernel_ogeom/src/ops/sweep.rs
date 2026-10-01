@@ -710,13 +710,12 @@ fn profile_diagonal(model: &Model, built: &BuiltProfile) -> f64 {
 pub struct RayHit {
     /// Set when the hit face is planar: its world-space plane.
     pub plane: Option<(Point, Direction)>,
-    /// The face hit.
     pub face: Shape,
 }
 
 /// Nearest (or farthest) intersection of the ray with the base solid's
-/// faces, via each face's triangulation. Mirrors the previous kernel's exact
-/// intersector closely enough for termination queries.
+/// faces, via each face's triangulation, which is close enough to the exact
+/// faces for termination queries.
 pub fn ray_hit(
     model: &Model,
     base: &Shape,
@@ -854,7 +853,7 @@ fn revolve(
     };
 
     // A full turn's seam position is arbitrary, but leaving it at the sketch
-    // plane makes the seam edge coincide with any base face on that plane —
+    // plane makes the seam edge coincide with any base face on that plane:
     // exactly the edge-on-face contact the boolean refuses. Park the seam at
     // an unaligned angle instead.
     let seam_offset = if total_rad >= TAU { 1.0 } else { 0.0 };

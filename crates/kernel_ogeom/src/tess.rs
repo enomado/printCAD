@@ -1,9 +1,5 @@
 //! Shape → `TriMesh` conversion: deflection mapping, per-face triangulation
 //! with color keying, normal-aware cross-face welding and boundary edges.
-//!
-//! The weld and boundary-edge algorithms are direct ports of the previous
-//! kernel-independent C++ implementations, so viewport shading and outline
-//! behaviour are unchanged across the kernel swap.
 
 use std::collections::HashMap;
 
@@ -85,7 +81,7 @@ pub fn write_blob(model: &Model, root: &Shape) -> KernelResult<Vec<u8>> {
 /// A finite bounding box for a shape.
 ///
 /// `shape_bounds` bounds each face's *carrier* surface, and a STEP-imported
-/// face can sit on an unbounded plane — the result balloons to ±1e9. When the
+/// face can sit on an unbounded plane, so the result balloons to ±1e9. When the
 /// carrier bound is absurd (or empty), fall back to the vertex bound, which
 /// is finite and only underestimates curved bulges.
 pub fn robust_bounds(model: &Model, shape: &Shape) -> Option<(Point, Point)> {
@@ -123,9 +119,7 @@ pub fn solid_bounds(model: &Model, shape: &Shape, mesh: &TriMesh) -> Option<([f3
 
 /// The absolute chord deflection for a shape under the current settings.
 ///
-/// Bbox-scaled mode replicates the previous kernel's formula —
-/// `(dx + dy + dz) / 300 × mesh_deviation` — so triangle density is visually
-/// unchanged across the swap.
+/// Bbox-scaled mode is `(dx + dy + dz) / 300 × mesh_deviation`.
 pub fn chord_for(model: &Model, shape: &Shape, detail: &TessellationSettings) -> f64 {
     match detail.linear_deflection_mode {
         LinearDeflectionMode::AbsoluteMm => f64::from(detail.chord_tolerance.max(0.001)),
@@ -215,8 +209,8 @@ fn mesh_faces(
         .map_err(|e| KernelError::Other(anyhow::anyhow!("edge chords failed: {e}")))?;
 
     // A detail, not a context: this runs once per body, from every worker
-    // thread during an import — announced as a context it reset the status
-    // display hundreds of times a second.
+    // thread during an import, and a context would reset the status display
+    // hundreds of times a second.
     crate::progress::detail(format_args!("Meshing {} faces", faces.len()));
 
     // A face the build before drew as it is now keeps its mesh.
@@ -310,7 +304,7 @@ fn mesh_faces(
     let mut face_normals: Vec<[f32; 3]> = Vec::new();
     let mut vertex_face: Vec<u32> = Vec::new();
     // A face the kernel cannot triangulate is dropped so the rest of the body
-    // still draws — but silently dropping it would leave a hole nobody
+    // still draws, but silently dropping it would leave a hole nobody
     // accounts for, so the count is reported below.
     let mut skipped = 0usize;
 

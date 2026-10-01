@@ -1,5 +1,6 @@
-//! Fillet / chamfer / draft / thickness on the running solid, with geometric
-//! (point-based) edge and face selection.
+//! Fillet, chamfer, draft, thickness and face edits (offset, move, remove)
+//! on the running solid, with geometric (point-based) edge and face
+//! selection.
 //!
 //! A fillet or a chamfer goes to the kernel as one chain, every selected
 //! edge at once, resolved on the solid as it stands, so blends and bevels
@@ -510,9 +511,6 @@ pub fn draft(
     .map_err(|e| format!("draft failed: {e}"))
 }
 
-/// Hollow `solid` into walls `value` thick, opened at the faces named,
-/// inward or outward (`side`), or both ways at once when `side` is `None`:
-/// the inward and outward walls fused along the solid's own faces.
 /// The faces at `points` of `solid`, by name first.
 fn faces_at(
     model: &mut Model,
@@ -602,6 +600,9 @@ pub fn remove_faces(
         .map_err(|e| format!("deleting the faces failed: {e}"))
 }
 
+/// Hollow `solid` into walls `value` thick, opened at the faces named,
+/// inward or outward (`side`), or both ways at once when `side` is `None`:
+/// the inward and outward walls fused along the solid's own faces.
 pub fn thickness(
     model: &mut Model,
     solid: &Shape,

@@ -1,7 +1,7 @@
 //! `execute_solid_chain`: threads one in-memory `(Model, Shape)` through a
 //! body's `SolidOp` list. Native-format blobs appear only at the boundaries:
 //! the final result out, and `SolidOp::Boolean`'s external tool in. Tool
-//! snapshots for patterns are in-model `Shape`s — no per-op serialization.
+//! snapshots for patterns are in-model `Shape`s, with no per-op serialization.
 
 use kernel_api::{
     BoolKind, BooleanOp, ChainError, ChainProbe, FeaturePreview, ProbeAnswer, SolidBuildResult,

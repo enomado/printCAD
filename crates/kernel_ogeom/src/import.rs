@@ -2,11 +2,10 @@
 //! reader is chosen by the file's extension, and everything after the read is
 //! shared.
 //!
-//! Bodies come back one per solid in file order. With
-//! `persist_brep_snapshot` set (the default), each body carries a native
-//! snapshot blob plus its per-face color table and meshing is deferred to the
-//! kernel worker; otherwise (or on the legacy full-mesh path) meshes are
-//! produced inline.
+//! Bodies come back one per placed occurrence, in the product tree's
+//! preorder, each meshed here with its per-face colour table. With
+//! `persist_brep_snapshot` set (the default) and inline meshing not forced,
+//! each also carries a native snapshot blob.
 
 use std::path::Path;
 use std::time::Instant;
@@ -36,7 +35,7 @@ pub fn import_step(
     let bytes = std::fs::read(path)
         .map_err(|e| KernelError::Import(format!("failed to read {}: {e}", path.display())))?;
     // Part 21 is nominally ASCII, but exporters routinely write Latin-1 bytes
-    // inside string literals — product names, authors. Decoding lossily keeps
+    // inside string literals (product names, authors). Decoding lossily keeps
     // those files importable; a replacement character can only ever land in a
     // name, never in geometry.
     let text = String::from_utf8_lossy(&bytes);
@@ -60,16 +59,16 @@ pub fn import_step(
 
     // Mesh here, from the model already in memory. Deferring it would mean
     // parsing every snapshot back afterwards, and re-parsing costs several
-    // times what the meshing itself does — the round trip through text was
-    // the dominant cost of a large import.
+    // times what the meshing itself does.
     let want_mesh = true;
     let want_blob = detail.persist_brep_snapshot && !force_inline_mesh;
 
     let sources = body_sources(document, &solids);
 
-    // Each body's work only reads the model — colours, the snapshot blob and
-    // bounds — so the bodies go wide. Serializing the snapshot dominates by
-    // two orders of magnitude, which is what makes this worth threading.
+    // Each body's work only reads the model (colours, the snapshot blob,
+    // mesh and bounds), so the bodies go wide. Serializing the snapshot
+    // dominates by two orders of magnitude, which is what makes this worth
+    // threading.
     let loop_start = Instant::now();
     match sources.len() {
         1 => progress::context("Preparing 1 body"),
@@ -313,7 +312,7 @@ fn unit_from_scale(scale_mm: f64) -> Option<LengthUnit> {
 /// The reader heals boundary slop up to a millimetre and hands over the
 /// faces it would not (`report.untrimmed_faces`); those faces refuse to
 /// triangulate and draw as gaps. `fix_face_pcurves` is the instructed
-/// follow-up — the same projection fit at the caller's cap, each fitted
+/// follow-up: the same projection fit at the caller's cap, each fitted
 /// edge's tolerance widened to the offset actually measured, so the model
 /// records the true fit. A face past even this cap stays a gap and is
 /// logged with its measured distance; silently stretching it into place
@@ -397,7 +396,7 @@ impl BodySource {
 ///
 /// **Placed occurrences, not `import.solids`.** The raw solids are one per
 /// `MANIFOLD_SOLID_BREP` in part-local coordinates, so an assembly built from
-/// them puts every part at its own origin — parts that look right on their
+/// them puts every part at its own origin: parts that look right on their
 /// own, scattered in relation to each other. `occurrences_of` carries each
 /// part's shape down through the placements above it, which is the whole
 /// point of the product tree.
@@ -482,7 +481,7 @@ fn nodes_from_document(document: &Document, body_count: usize) -> Vec<ImportedNo
     let mut next_id = 1u64;
     // Bodies were produced by `occurrences_of`, whose flattening is a preorder
     // walk of the product tree. Mirroring that walk here means the n-th part
-    // leaf we reach is the n-th body — an index correspondence rather than a
+    // leaf we reach is the n-th body: an index correspondence rather than a
     // fragile match on names or shapes.
     let mut next_body = 0usize;
 

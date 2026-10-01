@@ -61,7 +61,7 @@ fn circle_wire(cx: f64, cy: f64, radius: f64) -> ProfileWire {
 }
 
 /// Blind pad on a given plane; a negative distance extrudes backwards
-/// (mapped to the `reversed` flag of the new sweep contract).
+/// (the sweep's `reversed` flag).
 fn pad_on_plane(
     plane: ProfilePlane,
     wires: Vec<ProfileWire>,
@@ -125,9 +125,9 @@ fn assert_close(actual: f32, expected: f32, tol: f32, what: &str) {
     );
 }
 
-/// Re-tessellate a solid-chain BRep snapshot. Swept shapes do not expose their
-/// face count through `SolidBuildResult`, so probe the all-white colour-table
-/// size until the shim accepts it (it requires an exact face-count match).
+/// Re-tessellate a solid-chain BRep snapshot with an all-white colour table,
+/// trying growing sizes until one tessellates; a table that does not match
+/// the face count only warns.
 fn retessellate(kernel: &OgeomKernel, blob: &[u8], detail: &TessellationSettings) -> TriMesh {
     for face_count in 1..=32 {
         let colors = vec![[1.0_f32, 1.0, 1.0]; face_count];

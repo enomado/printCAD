@@ -1,7 +1,7 @@
 //! Parametric primitives. Full solids of revolution go through the exact
 //! primitive builders; partial-angle forms fall back to synthetic
-//! profile-and-revolve constructions, mirroring the previous kernel's
-//! three-angle parameterizations.
+//! profile-and-revolve constructions (a sphere, ellipsoid or torus takes
+//! three angles: two bounding its section and a sweep round its axis).
 
 use kernel_api::{Placement, PrimitiveKind, Profile, ProfilePlane, ProfileSegment, ProfileWire};
 use ogeom::algo::{

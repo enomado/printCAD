@@ -1,7 +1,7 @@
 //! A build that resumes from a state the body's last builds kept makes
 //! exactly what a build from the first feature makes: after an edit at the
-//! end of the history, in its middle, before a pattern that repeats an
-//! earlier feature, and with probes asked part way.
+//! end of the history, in its middle, and before a pattern that repeats an
+//! earlier feature.
 
 use core_document::{
     CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, FeatureId,

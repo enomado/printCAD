@@ -1,5 +1,5 @@
-//! Tests for the extended solid-op set: termination modes, taper, loft,
-//! pipe, helix, primitives, dress-ups, patterns, and body booleans.
+//! Tests for the solid ops: termination modes, taper, loft, pipe, helix,
+//! primitives, dress-ups, patterns, and body booleans.
 
 use kernel_api::{
     BoolKind, BooleanOp, ChamferSpec, EdgeSelection, ExtrudeTermination, FaceProbe, Placement,
@@ -104,9 +104,8 @@ fn through_all_pocket_pierces_the_pad() {
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
-    // A 20x20x10 pad with a through-all circular cut from the top plane
-    // downwards (reversed = the cut runs against +z from z=10... use the
-    // sketch plane at z=0 cutting forwards through everything).
+    // A 20x20x10 pad with a through-all circular cut from the sketch plane
+    // at z=0, run forwards through everything.
     let ops = [
         blind_pad(
             vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
@@ -430,7 +429,7 @@ fn pipe_sweeps_profile_along_l_path() {
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
-    // Circle profile on the XZ-ish plane at the path start, swept along an
+    // Circle profile on the YZ plane at the path start, swept along an
     // L-shaped path drawn in the XY plane starting at the origin.
     let profile_plane = ProfilePlane {
         origin: [0.0, 0.0, 0.0],
@@ -2751,7 +2750,7 @@ fn a_revolution_stops_on_a_face_whose_plane_holds_its_axis() {
 
 /// A revolution up to a wall beside its axis: every point of the profile
 /// turns until its circle meets the wall's plane, x = -2, at
-/// acos(-2 / r). The kernel has no sweep bounded that way.
+/// acos(-2 / r).
 #[test]
 fn a_revolution_stops_on_a_wall_beside_its_axis() {
     let wall = blind_pad(
@@ -3129,8 +3128,9 @@ fn revolve_on(plane: ProfilePlane, wire: ProfileWire, angle_deg: f64, op: Boolea
     }
 }
 
-/// A whole turn of a collar over the rim of a whole turned cylinder, both
-/// sketched on the plane holding their axis, fuses and cuts.
+/// A collar turned a whole turn, or just short of one, over the rim of a
+/// whole turned cylinder, both sketched on the plane holding their axis,
+/// fuses and cuts.
 #[test]
 fn a_whole_collar_fuses_with_and_cuts_a_turned_cylinder() {
     for plane in [yz_plane(), xz_plane()] {

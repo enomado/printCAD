@@ -1,9 +1,9 @@
 //! End-to-end smoke test: confirms the ogeom-backed STEP loader can read a
 //! real STEP file and produce a triangulated mesh.
 //!
-//! Tests run against the committed fixture in `tests/data/box.step` by
-//! default; set `PRINTCAD_TEST_STEP_FILE` to exercise a richer model (e.g. a
-//! KiCad sample with assemblies and colors).
+//! Tests run against the committed fixture in `tests/data/box_native.step`
+//! by default; set `PRINTCAD_TEST_STEP_FILE` to exercise a richer model (an
+//! assembly with colours, say).
 
 use kernel_api::{Kernel, TessellationSettings};
 use kernel_ogeom::OgeomKernel;
@@ -28,10 +28,9 @@ fn locate_sample() -> PathBuf {
     fixture
 }
 
-/// Real-world STEP files from OCCT-based exporters (KiCad, etc.) encode edge
-/// geometry as `SURFACE_CURVE`/`SEAM_CURVE` wrappers, which the ogeom STEP
-/// reader does not unwrap yet — every face refuses and the import fails.
-/// Un-ignore when the reader learns those entities (kernel work item G8).
+/// Real-world STEP files from some exporters encode edge geometry as
+/// `SURFACE_CURVE`/`SEAM_CURVE` wrappers; the reader unwraps them, so such a
+/// file imports as any other.
 #[test]
 fn imports_occt_flavoured_step_file() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/box.step");
@@ -341,7 +340,7 @@ fn assembly_parts_arrive_in_world_space() {
 }
 
 /// A face whose boundary hovers off its surface is named by the reader and
-/// healed by the import at its wider cap — the body draws whole instead of
+/// healed by the import at its wider cap: the body draws whole instead of
 /// with a hole. The fixture is the kernel's own hovering-face acceptance
 /// file (a boundary 3 mm off a planar B-spline surface; the reader's own
 /// healing stops at 1 mm).
@@ -415,11 +414,9 @@ END-ISO-10303-21;
 
 /// Every face's triangulation must stay inside its own trimming boundary.
 ///
-/// The fixture is two real parts whose periodic faces triangulate the long
-/// way around their seam — fans and lobes protruding ~30 mm from sub-mm
-/// features. The mesh AABB of a face may legitimately exceed its vertex
-/// hull a little (curved bulges); exceeding it severalfold means the trim
-/// was ignored.
+/// The fixture is two real parts with periodic faces that, triangulated the
+/// long way around their seam, throw fans and lobes ~30 mm out from sub-mm
+/// features.
 #[test]
 fn face_triangulations_stay_inside_their_boundaries() {
     let sample =
@@ -516,8 +513,8 @@ fn triangles_know_their_faces_and_a_curved_face_is_whole() {
     let mesh = &imported.bodies[0].mesh;
     assert_eq!(mesh.faces.len(), mesh.indices.len() / 3);
 
-    // Find a face whose triangles do not all share a normal — a bore, a
-    // fillet — and check that its name gathers more of it than its plane.
+    // Find a face whose triangles do not all share a normal (a bore, a
+    // fillet) and check that its name gathers more of it than its plane.
     let normal_of = |tri: &[u32; 3]| -> [f32; 3] {
         let p = |i: u32| mesh.positions[i as usize];
         let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));

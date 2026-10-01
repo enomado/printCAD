@@ -1,11 +1,11 @@
 //! Pattern re-application of tool solids under 4×4 transforms.
 //!
-//! Rigid transforms re-run the original tool op with its world-space inputs
-//! (profile plane, placement) moved — every instance is concrete, in-place
-//! geometry, the same effect the previous kernel got from re-loading a
-//! serialized tool blob under a rigid transform. Mirrors, scales and general
-//! affine maps go through the kernel's NURBS rebuild
-//! (`general_transformed_shape`), which also produces concrete topology.
+//! Isometries (rotations, translations, mirrors) re-run the original tool op
+//! with its world-space inputs (profile plane, placement) moved, so every
+//! instance is concrete, in-place geometry; a mirrored primitive is built
+//! where it is and mirrored whole. Scales and general affine maps go through
+//! the kernel's NURBS rebuild (`general_transformed_shape`), which also
+//! produces concrete topology.
 
 use kernel_api::{
     ExtrudeTermination, PipeFrame, Placement, Profile, ProfilePlane, SolidOp, SweepKind,
@@ -54,7 +54,7 @@ pub fn apply(
                         .shape
                 }
                 // Isometries (rotations, translations, mirrors) re-run the
-                // op with mapped inputs — exact, analytic, concrete.
+                // op with mapped inputs: exact, analytic, concrete.
                 (PatternTool::Op(op), _) if is_isometry(matrix) => {
                     let moved = transformed_op(op, matrix);
                     build_tool_op(model, Some(&acc), &moved)?
@@ -492,8 +492,8 @@ fn map_termination(m: &[[f64; 4]; 4], term: &ExtrudeTermination) -> ExtrudeTermi
     }
 }
 
-/// Whether the matrix is an isometry (orthonormal, unit scale) — rotations
-/// AND reflections. Both re-run the tool op exactly: a mirrored profile
+/// Whether the matrix is an isometry (orthonormal, unit scale): rotations
+/// and reflections. Both re-run the tool op exactly: a mirrored profile
 /// plane produces the mirrored solid, since the 2D payloads map through the
 /// mirrored axes. Only scaling/shear routes to the general (NURBS) path.
 fn is_isometry(m: &[[f64; 4]; 4]) -> bool {
@@ -569,7 +569,7 @@ pub(crate) fn rigid_of(m: &[[f64; 4]; 4]) -> Option<Transform> {
 }
 
 /// The similarity transform of a reflecting isometry: pull one plane mirror
-/// out so the rest is a proper rotation — `L = R · mirror_x`.
+/// out so the rest is a proper rotation, `L = R · mirror_x`.
 fn reflection_of(m: &[[f64; 4]; 4]) -> Transform {
     let c0 = Vector::new(m[0][0], m[1][0], m[2][0]);
     let c1 = Vector::new(m[0][1], m[1][1], m[2][1]);

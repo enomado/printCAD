@@ -488,7 +488,7 @@ pub(crate) fn tool_names(
         map.faces[index].names = vec![naming::child(feature, end)];
     }
     // What sweeping named neither a wall nor an end (the tool is not a
-    // plain sweep) keeps the fresh name `assign` gave it.
+    // plain sweep) is left without a name here.
     for f in &mut map.faces {
         f.names.retain(|n| *n != 0);
     }
@@ -724,7 +724,7 @@ pub(crate) fn find_face(model: &Model, root: &Shape, name: TopoName, near: Point
 }
 
 /// The edge of `root` between faces named `faces`: among several, the one
-/// whose faces' drawing passes nearest `near`. `None` when no such edge,
+/// whose drawn line passes nearest `near`. `None` when no such edge,
 /// or no names are set.
 pub(crate) fn find_edge(
     model: &Model,
@@ -813,8 +813,8 @@ fn edge_distance(model: &Model, edge: &Shape, near: Point) -> f64 {
         .fold(f64::MAX, f64::min)
 }
 
-/// The names of the two faces each edge of `root` runs between, in
-/// `edges`' order: what a pick keeps of an edge.
+/// The names of the two faces each of `edges` runs between, in their
+/// order: what a pick keeps of an edge.
 pub(crate) fn edge_faces(model: &Model, names: &NameMap, edges: &[Shape]) -> Vec<[TopoName; 2]> {
     let mut by_edge: Vec<(SameKey, Vec<TopoName>)> = Vec::new();
     for (face, _) in names.faces() {

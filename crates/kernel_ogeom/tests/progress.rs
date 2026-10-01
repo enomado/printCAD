@@ -69,7 +69,7 @@ fn pad(wire: ProfileWire, distance: f64, op: BooleanOp) -> SolidOp {
     }
 }
 
-/// A pad, then an overlapping pad fused onto it — two ops, and the fuse makes
+/// A pad, then an overlapping pad fused onto it: two ops, and the fuse makes
 /// the kernel announce its own boolean stages too.
 fn two_op_chain() -> Vec<SolidOp> {
     vec![
@@ -137,8 +137,8 @@ fn the_kernels_own_stages_arrive_alongside_ours() {
 
 #[test]
 fn nothing_is_announced_when_no_watch_is_installed() {
-    // The library must stay silent for callers that never install a watch —
-    // which is every other test in this crate.
+    // Every other test in this crate runs with no watch installed; a chain
+    // must build without one.
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
     kernel

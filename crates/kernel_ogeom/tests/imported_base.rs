@@ -623,7 +623,6 @@ fn pad_into_converted_part(
     Some((kernel.execute_solid_chain(&ops, &detail), volume(&base)))
 }
 
-/// The volume of a built solid.
 fn volume_of(built: &kernel_api::SolidBuildResult) -> f64 {
     OgeomKernel::new()
         .physical_properties(&built.brep_blob)

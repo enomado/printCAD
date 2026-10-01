@@ -140,7 +140,6 @@ pub fn recognize_holes(brep: &[u8]) -> KernelResult<(Vec<RecognizedHole>, usize)
         }
     }
 
-    // Which faces share an edge with which.
     let edge_faces = edge_face_map(&model, &faces).map_err(other)?;
 
     let mut holes = Vec::new();

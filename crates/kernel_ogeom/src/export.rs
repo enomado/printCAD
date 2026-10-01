@@ -3,8 +3,8 @@
 //! STEP carries the exact shapes, one part per body, gathered into one
 //! kernel model. The mesh formats carry triangles: a body with a shape is
 //! meshed afresh at the export's own tolerance (a print wants a finer mesh
-//! than the viewport), and a mesh body goes out as the mesh it is. 3MF
-//! objects are welded by position, so each closed solid arrives as a
+//! than the viewport), and a mesh body goes out as the mesh it is. Each
+//! body's mesh is welded by position, so a closed solid arrives as a
 //! closed mesh rather than as faces that merely touch.
 
 use std::collections::HashMap;

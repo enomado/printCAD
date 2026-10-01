@@ -196,7 +196,6 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
         &mut host,
     );
     assert_eq!(out.error, None);
-    // The datum moved; the sketch keeps the plane it was made on.
     let d = host
         .document
         .feature_tree()

@@ -138,9 +138,9 @@ fn pad_feature_builds_a_box_through_the_full_stack() {
     assert!(min[2].abs() < 1e-3, "starts on the sketch plane");
 }
 
-/// Regression for the reported "pocket did nothing" bug: a sketch drawn on
-/// the TOP FACE of a pad has its normal pointing out of the material; the
-/// pocket must cut against that normal (into the pad) by default.
+/// A sketch drawn on the top face of a pad has its normal pointing out of
+/// the material; the pocket must cut against that normal (into the pad) by
+/// default.
 #[test]
 fn pocket_feature_cuts_into_the_pad() {
     let (mut doc, body, rect_id) = setup(20.0, 20.0);

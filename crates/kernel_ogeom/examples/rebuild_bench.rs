@@ -9,9 +9,9 @@
 //! ```
 //!
 //! `--ops` prints each feature's time and the meshing as the chain logs
-//! them (target `printcad.chain`). `--before` builds as the application
-//! did before it kept anything between builds: every build from the first
-//! feature, the whole history while a task is open, at full detail.
+//! them (target `printcad.chain`). `--before` is the baseline that keeps
+//! nothing between builds: every build from the first feature, the whole
+//! history while a task is open, at full detail.
 //!
 //! Then an imported part (the bundled `drive_frame_upper.step`) as a
 //! body's base, a boss beside it whose height is edited: the history is short,

@@ -1,5 +1,5 @@
-//! What an assembly's placement structure looks like, versus what the
-//! importer currently takes from it.
+//! What an assembly's placement structure looks like: its placed
+//! occurrences against the reader's part-local solids.
 //!
 //! ```text
 //! cargo run --release -p kernel_ogeom --example assembly_probe -- <file.step>
@@ -58,7 +58,7 @@ fn main() {
             occurrences - import.solids.len()
         );
     }
-    // Would switching to occurrences lose any solid?
+    // A solid no part product reaches is one reading occurrences leaves out.
     let mut part_shapes = Vec::new();
     for (_, product) in doc.products() {
         if let ProductKind::Part { shape } = &product.kind {

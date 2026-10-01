@@ -514,9 +514,9 @@ fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
-/// The face of `root` a probe names: the nearest to its point, and among
-/// faces as near (a point on the edge between them), the one whose outward
-/// normal agrees best with the probe's.
+/// The face of `root` a probe names: the face its name finds, else the
+/// nearest to its point, and among faces as near (a point on the edge
+/// between them), the one whose outward normal agrees best with the probe's.
 pub(crate) fn face_named(
     model: &mut Model,
     root: &Shape,

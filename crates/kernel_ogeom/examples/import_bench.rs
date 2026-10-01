@@ -4,9 +4,10 @@
 //! cargo run --release -p kernel_ogeom --example import_bench -- <file.step>
 //! ```
 //!
-//! Reports the four phases separately: reading the file, parsing it into a
-//! model, the per-solid loop (colours, snapshot blobs, bounds), and the
-//! deferred per-body tessellation the app runs afterwards.
+//! Reports the phases separately: reading the file, parsing it into a
+//! model, and the whole import as the app calls it (parse, then the
+//! per-solid loop: colours, snapshot blobs, bounds, meshing), with what a
+//! deferred tessellation from the snapshots would add, for reference.
 
 use std::time::Instant;
 
@@ -57,12 +58,12 @@ fn main() {
     drop(import);
     drop(text);
 
-    // Phase 3: the whole import as the app calls it — parse again, plus the
+    // Phase 3: the whole import as the app calls it: parse again, plus the
     // per-solid loop. The import logs its OWN directly-measured phase
     // breakdown (parse / bodies / total on one tracing line); that is the
     // number to trust. This binary prints no subtraction across phases:
-    // deriving the loop as (total − phase-2 parse) once fabricated a 3.6×
-    // regression out of load variance between the two parses.
+    // load variance between the two parses makes (total − phase-2 parse)
+    // show regressions of several times that are not there.
     let mut kernel = OgeomKernel::new();
     kernel.initialize().expect("initialize kernel");
     let mut detail = TessellationSettings::default();
@@ -77,7 +78,7 @@ fn main() {
     let import_ms = t.elapsed().as_secs_f64() * 1000.0;
     println!("import total   {import_ms:9.0} ms  (phase breakdown on the tracing line above)");
 
-    // The import now meshes from the model it already has in memory, so the
+    // The import meshes from the model it already has in memory, so the
     // bodies come back ready to draw.
     let triangles: usize = model.bodies.iter().map(|b| b.mesh.indices.len() / 3).sum();
     let meshed = model
@@ -106,6 +107,6 @@ fn main() {
 
     println!("─────────────────────────");
     // The standalone parse in phase 2 is measurement overhead; the pipeline
-    // the app actually runs is read → import → tessellate.
+    // the app runs is read → import, which meshes as it goes.
     println!("total          {:9.0} ms", read_ms + import_ms);
 }

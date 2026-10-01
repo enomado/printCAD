@@ -32,7 +32,7 @@ pub fn bounds_overlap(model: &Model, a: &Shape, b: &Shape) -> bool {
 }
 
 /// Fuse two solids, or compound them when they are clearly disjoint (the
-/// kernel's disjoint-fuse path drops swept solids — building the compound
+/// kernel's disjoint-fuse path drops swept solids; building the compound
 /// directly sidesteps it and costs nothing).
 pub fn fuse_or_compound(model: &mut Model, a: &Shape, b: &Shape) -> Result<Shape, String> {
     if bounds_overlap(model, a, b) {
@@ -88,7 +88,7 @@ pub fn fuse_all(model: &mut Model, parts: Vec<Shape>) -> Result<Shape, String> {
         .map_err(|e| format!("compounding disjoint solids failed: {e}"))
 }
 
-/// Unwrap a compound holding exactly one solid — boolean results sometimes
+/// Unwrap a compound holding exactly one solid: boolean results sometimes
 /// come back wrapped, and downstream booleans insist on solid operands.
 pub fn normalized(model: &Model, shape: Shape) -> Shape {
     use ogeom::topo::ShapeType;
@@ -176,9 +176,8 @@ pub fn bool_once(
 }
 
 /// Compound-aware boolean: both operands may be compounds of disjoint
-/// solids (the previous kernel took those in stride, ogeom's booleans insist
-/// on solids). Pieces pair up by bounding-box overlap; disjoint pieces skip
-/// the boolean entirely.
+/// solids, where ogeom's booleans insist on solids. Pieces pair up by
+/// bounding-box overlap; disjoint pieces skip the boolean entirely.
 pub fn combine_solids(
     model: &mut Model,
     base: &Shape,

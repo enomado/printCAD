@@ -1,13 +1,13 @@
 //! Mesh files as bodies, and a mesh body turned into a B-rep.
 //!
-//! STL, OBJ and 3MF carry triangles and nothing else, so a mesh imports as
-//! a body with no shape snapshot: it draws, hides and picks, and takes no
-//! features. Its triangles weld where their normals agree within the
-//! crease angle, so curved regions shade smoothly, and its outline is the
-//! edges only one welded triangle uses: sharp creases and holes. When asked,
-//! the kernel builds a B-rep from the mesh's own connectivity, coplanar
-//! triangles merged into planar faces, and the body becomes an ordinary
-//! imported solid.
+//! STL, OBJ, 3MF, PLY, glTF and VRML carry triangles and nothing else, so a
+//! mesh imports as a body with no shape snapshot: it draws, hides and picks,
+//! and takes no features. Its triangles weld where their normals agree
+//! within the crease angle, so curved regions shade smoothly, and its
+//! outline is the edges only one welded triangle uses: sharp creases and
+//! holes. When asked, the kernel builds a B-rep from the mesh's own
+//! connectivity, coplanar triangles merged into planar faces, and the body
+//! becomes an ordinary imported solid.
 
 use std::path::Path;
 
@@ -418,7 +418,7 @@ fn finish(
     })
 }
 
-/// sRGB, as 3MF writes colours, to the linear RGB the renderer shades with.
+/// sRGB, as 3MF and VRML write colours, to the linear RGB the renderer shades with.
 fn srgb_to_linear(v: f32) -> f32 {
     let v = v.clamp(0.0, 1.0);
     if v <= 0.040_45 {
