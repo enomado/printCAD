@@ -81,8 +81,8 @@ pub trait Bench: Default + 'static {
         false
     }
 
-    /// Everything the bench shows. Asked after events and document
-    /// changes, and after [`host::redraw`].
+    /// Everything the bench shows. Asked after events, document and
+    /// selection changes, and after [`host::redraw`].
     fn frame(&mut self, _pointer: &Pointer) -> Frame {
         Frame::default()
     }

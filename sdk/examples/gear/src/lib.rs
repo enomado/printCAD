@@ -94,7 +94,7 @@ impl Gear {
 struct Gears {
     /// The gear whose task is open, and its data when the task opened.
     editing: Option<(String, Gear)>,
-    /// The gear the tool just made: Cancel removes it.
+    /// The open gear is one the tool just made: Cancel removes it.
     fresh: bool,
     /// The active feature last seen, so selecting a gear opens it once.
     seen_active: Option<String>,
@@ -128,7 +128,7 @@ impl Gears {
         }
     }
 
-    /// Make a body with a gear on it; the gear's id.
+    /// Make a body with a gear on it; the body's id and the gear's.
     fn make(&self, gear: &Gear) -> Result<(String, String), String> {
         let body = host::create_body(Some("Gear"))?;
         let name = format!("Gear z{}", gear.teeth);
