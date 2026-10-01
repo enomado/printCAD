@@ -55,8 +55,8 @@ pub fn names() -> impl Iterator<Item = &'static str> {
     ICONS.iter().map(|(n, _)| *n)
 }
 
-/// A drawing shown at this many points or larger rasterizes at twice its
-/// size, so it stays sharp where an icon-sized texture would smear.
+/// Pixels per point a drawing rasterizes at, for the size it is shown at,
+/// so it stays sharp where an icon-sized texture would smear.
 const DRAWING_SCALE: f32 = 2.0;
 
 #[derive(Default, Clone)]

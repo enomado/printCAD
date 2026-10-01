@@ -1,6 +1,6 @@
 //! The design system: tokens, bundled fonts, the egui theme, the widget
 //! vocabulary the mockups use, and the line-icon set. Every crate that
-//! draws UI — the app shell and the workbenches — builds on this one, so it
+//! draws UI (the app shell and the workbenches) builds on this one, so it
 //! knows nothing about documents.
 
 pub mod completion;

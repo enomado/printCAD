@@ -190,8 +190,8 @@ pub fn apply_theme(ctx: &Context) {
         style.spacing.scroll.bar_width = 8.0;
         style.spacing.scroll.floating = false;
         style.visuals = visuals();
-        // Labels are the chrome's text: a text cursor over them promised
-        // an edit and ate the clicks meant for what they sit on. Text worth
+        // Labels are the chrome's text: a text cursor over them would promise
+        // an edit and eat the clicks meant for what they sit on. Text worth
         // copying (log, console, chat) opts in with `Label::selectable`.
         style.interaction.selectable_labels = false;
     });
