@@ -191,7 +191,8 @@ const SHELL: &[ShellEntry] = &[
 /// One row the palette can show.
 struct Entry {
     label: String,
-    /// "Sketcher", "Design" or "printCAD".
+    /// Where the entry comes from: a workbench's name, a keymap group, or
+    /// "printCAD" for the shell's own.
     scope: String,
     icon: &'static str,
     keys: Option<String>,

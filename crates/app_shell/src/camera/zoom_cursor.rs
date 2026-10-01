@@ -34,8 +34,9 @@ pub fn viewport_ray(
     if dir.length_squared() < 1e-24 {
         return None;
     }
-    // Origin must lie on this pixel's ray. Using `eye` matches perspective rays but is wrong for
-    // orthographic rays (parallel to forward, offset laterally)—correction collapsed to orbit-center zoom.
+    // The origin lies on this pixel's ray. The eye would do for perspective rays, but orthographic
+    // rays run parallel to forward, offset sideways, and from the eye the cursor correction would
+    // collapse to zooming about the orbit centre.
     Some((near_w, dir))
 }
 

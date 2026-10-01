@@ -238,10 +238,9 @@ impl PrintCadApp {
         self.session.document.mark_clean();
         self.touch_recent(&path);
         self.session.screen = crate::ui::Screen::Workspace;
-        // Match STEP import: reframe imported mesh bounds so scene AABB and auto
-        // near/far use the same view as STEP apply (opening only updated zoom
-        // limits before, which left stale eye/target → marginal clipping until the
-        // user toggled projection or hit Fit View).
+        // Reframe on the imported meshes' bounds, as a STEP import does, so the
+        // scene bounds and the automatic near/far planes agree with the view;
+        // keeping the old eye and target would clip the model at the margins.
         if let Some((mn, mx)) = document_imported_aabb(&self.session.document) {
             let (center, radius) = aabb_fit_center_radius(mn, mx);
             self.session.camera.reset_to_fit(
@@ -257,9 +256,9 @@ impl PrintCadApp {
                 .clamp_focal_to_settings(&self.user_settings.camera);
         }
         self.session.journal.reset(&mut self.session.document);
-        // A fresh baseline: whatever the server logged before no longer
-        // describes this client's state. (set_name above records an op into
-        // the new document; it flows normally on the next drain.)
+        // A fresh baseline: what the server logged before describes another
+        // state than this client's. (set_name above records an op into the
+        // new document; it flows normally on the next drain.)
         self.session
             .server
             .send(core_document::server::ClientMessage::Rebase);
@@ -267,7 +266,7 @@ impl PrintCadApp {
         self.report_missing_packages();
     }
 
-    /// Move the server connection to `socket` — the document's own daemon
+    /// Move the server connection to `socket`: the document's own daemon
     /// (one socket per file) or the session's untitled one.
     /// The old connection is flushed first so no queued write is abandoned;
     /// on failure the old connection stays and the move is only logged: a
@@ -281,7 +280,7 @@ impl PrintCadApp {
                 self.session.server.flush();
                 self.session.server = Box::new(client);
                 self.session.server_socket = socket;
-                // New room, new roommates.
+                // The old connection's peers are not this one's.
                 self.session.peer_presence.clear();
                 self.session.last_sent_presence = None;
                 app_log::info(format!("Document server: {}", self.session.server.name()));
@@ -324,9 +323,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Ask the server for a document's bytes. The load epoch rides as the
-    /// request token so a response landing after File > New is ignored.
-    /// Public face of [`Self::request_document_open`] for startup hooks.
     /// Import a file picked or dropped: a mesh, or a file a workbench
     /// reads, at once; a STEP or IGES file through the import settings,
     /// which its meshing needs.
@@ -376,10 +372,12 @@ impl PrintCadApp {
         self.request_document_open(path);
     }
 
+    /// Ask the server for a document's bytes. The load epoch rides as the
+    /// request token so a response landing after File > New is ignored.
     fn request_document_open(&mut self, path: PathBuf) {
         app_log::info(format!("Opening `{}`...", path.display()));
-        // The document's own daemon owns its file (and, later, its other
-        // clients). Ask it, not the session daemon.
+        // The document's own daemon owns its file. Ask it, not the session
+        // daemon.
         self.switch_server_to(doc_server::socket_path_for(&path));
         self.session
             .server
@@ -390,7 +388,7 @@ impl PrintCadApp {
     }
 
     /// Apply everything the server answered since last frame: opened
-    /// documents (parsed here — the server serves bytes, never meaning) and
+    /// documents (parsed here: the server serves bytes, never meaning) and
     /// save completions, whose `at_seq` decides whether the document is
     /// truly clean or was edited mid-save.
     pub(crate) fn drain_server_messages(&mut self) {
@@ -462,7 +460,6 @@ impl PrintCadApp {
     }
 
     pub(crate) fn save_document_at(&mut self, path: &Path) -> Result<()> {
-        // Derive a user-facing document name from the file name (strip known extensions).
         let file_name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -505,7 +502,6 @@ impl PrintCadApp {
                     .with_context(|| "Failed to serialize document")?;
             }
             _ => {
-                // Choose compression based on the full file name suffix.
                 let compression = if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
                     core_document::Compression::Gzip
                 } else if lowered.ends_with(".prtcad.zst") || lowered.ends_with(".zst") {
@@ -515,13 +511,13 @@ impl PrintCadApp {
                 };
 
                 // A `.prtcad` carries every snapshot blob and the source
-                // file, so packing one takes seconds on a large import —
+                // file, so packing one takes seconds on a large import,
                 // long enough that it cannot happen on the UI thread. The
                 // clone is cheap (payloads sit behind Arcs), a worker packs
                 // the archive, and the bytes go to the server when it
                 // finishes; the server owns the write itself.
                 if self.session.current_file.as_deref() != Some(path) {
-                    // Save As gives the document a new identity — and a new
+                    // Save As gives the document a new identity, and a new
                     // daemon to own it.
                     self.switch_server_to(doc_server::socket_path_for(path));
                 }
@@ -539,10 +535,10 @@ impl PrintCadApp {
         Ok(())
     }
 
-    /// Apply a peer's relayed edits. The ops are resolved effects — the
-    /// same `apply_op` replay path the determinism tests pin — and the
-    /// daemon never echoes our own ops, so everything here is foreign.
-    /// Marking dirty is apply-side policy: it is what makes THIS replica
+    /// Apply a peer's relayed edits. The ops are resolved effects, replayed
+    /// through the same `apply_op` path the determinism tests pin, and the
+    /// daemon never echoes this client's own ops, so everything here is
+    /// foreign. Marking dirty is apply-side policy: it is what makes this replica
     /// re-derive the geometry the peer's edit invalidated.
     fn apply_remote_ops(&mut self, _actor: uuid::Uuid, ops: Vec<core_document::op::DocumentOp>) {
         use core_document::op::DocumentOp as Op;
@@ -559,8 +555,8 @@ impl PrintCadApp {
                 ..
             } = op
             {
-                // The op created the bodies; the geometry is derived state
-                // we re-compute from the carried bytes. The kernel import
+                // The op created the bodies; their geometry is derived state,
+                // computed again from the carried bytes. The kernel import
                 // is deterministic, so meshes land on the peer's
                 // pre-allocated body ids by import order.
                 // The kernel picks its reader by extension: stage the bytes
@@ -590,13 +586,13 @@ impl PrintCadApp {
                 }
             }
         }
-        // Per-user undo survives foreign edits: the journal holds only OUR
-        // gestures, and their inverses target only what we touched.
+        // Per-user undo survives foreign edits: the journal holds only this
+        // user's gestures, and their inverses touch only what those touched.
         app_log::info(format!("{} remote edit(s) applied", ops.len()));
     }
 
-    /// Tell the server what we have selected — only when it changed. The
-    /// display name is the login name; a settings field can refine it later.
+    /// Tell the server what this user has selected, only when it changed.
+    /// The display name is the login name.
     pub(crate) fn publish_presence(&mut self) {
         // Centimetre quantization: enough to follow a hand, coarse enough
         // that breathing on the mouse does not broadcast.
@@ -623,11 +619,6 @@ impl PrintCadApp {
         self.session.last_sent_presence = Some(state);
     }
 
-    /// Block until the server has durably handled every queued write.
-    ///
-    /// Only worth doing on the way out: the process exiting would abandon a
-    /// write in flight and could leave a truncated document behind. Every
-    /// exit path must call this (CLAUDE.md invariant).
     /// Parse opened bytes on a worker. Unpacking an archive costs what
     /// packing one does, so it does not belong on the UI thread either.
     fn start_document_parse(&mut self, token: u64, path: PathBuf, bytes: Vec<u8>) {
@@ -920,6 +911,11 @@ impl PrintCadApp {
         self.recoverable.retain(|r| r.copy != copy);
     }
 
+    /// Block until the server has durably handled every queued write.
+    ///
+    /// Only worth doing on the way out: the process exiting would abandon a
+    /// write in flight and could leave a truncated document behind. Every
+    /// exit path must call this (CLAUDE.md invariant).
     pub(crate) fn wait_for_document_saves(&mut self) {
         // A packing worker has bytes nobody has sent yet; abandoning it would
         // lose the save outright.

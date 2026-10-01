@@ -4,7 +4,7 @@
 use super::*;
 
 /// Draws the colored axis arrows for **world** X, Y, and Z (red / green / blue).
-/// `rot` is [`world_axes_widget_rotation`] — settings axis + camera quaternion, same widget basis as the cube.
+/// `rot` is [`world_axes_widget_rotation`]: settings axis and camera quaternion, the cube's own widget basis.
 pub(super) fn draw_axis_arrows(painter: &egui::Painter, axis_origin: Pos2, rot: &Mat3) {
     let axis_len = 18.0;
 
@@ -34,7 +34,6 @@ pub(super) fn draw_axis_arrows(painter: &egui::Painter, axis_origin: Pos2, rot: 
         let thickness = if rotated.z > 0.0 { 2.5_f32 } else { 1.5_f32 };
         painter.line_segment([axis_origin, end], Stroke::new(thickness, faded));
 
-        // Arrow head
         if rotated.z > -0.5 {
             let dir_2d = (end - axis_origin).normalized();
             let perp = egui::Vec2::new(-dir_2d.y, dir_2d.x);
@@ -51,7 +50,6 @@ pub(super) fn draw_axis_arrows(painter: &egui::Painter, axis_origin: Pos2, rot: 
             ));
         }
 
-        // Label
         if rotated.z > 0.0 {
             let label_pos = Pos2::new(
                 axis_origin.x + rotated.x * (axis_len + 10.0),
@@ -68,7 +66,9 @@ pub(super) fn draw_axis_arrows(painter: &egui::Painter, axis_origin: Pos2, rot: 
     }
 }
 
-/// Draws interactive rotation arrows around the circle
+/// Draws the step arrows around the cube's circle and returns the turn a
+/// click on one asks for. With `planar_only`, the ones that would tilt the
+/// view off its plane draw inert.
 pub(super) fn draw_rotation_arrows_interactive(
     ui: &Ui,
     painter: &egui::Painter,
@@ -91,16 +91,9 @@ pub(super) fn draw_rotation_arrows_interactive(
 
     let hover_pos = ui.input(|i| i.pointer.hover_pos());
 
-    // === Triangle arrows pointing outward (right, left, bottom, top) ===
-    // Arrow positions: 0=right, 90=bottom, 180=left, 270=top
-    //
-    // Screen-space rotation (around camera's local axes):
-    // - ScreenY: rotate around camera's UP axis
-    //   - Positive = rotate right (view shifts right)
-    //   - Negative = rotate left (view shifts left)
-    // - ScreenX: rotate around camera's RIGHT axis
-    //   - Positive = rotate up (view shifts up)
-    //   - Negative = rotate down (view shifts down)
+    // Triangle arrows pointing outward at 0° (right), 90° (bottom), 180°
+    // (left) and 270° (top), turning about the camera's own axes: ScreenY
+    // about its up axis, ScreenX about its right axis.
     let triangle_arrows = [
         (0.0_f32, RotateAxis::ScreenY, 45.0), // Right arrow -> rotate right 45°
         (180.0, RotateAxis::ScreenY, -45.0),  // Left arrow -> rotate left 45°
@@ -120,18 +113,16 @@ pub(super) fn draw_rotation_arrows_interactive(
             center.y + angle.sin() * arrow_radius,
         );
 
-        // Direction pointing outward
         let outward = egui::Vec2::new(angle.cos(), angle.sin());
         let perp = egui::Vec2::new(-angle.sin(), angle.cos());
 
-        // Triangle base is inward from the tip
         let base_center = tip - outward * triangle_size;
         let p1 = base_center + perp * (triangle_base / 2.0);
         let p2 = base_center - perp * (triangle_base / 2.0);
 
         let triangle_pts = vec![tip, p1, p2];
 
-        // Hit testing: use actual triangle shape
+        // Hit test against the triangle itself, not its bounding box.
         let is_hovered = hover_pos
             .map(|p| point_in_polygon(p, &triangle_pts))
             .unwrap_or(false);
@@ -160,21 +151,21 @@ pub(super) fn draw_rotation_arrows_interactive(
         ));
     }
 
-    // === Arc arrows at the top (for horizontal rotation) ===
+    // Arc arrows just outside the circle, one at its left and one at its
+    // right (angles near π and 0), roll the view about its direction.
     let arc_width = 10.0;
     let arc_radius = widget_size / 2.0 + arc_width + 4.0; // Slightly outside the circle
     let arc_y_offset = -widget_size / 2.0 - 2.0 - y_offset; // Above the top of the circle
     let arc_center = Pos2::new(center.x, center.y + arc_y_offset + arc_radius);
 
-    // Left-pointing arc arrow (yaw around view direction)
     draw_arc_arrow(
         ui,
         painter,
         arc_center,
         arc_radius,
         arc_width,
-        std::f32::consts::PI - 0.3, // End angle
-        std::f32::consts::PI + 0.3, // Start angle (left side, going up)
+        std::f32::consts::PI - 0.3, // Start angle (left side)
+        std::f32::consts::PI + 0.3, // End angle
         true,                       // Arrow points left (counter-clockwise)
         RotateAxis::ScreenZ,
         -45.0,
@@ -185,7 +176,6 @@ pub(super) fn draw_rotation_arrows_interactive(
         &mut result,
     );
 
-    // Right-pointing arc arrow (yaw around view direction)
     draw_arc_arrow(
         ui,
         painter,
@@ -282,7 +272,7 @@ pub(super) fn hit_test_arc_arrow(
     point_in_polygon(p, &arrow_pts)
 }
 
-/// Helper to draw an arc arrow with interaction
+/// Draws an arc arrow and sets `result` to its turn when it is clicked.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_arc_arrow(
     _ui: &Ui,
@@ -301,7 +291,7 @@ pub(super) fn draw_arc_arrow(
     hover_pos: &Option<Pos2>,
     result: &mut Option<RotateDelta>,
 ) {
-    // Hit testing: match the visual arc band + arrow head more closely
+    // Hit test against the drawn arc band and arrow head.
     let is_hovered = hover_pos
         .map(|p| {
             hit_test_arc_arrow(
@@ -337,7 +327,6 @@ pub(super) fn draw_arc_arrow(
     let color = if is_hovered { hover_color } else { base_color };
     let stroke_width = if is_hovered { width + 1.0 } else { width };
 
-    // Draw arc
     let segments = 12;
     let mut points = Vec::new();
     for i in 0..=segments {
@@ -352,7 +341,6 @@ pub(super) fn draw_arc_arrow(
         painter.line_segment([points[i], points[i + 1]], Stroke::new(stroke_width, color));
     }
 
-    // Arrow head
     let delta_angle = stroke_width / radius;
 
     let arrow_angle = if arrow_at_start {

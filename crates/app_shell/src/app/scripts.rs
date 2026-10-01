@@ -1254,9 +1254,6 @@ impl PrintCadApp {
     }
 }
 
-/// What a host UI command does, as the command a recording says it with:
-/// renaming, showing or hiding and deleting tree rows. The benches record
-/// their own.
 /// The command a body menu's edit runs, and its arguments.
 pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'static str, Value) {
     use crate::ui::BodyEdit;
@@ -1272,6 +1269,9 @@ pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'sta
     }
 }
 
+/// What a host UI command does, as the command a recording says it with:
+/// renaming, showing or hiding and deleting tree rows. The benches record
+/// their own.
 pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_document::Recorded> {
     use crate::ui::{TreeFeatureCommand, UiCommand};
     let call = |id: &str, args: Value| core_document::Recorded {
@@ -1911,7 +1911,6 @@ pub(crate) fn suppress(document: &mut core_document::Document, feature: FeatureI
     document.mark_feature_dirty(feature);
 }
 
-/// Move `feature` a step in its body's history; whether it could.
 /// Move `feature` a step earlier (`up`) or later, or say why it cannot go.
 pub(crate) fn move_in_history(
     document: &mut core_document::Document,
@@ -2194,7 +2193,7 @@ fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, Comm
 
 /// The names of a feature's fields that hold no value, which a script's
 /// table cannot show (a nil is no entry): at the top of the data or inside
-/// its one variant, as a Design feature keeps it.
+/// its one variant, where a feature kept as an enum holds its fields.
 fn unset_fields(data: &Value) -> Vec<String> {
     let Value::Object(top) = data else {
         return Vec::new();

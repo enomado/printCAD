@@ -209,7 +209,6 @@ impl PrintCadApp {
     }
 }
 
-/// The ends of a kernel edge's outline segments.
 /// How far an edge may turn from the one before it and still continue
 /// it: the outline's chords stand off a curve's tangent by up to half the
 /// display's angular step.

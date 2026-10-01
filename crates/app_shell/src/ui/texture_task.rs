@@ -91,7 +91,8 @@ impl TextureTask {
             .imported_geometry(body)
             .map(|g| std::sync::Arc::clone(&g.mesh));
 
-        // Which texture, when the body has more than one; one more.
+        // A label for each of the body's textures, picking the one edited,
+        // and Add for another.
         ui.horizontal_wrapped(|ui| {
             for n in 0..textures.len() {
                 if ui

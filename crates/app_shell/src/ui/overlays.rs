@@ -47,7 +47,7 @@ fn ends(
 }
 
 /// Draw the pictures a bench lays over the viewport, each a textured quad
-/// between its corners; a picture no longer shown lets its texture go.
+/// between its corners; a picture not shown any more lets its texture go.
 pub fn draw_screen_space_images(
     ctx: &Context,
     viewport_rect: egui::Rect,

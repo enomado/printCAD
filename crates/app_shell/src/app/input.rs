@@ -72,9 +72,10 @@ impl PrintCadApp {
             _ => {}
         }
 
-        // Update picking + viewport-local cursor *before* egui. Cursor events can be marked
-        // consumed while dragging UI; we still need consistent coords for 3D hit testing and
-        // zoom-to-focal-plane math.
+        // Picking and the viewport-local cursor update before egui sees the
+        // event: egui can mark cursor events consumed while a UI drag runs,
+        // and 3D hit testing and zoom-to-focal-plane math still need
+        // consistent coordinates.
         // A modal, menu or tooltip drawn over the viewport owns the pointer:
         // the scene must neither hover nor zoom under it.
         let floating_ui_owns_pointer = self
@@ -106,7 +107,7 @@ impl PrintCadApp {
                 }
                 // Sketch hover feedback (CPU hit-test; the GPU pick can't
                 // reliably hit hairline sketch curves). Skipped while
-                // editing — the sketcher renders its own hover state.
+                // editing: the sketcher renders its own hover state.
                 self.session.hovered_feature = if self.sketch_editing_active() {
                     None
                 } else {
@@ -139,8 +140,9 @@ impl PrintCadApp {
                 self.redraw_needed = true;
                 gfx.window.request_redraw();
             }
-            // egui-winit marks MouseWheel consumed when `wants_pointer_input()` — true over most
-            // of the central panel — which prevented the CAD camera from ever seeing scroll.
+            // egui-winit marks MouseWheel consumed whenever `wants_pointer_input()`
+            // is true, which is most of the central panel, so the camera would
+            // never see scroll.
             // It also marks Tab consumed unconditionally; keys belong to the
             // workbench whenever no text field owns the keyboard.
             let key_for_workbench = matches!(event, WindowEvent::KeyboardInput { .. })
@@ -339,7 +341,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Call on_input on a workbench.
     fn call_workbench_input(
         &mut self,
         wb_id: &WorkbenchId,
@@ -362,7 +363,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Convert a winit WindowEvent to a WorkbenchInputEvent.
     fn convert_to_wb_event(&self, event: &WindowEvent) -> Option<WorkbenchInputEvent> {
         match event {
             WindowEvent::MouseInput { state, button, .. } => {
@@ -660,7 +660,7 @@ impl PrintCadApp {
 
             let whole_only = filter == crate::ui::PickFilter::Bodies;
             if is_double || whole_mesh || (whole_only && !already_whole) {
-                // The whole body the face belongs to — one part of an
+                // The whole body the face belongs to: one part of an
                 // assembly, not the assembly. A modelling bench works from
                 // the tree, so there the body's row opens and scrolls into
                 // view; an edit session keeps the tree still.
@@ -750,7 +750,7 @@ impl PrintCadApp {
 /// Resolve a picked world position to a face reference on `mesh`.
 ///
 /// The GPU pick reconstructs the position from the depth buffer, whose
-/// precision varies with view angle and distance — the raw point can sit a
+/// precision varies with view angle and distance: the raw point can sit a
 /// millimetre or more off the surface, far enough that a naive containment
 /// test misses the face and falls back to whole-body selection. So:
 /// find the nearest triangle, take the face plane from ITS exact vertices,
@@ -819,7 +819,7 @@ fn nearest_triangle(
 /// The sub-mesh of one face, for the selection highlight.
 ///
 /// When the mesh knows which kernel face each triangle came from, the face
-/// is the one under the hit, whole — a cylinder wall as much as a flat side.
+/// is the one under the hit, whole: a cylinder wall as much as a flat side.
 /// A mesh without that (a sketch, a document saved before faces were
 /// recorded) falls back to the plane through the hit, which is exact for a
 /// flat face and one strip of a curved one.
@@ -856,10 +856,6 @@ pub(crate) struct FaceHover {
     pub probe: [f32; 3],
 }
 
-/// Every triangle cut from kernel face `face`, copied exactly: the
-/// translucent pass passes equal depth, so the copy sits on its surface
-/// whichever way the face is wound. A copy lifted along the winding normal
-/// would sink into the solid on a face wound inward and never show.
 /// Where face `face` of `mesh` stands and the way it faces: the centre of
 /// its area and its area-weighted outward normal, from the mesh's own
 /// normals (the kernel's, outward, where the winding may not be).
@@ -893,6 +889,10 @@ pub(crate) fn face_frame(
         .then(|| (centre / area_sum, normal.normalize()))
 }
 
+/// Every triangle cut from kernel face `face`, copied exactly: the
+/// translucent pass passes equal depth, so the copy sits on its surface
+/// whichever way the face is wound. A copy lifted along the winding normal
+/// would sink into the solid on a face wound inward and never show.
 pub(crate) fn face_submesh_by_id(
     mesh: &kernel_api::TriMesh,
     face: u32,
@@ -1103,7 +1103,6 @@ mod tests {
             "point projected onto the exact face plane: {:?}",
             face.point
         );
-        // And extraction from the projected point succeeds.
         let sub = coplanar_face_submesh(&mesh, face.point, face.normal).unwrap();
         assert_eq!(sub.indices.len(), 6);
     }

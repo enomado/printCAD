@@ -7,9 +7,9 @@ use super::*;
 pub(super) struct CubePolygon {
     /// 3D vertices (will be transformed and projected)
     verts: Vec<Vec3>,
-    /// Normal direction in world space
+    /// Outward normal in the cube's own frame, turned with the view as the
+    /// vertices are.
     normal: Vec3,
-    /// Base color
     color: Color32,
     /// Optional label (only for main faces)
     label: Option<&'static str>,
@@ -34,15 +34,11 @@ pub(super) fn draw_cube_interactive(
 
     let m = 0.12_f32;
 
-    // - Main faces are 8-sided polygons (octagons with cut corners)
-    // - Edge bevels are quads
-    // - Corner bevels are hexagons
-
     let mut polygons: Vec<CubePolygon> = Vec::new();
 
     // A face wears the colour of the world axis it faces, as the triad in
     // the corner draws that axis, so the two read as one thing. Faces are
-    // built canonical — Y up, Z toward the viewer — and the preset says which
+    // built canonical (Y up, Z toward the viewer) and the preset says which
     // world axis each of those is, so opposite faces share a colour by
     // construction.
     let front_color = face_color(axes, Vec3::Z);
@@ -54,8 +50,8 @@ pub(super) fn draw_cube_interactive(
     let edge_color = Color32::from_rgb(160, 165, 175);
     let corner_color = Color32::from_rgb(145, 150, 160);
 
-    // Helper to create main face vertices (8-sided polygon)
-    // x_dir and y_dir are the face's local X and Y axes, z_dir is the normal (pointing outward)
+    // A main face, an octagon with cut corners: x_dir and y_dir are the
+    // face's local X and Y axes, z_dir its outward normal.
     let make_main_face = |x_dir: Vec3, y_dir: Vec3, z_dir: Vec3| -> Vec<Vec3> {
         let x2 = x_dir * (1.0 - m * 2.0);
         let y2 = y_dir * (1.0 - m * 2.0);
@@ -73,9 +69,8 @@ pub(super) fn draw_cube_interactive(
         ]
     };
 
-    // Helper to create edge bevel vertices (4-sided polygon)
-    // Following x_dir is along the edge, z_dir is the edge normal direction
-    // y_dir is computed as x_dir.cross(-z_dir)
+    // An edge bevel, a quad: x_dir runs along the edge, z_dir is the
+    // bevel's outward normal.
     let make_edge_face = |x_dir: Vec3, z_dir: Vec3| -> Vec<Vec3> {
         let y_dir = x_dir.cross(-z_dir);
         let x4 = x_dir * (1.0 - m * 4.0);
@@ -89,7 +84,7 @@ pub(super) fn draw_cube_interactive(
         ]
     };
 
-    // Helper to create corner bevel vertices (6-sided polygon / hexagon)
+    // A corner bevel, a hexagon.
     let make_corner_face = |x_dir: Vec3, z_dir: Vec3| -> Vec<Vec3> {
         let y_dir = x_dir.cross(-z_dir);
         let x_c = x_dir * m;
@@ -113,8 +108,7 @@ pub(super) fn draw_cube_interactive(
     let fc_y = -z;
     let fc_z = y;
 
-    // ===== MAIN FACES (6 octagons) =====
-    // These were working before - using our coordinate system directly
+    // The six main faces, in the cube's own frame (Y up).
 
     // Top (+Y)
     let verts_top = make_main_face(x, z, y);
@@ -182,8 +176,9 @@ pub(super) fn draw_cube_interactive(
         snap_view: Some(CameraSnapView::Left),
     });
 
-    // ===== EDGE BEVELS (12 quads) =====
-    // addCubeFace(x, z - y, Edge, FrontTop)
+    // The twelve edge bevels and eight corner bevels take their directions
+    // in the `fc_*` frame, Z up (fc_z is the cube's Y and fc_y its -Z);
+    // their `normal`s stay in the cube's own frame.
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, fc_z - fc_y),
         normal: (Vec3::Y + Vec3::Z).normalize(),
@@ -193,7 +188,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(x, -z - y, Edge, FrontBottom)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, -fc_z - fc_y),
         normal: (Vec3::NEG_Y + Vec3::Z).normalize(),
@@ -203,7 +197,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(x, y - z, Edge, RearBottom)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, fc_y - fc_z),
         normal: (Vec3::NEG_Y + Vec3::NEG_Z).normalize(),
@@ -213,7 +206,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(x, y + z, Edge, RearTop)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, fc_y + fc_z),
         normal: (Vec3::Y + Vec3::NEG_Z).normalize(),
@@ -223,7 +215,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(z, x + y, Edge, RearRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, fc_x + fc_y),
         normal: (Vec3::X + Vec3::NEG_Z).normalize(),
@@ -233,7 +224,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(z, x - y, Edge, FrontRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, fc_x - fc_y),
         normal: (Vec3::X + Vec3::Z).normalize(),
@@ -243,7 +233,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(z, -x - y, Edge, FrontLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, -fc_x - fc_y),
         normal: (Vec3::NEG_X + Vec3::Z).normalize(),
@@ -253,7 +242,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(z, y - x, Edge, RearLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, fc_y - fc_x),
         normal: (Vec3::NEG_X + Vec3::NEG_Z).normalize(),
@@ -263,7 +251,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(y, z - x, Edge, TopLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, fc_z - fc_x),
         normal: (Vec3::NEG_X + Vec3::Y).normalize(),
@@ -273,7 +260,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(y, x + z, Edge, TopRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, fc_x + fc_z),
         normal: (Vec3::X + Vec3::Y).normalize(),
@@ -283,7 +269,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(y, x - z, Edge, BottomRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, fc_x - fc_z),
         normal: (Vec3::X + Vec3::NEG_Y).normalize(),
@@ -293,7 +278,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(y, -z - x, Edge, BottomLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, -fc_z - fc_x),
         normal: (Vec3::NEG_X + Vec3::NEG_Y).normalize(),
@@ -303,10 +287,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // ===== CORNER BEVELS (8 hexagons) =====
-    // prepare() calls with exact parameters
-
-    // addCubeFace(-x - y, x - y + z, Corner, FrontTopRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x - fc_y, fc_x - fc_y + fc_z),
         normal: (Vec3::X + Vec3::Y + Vec3::Z).normalize(),
@@ -316,7 +296,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(-x + y, -x - y + z, Corner, FrontTopLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x + fc_y, -fc_x - fc_y + fc_z),
         normal: (Vec3::NEG_X + Vec3::Y + Vec3::Z).normalize(),
@@ -326,7 +305,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(x + y, x - y - z, Corner, FrontBottomRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x + fc_y, fc_x - fc_y - fc_z),
         normal: (Vec3::X + Vec3::NEG_Y + Vec3::Z).normalize(),
@@ -336,7 +314,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(x - y, -x - y - z, Corner, FrontBottomLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x - fc_y, -fc_x - fc_y - fc_z),
         normal: (Vec3::NEG_X + Vec3::NEG_Y + Vec3::Z).normalize(),
@@ -346,7 +323,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(x - y, x + y + z, Corner, RearTopRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x - fc_y, fc_x + fc_y + fc_z),
         normal: (Vec3::X + Vec3::Y + Vec3::NEG_Z).normalize(),
@@ -356,7 +332,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(x + y, -x + y + z, Corner, RearTopLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x + fc_y, -fc_x + fc_y + fc_z),
         normal: (Vec3::NEG_X + Vec3::Y + Vec3::NEG_Z).normalize(),
@@ -366,7 +341,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(-x + y, x + y - z, Corner, RearBottomRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x + fc_y, fc_x + fc_y - fc_z),
         normal: (Vec3::X + Vec3::NEG_Y + Vec3::NEG_Z).normalize(),
@@ -376,7 +350,6 @@ pub(super) fn draw_cube_interactive(
         uvs: None,
     });
 
-    // addCubeFace(-x - y, -x + y - z, Corner, RearBottomLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x - fc_y, -fc_x + fc_y - fc_z),
         normal: (Vec3::NEG_X + Vec3::NEG_Y + Vec3::NEG_Z).normalize(),
@@ -409,34 +382,28 @@ pub(super) fn draw_cube_interactive(
         .collect();
     poly_data.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap());
 
-    // Check for click position
     let click_pos = if response.clicked() {
         response.interact_pointer_pos()
     } else {
         None
     };
 
-    // Track which face is hovered
     let mut hovered_label: Option<&'static str> = None;
 
-    // Draw polygons (back to front)
     for (poly, normal, transformed_verts, _depth) in &poly_data {
         // Only draw faces that are visible (facing camera)
         if normal.z <= 0.05 {
             continue;
         }
 
-        // Project vertices to 2D
         let points: Vec<Pos2> = transformed_verts.iter().map(|v| project(*v)).collect();
 
-        // Check if mouse is over this polygon
         let is_hovered = if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
             point_in_polygon(pos, &points)
         } else {
             false
         };
 
-        // Check if clicked on this polygon
         if let Some(pos) = click_pos
             && point_in_polygon(pos, &points)
             && let Some(snap) = poly.snap_view
@@ -462,7 +429,6 @@ pub(super) fn draw_cube_interactive(
             (poly.color.b() as f32 * brightness) as u8,
         );
 
-        // Draw filled polygon
         let stroke_color = if is_hovered && poly.snap_view.is_some() {
             Color32::from_gray(150)
         } else {
@@ -497,7 +463,6 @@ pub(super) fn draw_cube_interactive(
         }
     }
 
-    // Show tooltip for hovered face
     if let Some(label) = hovered_label {
         response.clone().on_hover_ui_at_pointer(|ui| {
             ui.label(format!("Click to view {}", label));

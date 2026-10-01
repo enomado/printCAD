@@ -189,7 +189,6 @@ fn encode(animation: &Animation) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// One frame as a PNG of its own.
 /// A `width` × `height` RGBA picture as PNG bytes.
 pub(crate) fn png_of(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();

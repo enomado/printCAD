@@ -38,9 +38,6 @@ fn hash_trimesh(mesh: &kernel_api::TriMesh) -> u64 {
     hasher.finish()
 }
 
-/// Stable u64 fingerprint of a serde JSON value. Used as a `revision`
-/// counter for sketch geometry so the GPU mesh cache can skip the upload
-/// when the underlying sketch JSON hasn't changed between frames.
 /// The build volume as a line body: a box of the bed's width and depth,
 /// standing on Z, with the origin at the bed's corner or centre.
 fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh {
@@ -174,13 +171,6 @@ const BENCH_TOOL_FRAME: u32 = 192;
 const BENCH_REPORT_FRAME: u32 = 300;
 
 impl PrintCadApp {
-    /// Body of `about_to_wait`: pace the frame, drain worker channels,
-    /// assemble the scene, run the UI, render, read back the pick, and
-    /// apply this frame's UI commands.
-    /// Every background source that must keep frames coming until it
-    /// settles. The wake gate and the end-of-frame scheduler share this —
-    /// a source listed in only one of them either burns CPU or sleeps
-    /// through its own completion.
     /// The body the tree row under the pointer stands for: a body's row, an
     /// imported part's, or a feature's that builds its body's solid. A
     /// hidden body lights nothing.
@@ -230,6 +220,10 @@ impl PrintCadApp {
         }
     }
 
+    /// Every background source that must keep frames coming until it
+    /// settles. The wake gate and the end-of-frame scheduler share this: a
+    /// source listed in only one of them either burns CPU or sleeps through
+    /// its own completion.
     fn async_work_pending(&self) -> bool {
         self.texture_previews_pending()
             || self.picture.is_some()
@@ -279,12 +273,15 @@ impl PrintCadApp {
         commands
     }
 
+    /// Body of `about_to_wait`: pace the frame, drain worker channels,
+    /// assemble the scene, run the UI, render, read back the pick, and
+    /// apply this frame's UI commands.
     pub(crate) fn frame(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         // When the loop must wake for the next autosave, idle or not.
         let autosave_at = self.next_autosave();
-        // Optional FPS cap from settings (0 = uncapped).
-        // We only advance timing/FPS when we actually render a frame.
+        // Optional FPS cap from settings (0 = uncapped). Timing and FPS
+        // advance only on a frame that is rendered.
         let fps_cap = self.user_settings.fps_cap.max(0.0);
         if fps_cap > 0.0 {
             let target = Duration::from_secs_f32(1.0 / fps_cap);
@@ -303,9 +300,10 @@ impl PrintCadApp {
         // demand); an idle scene sleeps until the next event.
 
         // `about_to_wait` runs on every loop wake, including compositor
-        // frame callbacks acknowledging our own presents. Render only when
-        // someone asked (scheduler, input, OS expose) or state demands it —
-        // otherwise presenting would wake us again and the loop never rests.
+        // frame callbacks acknowledging the app's own presents. Render only
+        // when someone asked (scheduler, input, OS expose) or state demands
+        // it: otherwise presenting would wake the loop again and it never
+        // rests.
         {
             let input_active = self
                 .last_input_time
@@ -345,8 +343,8 @@ impl PrintCadApp {
                 self.fps_frame_count = 0;
                 self.smoothed_frame_s = None;
             } else if dt > 0.0 {
-                // The display updates every frame from a smoothed frame time
-                // — a real number one frame after waking, without the jitter
+                // The display updates every frame from a smoothed frame time:
+                // a real number one frame after waking, without the jitter
                 // of raw per-frame values. The 1 s accumulator below only
                 // paces the log line.
                 let sft = match self.smoothed_frame_s {
@@ -657,10 +655,10 @@ impl PrintCadApp {
         let ui_repaint_delay;
 
         // Pull any STEP imports that the kernel worker finished off the
-        // queue before we build this frame's submission, so freshly imported
+        // queue before this frame's submission is built, so freshly imported
         // bodies show up immediately and the import log lines stay tied to
         // the frame they actually became visible in. Has to happen before
-        // we take a mutable borrow on `self.renderer` below.
+        // the mutable borrow on `self.renderer` below.
         // Every tab takes its turn: a background tab's save completes, its
         // peers' edits land and its solids rebuild while another is on
         // screen.
@@ -932,7 +930,7 @@ impl PrintCadApp {
                 .is_some_and(|t| t.elapsed() < INPUT_TAIL);
             // Field-level reads, not `async_work_pending()`: a `&self`
             // method call cannot coexist with the live `gfx` borrow, and
-            // this must be frame-END truth — a kernel job submitted during
+            // this must be frame-END truth: a kernel job submitted during
             // this frame has to keep the loop awake. Mirror the helper.
             let work_pending = renderer.capture_pending()
                 || self.session.textured.values().any(|p| p.making.is_some())
@@ -1034,10 +1032,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Update the camera and assemble this frame's [`FrameSubmission`]
-    /// (sketch tessellations, imported bodies, workbench overlay meshes).
-    /// Returns the workbench's screen-space overlays, which are drawn via
-    /// egui rather than the 3D pass.
     /// True while the active workbench has an edit session open that keeps
     /// the view square to its plane. Gates the camera's out-of-plane
     /// rotation and the hover feedback that would compete with the bench's
@@ -1048,6 +1042,11 @@ impl PrintCadApp {
             .is_ok_and(|wb| wb.locks_view_to_plane() && wb.editing_feature().is_some())
     }
 
+    /// Update the camera and assemble this frame's [`FrameSubmission`]
+    /// (sketch tessellations, imported bodies, workbench overlay meshes).
+    /// Returns what the active workbench contributes beyond the 3D pass:
+    /// its screen-space overlays, drawn via egui, and the rest of
+    /// [`ViewportData`].
     fn build_scene_submission(&mut self, dt_secs: f32) -> ViewportData {
         let editing = self.sketch_editing_active();
         // An edit session opening on a picked face or body: the pick has
@@ -1420,7 +1419,6 @@ impl PrintCadApp {
         }
         self.annotation_overlays(&mut data);
 
-        // Combine sketch meshes, imported geometry, and overlay meshes.
         let mut all_meshes = sketch_meshes;
         all_meshes.extend(imported_meshes);
         // What the feature being edited adds or takes: its tool in the

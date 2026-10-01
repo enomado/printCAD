@@ -14,7 +14,7 @@ impl PrintCadApp {
             Some(label) => {
                 app_log::info(format!("Undo: {label}"));
                 self.after_history_jump();
-                // No Rebase: an op-journal undo IS ordinary forward ops —
+                // No Rebase: an op-journal undo IS ordinary forward ops, so
                 // the server log stays truthful and peers hear the undo.
             }
             None => app_log::info("Nothing to undo"),
@@ -46,8 +46,8 @@ impl PrintCadApp {
         true
     }
 
-    /// Clear selection/editing state that dangles after the document was
-    /// swapped by undo/redo.
+    /// Clear selection/editing state that dangles after undo/redo changed
+    /// the document.
     fn after_history_jump(&mut self) {
         let doc = &self.session.document;
         let body_exists = |id: core_document::BodyId| doc.bodies().iter().any(|body| body.id == id);

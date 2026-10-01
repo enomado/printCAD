@@ -205,8 +205,6 @@ pub struct PreferencesInputs<'a> {
 }
 
 /// The six ways the puck moves, in the order the device reports them: what
-/// the hand does, and the icon that shows it.
-/// The six ways the puck moves, in the order the device reports them: what
 /// the hand does, the drawing that shows it, and the id its chooser
 /// needs.
 struct Gesture {
@@ -331,7 +329,7 @@ pub fn draw_preferences(
     // The dialog keeps whatever the user dragged and resized it to; until
     // then it opens centred at its own size.
     // Built by hand rather than from `Modal::default_area`, which anchors
-    // itself to the centre every frame — an anchored area cannot be dragged.
+    // itself to the centre every frame: an anchored area cannot be dragged.
     let id = egui::Id::new("preferences");
     let area = egui::Area::new(id)
         .kind(egui::UiKind::Modal)
@@ -1565,10 +1563,10 @@ fn split_words(text: &str) -> Vec<String> {
     words
 }
 
-/// The running version and where releases are published.
 /// Installed workbench packages: whether each loads, what it may reach,
-/// removing it, and installing another. Everything here takes effect the
-/// next time the app starts.
+/// removing it, and installing another. Installs, updates and removals
+/// take effect at once; turning one on or off and what it may reach, when
+/// the draft is applied.
 fn packages_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
@@ -2118,6 +2116,7 @@ fn listing_card(
     });
 }
 
+/// The running version and where releases are published.
 fn updates_page(
     ui: &mut Ui,
     state: &mut PreferencesState,

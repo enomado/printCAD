@@ -107,7 +107,7 @@ pub enum HostTaskEnd {
 /// What a task reads of the moment.
 pub struct HostTaskInputs<'a> {
     pub document: &'a mut Document,
-    /// The face selected in the view: its body, index and name.
+    /// The face selected in the view: its body and index.
     pub picked_face: Option<(BodyId, u32)>,
     pub custom_colors: &'a [[f32; 3]],
 }
@@ -447,7 +447,6 @@ impl AppearanceTask {
             ));
         }
 
-        // The body's colour.
         heading(ui, "Colour");
         let display = entry.display;
         if let Some(color) = swatches(ui, display.map(|d| d.color), custom_colors) {
@@ -501,7 +500,6 @@ impl AppearanceTask {
             document.set_body_display(body, None);
         }
 
-        // How much shows through.
         heading(ui, "See-through");
         let mut through = (1.0 - display.map_or(1.0, |d| d.opacity)) * 100.0;
         let slider = ui.add(
@@ -515,7 +513,6 @@ impl AppearanceTask {
             document.set_body_display(body, Some(next));
         }
 
-        // Single faces.
         heading(ui, "Faces");
         if let Some((_, index)) = picked_face.filter(|(b, _)| *b == body) {
             self.face = Some(index);
@@ -559,7 +556,6 @@ impl AppearanceTask {
             });
         }
 
-        // What it is made of.
         heading(ui, "Material");
         let mut choice: usize = match &entry.material {
             None => 0,

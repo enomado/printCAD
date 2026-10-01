@@ -112,7 +112,8 @@ fn main() -> Result<()> {
         group: &|id| core_document::renamed::workbench_prefixed(id).into_owned(),
     });
 
-    // A script run from the command line needs no window.
+    // `--mcp` and a script run from the command line both finish before
+    // any window opens.
     let words: Vec<String> = std::env::args().skip(1).collect();
     // `printcad --mcp`: an agent's MCP server, relayed to the running app.
     if let Some(relayed) = app::mcp::relay_from_args(&words) {
@@ -217,7 +218,6 @@ struct PrintCadApp {
     available_gpus: Vec<String>,
     fps_accum_time: f32,
     fps_frame_count: u32,
-    // Current cursor position in viewport
     cursor_in_viewport: Option<(f32, f32)>,
     registry: DocumentService,
     /// Recently opened documents and the last dialog directory.
@@ -275,16 +275,16 @@ struct PrintCadApp {
     last_wake_reason: (bool, bool, bool, bool),
     /// An explicit request for the next wake to render (scheduler, OS
     /// expose, input handlers). `about_to_wait` fires on every event-loop
-    /// wake — including Wayland frame callbacks after each present — so
+    /// wake, Wayland frame callbacks after each present included, so
     /// rendering must be gated on intent or presenting itself keeps the
     /// loop hot forever.
     redraw_needed: bool,
     /// The render loop decided to sleep and painted one closing frame whose
-    /// FPS reads "idle" — a frozen number would look like a measurement.
+    /// FPS reads "idle": a frozen number would look like a measurement.
     fps_display_idle: bool,
     /// Exponentially smoothed frame time (seconds). Updated every rendered
     /// frame, so the FPS display is live from the first measured interval
-    /// after a wake — no batching delay. `None` right after a sleep; the
+    /// after a wake, with no batching delay. `None` right after a sleep; the
     /// next frame's dt seeds it with a real measurement.
     smoothed_frame_s: Option<f32>,
     /// egui's repaint request from the last built frame.
@@ -353,8 +353,8 @@ struct PrintCadApp {
     scripts_to_run: Vec<PathBuf>,
     /// The scripts folder's scripts, and when it was last read.
     script_library: Vec<script_library::ScriptEntry>,
-    /// The workbench packages found at start, and those installed or
-    /// removed since (which take effect at the next start).
+    /// The workbench packages found at start, and those installed, updated
+    /// or removed while the app runs.
     packages: Vec<workbenches::PackageStatus>,
     /// Package installs, update checks and updates running on threads.
     package_work: app::packages::PackageWork,
@@ -519,7 +519,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Get the workbench ID for the currently active workbench.
     /// The bench a new document lands in, as the registry orders them.
     pub(crate) fn landing_workbench(&self) -> ActiveWorkbench {
         ActiveWorkbench(landing_workbench(&self.registry))

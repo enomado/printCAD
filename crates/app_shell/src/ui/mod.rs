@@ -160,7 +160,7 @@ impl UiLayer {
     }
 
     /// Act on a menu entry that changes the window: a page of the property
-    /// panel, a rename, the console's input, the placement dialog.
+    /// panel, a rename, the console's input, an application task.
     fn apply_local(
         &mut self,
         ctx: &Context,
@@ -245,8 +245,8 @@ impl UiLayer {
     /// be the only thing acting on the wheel or showing what is under the
     /// cursor. egui answers with the modal's own layer whenever one is open,
     /// wherever the pointer is, which is what makes a modal modal. Overlays
-    /// the shell paints without interaction — the HUD cards, the axis
-    /// triad — are built `interactable(false)` and are skipped here.
+    /// the shell paints without interaction (the HUD cards, the axis
+    /// triad) are built `interactable(false)` and are skipped here.
     pub fn pointer_over_floating_ui(&self) -> bool {
         let Some(pos) = self.ctx.pointer_latest_pos() else {
             return false;
@@ -1031,7 +1031,6 @@ impl UiLayer {
             }
         });
 
-        // Detect workbench change
         // A palette pick on another bench switches first, then activates.
         let plain_switch = palette_activate.is_none();
         if let Some((bench, id)) = palette_activate {
@@ -1051,7 +1050,6 @@ impl UiLayer {
         }
         let workbench_changed = active_workbench != prev_workbench;
         if workbench_changed && plain_switch {
-            // Reset tool when switching workbenches
             active_tool = ActiveTool::default();
         }
 

@@ -71,7 +71,8 @@ impl ThumbnailCache {
     }
 }
 
-/// The start page's main area: the cards, or the release notes.
+/// The start page's main area: the cards, the release notes, or the export
+/// walkthrough.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StartView {
     #[default]

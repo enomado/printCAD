@@ -46,7 +46,6 @@ pub(crate) struct DocumentSession {
     pub active_document_object: Option<FeatureId>,
     pub active_body_id: Option<BodyId>,
     pub tree_selection: Option<TreeItemId>,
-    /// Current file on disk (if any).
     pub current_file: Option<PathBuf>,
     /// Start page or workspace: a fresh tab shows the start page.
     pub screen: Screen,
@@ -57,12 +56,12 @@ pub(crate) struct DocumentSession {
     /// The worker parsing an opened document, for the same reason.
     pub document_open_rx: Option<std::sync::mpsc::Receiver<OpenJob>>,
     pub save_progress: Option<std::sync::Arc<SaveProgress>>,
-    /// The document server connection — local daemon by default, direct
-    /// files when no daemon can run, a remote plugin someday. Everything
-    /// that crosses it is the wire protocol; `document_load_epoch` rides
+    /// The document server connection: the local daemon by default, direct
+    /// files when no daemon can run. Everything that crosses it is the wire
+    /// protocol; `document_load_epoch` rides
     /// Open requests as the token that invalidates late responses.
     pub server: Box<dyn core_document::server::DocumentServer>,
-    /// The socket the server connection is (or should be) on — the
+    /// The socket the server connection is (or should be) on: the
     /// document's own once it has a file, the tab's own for Untitled.
     /// Reconnects and connection switches aim here.
     pub server_socket: PathBuf,
@@ -72,7 +71,7 @@ pub(crate) struct DocumentSession {
     /// Remote imports being re-derived: a peer's ImportModel op created the
     /// bodies; the kernel re-imports the carried bytes (written to a temp
     /// file) and the resulting meshes are routed to those pre-existing
-    /// bodies by import order — deterministic at any thread count.
+    /// bodies by import order, deterministic at any thread count.
     pub remote_import_routes: HashMap<PathBuf, RemoteImportRoute>,
     /// What each peer has selected, keyed by actor. Bodies in here render
     /// with the peer tint; entries die with their peer.
@@ -82,7 +81,7 @@ pub(crate) struct DocumentSession {
     /// to the document the open is about to replace would lose the edit,
     /// so they wait here and apply right after the new document lands.
     pub held_remote_ops: Vec<(Uuid, Vec<core_document::op::DocumentOp>)>,
-    /// Last presence we told the server, so only changes cross the wire.
+    /// The last presence told to the server, so only changes cross the wire.
     pub last_sent_presence: Option<core_document::server::PresenceState>,
     pub document_load_epoch: u64,
     /// Picked STEP path and draft tessellation settings until the user
@@ -92,7 +91,7 @@ pub(crate) struct DocumentSession {
     /// is held, so drags coalesce into single steps.
     pub journal: core_document::history::OpJournal,
     /// A workbench asked to create a sketch on this body; carried between
-    /// hooks until the sketch workbench consumes it (plane picker).
+    /// hooks until the bench that edits sketches consumes it (plane picker).
     pub pending_sketch_creation: Option<core_document::SketchAttachRequest>,
     /// A bench's edit session on a plane was open last frame.
     pub plane_session_open: bool,
@@ -114,7 +113,7 @@ pub(crate) struct DocumentSession {
     /// used or dismissed.
     pub viewport_menu: Option<crate::ui::ViewportMenu>,
     /// Workbench to return to when an edit session finishes, when the flow
-    /// was started from another workbench (e.g. Design).
+    /// was started from another workbench.
     pub return_workbench: Option<ActiveWorkbench>,
     /// The last tool started, and its bench: what Repeat starts again.
     pub last_tool: Option<(crate::WorkbenchId, String)>,
@@ -159,8 +158,8 @@ pub(crate) struct DocumentSession {
     /// changes a feature every frame, only the latest shape is built.
     pub builds_in_flight:
         std::collections::HashMap<Uuid, Option<crate::app::recompute::QueuedBuild>>,
-    /// Bodies whose build out on the kernel thread no longer stands for
-    /// their history (it emptied meanwhile): what lands is left unused.
+    /// Bodies whose history emptied while a build was out on the kernel
+    /// thread: what lands is left unused.
     pub stale_builds: std::collections::HashSet<Uuid>,
     /// The serial of each body's build out on the kernel thread.
     pub build_serials: std::collections::HashMap<Uuid, u64>,
@@ -219,9 +218,9 @@ impl DocumentSession {
         screen: Screen,
     ) -> Self {
         let tab = Uuid::new_v4();
-        // The document server: a per-tab local daemon by default; plain
-        // in-process file I/O when the daemon cannot start. Same contract
-        // either way — the trait is the seam a remote plugin replaces.
+        // A per-tab local daemon by default, plain in-process file I/O when
+        // the daemon cannot start: the same `DocumentServer` contract either
+        // way.
         let server_socket = doc_server::socket_path_for_untitled(tab);
         let server: Box<dyn core_document::server::DocumentServer> =
             match doc_server::DaemonClient::spawn_or_connect(&server_socket) {

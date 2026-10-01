@@ -120,9 +120,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Close tab `index`, saving or discarding its edits as the user
-    /// decides. `false` when they cancel. The last tab closing leaves a
-    /// blank one behind.
     /// Open again the file of the last tab closed that is not open now and
     /// still there.
     pub(crate) fn reopen_closed_tab(&mut self) {
@@ -141,6 +138,9 @@ impl PrintCadApp {
         app_log::info("No closed tab to reopen");
     }
 
+    /// Close tab `index`, saving or discarding its edits as the user
+    /// decides. `false` when they cancel. The last tab closing leaves a
+    /// blank one behind.
     pub(crate) fn close_tab_interactive(&mut self, index: usize) -> bool {
         if index >= self.tabs.len() {
             return false;

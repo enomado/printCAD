@@ -53,7 +53,7 @@ struct DraggedFeature(FeatureId);
 pub struct TreeUiResult {
     pub selection: Option<TreeItemId>,
     pub activation: Option<TreeItemId>,
-    /// The row under the pointer this frame — drives the details line, so
+    /// The row under the pointer this frame. It drives the details line, so
     /// a glance tells what something is without committing a click.
     pub hovered: Option<TreeItemId>,
     pub imported_visibility_change: Option<(Uuid, bool)>,
@@ -97,7 +97,7 @@ struct TreeNode {
     label: String,
     /// What this item is, spelled out ("Instance of assembly Frame",
     /// "Sketch feature"). Shown in the details line under the tree when the
-    /// item is selected — never inline, where it only crowds the names.
+    /// item is selected, never inline, where it only crowds the names.
     detail: Option<String>,
     tooltip: Option<String>,
     dirty: bool,
@@ -121,8 +121,8 @@ struct TreeNode {
     /// A feature from a package that is not loaded: the package's id and
     /// the repository its menu installs it from.
     needs_package: Option<(String, String)>,
-    /// Marks the body-tip feature / features past the tip (excluded from
-    /// the build).
+    /// The row is its body's tip feature, or a feature past the tip (left
+    /// out of the build).
     is_tip: bool,
     after_tip: bool,
     /// Feature nodes get a history context menu.
@@ -176,7 +176,6 @@ impl DocumentTree {
             })
             .collect();
 
-        // First, build subtrees for all root features.
         for &root_id in feature_tree.roots() {
             if let Some(node) = feature_tree.get_node(root_id) {
                 let body = node.body;
@@ -191,8 +190,8 @@ impl DocumentTree {
             }
         }
 
-        // Then, include any remaining nodes that weren't reachable from roots
-        // (defensive: should be rare in a well-formed DAG).
+        // Nodes not reachable from the roots still get a row (rare in a
+        // well-formed DAG).
         for (&id, node) in feature_tree.all_nodes() {
             if !visited.contains(&id) {
                 let body = node.body;
@@ -277,7 +276,6 @@ impl DocumentTree {
         }
     }
 
-    /// The spelled-out description of a tree item, for the details line.
     /// The row that stands for `body`, with every row above it, root first.
     ///
     /// A pick in the viewport names a body; the tree is the only thing that
@@ -298,6 +296,7 @@ impl DocumentTree {
         walk(&self.nodes, body, &mut trail).then_some(trail)
     }
 
+    /// The spelled-out description of a tree item, for the details line.
     pub fn detail_for(&self, id: TreeItemId) -> Option<String> {
         fn find(nodes: &[TreeNode], id: TreeItemId) -> Option<&TreeNode> {
             for node in nodes {
@@ -757,7 +756,7 @@ fn build_imported_node(
     // An instance whose only child is the product it instances is one thing
     // to the user, not two: show a single row named for the instance, with
     // the product's children hoisted under it. Selection and visibility keep
-    // the instance's identity — hiding an instance hides that placement.
+    // the instance's identity: hiding an instance hides that placement.
     if imported.kind == kernel_api::ImportedNodeKind::Instance
         && imported.children.len() == 1
         && let Some(target) = document.imported_object(imported.children[0])
@@ -933,7 +932,7 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
 
     // A row hidden inside a closed branch cannot be scrolled to, so the
     // branches above it open first and the row names itself as the
-    // selection — the same answer a click on it would give.
+    // selection, the same answer a click on it would give.
     let mut options = options;
     let mut scroll_to = None;
     if let Some(body) = options.reveal_body
@@ -1010,7 +1009,7 @@ struct RowSpec<'a> {
 const ROW_FONT: f32 = 12.5;
 
 /// Whether a branch shows its children. Until the user says otherwise, a
-/// body and its features are open — that is the work in progress — and an
+/// body and its features are open (that is the work in progress) and an
 /// imported assembly is closed: a real-world STEP file is hundreds of parts,
 /// and unfolding all of them would bury the rest of the tree.
 fn open_state(ui: &Ui, id: TreeItemId) -> bool {
@@ -1415,7 +1414,6 @@ fn draw_node(
     }
 }
 
-/// Right-click menu: history actions on feature rows, Delete on anything
 /// A feature row's menu: its own edits, its place in history, its body's
 /// look and placement, the clipboard, its formulas and the rest.
 fn attach_feature_menu(
@@ -1723,8 +1721,11 @@ fn bench_menu_entries(
     picked
 }
 
-/// Bodies and imported parts: select the body, or Delete, which takes the
-/// body's features and geometry with it.
+/// The menu of a component row (Take apart, then what the benches offer),
+/// or of a body or imported part row: the conversions and repairs its
+/// bodies wait for, the linked file, selection, renaming, visibility, the
+/// shared body entries, the clipboard, Delete, which takes the body's
+/// features and geometry with it, and what the benches offer.
 fn attach_body_menu(
     response: Response,
     node: &TreeNode,
@@ -2405,7 +2406,7 @@ mod tests {
         doc.set_imported_object_graph(vec![asm], graph);
 
         // The instance and its only part draw as one row, which carries the
-        // instance's id — so that is the row a pick has to land on.
+        // instance's id, so that is the row a pick has to land on.
         let tree = DocumentTree::build(&doc, &DocumentService::default());
         assert_eq!(
             tree.path_to_body(body),
@@ -2438,8 +2439,8 @@ mod tests {
     }
 
     /// An instance whose only child is the assembly it instances shows as
-    /// ONE row — named for the instance, carrying the assembly's children,
-    /// keeping the instance's identity — and the row says what it is.
+    /// ONE row (named for the instance, carrying the assembly's children,
+    /// keeping the instance's identity), and the row says what it is.
     #[test]
     fn an_instance_and_its_product_collapse_into_one_row() {
         use kernel_api::ImportedNodeKind as K;
@@ -2523,7 +2524,7 @@ mod tests {
         assert_eq!(row.detail.as_deref(), Some("Instance of part Anet v1-body"));
     }
 
-    /// Bracket tags are gone from labels: a label is just the name.
+    /// A label carries no bracket tag: it is just the name.
     #[test]
     fn labels_carry_no_kind_tags() {
         let mut doc = Document::new("tree");

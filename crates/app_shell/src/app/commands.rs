@@ -16,8 +16,8 @@ use crate::ui::{
 };
 
 /// Phase 1 of the two-phase dispatch: commands folded into per-frame
-/// intents. Phase 2 applies them in the frame order the pre-command code
-/// used, so a single frame carrying several actions behaves identically.
+/// intents. Phase 2 applies the intents in one fixed order, whatever order
+/// their commands came in.
 #[derive(Default)]
 struct FrameIntents {
     camera_snap: Option<CameraSnapView>,
@@ -100,8 +100,8 @@ impl PrintCadApp {
                 }
                 UiCommand::ConfirmExport => self.confirm_export(),
                 UiCommand::CancelExport => self.session.export_pending = None,
-                // Dialog-kind priority (import > open > save-as > save)
-                // mirrors the old boolean-cascade in `start_file_dialog`.
+                // One dialog a frame, by priority: import > open > save-as
+                // > save.
                 UiCommand::File(FileCommand::ImportStep) => {
                     intents.file_dialog = Some(FileDialogKind::ImportStep);
                 }
@@ -547,7 +547,7 @@ impl PrintCadApp {
             intents.workbench_switch = Some((self.session.active_workbench.clone(), wb));
         }
 
-        // ---- Phase 2: apply in legacy frame order ----
+        // Phase 2: the intents applied in their fixed order.
 
         // An open sketch keeps the view square to its plane: standard
         // views and out-of-plane rotation are refused, but rolling about
@@ -803,8 +803,8 @@ impl PrintCadApp {
     /// End the active workbench's editing session (e.g. Exit Sketch Mode)
     /// and drop the edited feature from the active-object slot so the
     /// workbench doesn't immediately re-enter editing on the next event.
-    /// When the editing flow was started from another workbench (Part
-    /// Design's "New Sketch"), jump back to it.
+    /// When the editing flow was started from another workbench (a new
+    /// sketch made from a solid bench), jump back to it.
     pub(crate) fn finish_active_workbench_editing(&mut self) {
         let wb_id = self.session.active_workbench.0.clone();
         let edited = self
@@ -838,9 +838,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Host-driven workbench switch (create-sketch flow, return-on-finish).
-    /// Remembers the outgoing workbench as the return target when jumping
-    /// INTO an edit-session bench so finishing can jump back.
     /// Start the last tool started again, as its button would, when its
     /// bench is the one in use.
     fn repeat_last_tool(&mut self) {
@@ -915,6 +912,9 @@ impl PrintCadApp {
         );
     }
 
+    /// Host-driven workbench switch (create-sketch flow, return-on-finish).
+    /// Remembers the outgoing workbench as the return target when jumping
+    /// into an edit-session bench so finishing can jump back.
     pub(crate) fn switch_workbench_for_flow(&mut self, target: crate::WorkbenchId) {
         if self.session.active_workbench.0 == target {
             return;
@@ -932,7 +932,6 @@ impl PrintCadApp {
         self.call_workbench_activate(&target);
     }
 
-    /// Frame the camera around the imported geometry (or the default box).
     /// Frame the selected body (else the active one); the whole scene when
     /// neither has geometry.
     fn fit_view_to_selection(&mut self) {
@@ -956,6 +955,7 @@ impl PrintCadApp {
             .reset_to_fit(center, radius, None, &self.user_settings.camera);
     }
 
+    /// Frame the camera around the imported geometry (or the default box).
     fn fit_view_to_scene(&mut self) {
         app_log::info("Fit View requested");
         if let Some(aabb) = document_imported_aabb(&self.session.document) {
@@ -1041,8 +1041,8 @@ impl PrintCadApp {
     }
 
     /// A double click on a row: a feature opens for editing in the bench
-    /// that claims its kind (a sketch in the sketcher, a part feature or
-    /// datum in Design's task panel), through `Workbench::edit_feature`.
+    /// that claims its kind (a sketch in the sketcher, a solid feature or
+    /// datum in its bench's task panel), through `Workbench::edit_feature`.
     /// A single click only selects.
     pub(crate) fn apply_tree_activation(&mut self, item: TreeItemId) {
         let TreeItemId::Feature(id) = item else {
@@ -1111,7 +1111,6 @@ impl PrintCadApp {
         }
     }
 
-    /// Apply a history context-menu action from the feature tree.
     /// Delete what a tree row stands for: a feature, or a body with every
     /// feature and every bit of geometry on it.
     fn delete_tree_item(&mut self, item: TreeItemId) {
@@ -1192,8 +1191,6 @@ impl PrintCadApp {
         self.close_gesture();
     }
 
-    /// Read `body`'s shape from `path`, as `doc.replace_shape` does: one
-    /// step of history, recorded as that command.
     /// Make the picture at `path` texture `index` of `body`'s pattern: the
     /// file kept in the document, its grey levels the heights.
     pub(crate) fn use_texture_picture(
@@ -1247,6 +1244,8 @@ impl PrintCadApp {
         app_log::info(format!("Texture picture: {}", path.display()));
     }
 
+    /// Read `body`'s shape from `path`, as `doc.replace_shape` does: one
+    /// step of history, recorded as that command.
     pub(crate) fn replace_shape_from(
         &mut self,
         body: core_document::BodyId,
@@ -1414,6 +1413,7 @@ impl PrintCadApp {
         }
     }
 
+    /// Apply a history context-menu action from the feature tree.
     fn apply_tree_feature_command(
         &mut self,
         feature: core_document::FeatureId,
@@ -1540,8 +1540,8 @@ impl PrintCadApp {
 }
 
 impl PrintCadApp {
-    /// A fresh document from a start-page card: one body in Design,
-    /// plus an XY sketch open for editing when asked.
+    /// A fresh document from a start-page card: one body in the landing
+    /// bench, plus an XY sketch open for editing when asked.
     fn start_new_document(&mut self, kind: StartKind) {
         let walkthrough = kind == StartKind::ExportWalkthrough;
         let kind = if walkthrough {

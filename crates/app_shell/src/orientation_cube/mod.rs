@@ -6,8 +6,8 @@
 //!
 //! The cube is interactive: clicking faces snaps to that view, clicking arrows rotates 45°.
 //!
-//! The RGB axis triad is drawn in a separate floating widget at the **top-right** of the
-//! viewport so it does not overlap the cube (which sits at the **bottom-right**).
+//! The RGB axis triad is drawn in a separate floating widget at the **bottom-left** of the
+//! viewport so it does not overlap the cube (which sits at the **top-right**).
 //!
 //! `cube` draws the cube and takes its clicks, `arrows` the triad and the
 //! turning arrows, `faces` the face textures and colours.
@@ -45,7 +45,6 @@ pub struct OrientationCubeConfig {
     pub cube_scale: f32,
     /// Background circle color
     pub background_color: Color32,
-    /// Border color
     pub border_color: Color32,
     /// Whether to show rotation arrows around the circle
     pub show_rotation_arrows: bool,
@@ -81,7 +80,7 @@ pub struct OrientationCubeInput {
 /// Result of orientation cube interaction
 #[derive(Debug, Clone, Default)]
 pub struct OrientationCubeResult {
-    /// If set, snap camera to look from this direction (normalized vector pointing FROM camera TO target)
+    /// If set, snap the camera to this preset view.
     pub snap_to_view: Option<CameraSnapView>,
     /// If set, rotate camera by this amount (in degrees) around the specified axis
     pub rotate_delta: Option<RotateDelta>,
@@ -217,8 +216,9 @@ fn camera_display_rotation(input: &OrientationCubeInput) -> Mat3 {
 }
 
 /// Where **world** +X / +Y / +Z land in the axis widget (same `(Δx, −Δy)` as the cube).
-/// `w` maps as `rot * (Bᵀ w)` with `rot = camera_display_rotation` and `B` the settings canonical basis —
-/// same pipeline as cube face directions, which fixes e.g. +Y “back” vs forward for Z‑up.
+/// `w` maps as `rot * (Bᵀ w)` with `rot = camera_display_rotation` and `B` the settings canonical basis:
+/// the same pipeline as the cube's face directions, so the triad and the cube agree on which way
+/// +Y points (back, not forward, for Z-up).
 fn world_axes_widget_rotation(input: &OrientationCubeInput) -> Mat3 {
     let basis = input.axis_system.canonical_basis();
     camera_display_rotation(input) * basis.transpose()
@@ -242,7 +242,6 @@ pub fn draw(
 
     let y_offset: f32 = 10.0;
 
-    // Get the available central rect (the viewport area between panels)
     let available = viewport_rect;
     let margin = 10.0;
 
@@ -253,7 +252,6 @@ pub fn draw(
         available.top() + toolbar_clearance + margin,
     );
 
-    // Use Area for floating widget in the viewport
     egui::Area::new(egui::Id::new("orientation_cube"))
         .fixed_pos(pos)
         .order(crate::ui::VIEW_LAYER)
@@ -267,7 +265,6 @@ pub fn draw(
                 response.rect.min.y + arc_arrow_padding + config.widget_size / 2.0 - y_offset,
             );
 
-            // Draw background circle (unchanged outer widget)
             painter.circle_filled(
                 local_center,
                 config.widget_size / 2.0,
@@ -279,7 +276,6 @@ pub fn draw(
                 Stroke::new(2.0_f32, config.border_color),
             );
 
-            // Draw and handle cube face clicks
             if let Some(snap) = draw_cube_interactive(
                 ui,
                 &painter,

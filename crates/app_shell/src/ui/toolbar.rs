@@ -167,9 +167,8 @@ pub struct ToolbarInputs<'a> {
     pub layout: &'a [Vec<String>],
 }
 
-/// The Scripts button: the scripts folder's scripts, then running a file,
-/// the console and the folder itself.
-/// What the Scripts button's menu shows.
+/// What the Scripts button's menu shows: the scripts folder's scripts,
+/// then running a file, the console and the folder itself.
 struct ScriptsMenu<'a> {
     scripts: &'a [crate::script_library::ScriptEntry],
     console_open: bool,
@@ -558,7 +557,7 @@ fn groups(standard: &[Option<ShellItem>], tools: &[ToolDescriptor], bench: &str)
         content: GroupContent::Workbench,
     });
     // The bench's tools, one group per run of a category along a row and
-    // side, as they were separated before groups could move.
+    // side.
     let mut open: Vec<((u8, bool), usize)> = Vec::new();
     let mut seen: std::collections::HashMap<String, usize> = Default::default();
     for (i, tool) in tools.iter().enumerate() {

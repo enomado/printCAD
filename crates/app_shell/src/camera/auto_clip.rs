@@ -1,6 +1,6 @@
 //! Near/far adjustment from scene AABB (depth along view forward).
 //!
-//! See `camera_system.md` §5 — handles empty/degenerate bounds and caps `far/near` ratio.
+//! See `camera_system.md` §5: handles empty/degenerate bounds and caps the `far/near` ratio.
 
 use glam::Vec3;
 use settings::{CameraSettings, ProjectionMode};
@@ -70,8 +70,8 @@ pub fn update_auto_clip(
 
     // With the whole box ahead, nothing is nearer than its nearest corner and
     // the near plane may move up towards it. A box that reaches the eye's
-    // own plane holds geometry at any depth down to zero — the eye is inside
-    // it or beside it — so only the focal floor is safe; the nearest corner
+    // own plane holds geometry at any depth down to zero (the eye is inside
+    // it or beside it), so only the focal floor is safe; the nearest corner
     // ahead can be metres beyond what is in front of the camera.
     let near = if min_depth > 0.0 {
         near_from_focal

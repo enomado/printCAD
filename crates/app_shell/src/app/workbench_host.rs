@@ -16,7 +16,7 @@ use crate::ui::TreeItemId;
 
 /// Snapshot of host state a hook's context is built from. Constructed via
 /// [`PrintCadApp::interaction_ctx_params`] / [`PrintCadApp::overlay_ctx_params`]
-/// (`&self`-only — a `&mut self` builder could not coexist with the split
+/// (`&self`-only: a `&mut self` builder could not coexist with the split
 /// field borrows inside [`PrintCadApp::with_workbench_ctx`]).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct WbCtxParams {
@@ -48,8 +48,6 @@ pub(crate) enum HookSite {
 }
 
 impl PrintCadApp {
-    /// Context params for activate/deactivate/input hooks: camera-derived
-    /// viewport plus the live hover/selection state.
     /// Close the current undo step, after working out the formulas and
     /// letting every bench follow values they moved, so an edit and what
     /// it moves are one step.
@@ -76,6 +74,8 @@ impl PrintCadApp {
         }
     }
 
+    /// Context params for activate/deactivate/input hooks: camera-derived
+    /// viewport plus the live hover/selection state.
     pub(crate) fn interaction_ctx_params(&self) -> WbCtxParams {
         let vp = self.session.camera.viewport_info();
         WbCtxParams {

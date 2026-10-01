@@ -144,7 +144,6 @@ fn panel(
                 egui::Stroke::new(1.0, BORDER),
             );
 
-            // Header.
             let (header, _) = ui.allocate_exact_size(
                 Vec2::new(ui.available_width(), TAB_BAR),
                 egui::Sense::hover(),

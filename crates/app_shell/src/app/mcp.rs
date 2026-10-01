@@ -227,12 +227,12 @@ impl ToolHost for Relay {
     }
 }
 
-/// The tools, every one loaded by the agent from the start: they are few,
-/// and an agent that has to search for them first loses turns doing it.
 /// What a call's `description` argument is for.
 const DESCRIBE: &str = "A few words on what this does, such as \"Pocket the bolt holes\": \
                         the user sees it as the call's title in the chat";
 
+/// The tools, every one loaded by the agent from the start: they are few,
+/// and an agent that has to search for them first loses turns doing it.
 pub(crate) fn tools() -> Vec<Tool> {
     vec![
         Tool {
@@ -561,8 +561,8 @@ impl PrintCadApp {
         }
     }
 
-    /// The scene as the user sees it, as a picture an agent can look at.
-    /// The scene from the current view, as a PNG `width` by `height`.
+    /// The scene as the user sees it from the current view, as a PNG
+    /// `width` by `height` an agent can look at.
     pub(crate) fn view_png(&self, width: u32, height: u32) -> Option<Vec<u8>> {
         let shapes = self.thumbnail_shapes();
         let (forward, up) = self.session.camera.view_basis();

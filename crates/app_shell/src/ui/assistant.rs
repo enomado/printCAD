@@ -1081,9 +1081,6 @@ fn stop_button(ui: &mut egui::Ui) -> egui::Response {
 mod tests {
     use super::*;
 
-    /// The panel in a window `width` wide with a busy chat whose tool
-    /// title is one very long line: the input's rect, and what is left for
-    /// the viewport.
     /// A select option of a chat's agent, with these choices.
     fn select(id: &str, category: &str, choices: &[&str]) -> agents::acp::SessionOption {
         agents::acp::SessionOption {
@@ -1106,8 +1103,9 @@ mod tests {
         }
     }
 
-    /// Lay the panel out: the input's rect, what is left for the
-    /// viewport, and everything the panel painted, before clipping.
+    /// Lay the panel out in a window `width` wide, with a busy chat whose
+    /// tool title is one very long line: the input's rect, what is left for
+    /// the viewport, and everything the panel painted, before clipping.
     fn lay_out(width: f32) -> (egui::Rect, egui::Rect, egui::Rect) {
         let long = format!(
             "jq -r '.[0].text' {}",

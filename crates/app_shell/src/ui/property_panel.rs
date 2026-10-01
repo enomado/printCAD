@@ -633,8 +633,6 @@ fn data_groups(
     }
 }
 
-/// Draw the panel body for `selected`. `detail` is the tree's spelled-out
-/// description of the hovered (else selected) item.
 /// What the panel shows: the item, its spelled-out description, and the
 /// measure of its body when it has one.
 pub struct PanelSubject<'a> {
@@ -643,6 +641,8 @@ pub struct PanelSubject<'a> {
     pub physical: Option<&'a super::Physical>,
 }
 
+/// Draw the panel body for `subject.selected`. `subject.detail` is the
+/// tree's spelled-out description of the hovered (else selected) item.
 pub fn draw_property_panel(
     ui: &mut egui::Ui,
     document: &Document,
@@ -680,7 +680,6 @@ pub fn draw_property_panel(
             .unwrap_or_default(),
     };
 
-    // Tab strip.
     let (strip, _) = ui.allocate_exact_size(
         egui::Vec2::new(ui.available_width(), 28.0),
         egui::Sense::hover(),
@@ -922,10 +921,10 @@ fn value_row(ui: &mut egui::Ui, row: &PropRow) {
     );
 }
 
-/// The Label row edits the item's name in place.
 /// The key under which a rename asks the Label row for the keyboard.
 pub const FOCUS_LABEL: &str = "property_label_focus";
 
+/// The Label row edits the item's name in place.
 fn label_row(
     ui: &mut egui::Ui,
     selected: TreeItemId,
@@ -1109,7 +1108,8 @@ fn display_rows(
 mod tests {
     use super::*;
 
-    /// The keys Design's payloads use, as its hints declare them.
+    /// The keys a solid-feature bench's payloads use, as its hints declare
+    /// them.
     fn hints() -> PropertyHints {
         PropertyHints {
             length_keys: vec!["length", "length2", "depth", "depth2", "radius", "diameter"],

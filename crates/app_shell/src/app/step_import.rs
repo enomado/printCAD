@@ -69,8 +69,6 @@ impl PrintCadApp {
             .request_step_import(path.to_path_buf(), detail);
     }
 
-    /// Drain any STEP responses that have arrived from the kernel worker and
-    /// fold them into the document. Called once per frame in `about_to_wait`.
     /// Whether a kernel error is the user's own cancellation rather than a
     /// geometry failure. The kernel reports it as an ordinary `Err` carrying
     /// `OgeomError::Cancelled`'s message, so match on that.
@@ -78,6 +76,8 @@ impl PrintCadApp {
         error.contains("cancelled")
     }
 
+    /// Drain the responses that have arrived from the kernel worker and fold
+    /// them into the document. Called once per frame in `about_to_wait`.
     pub(crate) fn drain_kernel_responses(&mut self) {
         for response in self.kernel_worker.drain() {
             // Each answer goes to the tab it belongs to: an import to the
@@ -136,7 +136,7 @@ impl PrintCadApp {
             }
             let stale = self.session.stale_builds.remove(body_id);
             self.build_landed(*body_id);
-            // Built from a history the body no longer has.
+            // Built from a history that is not the body's current one.
             if stale {
                 return;
             }
@@ -338,12 +338,8 @@ impl PrintCadApp {
         }
     }
 
-    /// Register the imported bodies + raw asset bytes on the document and
-    /// frame the camera around the new geometry. Mirrors the behaviour of
-    /// the previous synchronous `import_step_at` but runs entirely on the UI
-    /// thread after the heavy CPU work has completed in the worker.
     /// Land a re-derived remote import's meshes on the bodies the peer's
-    /// op created. Import order is the correspondence — the kernel is
+    /// op created. Import order is the correspondence: the kernel is
     /// deterministic at any thread count, so the n-th imported body is the
     /// n-th id the op carried.
     fn apply_remote_import_geometry(
@@ -383,6 +379,9 @@ impl PrintCadApp {
         app_log::info(format!("Remote import materialized: {count} bodies"));
     }
 
+    /// Register the imported bodies and raw asset bytes on the document and
+    /// frame the camera around the new geometry, on the UI thread once the
+    /// worker has done the heavy work.
     fn apply_step_import(
         &mut self,
         path: &Path,
@@ -392,8 +391,8 @@ impl PrintCadApp {
         elapsed: Duration,
     ) -> Result<()> {
         let apply_start = Instant::now();
-        // Capture "fresh document" *before* we start mutating it so the
-        // auto-unit pick below isn't confused by bodies we're about to add.
+        // Whether the document is fresh, read before any write so the
+        // auto-unit pick below is not confused by the bodies the import adds.
         let was_fresh_document = self.session.document.bodies().is_empty()
             && !self.session.document.assets().any(|_| true)
             && self.session.document.imported_geometries().next().is_none();
@@ -526,7 +525,7 @@ impl PrintCadApp {
                 id_map.insert(src.id, Uuid::new_v4());
             }
             let mut claimed_body_indices: HashMap<usize, Uuid> = HashMap::new();
-            // Preserve C++ FFI preorder DFS emission order so siblings appear
+            // Keep the kernel's preorder emission order so siblings appear
             // in source-file order instead of HashMap-iteration order.
             let mut parent_links_in_order: Vec<(Uuid, Uuid)> =
                 Vec::with_capacity(imported_nodes.len());
@@ -651,7 +650,7 @@ impl PrintCadApp {
         };
 
         // The whole import is one atomic op: asset + bytes + bodies + graph
-        // + unit. Geometry lands separately below — derived, not replicated.
+        // + unit. Geometry lands separately below: derived, not replicated.
         self.session.document.apply_import(
             asset,
             raw_bytes,

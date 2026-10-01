@@ -1,10 +1,10 @@
-//! Background reader for a 6-DoF mouse — a six-axis navigation puck.
+//! Background reader for a 6-DoF mouse, a six-axis navigation puck.
 //!
 //! The daemon that owns the device publishes events on a UNIX socket, and the
 //! vendor's own driver publishes them through the display server instead; one
 //! thread here blocks on whichever answered, so the UI thread never waits on
 //! it. The thread reconnects on its own, because a daemon with no device
-//! plugged in — or no daemon at all — is an ordinary state, not an error
+//! plugged in, or no daemon at all, is an ordinary state, not an error
 //! worth reporting.
 //!
 //! The daemon sends a reading only when the puck's deflection *changes*, so
@@ -97,7 +97,7 @@ impl SixDofWorker {
     /// for the daemon until it finds one.
     ///
     /// `wake` is called when the puck starts or stops moving and on every
-    /// button change — the moments a sleeping frame loop has to be told
+    /// button change: the moments a sleeping frame loop has to be told
     /// about. While the puck is deflected the loop keeps itself awake, so
     /// nothing is called for the readings in between.
     pub fn spawn(wake: impl Fn() + Send + 'static) -> Self {

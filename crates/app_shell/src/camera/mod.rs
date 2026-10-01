@@ -127,16 +127,17 @@ impl CameraController {
     }
 
     /// Lock out-of-plane rotation (the middle-button orbit). Pan, zoom, and roll stay
-    /// available — they keep the view planar. Used while editing a sketch.
+    /// available: they keep the view planar. Used while editing a sketch.
     pub fn set_orbit_lock(&mut self, locked: bool) {
         self.orbit_locked = locked;
     }
 
     /// Begin / update pointer drag modes: MMB orbit (a clean MMB click picks the pivot), LMB select, RMB pan, LMB+RMB tilt (roll).
     ///
-    /// Orbit activates after movement from the press anchor exceeds
-    /// `CameraSettings::click_drag_threshold_px` (over geometry or empty space). A shorter click
-    /// without that much motion selects under the cursor instead.
+    /// A middle-button orbit starts once the pointer moves
+    /// `CameraSettings::click_drag_threshold_px` from where the button went down (over geometry or
+    /// empty space); a shorter middle click picks the pivot, and a left press that moves less than
+    /// that is a selection click.
     ///
     /// When `CameraSettings::orbit_pivot_pick` is set, the first orbit-drag frame remembers
     /// `pick_world_under_cursor` as an off-axis orbit pivot (no recenter jump).
@@ -282,7 +283,6 @@ impl CameraController {
                     return CameraPointerResult::Redraw;
                 }
 
-                // Orbit lives on MMB drag; a plain MMB click picks the pivot.
                 if self.mmb_was_down_scene {
                     let thresh_sq =
                         settings.click_drag_threshold_px * settings.click_drag_threshold_px;
@@ -338,7 +338,7 @@ impl CameraController {
         }
     }
 
-    /// Must be called from `PhysicalPosition`, converted to viewport-local pixels.
+    /// The cursor's position, in viewport-local physical pixels.
     pub fn set_cursor_viewport(&mut self, pos: Option<Vec2>) {
         self.last_cursor_viewport = pos;
     }
@@ -361,8 +361,8 @@ impl CameraController {
 
     /// Steer the view with one reading from a 6-DoF mouse.
     ///
-    /// `axis_readings` is the device's own six numbers — three translations,
-    /// then three rotations — as the daemon sends them. They describe a rate,
+    /// `axis_readings` is the device's own six numbers, three translations
+    /// then three rotations, as the daemon sends them. They describe a rate,
     /// not a step: the puck is held at a deflection and the view moves for as
     /// long as it is held, so each reading is integrated over the frame.
     /// Returns whether the view moved.
@@ -423,7 +423,7 @@ impl CameraController {
 
         // A sketch locks the view to its plane: the two movements that would
         // tilt out of it are dropped, and the one about the plane's own
-        // normal — roll — is kept.
+        // normal, roll, is kept.
         if orbit != Vec2::ZERO && !self.orbit_locked {
             let delta = orbit * dt * std::f32::consts::PI / 180.0 / radians_per_px;
             match self.orbit_anchor_world {
@@ -448,7 +448,8 @@ impl CameraController {
         true
     }
 
-    /// Middle mouse — uses current pick world position supplied by caller.
+    /// A middle click's pivot pick, at the world point under the cursor the
+    /// caller supplies.
     pub fn on_mmb_pivot_pick(&mut self, world_hit: Option<Vec3>, settings: &CameraSettings) {
         if let Some(hit) = world_hit
             && ops::set_pivot_world_hit(&mut self.state, &self.axes, hit, settings)
@@ -720,10 +721,10 @@ impl CameraController {
         let cam_up = up_raw.normalize();
 
         // The camera state consumes the orientation as `q * (-depth) =
-        // forward` and `q * vertical = up` in the ACTIVE axis preset — do
-        // not assume the canonical XYZ basis here (that was wrong for the
-        // default Z-up preset and rolled the view on sketch entry). Build q
-        // as the rotation mapping the preset pair onto the target pair.
+        // forward` and `q * vertical = up` in the ACTIVE axis preset, not
+        // the canonical XYZ basis, which rolls the view under the default
+        // Z-up preset. Build q as the rotation mapping the preset pair onto
+        // the target pair.
         let depth = self.axes.depth().vector();
         let vertical = self.axes.vertical().vector();
         let src_forward = -depth;
@@ -784,7 +785,8 @@ impl CameraController {
         self.position_vec().to_array()
     }
 
-    /// Focal pivot (/workbench "target").
+    /// The focal pivot: the point the view looks at and orbits about,
+    /// handed to benches as the camera's target.
     pub fn target(&self) -> [f32; 3] {
         self.focal_point_world().to_array()
     }

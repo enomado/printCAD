@@ -88,9 +88,9 @@ fn orient_to_plane_puts_sketch_axes_screen_aligned() {
     use super::CameraController;
     use glam::Vec3;
 
-    // Default settings use the Z-up axis preset — the case where an
+    // Default settings use the Z-up axis preset: the case where an
     // orientation built against a hardcoded XYZ camera basis, instead of
-    // the preset's, rolls the view on sketch entry.
+    // the preset's, would roll the view on sketch entry.
     let settings = CameraSettings::default();
     let mut cam = CameraController::new(&settings, (800, 600));
     cam.update_viewport((0, 0), (800, 600));
@@ -111,8 +111,7 @@ fn orient_to_plane_puts_sketch_axes_screen_aligned() {
         .expect("+Y visible");
 
     // Screen space is Y-down: sketch +X must appear to the right of the
-    // origin and sketch +Y above it (smaller screen y). The old code showed
-    // the sketch mirrored/rolled.
+    // origin and sketch +Y above it (smaller screen y).
     assert!(
         plus_x.0 > origin.0 + 1.0,
         "sketch +X should be screen-right: origin {origin:?}, +X {plus_x:?}"
@@ -352,7 +351,7 @@ fn world_to_viewport_is_the_screen_position_less_the_viewport_origin() {
 }
 
 /// A scene box far larger than the part being looked at, with the camera
-/// inside it — one stray face metres off — must not push the near plane
+/// inside it (one stray face metres off), must not push the near plane
 /// past the part: geometry can sit anywhere in the box, however close.
 #[test]
 fn a_camera_inside_the_scene_box_keeps_the_near_plane_close() {

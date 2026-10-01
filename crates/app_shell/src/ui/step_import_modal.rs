@@ -48,7 +48,6 @@ pub fn draw_step_import_modal(
         .backdrop_color(egui::Color32::from_black_alpha(140))
         .show(ctx, |ui| {
             ui.set_width(460.0);
-            // Header.
             egui::Frame::new()
                 .inner_margin(egui::Margin::symmetric(16, 12))
                 .show(ui, |ui| {
@@ -135,7 +134,6 @@ pub fn draw_step_import_modal(
                     }
                 });
 
-            // Footer.
             let r = ui.min_rect();
             ui.painter().hline(r.x_range(), r.bottom(), egui::Stroke::new(1.0, BORDER));
             egui::Frame::new()

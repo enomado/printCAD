@@ -1,4 +1,4 @@
-//! Interpolated view transitions (`camera_system.md` §9).
+//! Interpolated view transitions (`camera_system.md`, Animation).
 
 use glam::{DVec3, Quat};
 use settings::CameraSettings;

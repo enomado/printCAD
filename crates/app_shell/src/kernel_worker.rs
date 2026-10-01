@@ -6,7 +6,7 @@
 //! imports.
 //!
 //! The worker also performs the `std::fs::read(path)` that backs the
-//! document's asset blob — that I/O belongs off the UI thread, and is
+//! document's asset blob: that I/O belongs off the UI thread, and is
 //! naturally cheap to colocate with the kernel call since the worker is
 //! already off the hot path.
 
@@ -24,15 +24,12 @@ use uuid::Uuid;
 
 /// Job submitted from the UI thread to the kernel worker.
 pub enum KernelRequest {
-    /// Read a STEP/STP file (BRep-only fast path) and return bodies for the UI
-    /// to register; tessellation is scheduled separately per body.
+    /// Read a model file and return its bodies, meshed as they are read,
+    /// for the UI to register.
     ImportStep {
         path: PathBuf,
         detail: TessellationSettings,
     },
-    /// Rebuild a body's solid from its Design feature chain.
-    /// `op_features` maps each op index to its owning feature id so a
-    /// failure can be pinned on the culprit in the tree.
     /// Measure a body's snapshot: volume, area, centre of mass.
     Measure {
         body_id: Uuid,
@@ -80,6 +77,8 @@ pub enum KernelRequest {
 struct BuildRequest {
     body_id: Uuid,
     ops: Vec<SolidOp>,
+    /// The feature each op index belongs to, so a failure is pinned on the
+    /// culprit in the tree.
     op_features: Vec<Uuid>,
     detail: TessellationSettings,
     /// The feature being edited, whose preview the result carries.
@@ -94,7 +93,7 @@ struct BuildRequest {
 ///
 /// Each request emits exactly one response; the UI's `in_flight` counter is
 /// decremented when one is drained, so spurious extras would skew the
-/// "importing X..." indicator.
+/// status bar's busy state and job count.
 pub enum KernelResponse {
     StepImported {
         path: PathBuf,
@@ -178,7 +177,7 @@ pub enum KernelResponse {
 struct Activity {
     /// printCAD's own label: which feature or body is being worked on.
     context: Option<String>,
-    /// The kernel's stage within that work — changes rapidly, and during a
+    /// The kernel's stage within that work: changes rapidly, and during a
     /// parallel loop arrives from every worker thread at once.
     detail: Option<String>,
     /// `(done, total)` announced by the kernel's current stage.
@@ -245,10 +244,9 @@ fn lock<T>(slot: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// UI-side handle to the worker thread. `in_flight` is incremented by
-/// [`Self::request_step_import`] / [`Self::request_tessellate_body`] and
-/// decremented by [`Self::drain`] so the status panel can show a spinner while
-/// imports are pending.
+/// UI-side handle to the worker thread. `in_flight` is incremented by every
+/// `request_*` call and decremented by [`Self::drain`] for each response, so
+/// the status panel can show a spinner while work is pending.
 pub struct KernelWorker {
     tx: Sender<KernelRequest>,
     build_tx: Sender<BuildRequest>,
@@ -322,10 +320,9 @@ impl KernelWorker {
         }
     }
 
-    /// Submit a Design solid rebuild. One response arrives per request.
-    /// Submit a body's chain. With `preview`, a feature being edited, the
-    /// result also carries what that feature does (its tool, and the body
-    /// without it).
+    /// Submit a body's chain. One response arrives per request. With
+    /// `preview`, a feature being edited, the result also carries what that
+    /// feature does (its tool, and the body without it).
     pub fn request_build_solid(
         &mut self,
         body_id: Uuid,
@@ -494,7 +491,7 @@ impl KernelWorker {
         out
     }
 
-    /// Number of imports the worker is currently processing or has queued.
+    /// Number of requests the worker threads are processing or have queued.
     /// Drives the bottom-panel spinner.
     pub fn in_flight(&self) -> u32 {
         self.in_flight
@@ -517,7 +514,7 @@ impl KernelWorker {
         self.activities().find_map(|a| lock(a).progress())
     }
 
-    /// Whether a running job can be stopped — i.e. one is running at all.
+    /// Whether a running job can be stopped, that is, whether one is running.
     pub fn is_cancellable(&self) -> bool {
         self.activities().any(|a| lock(a).canceller.is_some())
     }

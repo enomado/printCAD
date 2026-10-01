@@ -20,7 +20,7 @@ pub struct HoverCard {
 }
 
 /// Everything the UI needs to draw one frame. Constructed as a literal at
-/// the call site — the fields borrow disjoint pieces of `PrintCadApp`, which
+/// the call site: the fields borrow disjoint pieces of `PrintCadApp`, which
 /// a `&mut self` builder method could not express.
 pub struct UiFrameInputs<'a> {
     pub screen: Screen,
@@ -28,11 +28,11 @@ pub struct UiFrameInputs<'a> {
     pub recent: &'a [RecentEntry],
     /// Autosaved copies a crash left, which the start page offers back.
     pub recoverable: &'a [crate::app::recovery::Recoverable],
-    /// The host's tool state — authoritative. The host consumes a used
+    /// The host's tool state, authoritative. The host consumes a used
     /// Action tool id from its copy once its bench has handled it, so the
     /// UI must re-seed from it each frame rather than keeping its own.
     pub active_tool: ActiveTool,
-    /// The host's active workbench — authoritative (the host can switch
+    /// The host's active workbench, authoritative (the host can switch
     /// benches itself, e.g. the create-sketch flow).
     pub active_workbench: ActiveWorkbench,
     pub settings: &'a UserSettings,

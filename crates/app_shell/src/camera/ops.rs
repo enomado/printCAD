@@ -22,7 +22,8 @@ pub fn pan_pixels(
     if right.length_squared() < 1e-12 || up.length_squared() < 1e-12 {
         return;
     }
-    // Negate viewport X so drags behave like grabbing the scene (matches vertical feel).
+    // Viewport X is negated so a drag grabs the scene, as the Y-down
+    // vertical already does.
     let world_delta = (-delta_px.x as f64 * wpp)
         * DVec3::new(right.x as f64, right.y as f64, right.z as f64)
         + (delta_px.y as f64 * wpp) * DVec3::new(up.x as f64, up.y as f64, up.z as f64);
@@ -41,7 +42,7 @@ pub fn orbit_pixels(
         return;
     }
     let sens = settings.orbit_sensitivity * 0.005;
-    // Screen-space Δ with negation so orbit matches CAD/turntable expect: drag follows scene motion.
+    // Screen deltas negated so the scene turns the way the drag goes.
     let dx = -delta_px.x * sens;
     let dy = -delta_px.y * sens;
 
@@ -59,7 +60,8 @@ pub fn orbit_pixels(
     let right = right.normalize();
 
     let yaw_q = glam::Quat::from_axis_angle(up_axis, dx);
-    // Pitch magnitude clamped loosely to reduce pole flipping (CAD-style).
+    // Pitch per step clamped loosely so a fast drag does not flip over the
+    // pole.
     let pitch_q = glam::Quat::from_axis_angle(right, dy.clamp(-1.45, 1.45));
     let delta_q = (yaw_q * pitch_q).normalize();
 

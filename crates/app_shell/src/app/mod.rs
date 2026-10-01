@@ -1,4 +1,5 @@
-//! Application-shell internals split out of `main.rs`.
+//! Application-shell internals: the app's per-concern modules beside
+//! `main.rs`.
 
 pub(crate) mod agent_context;
 pub(crate) mod animation;
