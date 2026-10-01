@@ -103,7 +103,7 @@ impl PrefGroup {
             PrefGroup::Input => &["Mouse", "6-DoF mouse"],
             PrefGroup::Keyboard => &["Shortcuts"],
             PrefGroup::Workbench(_) => &["General"],
-            PrefGroup::Packages => &["Installed"],
+            PrefGroup::Packages => &["Installed", "Browse"],
             PrefGroup::Units => &["Units"],
             PrefGroup::ImportExport => &["STEP", "IGES"],
             PrefGroup::Printing => &["Printer"],
@@ -139,6 +139,10 @@ pub struct PreferencesState {
     pub package_request: Option<super::UiCommand>,
     /// The GitHub address typed on the packages page.
     package_repo: String,
+    /// What the store's list is narrowed to: the words typed, and the
+    /// category picked (0 for every one).
+    store_query: String,
+    store_category: usize,
 }
 
 impl Default for PreferencesState {
@@ -156,6 +160,8 @@ impl Default for PreferencesState {
             recording: None,
             package_request: None,
             package_repo: String::new(),
+            store_query: String::new(),
+            store_category: 0,
         }
     }
 }
@@ -188,6 +194,8 @@ pub struct PreferencesInputs<'a> {
     pub packages: &'a [workbenches::PackageStatus],
     /// What the last look for a newer printCAD found.
     pub release: &'a crate::app::updates::ReleaseCheck,
+    /// The workbench store's list.
+    pub store: &'a crate::app::packages::StoreView,
 }
 
 /// The six ways the puck moves, in the order the device reports them: what
@@ -560,7 +568,9 @@ fn draw_content(
                             keyboard_page(ui, state, inputs.registry, inputs.scripts, &filter)
                         }
                         PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, &filter),
-                        PrefGroup::Packages => packages_page(ui, state, inputs.packages, &filter),
+                        PrefGroup::Packages => {
+                            packages_page(ui, state, inputs.packages, inputs.store, &filter)
+                        }
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
                         PrefGroup::Printing => printing_page(ui, state, &filter),
@@ -1287,7 +1297,9 @@ fn search_results(
                     keyboard_page(ui, state, inputs.registry, inputs.scripts, filter)
                 }
                 PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, filter),
-                PrefGroup::Packages => packages_page(ui, state, inputs.packages, filter),
+                PrefGroup::Packages => {
+                    packages_page(ui, state, inputs.packages, inputs.store, filter)
+                }
                 PrefGroup::Units => units_page(ui, state, filter),
                 PrefGroup::ImportExport => import_page(ui, state, filter),
                 PrefGroup::Printing => printing_page(ui, state, filter),
@@ -1555,9 +1567,14 @@ fn packages_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
     packages: &[workbenches::PackageStatus],
+    store: &crate::app::packages::StoreView,
     filter: &str,
 ) {
     use workbenches::PackageState;
+    if state.tab == 1 && filter.is_empty() {
+        browse_page(ui, state, packages, store);
+        return;
+    }
     if !filter.is_empty()
         && !"workbench packages plugins install remove extensions".contains(filter)
         && !packages
@@ -1604,7 +1621,18 @@ fn packages_page(
                     PackageState::Failed(_) => ("Did not load", DANGER),
                 };
                 ui_kit::widgets::badge(ui, text, color);
+                if store.lists(package).is_some() {
+                    ui_kit::widgets::badge(ui, "Listed", ACCENT)
+                        .on_hover_text("In the workbench store's list");
+                }
             });
+            if let Some(why) = store.lists(package).and_then(|l| l.removed.as_deref()) {
+                ui.label(
+                    RichText::new(format!("Taken off the store's list: {why}"))
+                        .font(sans(FONT_XS))
+                        .color(WARNING),
+                );
+            }
             if !package.description.is_empty() {
                 ui.label(
                     RichText::new(&package.description)
@@ -1720,6 +1748,247 @@ fn packages_page(
         &mut state.draft.packages.check_updates,
         "Check for updates of packages from GitHub when printCAD starts",
     );
+}
+
+/// The workbench store: every package its list holds, to read about and
+/// install, under a word of care about software from other people.
+fn browse_page(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    packages: &[workbenches::PackageStatus],
+    store: &crate::app::packages::StoreView,
+) {
+    // The page on screen with nothing fetched yet fetches by itself.
+    if !store.looked {
+        state.package_request = Some(super::UiCommand::LookAtStore);
+    }
+    ui_kit::widgets::note_card(
+        ui,
+        ui_kit::widgets::Note::Warning,
+        Some("Software from other people"),
+        "These workbenches are made by people outside printCAD. The store checks that each \
+         is what it says it is; it does not check what its code does. Install the ones you \
+         trust, and allow each only what it needs: the network lets it reach the internet, \
+         and running its own programs takes it outside its sandbox.",
+    );
+    ui.add_space(SPACE_1);
+
+    let listings: Vec<&workbenches::Listing> = store
+        .index
+        .iter()
+        .flat_map(|index| index.packages.iter())
+        // A package taken off the list shows only to whoever has it.
+        .filter(|l| l.removed.is_none() || packages.iter().any(|p| p.id == l.id))
+        .collect();
+    let mut categories: Vec<&str> = listings
+        .iter()
+        .flat_map(|l| l.categories.iter().map(String::as_str))
+        .collect();
+    categories.sort_unstable();
+    categories.dedup();
+    let category_names: Vec<String> = std::iter::once("Every category".to_string())
+        .chain(categories.iter().map(|c| c.replace('-', " ")))
+        .collect();
+    let options: Vec<(usize, &str)> = category_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (i, name.as_str()))
+        .collect();
+    if state.store_category >= options.len() {
+        state.store_category = 0;
+    }
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut state.store_query)
+                .hint_text("Search the store")
+                .font(sans(FONT_SM))
+                .desired_width(220.0),
+        );
+        ui_kit::widgets::select_field(
+            ui,
+            "store_category",
+            &mut state.store_category,
+            &options,
+            160.0,
+        );
+        let refresh = ui
+            .add_enabled_ui(!store.looking, |ui| {
+                ui_kit::widgets::small_secondary_button(ui, "Refresh")
+            })
+            .inner;
+        if refresh.clicked() {
+            state.package_request = Some(super::UiCommand::LookAtStore);
+        }
+    });
+    let status = match (&store.error, store.looking, &store.index) {
+        (_, true, _) => ("Reading the store's list…".to_string(), TEXT3),
+        (Some(e), _, Some(_)) => (format!("Showing the list as last read: {e}"), WARNING),
+        (Some(e), _, None) => (e.clone(), WARNING),
+        (None, _, Some(index)) => (
+            format!(
+                "{} package{} listed, as of {}",
+                listings.len(),
+                if listings.len() == 1 { "" } else { "s" },
+                index.generated.replace('T', " ").trim_end_matches('Z')
+            ),
+            TEXT3,
+        ),
+        (None, _, None) => (String::new(), TEXT3),
+    };
+    ui.label(RichText::new(status.0).font(sans(FONT_XS)).color(status.1));
+    ui.add_space(SPACE_1);
+
+    let query = state.store_query.trim().to_lowercase();
+    let category = (state.store_category > 0).then(|| categories[state.store_category - 1]);
+    let shown = listings.iter().filter(|l| {
+        let words = format!("{} {} {}", l.name, l.id, l.description).to_lowercase();
+        (query.is_empty() || words.contains(&query))
+            && category.is_none_or(|c| l.categories.iter().any(|lc| lc == c))
+    });
+    for listing in shown {
+        listing_card(ui, state, packages, listing);
+        ui.add_space(SPACE_1);
+    }
+
+    ui.add_space(SPACE_2);
+    pref_group(
+        ui,
+        "Store",
+        vec![
+            PrefRow::new("List address", |ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut state.draft.packages.store)
+                        .font(mono(FONT_XS))
+                        .desired_width(320.0),
+                );
+                let default = state.draft.packages.store == settings::STORE_INDEX;
+                if !default && ui_kit::widgets::small_secondary_button(ui, "Default").clicked() {
+                    state.draft.packages.store = settings::STORE_INDEX.to_string();
+                }
+                field.changed()
+            })
+            .hint("The workbench registry's index; empty for no store"),
+        ],
+        "",
+    );
+}
+
+/// One package the store lists: what it is, what it asks to reach, and
+/// installing or updating it.
+fn listing_card(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    packages: &[workbenches::PackageStatus],
+    listing: &workbenches::Listing,
+) {
+    let installed = packages.iter().find(|p| p.id == listing.id);
+    let installable = listing.installable();
+    Card::new().padding(10.0).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(&listing.name)
+                    .font(sans_semibold(FONT_SM))
+                    .color(TEXT1),
+            );
+            if let Some(release) = &listing.release {
+                ui.label(
+                    RichText::new(&release.version)
+                        .font(mono(FONT_XS))
+                        .color(TEXT3),
+                );
+            }
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match (installed, &installable) {
+                    (Some(status), Ok(release)) => {
+                        let tag = status.source.as_ref().map_or("", |s| s.tag.as_str());
+                        let newer = status.source.is_some()
+                            && workbenches::is_newer(&release.tag, tag, &status.version);
+                        if newer {
+                            if primary_button(ui, &format!("Update to {}", release.tag)).clicked() {
+                                state.package_request =
+                                    Some(super::UiCommand::UpdatePackage(listing.id.clone()));
+                            }
+                        } else {
+                            ui_kit::widgets::badge(ui, "Installed", SUCCESS);
+                        }
+                    }
+                    (Some(_), Err(_)) => {
+                        ui_kit::widgets::badge(ui, "Installed", SUCCESS);
+                    }
+                    (None, Ok(_)) => {
+                        if primary_button(ui, "Install").clicked() {
+                            state.package_request =
+                                Some(super::UiCommand::InstallListed(listing.id.clone()));
+                        }
+                    }
+                    (None, Err(_)) => {}
+                },
+            );
+        });
+        if !listing.description.is_empty() {
+            ui.label(
+                RichText::new(&listing.description)
+                    .font(sans(FONT_XS))
+                    .color(TEXT2),
+            );
+        }
+        if let Err(why) = &installable {
+            let color = if listing.removed.is_some() {
+                WARNING
+            } else {
+                DANGER
+            };
+            ui.label(RichText::new(why).font(sans(FONT_XS)).color(color));
+        }
+        // What it asks to reach beyond its own folder, the weightiest first.
+        ui.horizontal_wrapped(|ui| {
+            if let Some(release) = &listing.release {
+                let asks = &release.capabilities;
+                if asks.helper {
+                    ui_kit::widgets::badge(ui, "Runs its own programs", DANGER)
+                        .on_hover_text("Outside its sandbox, once you allow it");
+                }
+                if asks.network {
+                    ui_kit::widgets::badge(ui, "Uses the network", WARNING)
+                        .on_hover_text("Once you allow it");
+                }
+                if asks.save_dialog {
+                    ui_kit::widgets::badge(ui, "Asks where to save files", TEXT3);
+                }
+                if !(asks.helper || asks.network || asks.save_dialog) {
+                    ui.label(
+                        RichText::new("Reaches nothing beyond its own folder")
+                            .font(sans(FONT_XS))
+                            .color(TEXT3),
+                    );
+                }
+            }
+            for category in &listing.categories {
+                ui_kit::widgets::badge(ui, &category.replace('-', " "), TEXT3);
+            }
+        });
+        let by = if listing.maintainers.is_empty() {
+            String::new()
+        } else {
+            format!(" · by {}", listing.maintainers.join(", "))
+        };
+        ui.label(
+            RichText::new(format!("{} · {}{by}", listing.id, listing.license))
+                .font(mono(FONT_XS))
+                .color(TEXT3),
+        );
+        ui.horizontal(|ui| {
+            ui.hyperlink_to(
+                RichText::new(format!("github.com/{}", listing.repository)).font(mono(FONT_XS)),
+                format!("https://github.com/{}", listing.repository),
+            );
+            if let Some(homepage) = &listing.homepage {
+                ui.hyperlink_to(RichText::new("Documentation").font(sans(FONT_XS)), homepage);
+            }
+        });
+    });
 }
 
 fn updates_page(

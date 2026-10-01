@@ -97,7 +97,8 @@ pub struct UiLayer {
     ctx: Context,
     state: State,
     preferences: preferences::PreferencesState,
-    /// `PRINTCAD_BENCH_PREFS=<page>` opened Preferences there once.
+    /// `PRINTCAD_BENCH_PREFS=<page>` (or `<page>/<tab>`) opened Preferences
+    /// there once.
     bench_prefs_opened: bool,
     /// The newer release whose notice was put away.
     dismissed_release: Option<String>,
@@ -364,6 +365,7 @@ impl UiLayer {
             scripts,
             packages,
             release,
+            store,
             console_attention,
             command_ids,
             script_running,
@@ -564,8 +566,11 @@ impl UiLayer {
                 && let Ok(page) = std::env::var("PRINTCAD_BENCH_PREFS")
             {
                 self.bench_prefs_opened = true;
-                if let Some(group) = preferences::PrefGroup::named(&page, registry) {
-                    self.preferences.open_at(settings, unit, group, 0);
+                // `<page>/<tab>` opens on that tab.
+                let (page, tab) = page.split_once('/').unwrap_or((page.as_str(), ""));
+                if let Some(group) = preferences::PrefGroup::named(page, registry) {
+                    let tab = group.tabs().iter().position(|t| *t == tab).unwrap_or(0);
+                    self.preferences.open_at(settings, unit, group, tab);
                 }
             }
             let mut open_palette = menu.open_palette;
@@ -602,6 +607,7 @@ impl UiLayer {
                         scripts,
                         packages,
                         release,
+                        store,
                     },
                 );
                 if let Some(request) = self.preferences.package_request.take() {
@@ -913,6 +919,7 @@ impl UiLayer {
                     scripts,
                     packages,
                     release,
+                    store,
                 },
             );
             if let Some(request) = self.preferences.package_request.take() {

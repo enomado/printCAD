@@ -45,7 +45,16 @@ cargo fmt --all                   # CI enforces --check
   loads what `settings::workbenches_dir()` holds as
   `UserSettings.packages` allows (Preferences › Workbench packages
   installs from a file or a GitHub address, updates, removes, turns off
-  and grants, all while the app runs). Network work and compiling
+  and grants, all while the app runs; its Browse tab is the workbench
+  store: `wb_wasm::store` reads the index the registry repository
+  `PrintCAD-wb-repo` publishes (`UserSettings.packages.store`, kept for
+  offline in `settings::store_cache`, fetched as `PackageNews::Store`,
+  quietly at start with the update check), and `install_listed` installs a
+  listing's release checked against the index's sha256, recording its
+  repository so it updates as any GitHub install; the page opens on a
+  third-party warning, installed packages the store lists show Listed, and
+  one it took off is warned of once a run; `PRINTCAD_STORE_INDEX` points
+  it elsewhere). Network work and compiling
   (installs, update checks at start, updates, turning one on) runs on
   threads reporting through `app/packages.rs::PackageNews`, drained each
   frame; the registry then changes on the UI thread: `unload_bench` moves

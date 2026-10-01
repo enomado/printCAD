@@ -849,6 +849,7 @@ impl PrintCadApp {
                         scripts: &self.script_library,
                         packages: &self.packages,
                         release: &self.release_check,
+                        store: &self.store,
                         console_attention: std::mem::take(&mut self.console_attention),
                         command_ids: &self.command_ids,
                         script_running: self.script_runs.front().map(|r| r.label.as_str()),

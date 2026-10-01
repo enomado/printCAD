@@ -291,6 +291,8 @@ impl PrintCadApp {
                 UiCommand::RemovePackage(id) => self.remove_package(&id),
                 UiCommand::InstallPackageFromGithub(text) => self.install_package_from_github(text),
                 UiCommand::CheckPackageUpdates => self.check_package_updates(),
+                UiCommand::LookAtStore => self.look_at_store(false),
+                UiCommand::InstallListed(id) => self.install_listed(id),
                 UiCommand::UpdatePackage(id) => self.update_package(id),
                 UiCommand::StopScript => self.stop_script(),
                 UiCommand::ToggleRecording => self.toggle_recording(),

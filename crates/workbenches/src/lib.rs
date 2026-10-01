@@ -9,6 +9,7 @@ core_document::define_workbenches!(SketchWorkbench, DesignWorkbench, AssemblyWor
 
 pub use core_document::registration::REGISTERED_WORKBENCHES;
 pub use wb_wasm::remote::Source;
+pub use wb_wasm::store::{Index as StoreIndex, Listing};
 pub use wb_wasm::{Capabilities, Package, package::ARCHIVE_EXTENSION};
 
 /// How an installed workbench package stands: loaded, turned off, or
@@ -158,6 +159,28 @@ pub fn install_package(
 /// It reaches the network; call it away from the window.
 pub fn install_from_github(text: &str, root: &std::path::Path) -> Result<Package, String> {
     wb_wasm::remote::install_from_github(&wb_wasm::remote::Http::default(), text, root)
+}
+
+/// The workbench store's index at `url`. It reaches the network.
+pub fn fetch_store(url: &str) -> Result<StoreIndex, String> {
+    wb_wasm::store::fetch_index(&wb_wasm::remote::Http::default(), url)
+}
+
+/// An index the app kept, from its text.
+pub fn read_store(text: &str) -> Result<StoreIndex, String> {
+    wb_wasm::store::read_index_text(text)
+}
+
+/// Install a package listed in the store, checked against the index. It
+/// reaches the network.
+pub fn install_listed(listing: &Listing, root: &std::path::Path) -> Result<Package, String> {
+    wb_wasm::store::install_listed(&wb_wasm::remote::Http::default(), listing, root)
+}
+
+/// Whether release `latest` is newer than the one installed (`tag`, with
+/// the manifest's `version`).
+pub fn is_newer(latest: &str, tag: &str, version: &str) -> bool {
+    wb_wasm::remote::newer(latest, tag, version)
 }
 
 /// The latest published release of `repo` (`owner/repo`), and whether it

@@ -14,7 +14,18 @@ a package from, with CI and releases on tags already set up, is
 
 ## Installing one
 
-Preferences › Workbench packages installs a `.pcbench` file (Install from
+Preferences › Workbench packages › Browse is the workbench store: the
+packages the [workbench registry](https://github.com/gilbertorconde/PrintCAD-wb-repo)
+lists, to search, read about (what each asks to reach beyond its own
+folder comes first) and install. The registry reviews each listing and
+checks that the package is what it says it is; it does not audit the
+code, so install what you trust. A package installed from the store comes
+from its repository's latest release, checked against the list's
+checksum, and updates as any package from GitHub does; one the registry
+takes off its list is marked, and whoever has it is told why. The store's
+address can be changed, or emptied for no store, at the page's foot.
+
+Installing does not need the store: the Installed page installs a `.pcbench` file (Install from
 a file…) or a package published on GitHub: type the repository's address
 (`https://github.com/owner/repo`, or `owner/repo`) to take its latest
 release, or a release's address (`…/releases/tag/v1.2.0`) to take that
@@ -133,7 +144,11 @@ tar czf hello.pcbench -C pkg .
 
 To publish, attach the `.pcbench` file to a GitHub release. The release's
 tag is its version for updates (`v0.2.0` is newer than `v0.1.0`); the
-first `.pcbench` asset of the latest release is what users get.
+first `.pcbench` asset of the latest release is what users get. To have it
+in the store, add an entry to the
+[workbench registry](https://github.com/gilbertorconde/PrintCAD-wb-repo)
+by pull request; its README says how. Releases after that reach the store
+by themselves.
 
 Icons are 24×24 SVGs drawn in white (`#fff`) with a 1.5 px stroke; the app
 tints them. A tool or feature names one by its file name (`gear` for

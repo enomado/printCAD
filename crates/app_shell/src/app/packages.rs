@@ -34,6 +34,69 @@ pub(crate) enum PackageNews {
         found: crate::app::updates::ReleaseCheck,
         quiet: bool,
     },
+    /// The workbench store's index; `quiet` for the look at start.
+    Store {
+        found: Result<workbenches::StoreIndex, String>,
+        quiet: bool,
+    },
+}
+
+/// What the app knows of the workbench store.
+#[derive(Default)]
+pub(crate) struct StoreView {
+    /// The index as last fetched, or as kept from a run before.
+    pub index: Option<workbenches::StoreIndex>,
+    /// A fetch is out.
+    pub looking: bool,
+    /// Why the last fetch failed.
+    pub error: Option<String>,
+    /// A fetch was asked for in this run: the Browse page asks once by
+    /// itself.
+    pub looked: bool,
+    /// Installed packages already warned of as taken off the list.
+    warned: std::collections::HashSet<String>,
+}
+
+impl StoreView {
+    /// The listing of package `id`.
+    pub fn listing(&self, id: &str) -> Option<&workbenches::Listing> {
+        self.index.as_ref()?.packages.iter().find(|l| l.id == id)
+    }
+
+    /// Whether an installed package is the one the store lists: the same
+    /// id from the same repository.
+    pub fn lists(&self, status: &PackageStatus) -> Option<&workbenches::Listing> {
+        let listing = self.listing(&status.id)?;
+        let source = status.source.as_ref()?;
+        source
+            .repo
+            .eq_ignore_ascii_case(&listing.repository)
+            .then_some(listing)
+    }
+}
+
+/// The store's index as the last run kept it.
+fn kept_store() -> Option<workbenches::StoreIndex> {
+    let text = std::fs::read_to_string(settings::store_cache()?).ok()?;
+    workbenches::read_store(&text).ok()
+}
+
+/// Keep the store's index for the next run, and for browsing offline.
+fn keep_store(index: &workbenches::StoreIndex) {
+    let Some(path) = settings::store_cache() else {
+        return;
+    };
+    let written = serde_json::to_string(index)
+        .map_err(|e| e.to_string())
+        .and_then(|text| {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, text).map_err(|e| e.to_string())
+        });
+    if let Err(e) = written {
+        app_log::warn(format!("Could not keep the workbench store's list: {e}"));
+    }
 }
 
 /// The package threads' line back, and how many are out.
@@ -187,6 +250,77 @@ impl PrintCadApp {
         });
     }
 
+    /// Fetch the workbench store's index, showing the one kept from the
+    /// last run meanwhile; `quiet` keeps a failure out of the log.
+    pub(crate) fn look_at_store(&mut self, quiet: bool) {
+        self.store.looked = true;
+        if self.store.index.is_none() {
+            self.store.index = kept_store();
+        }
+        // Dev/bench hook: `PRINTCAD_STORE_INDEX` reads the list from
+        // another address, such as a registry served on this machine.
+        let url = std::env::var("PRINTCAD_STORE_INDEX")
+            .unwrap_or_else(|_| self.user_settings.packages.store.trim().to_string());
+        if url.is_empty() {
+            self.store.error = Some("No store address is set".into());
+            return;
+        }
+        if self.store.looking {
+            return;
+        }
+        self.store.looking = true;
+        self.package_thread(move || PackageNews::Store {
+            found: workbenches::fetch_store(&url),
+            quiet,
+        });
+    }
+
+    fn take_store(&mut self, found: Result<workbenches::StoreIndex, String>, quiet: bool) {
+        self.store.looking = false;
+        match found {
+            Ok(index) => {
+                keep_store(&index);
+                self.store.index = Some(index);
+                self.store.error = None;
+                // Whoever has a package the store took off its list hears
+                // why, once a run.
+                for status in &self.packages {
+                    let Some(why) = self.store.lists(status).and_then(|l| l.removed.clone()) else {
+                        continue;
+                    };
+                    if self.store.warned.insert(status.id.clone()) {
+                        app_log::warn(format!(
+                            "{} was taken off the workbench store's list: {why}",
+                            status.name
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                if !quiet {
+                    app_log::warn(format!("Could not read the workbench store: {e}"));
+                }
+                self.store.error = Some(e);
+            }
+        }
+    }
+
+    /// Install the package the store lists as `id`.
+    pub(crate) fn install_listed(&mut self, id: String) {
+        let Some(listing) = self.store.listing(&id).cloned() else {
+            app_log::error(format!("The workbench store lists no package {id}"));
+            return;
+        };
+        app_log::info(format!(
+            "Fetching {} from the workbench store",
+            listing.name
+        ));
+        self.install_with("Installed", move |root| {
+            workbenches::install_listed(&listing, root)
+                .map_err(|e| format!("Could not install {}: {e}", listing.name))
+        });
+    }
+
     /// Look for newer releases of the packages installed from GitHub.
     pub(crate) fn check_package_updates(&mut self) {
         let Some(root) = root() else {
@@ -207,6 +341,7 @@ impl PrintCadApp {
                 PackageNews::Failed(e) => app_log::error(e),
                 PackageNews::Checked(found) => self.take_checked(found),
                 PackageNews::AppRelease { found, quiet } => self.take_app_release(found, quiet),
+                PackageNews::Store { found, quiet } => self.take_store(found, quiet),
             }
         }
     }

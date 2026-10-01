@@ -197,7 +197,7 @@ pub fn release(fetch: &dyn Fetch, repo: &str, tag: Option<&str>) -> Result<Relea
 
 /// Download `release`'s archive, checked against its digest when GitHub
 /// gave one.
-fn download(fetch: &dyn Fetch, release: &Release) -> Result<Vec<u8>, String> {
+pub(crate) fn download(fetch: &dyn Fetch, release: &Release) -> Result<Vec<u8>, String> {
     let bytes = fetch.bytes(&release.download, ARCHIVE_LIMIT)?;
     if let Some(digest) = &release.digest
         && let Some(want) = digest.strip_prefix("sha256:")
@@ -234,7 +234,7 @@ pub fn install_from_github(fetch: &dyn Fetch, text: &str, root: &Path) -> Result
     Ok(package)
 }
 
-fn write_source(package: &Package, source: &Source) -> Result<(), String> {
+pub(crate) fn write_source(package: &Package, source: &Source) -> Result<(), String> {
     let json = serde_json::to_string_pretty(source).map_err(|e| e.to_string())?;
     std::fs::write(package.dir.join(SOURCE), json)
         .map_err(|e| format!("cannot record where {} came from: {e}", package.manifest.id))
