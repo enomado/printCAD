@@ -31,8 +31,8 @@ pub enum Job {
 }
 
 impl Job {
-    /// How a run of this job is named: the line itself, or the script's
-    /// name.
+    /// How a run of this job is named: the line itself, the script's name,
+    /// or the command's id.
     pub fn label(&self) -> String {
         match self {
             Job::Line(line) => line.clone(),

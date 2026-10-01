@@ -101,7 +101,8 @@ impl Recorder {
                 Some(name) => name.clone(),
                 None => quoted(s),
             },
-            // A plain `{}` reads back as an empty table of names.
+            // `{}` cannot say whether it is a list or a table of names;
+            // `array()` can.
             Value::Array(items) if items.is_empty() => "array()".to_string(),
             Value::Array(items) => {
                 let items: Vec<String> = items.iter().map(|v| self.lua(v)).collect();

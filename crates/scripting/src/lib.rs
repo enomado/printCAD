@@ -92,8 +92,8 @@ impl ScriptEngine {
         lua.globals()
             .set("__pc_print", print)
             .expect("print global");
-        // `array(...)`: a table that is a list even when it is empty, which a
-        // plain `{}` is not once a command reads it.
+        // `array(...)`: a table marked as a list, so it converts to a list
+        // even when it is empty.
         let array = lua
             .create_function(|lua, values: mlua::Variadic<mlua::Value>| {
                 let list = lua.create_sequence_from(values)?;
