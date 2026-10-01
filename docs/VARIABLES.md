@@ -1,7 +1,8 @@
 # Variables and formulas
 
 Any number in a model can be a formula: a pad's length, a hole's diameter,
-a sketch dimension, a joint's offset, a datum's offset. A formula can read
+a sketch dimension, a joint's offset, a datum's offset, the components of a
+pad's or pocket's custom direction (`Pad.direction_x`, `_y`, `_z`). A formula can read
 variables and the numbers of other objects, and everything that depends on
 it rebuilds when they change.
 

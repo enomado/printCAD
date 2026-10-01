@@ -746,6 +746,7 @@ fn direction_references(
 fn extrude_direction_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
+    fx: &mut Formulas,
     body: BodyId,
     direction: &mut ExtrudeDirection,
     id_salt: impl egui::AsIdSalt,
@@ -828,13 +829,24 @@ fn extrude_direction_editor(
         | ExtrudeDirection::Datum(_)
         | ExtrudeDirection::SketchLine { .. }
         | ExtrudeDirection::Axis(_) => {}
+        // Each component a number formulas can set: `Pad.direction_x`.
         ExtrudeDirection::Custom(v) => {
-            ui.horizontal(|ui| {
-                label_cell(ui, "Vector");
-                for c in v.iter_mut() {
-                    changed |= ui.add(egui::DragValue::new(c).speed(0.05)).changed();
+            for (c, (label, name)) in v.iter_mut().zip([
+                ("Vector X:", "direction_x"),
+                ("Vector Y:", "direction_y"),
+                ("Vector Z:", "direction_z"),
+            ]) {
+                let mut value = f64::from(*c);
+                let edited = named_f64(ui, fx, &mut value, (label, name), |ui, value| {
+                    field(ui, label, |ui| {
+                        ui.add(egui::DragValue::new(value).speed(0.05)).changed()
+                    })
+                });
+                if edited {
+                    *c = value as f32;
+                    changed = true;
                 }
-            });
+            }
         }
         ExtrudeDirection::Edge(edge) => {
             let mut pick = Some(*edge);
@@ -2193,7 +2205,8 @@ pub fn feature_editor(
                     );
                 }
             }
-            changed |= extrude_direction_editor(ui, ctx, body, direction, ("pad_dir", feature_id));
+            changed |=
+                extrude_direction_editor(ui, ctx, fx, body, direction, ("pad_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
             taper_note(ui, "Positive opens the pad out as it rises.");
@@ -2275,7 +2288,7 @@ pub fn feature_editor(
                 }
             }
             changed |=
-                extrude_direction_editor(ui, ctx, body, direction, ("pocket_dir", feature_id));
+                extrude_direction_editor(ui, ctx, fx, body, direction, ("pocket_dir", feature_id));
             changed |= check_row(ui, reversed, "Reversed")
                 .on_hover_text("Cut along the sketch normal instead of against it")
                 .changed();

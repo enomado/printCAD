@@ -13,8 +13,6 @@ kernel has it.
 
 ## Design
 
-- [ ] **Direction by formula** (S). A custom extrusion direction's
-  components are not numbers a formula can set.
 - [ ] **Borrowed faces in more places** (M). As up-to-shape faces and
   revolution targets, and an existing sketch mapped onto one.
 - [ ] **Tangent-chain chamfers by two distances** (S). The reference face

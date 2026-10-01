@@ -895,6 +895,59 @@ fn a_variable_drives_the_pad_and_changing_it_rebuilds_the_solid() {
     assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
 }
 
+/// A custom direction's components take formulas like any number: a
+/// variable tilts the pad, and changing it tilts it again.
+#[test]
+fn a_variable_tilts_a_pad_s_custom_direction() {
+    use core_document::{DocumentService, Variable, VariableSet, WorkbenchFeature};
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
+        .unwrap();
+    let (mut doc, body, sketch_id) = setup(10.0, 5.0);
+    let lean = doc
+        .add_feature(
+            VariableSet {
+                variables: vec![Variable {
+                    name: "lean".into(),
+                    formula: "0".into(),
+                    comment: String::new(),
+                }],
+            },
+            "Tilt".into(),
+        )
+        .unwrap();
+    let mut pad = pad_feature(sketch_id, 8.0, false, false);
+    if let DesignFeature::Pad { direction, .. } = &mut pad {
+        *direction = wb_design::ExtrudeDirection::Custom([0.0, 0.0, 1.0]);
+    }
+    let pad_id = doc
+        .add_feature_in_body(pad, "Pad".into(), Some(body))
+        .unwrap();
+    doc.set_feature_formula(pad_id, "/Pad/direction/Custom/1", Some("Tilt.lean".into()))
+        .unwrap();
+    // New, as the application marks it.
+    doc.mark_feature_stale(pad_id);
+
+    let depth = |doc: &mut Document| {
+        let job = registry
+            .rebuild_jobs(doc)
+            .into_iter()
+            .find(|j| j.body == body)
+            .expect("a rebuild");
+        let result = OgeomKernel::new()
+            .execute_solid_chain(&job.plan.unwrap().ops, &TessellationSettings::default())
+            .unwrap();
+        let (min, max) = mesh_bounds(&result.mesh);
+        max[1] - min[1]
+    };
+    assert!((depth(&mut doc) - 5.0).abs() < 1e-3, "straight up");
+    let mut set = VariableSet::from_json(doc.get_feature_data(lean).unwrap()).unwrap();
+    set.variables[0].formula = "1".into();
+    doc.update_feature_data(lean, set.to_json()).unwrap();
+    assert!(depth(&mut doc) > 6.0, "leaning along Y");
+}
+
 #[test]
 fn a_variable_drives_a_named_sketch_dimension_and_the_pad_on_it() {
     use core_document::{DocumentService, Variable, VariableSet, WorkbenchFeature};

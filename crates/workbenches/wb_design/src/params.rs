@@ -243,6 +243,17 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
                 ));
             }
         }
+        // A custom direction's components, while the direction is one.
+        "Pad" | "Pocket" if body.pointer("/direction/Custom").is_some() => {
+            for (i, axis) in ["x", "y", "z"].iter().enumerate() {
+                out.push(parameter(
+                    format!("/{variant}/direction/Custom/{i}"),
+                    &format!("direction_{axis}"),
+                    &format!("Direction {}", axis.to_uppercase()),
+                    Some(NUMBER),
+                ));
+            }
+        }
         "LinearPattern" | "PolarPattern" => {
             // An uneven pattern's gaps: `spacing1`, `spacing2`, … or
             // `step_angle1`, … from the first occurrence on.
@@ -295,6 +306,7 @@ pub(crate) fn every_name() -> Vec<&'static str> {
             .flat_map(|k| step_fields(k).iter().map(|(_, name, _, _)| *name)),
     )
     .chain(["x", "y", "z", "radius", "height", "length", "angle"])
+    .chain(["direction_x", "direction_y", "direction_z"])
     .chain(
         datum_parameters()
             .into_iter()
@@ -377,6 +389,24 @@ mod tests {
         assert_eq!(
             all_resolve(&pad),
             ["length", "length2", "taper", "offset", "offset2"]
+        );
+        // A custom direction's components join them, only while it is one.
+        let slanted = feature(serde_json::json!({"Pad": {
+            "sketch": SKETCH, "length": 10.0, "reversed": false,
+            "direction": {"Custom": [0.0, 1.0, 1.0]},
+        }}));
+        assert_eq!(
+            all_resolve(&slanted),
+            [
+                "length",
+                "length2",
+                "taper",
+                "offset",
+                "offset2",
+                "direction_x",
+                "direction_y",
+                "direction_z"
+            ]
         );
         let hole = feature(serde_json::json!({"Hole": {
             "sketch": SKETCH, "diameter": 5.0, "depth": 8.0, "through_all": false,
