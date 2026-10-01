@@ -103,7 +103,7 @@ impl PrefGroup {
             PrefGroup::Input => &["Mouse", "6-DoF mouse"],
             PrefGroup::Keyboard => &["Shortcuts"],
             PrefGroup::Workbench(_) => &["General"],
-            PrefGroup::Packages => &["Installed", "Browse"],
+            PrefGroup::Packages => &["Installed", "Browse", "Stores"],
             PrefGroup::Units => &["Units"],
             PrefGroup::ImportExport => &["STEP", "IGES"],
             PrefGroup::Printing => &["Printer"],
@@ -1577,9 +1577,12 @@ fn packages_page(
     filter: &str,
 ) {
     use workbenches::PackageState;
-    if state.tab == 1 && filter.is_empty() {
-        browse_page(ui, state, packages, store);
-        return;
+    if filter.is_empty() {
+        match state.tab {
+            1 => return browse_page(ui, state, packages, store),
+            2 => return stores_page(ui, state, store),
+            _ => {}
+        }
     }
     if !filter.is_empty()
         && !"workbench packages plugins install remove extensions".contains(filter)
@@ -1757,8 +1760,7 @@ fn packages_page(
 }
 
 /// The workbench stores: every package their lists hold, to read about
-/// and install, under a word of care about software from other people;
-/// and the stores themselves, added and removed.
+/// and install, under a word of care about software from other people.
 fn browse_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
@@ -1854,7 +1856,7 @@ fn browse_page(
         }
     });
     let status = if store.stores.is_empty() {
-        "No stores: add one below".to_string()
+        "No stores: add one on the Stores tab".to_string()
     } else if looking {
         "Reading the stores' lists…".to_string()
     } else {
@@ -1890,25 +1892,17 @@ fn browse_page(
         listing_card(ui, state, packages, url, from.as_deref(), listing);
         ui.add_space(SPACE_1);
     }
-
-    ui.add_space(SPACE_2);
-    stores_section(ui, state, store);
 }
 
-/// The stores Browse reads, as the draft keeps them: each with what its
-/// last read found and a Remove, an address to add, and printCAD's own
-/// to put back when it was removed.
-fn stores_section(
-    ui: &mut Ui,
-    state: &mut PreferencesState,
-    store: &crate::app::packages::StoreView,
-) {
+/// The Stores tab: the stores Browse reads, as the draft keeps them, each
+/// with what its last read found and a Remove; an address to add, and
+/// printCAD's own to put back when it was removed.
+fn stores_page(ui: &mut Ui, state: &mut PreferencesState, store: &crate::app::packages::StoreView) {
     use crate::app::packages::store_name;
-    ui.label(
-        RichText::new("Stores")
-            .font(sans_semibold(FONT_SM))
-            .color(TEXT1),
-    );
+    // What each store holds shows once it is read.
+    if store.unlooked() {
+        state.package_request = Some(super::UiCommand::LookAtStores);
+    }
     ui.label(
         RichText::new(
             "Each is the address of a registry's index; Browse lists the packages of all of \

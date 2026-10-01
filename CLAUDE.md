@@ -56,7 +56,8 @@ cargo fmt --all                   # CI enforces --check
   release checked against the index's sha256, recording its repository so
   it updates as any GitHub install; the page opens on a third-party
   warning, lists every store's packages (a store filter, each card naming
-  its store when there are several), and ends in the Stores list;
+  its store when there are several), and the Stores tab beside it adds and
+  removes stores;
   installed packages a store lists show Listed, and one taken off is
   warned of once a run; `PRINTCAD_STORE_INDEX` (`;`-separated) stands in
   for the list). Network work and compiling

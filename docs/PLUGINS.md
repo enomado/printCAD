@@ -19,7 +19,7 @@ packages every store you keep lists, to search, read about (what each asks
 to reach beyond its own folder comes first) and install. A store is a
 registry's index; a new install keeps one,
 [printCAD's own](https://github.com/gilbertorconde/PrintCAD-wb-repo), and
-the Stores list at the page's foot adds others by their index's address or
+the Stores tab beside it adds others by their index's address or
 removes any, printCAD's included. A registry reviews each listing and
 checks that the package is what it says it is; it does not audit the
 code, so install what you trust, from stores you trust. A package
