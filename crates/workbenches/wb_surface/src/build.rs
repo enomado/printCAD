@@ -263,7 +263,13 @@ pub fn op_of(
             faces: faces.iter().map(face_probe).collect(),
             curves: curves(refs)?,
         },
-        SurfaceFeature::Sew => SurfaceOp::Sew,
+        SurfaceFeature::Sew { gap } => SurfaceOp::Sew {
+            gap: f64::from(*gap),
+        },
+        SurfaceFeature::Fillet { edges, radius } => SurfaceOp::Fillet {
+            edges: edges.iter().map(edge_probe).collect(),
+            radius: f64::from(*radius),
+        },
         SurfaceFeature::Thicken {
             thickness,
             both_sides,

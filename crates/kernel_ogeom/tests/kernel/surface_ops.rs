@@ -180,7 +180,6 @@ fn a_closed_loop_with_a_hole_fills_flat() {
 /// Four walls and two lids, each its own sheet, sew into a closed box: a
 /// solid.
 #[test]
-#[ignore = "kernel: sew does not join a prism's end edges to a coincident face (ogeom-rs#104)"]
 fn six_sheets_closing_a_box_sew_into_a_solid() {
     let base = square_loop(0.0, 10.0);
     let result = build(vec![
@@ -194,7 +193,7 @@ fn six_sheets_closing_a_box_sew_into_a_solid() {
         SurfaceOp::PlanarFill {
             curves: vec![square_loop(5.0, 10.0)],
         },
-        SurfaceOp::Sew,
+        SurfaceOp::Sew { gap: 0.0 },
     ])
     .unwrap();
     assert_eq!(census(&result), (6, 1));
@@ -209,7 +208,7 @@ fn sheets_that_do_not_close_sew_into_a_shell() {
             length: 5.0,
             symmetric: false,
         },
-        SurfaceOp::Sew,
+        SurfaceOp::Sew { gap: 0.0 },
     ])
     .unwrap();
     assert_eq!(census(&result), (2, 0));
@@ -251,15 +250,33 @@ fn four_curves_meeting_end_to_end_fill() {
 fn a_ruled_surface_spans_two_curves() {
     let result = build(vec![SurfaceOp::Ruled {
         first: open_chain(0.0),
-        second: sketch(xy(6.0), vec![line([0.0, 0.0], [12.0, 6.0])]),
+        second: sketch(
+            xy(6.0),
+            vec![
+                line([0.0, 0.0], [12.0, 6.0]),
+                line([12.0, 6.0], [8.0, 12.0]),
+            ],
+        ),
     }])
     .unwrap();
-    assert_eq!(census(&result), (1, 0));
+    assert_eq!(census(&result), (2, 0), "one face per pair of curves");
     let (lo, hi) = bounds(&result);
     assert!(
         (lo[2]).abs() < 1e-2 && (hi[2] - 6.0).abs() < 1e-2,
         "{lo:?} {hi:?}"
     );
+}
+
+/// A ruled surface between a chain of two curves and a single line.
+#[test]
+#[ignore = "kernel: a ruled surface pairs its curves edge for edge (ogeom-rs#118)"]
+fn a_ruled_surface_spans_curves_of_different_counts() {
+    let result = build(vec![SurfaceOp::Ruled {
+        first: open_chain(0.0),
+        second: sketch(xy(6.0), vec![line([0.0, 0.0], [12.0, 6.0])]),
+    }])
+    .unwrap();
+    assert_eq!(census(&result).1, 0);
 }
 
 #[test]
@@ -349,7 +366,7 @@ fn a_mirror_keeps_the_sheet_and_adds_its_image() {
 
 #[test]
 fn a_step_on_nothing_says_why() {
-    let sew = build(vec![SurfaceOp::Sew]).unwrap_err();
+    let sew = build(vec![SurfaceOp::Sew { gap: 0.0 }]).unwrap_err();
     assert_eq!(sew.op_index, 0);
 }
 
@@ -388,7 +405,6 @@ fn three_sided() -> Vec<CurveSource> {
 }
 
 #[test]
-#[ignore = "kernel: a fill takes exactly four edges (ogeom-rs#108)"]
 fn three_curves_meeting_end_to_end_fill() {
     let result = build(vec![SurfaceOp::Fill {
         boundary: three_sided(),
@@ -398,9 +414,10 @@ fn three_curves_meeting_end_to_end_fill() {
     assert_eq!(census(&result), (1, 0));
 }
 
+/// A tray's top edges, picked, filled and sewn: a closed box.
 #[test]
-#[ignore = "kernel: a fill meets its neighbours G0 only, and comes with no boundary edges to sew (ogeom-rs#108)"]
-fn a_tangent_fill_closes_a_tray_into_a_solid() {
+#[ignore = "kernel: a fill refuses an extrusion's far edges, which are placed, and a sheet cannot be baked (ogeom-rs#116)"]
+fn a_fill_closes_a_tray_into_a_solid() {
     let mut ops = tray();
     let top = |a: [f64; 3], b: [f64; 3]| {
         CurveSource::Edge(kernel_api::EdgeProbe {
@@ -416,15 +433,90 @@ fn a_tangent_fill_closes_a_tray_into_a_solid() {
             top([10.0, 10.0, 5.0], [0.0, 10.0, 5.0]),
             top([0.0, 10.0, 5.0], [0.0, 0.0, 5.0]),
         ],
+        continuity: Continuity::G0,
+    });
+    ops.push(SurfaceOp::Sew { gap: 0.0 });
+    let result = build(ops).unwrap();
+    assert_eq!(census(&result), (6, 1), "the tray and its lid close");
+}
+
+/// Four strips sloping out and down from a square, filled tangent to
+/// them: the fill crowns over the square, meeting every strip without a
+/// crease.
+#[test]
+#[ignore = "kernel: a fill chains its sides only by shared vertices, so edges of separate sheets meeting at a point do not close (ogeom-rs#117)"]
+fn a_tangent_fill_meets_its_neighbours_without_a_crease() {
+    use kernel_api::KernelQueries;
+    // Each side of a 10 mm square at z = 5, and the way out from it.
+    let sides = [
+        ([0.0, 0.0], [10.0, 0.0], [0.0, -1.0]),
+        ([10.0, 0.0], [10.0, 10.0], [1.0, 0.0]),
+        ([10.0, 10.0], [0.0, 10.0], [0.0, 1.0]),
+        ([0.0, 10.0], [0.0, 0.0], [-1.0, 0.0]),
+    ];
+    let mut ops: Vec<SurfaceOp> = sides
+        .iter()
+        .map(|(a, b, out)| SurfaceOp::Extrude {
+            curves: vec![sketch(xy(5.0), vec![line(*a, *b)])],
+            direction: [out[0], out[1], -1.0],
+            length: 4.0,
+            symmetric: false,
+        })
+        .collect();
+    let top = |(a, b, _): &([f64; 2], [f64; 2], [f64; 2])| {
+        CurveSource::Edge(kernel_api::EdgeProbe {
+            point: [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 5.0],
+            direction: [b[0] - a[0], b[1] - a[1], 0.0],
+            faces: [0, 0],
+        })
+    };
+    ops.push(SurfaceOp::Fill {
+        boundary: sides.iter().map(top).collect(),
         continuity: Continuity::G1,
     });
-    ops.push(SurfaceOp::Sew);
+    ops.push(SurfaceOp::Sew { gap: 0.0 });
     let result = build(ops).unwrap();
-    assert_eq!(census(&result).1, 1, "the tray and its lid close");
+    let (_, hi) = bounds(&result);
+    assert!(hi[2] > 5.5, "the fill crowns above the square: {hi:?}");
+    let joins = kernel_ogeom::QUERIES.continuity(&result.brep_blob).unwrap();
+    let crowned: Vec<_> = joins
+        .iter()
+        .filter(|j| (j.point[2] - 5.0).abs() < 1e-3)
+        .collect();
+    assert_eq!(crowned.len(), 4, "{joins:?}");
+    assert!(crowned.iter().all(|j| j.angle_deg < 0.5), "{crowned:?}");
+}
+
+/// Two walls of an L meeting at a right angle, rounded where they meet.
+#[test]
+fn an_edge_where_two_sheets_meet_rounds() {
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![sketch(
+                xy(0.0),
+                vec![
+                    line([0.0, 0.0], [10.0, 0.0]),
+                    line([10.0, 0.0], [10.0, 10.0]),
+                ],
+            )],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        },
+        SurfaceOp::Fillet {
+            edges: vec![kernel_api::EdgeProbe {
+                point: [10.0, 0.0, 2.5],
+                direction: [0.0, 0.0, 1.0],
+                faces: [0, 0],
+            }],
+            radius: 2.0,
+        },
+    ])
+    .unwrap();
+    assert_eq!(census(&result), (3, 0), "two walls and the round between");
 }
 
 #[test]
-#[ignore = "kernel: sew joins only edges that coincide within the model's tolerance (ogeom-rs#105)"]
 fn sheets_a_hair_apart_sew() {
     let near = sketch(xy(0.0), vec![line([10.05, 0.0], [20.0, 0.0])]);
     let result = build(vec![
@@ -440,14 +532,13 @@ fn sheets_a_hair_apart_sew() {
             length: 5.0,
             symmetric: false,
         },
-        SurfaceOp::Sew,
+        SurfaceOp::Sew { gap: 0.1 },
     ])
     .unwrap();
     assert_eq!(shells(&result), 1, "the strips join across the gap");
 }
 
 #[test]
-#[ignore = "kernel: a sheet cannot be thickened into a solid (ogeom-rs#111)"]
 fn a_sheet_thickens_into_a_solid() {
     let result = build(vec![
         SurfaceOp::PlanarFill {
@@ -463,8 +554,28 @@ fn a_sheet_thickens_into_a_solid() {
 }
 
 #[test]
-#[ignore = "kernel: a sheet's faces cannot be offset (ogeom-rs#111)"]
 fn a_sheet_offsets() {
+    let result = build(vec![
+        SurfaceOp::PlanarFill {
+            curves: vec![square_loop(0.0, 10.0)],
+        },
+        SurfaceOp::Offset {
+            faces: vec![kernel_api::FaceProbe {
+                point: [5.0, 5.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                name: 0,
+            }],
+            distance: 2.0,
+        },
+    ])
+    .unwrap();
+    assert_eq!(census(&result), (2, 0));
+    assert!((bounds(&result).1[2].abs() - 2.0).abs() < 1e-3);
+}
+
+#[test]
+#[ignore = "kernel: a free-form face's offset must fit within 1e-6 (ogeom-rs#119)"]
+fn a_free_form_sheet_offsets() {
     let result = build(vec![
         SurfaceOp::Fill {
             boundary: saddle(),
@@ -484,7 +595,6 @@ fn a_sheet_offsets() {
 }
 
 #[test]
-#[ignore = "kernel: booleans refuse sheets, so nothing trims one by a plane (ogeom-rs#106)"]
 fn a_sheet_trims_by_a_plane() {
     let result = build(vec![
         SurfaceOp::PlanarFill {
@@ -500,7 +610,6 @@ fn a_sheet_trims_by_a_plane() {
 }
 
 #[test]
-#[ignore = "kernel: nothing splits a face along a curve (ogeom-rs#107)"]
 fn a_face_splits_along_a_curve() {
     let result = build(vec![
         SurfaceOp::PlanarFill {
@@ -520,7 +629,6 @@ fn a_face_splits_along_a_curve() {
 }
 
 #[test]
-#[ignore = "kernel: a face cannot be extended past its edge (ogeom-rs#112)"]
 fn a_face_extends_past_its_edge() {
     let result = build(vec![
         SurfaceOp::PlanarFill {
@@ -541,11 +649,12 @@ fn a_face_extends_past_its_edge() {
 }
 
 #[test]
-#[ignore = "kernel: no blend surface between two edges (ogeom-rs#110)"]
 fn two_strips_blend() {
-    let strip = |y: f64, z: f64| SurfaceOp::Extrude {
+    // Each strip runs away from the gap, so the edge facing it is the
+    // profile's own line.
+    let strip = |y: f64, z: f64, way: f64| SurfaceOp::Extrude {
         curves: vec![sketch(xy(z), vec![line([0.0, y], [10.0, y])])],
-        direction: [0.0, 1.0, 0.0],
+        direction: [0.0, way, 0.0],
         length: 5.0,
         symmetric: false,
     };
@@ -555,8 +664,8 @@ fn two_strips_blend() {
         faces: [0, 0],
     };
     let result = build(vec![
-        strip(0.0, 0.0),
-        strip(15.0, 6.0),
+        strip(5.0, 0.0, -1.0),
+        strip(15.0, 6.0, 1.0),
         SurfaceOp::Blend {
             first: edge(5.0, 0.0),
             second: edge(15.0, 6.0),
@@ -568,7 +677,6 @@ fn two_strips_blend() {
 }
 
 #[test]
-#[ignore = "kernel: sweeps build closed solids only, so an open profile does not sweep along a curve (ogeom-rs#109)"]
 fn an_open_profile_sweeps_along_a_curve() {
     let path = sketch(
         plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
@@ -588,7 +696,6 @@ fn an_open_profile_sweeps_along_a_curve() {
 }
 
 #[test]
-#[ignore = "kernel: a lofted surface cannot close on itself (ogeom-rs#109)"]
 fn a_closed_loft_comes_back_to_its_first_section() {
     let ring = |z: f64, r: f64| {
         sketch(
@@ -608,7 +715,6 @@ fn a_closed_loft_comes_back_to_its_first_section() {
 }
 
 #[test]
-#[ignore = "kernel: STEP export writes solids only (ogeom-rs#113)"]
 fn a_sheet_exports_as_step() {
     let result = build(vec![SurfaceOp::Extrude {
         curves: vec![open_chain(0.0)],
@@ -674,7 +780,6 @@ fn continuity_tells_a_crease_from_a_tangent_join() {
 /// Walls with a floor sewn on: every edge two faces share meets with no
 /// gap.
 #[test]
-#[ignore = "kernel: a prism's end edges are matched as the profile's edges they were moved from (ogeom-rs#104)"]
 fn a_sewn_floor_meets_its_walls_with_no_gap() {
     use kernel_api::KernelQueries;
     let result = build(vec![
@@ -687,7 +792,7 @@ fn a_sewn_floor_meets_its_walls_with_no_gap() {
         SurfaceOp::PlanarFill {
             curves: vec![square_loop(0.0, 10.0)],
         },
-        SurfaceOp::Sew,
+        SurfaceOp::Sew { gap: 0.0 },
     ])
     .unwrap();
     let joins = kernel_ogeom::QUERIES.continuity(&result.brep_blob).unwrap();

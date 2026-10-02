@@ -1,33 +1,30 @@
 //! Surface steps: sheets made from curves and added to the body beside what
-//! is there, and the body's faces sewn, mirrored or trimmed.
+//! is there, and the body's faces sewn, trimmed, split, extended, offset,
+//! thickened, rounded or mirrored.
 //!
 //! A body built from surface steps holds a compound of its sheets (and of
-//! the solids sewing closes). Curves come from sketches (open chains as
-//! well as loops) or from edges of the body's own shape. Extrusions and
-//! revolutions are exact; a ruled surface and a loft are B-spline surfaces
-//! fitted through the curves to `FIT_TOLERANCE`, as natural faces. A step
-//! the kernel has no operation for fails with a message saying so.
+//! the solids sewing or thickening makes). Curves come from sketches (open
+//! chains as well as loops) or from edges of the body's own shape. Every
+//! sheet a step makes is bounded by edges, so the steps after it can pick
+//! them and a sew can join it to its neighbours; a fill is bounded by the
+//! very edges it was given.
 
-use kernel_api::{Continuity, CurveSource, SurfaceOp};
+use kernel_api::{Continuity, CurveSource, EdgeProbe, FaceProbe, PipeFrame, SurfaceOp};
 use ogeom::algo::build::trimmed_where_bare;
 use ogeom::algo::{
-    copied, find_plane, make_face, make_natural_face, make_prism, make_revolution, make_solid,
-    make_wire, sew, transformed,
+    Extension, copied, extend_face, find_plane, make_face, make_prism, make_revolution, make_shell,
+    make_solid, make_wire, sew, sew_within, transformed,
 };
 use ogeom::geom::{PlaneSurface, SurfaceGeometry};
 use ogeom::math::{Axis, Direction, Point, Transform, Vector};
-use ogeom::mesh::{Deflection, discretize};
-use ogeom::topo::{EdgeRepr, Model, NodeData, Orientation, Shape, ShapeType, explore_unique};
+use ogeom::offset::{
+    FillBoundary, PipeLaw, make_filling_n, make_loft_surface, make_ruled, make_sweep_surface,
+    make_thick_sheet, offset_sheet,
+};
+use ogeom::topo::{Model, Shape, ShapeType, explore_unique};
 
 use super::tol;
 use crate::profile;
-
-/// How far a fitted surface may stray from the curves it is fitted to (mm).
-pub const FIT_TOLERANCE: f64 = 1e-3;
-
-/// Points a curve is sampled at for a fit: enough for a smooth curve to fit
-/// within `FIT_TOLERANCE` at part sizes, few enough to solve quickly.
-const FIT_SAMPLES: usize = 48;
 
 /// What a surface step made: the body's shape after it, and the sheet it
 /// added (whose faces are named afresh), when it added one.
@@ -40,20 +37,20 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
     if !op.constructs() {
         let base = base.ok_or("there is no surface in the body to work on yet")?;
         let shape = match op {
-            SurfaceOp::Sew => sew_all(model, base)?,
+            SurfaceOp::Sew { gap } => sew_all(model, base, *gap)?,
             SurfaceOp::Mirror { origin, normal } => mirror(model, base, *origin, *normal)?,
-            SurfaceOp::Thicken { .. } => {
-                return Err("the kernel cannot give a sheet thickness yet".into());
-            }
-            SurfaceOp::TrimByPlane { .. } => {
-                return Err("the kernel cannot cut a sheet by a plane yet".into());
-            }
-            SurfaceOp::Split { .. } => {
-                return Err("the kernel cannot split a face along a curve yet".into());
-            }
-            SurfaceOp::Extend { .. } => {
-                return Err("the kernel cannot extend a face past its edge yet".into());
-            }
+            SurfaceOp::Thicken {
+                thickness,
+                both_sides,
+            } => thicken(model, base, *thickness, *both_sides)?,
+            SurfaceOp::TrimByPlane { origin, normal } => trim(model, base, *origin, *normal)?,
+            SurfaceOp::Split { faces, curves } => split(model, base, faces, curves)?,
+            SurfaceOp::Extend {
+                edges,
+                length,
+                continuity,
+            } => extend(model, base, edges, *length, *continuity)?,
+            SurfaceOp::Fillet { edges, radius } => fillet(model, base, edges, *radius)?,
             _ => unreachable!("constructive steps are handled below"),
         };
         return Ok(Made { shape, sheet: None });
@@ -77,20 +74,24 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
             continuity,
         } => fill(model, base, boundary, *continuity)?,
         SurfaceOp::Ruled { first, second } => {
-            let rows = vec![
-                chain_samples(model, base, std::slice::from_ref(first))?,
-                chain_samples(model, base, std::slice::from_ref(second))?,
-            ];
-            fitted_face(model, &rows, "ruled surface")?
+            let a = one_curve(model, base, first, "first")?;
+            let b = one_curve(model, base, second, "second")?;
+            make_ruled(model, &a, &b, tol())
+                .map(|built| built.shape)
+                .map_err(|e| format!("the ruled surface failed: {e}"))?
         }
         SurfaceOp::Loft { sections, closed } => loft(model, base, sections, *closed)?,
-        SurfaceOp::Sweep { profile, path, .. } => sweep(model, base, profile, path)?,
-        SurfaceOp::Offset { .. } => {
-            return Err("the kernel cannot offset a sheet's faces yet".into());
-        }
-        SurfaceOp::Blend { .. } => {
-            return Err("the kernel cannot blend two edges with a surface yet".into());
-        }
+        SurfaceOp::Sweep {
+            profile,
+            path,
+            frame,
+        } => sweep(model, base, profile, path, frame)?,
+        SurfaceOp::Offset { faces, distance } => offset(model, base, faces, *distance)?,
+        SurfaceOp::Blend {
+            first,
+            second,
+            continuity,
+        } => blend(model, base, first, second, *continuity)?,
         _ => unreachable!("only constructive steps reach here"),
     };
     let shape = beside(model, base, sheet.clone())?;
@@ -280,29 +281,149 @@ fn planar_fill(
     Ok(face)
 }
 
+/// The kernel's continuity for a side asking `continuity`.
+fn kernel_continuity(continuity: Continuity) -> ogeom::geom::Continuity {
+    match continuity {
+        Continuity::G0 => ogeom::geom::Continuity::C0,
+        Continuity::G1 => ogeom::geom::Continuity::G1,
+        Continuity::G2 => ogeom::geom::Continuity::G2,
+    }
+}
+
+/// The face of `base` an edge of it belongs to: the one a step meets across
+/// the edge. `None` for an edge no face holds (a sketch's).
+fn face_holding(model: &Model, base: Option<&Shape>, edge: &Shape) -> Option<Shape> {
+    let base = base?;
+    explore_unique(model, base, ShapeType::Face)
+        .ok()?
+        .into_iter()
+        .find(|face| {
+            explore_unique(model, face, ShapeType::Edge)
+                .is_ok_and(|edges| edges.iter().any(|e| e.is_same(edge)))
+        })
+}
+
+/// The hole the boundary curves close, filled: a side that is an edge of
+/// the body meets the face it belongs to with `continuity`, a sketch's
+/// curve is touched. The face is bounded by the given edges themselves, so
+/// it sews to the faces around it.
 fn fill(
     model: &mut Model,
     base: Option<&Shape>,
     boundary: &[CurveSource],
     continuity: Continuity,
 ) -> Result<Shape, String> {
-    if continuity != Continuity::G0 {
-        return Err(
-            "the kernel can only fill touching its boundary (G0) yet; tangent and curvature \
-             continuous fills wait on it"
-                .into(),
-        );
+    let mut edges = Vec::new();
+    for curve in boundary {
+        let own = edges_of(model, base, std::slice::from_ref(curve))?;
+        let drawn = matches!(curve, CurveSource::Sketch { .. });
+        edges.extend(own.into_iter().map(|e| (e, drawn)));
     }
-    let edges = edges_of(model, base, boundary)?;
-    let four: [Shape; 4] = edges.try_into().map_err(|edges: Vec<Shape>| {
-        format!(
-            "the kernel fills a boundary of four curves; this one has {}",
-            edges.len()
-        )
-    })?;
-    ogeom::offset::make_filling(model, &four, FIT_SAMPLES, FIT_TOLERANCE, tol())
-        .map(|b| b.shape)
+    let sides: Vec<FillBoundary> = joined(model, edges)?
+        .into_iter()
+        .map(|edge| {
+            let support = face_holding(model, base, &edge);
+            let continuity = if support.is_some() {
+                kernel_continuity(continuity)
+            } else {
+                ogeom::geom::Continuity::C0
+            };
+            FillBoundary {
+                edge,
+                support,
+                continuity,
+            }
+        })
+        .collect();
+    make_filling_n(model, &sides, &[], FILL_TOLERANCE, tol())
+        .map(|filled| filled.built.shape)
         .map_err(|e| format!("filling the boundary failed: {e}"))
+}
+
+/// The sides of a fill, those drawn in sketches rebuilt to end on shared
+/// vertices: the kernel chains sides by the vertices they share, and each
+/// sketch builds its own. A drawn side's end meets a vertex already there
+/// (a picked edge's, or another drawn side's) when it lies within the
+/// model's tolerance of it; picked edges stay as they are, since the fill
+/// is bounded by them to sew to their faces.
+fn joined(model: &mut Model, sides: Vec<(Shape, bool)>) -> Result<Vec<Shape>, String> {
+    use ogeom::algo::{edge_vertices, make_edge_between};
+    use ogeom::geom::Curve3d as _;
+    use ogeom::topo::{EdgeRepr, NodeData};
+    let near = tol().confusion() * 100.0;
+    let at = |model: &Model, vertex: &Shape| -> Option<Point> {
+        let NodeData::Vertex(data) = model.node(vertex)?.data() else {
+            return None;
+        };
+        Some(vertex.transform(model.datums()).ok()?.apply(data.point))
+    };
+    let mut vertices: Vec<(Point, Shape)> = Vec::new();
+    for (edge, drawn) in &sides {
+        if !drawn && let Ok(Some((a, b))) = edge_vertices(model, edge) {
+            for v in [a, b] {
+                if let Some(p) = at(model, &v) {
+                    vertices.push((p, v));
+                }
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(sides.len());
+    for (edge, drawn) in sides {
+        if !drawn {
+            out.push(edge);
+            continue;
+        }
+        let Some(NodeData::Edge(data)) = model.node(&edge).map(|n| n.data()) else {
+            return Err("a side is not an edge".into());
+        };
+        let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
+            return Err("a side has no curve".into());
+        };
+        let range = *range;
+        let curve = model
+            .geometry()
+            .curve(*curve)
+            .cloned()
+            .ok_or("a side's curve is missing")?;
+        let ends = [range.0, range.1].map(|t| curve.point_at(t, tol()));
+        let [Ok(start), Ok(end)] = ends else {
+            return Err("a side's ends do not evaluate".into());
+        };
+        let mut vertex_at = |model: &mut Model, p: Point| -> Shape {
+            if let Some((_, v)) = vertices.iter().find(|(q, _)| q.distance(p) <= near) {
+                return v.clone();
+            }
+            let v = model.add_vertex(ogeom::topo::VertexData::new(p));
+            vertices.push((p, v.clone()));
+            v
+        };
+        let from = vertex_at(model, start);
+        let to = vertex_at(model, end);
+        let rebuilt = make_edge_between(model, curve, range, &from, &to, tol())
+            .map_err(|e| format!("joining a side's ends failed: {e}"))?
+            .shape;
+        out.push(rebuilt);
+    }
+    Ok(out)
+}
+
+/// How near a fill meets its sides: a distance (mm) for a gap, an angle
+/// (radians) for a tangent side, a curvature (1/mm) for a curvature
+/// continuous one.
+const FILL_TOLERANCE: f64 = 1e-3;
+
+/// One source as a single curve: a sketch's one chain, or a picked edge.
+fn one_curve(
+    model: &mut Model,
+    base: Option<&Shape>,
+    curve: &CurveSource,
+    which: &str,
+) -> Result<Shape, String> {
+    let mut shapes = shapes_of(model, base, std::slice::from_ref(curve))?;
+    match shapes.len() {
+        1 => Ok(shapes.remove(0)),
+        n => Err(format!("the {which} curve must be one chain; it has {n}")),
+    }
 }
 
 fn loft(
@@ -311,156 +432,275 @@ fn loft(
     sections: &[CurveSource],
     closed: bool,
 ) -> Result<Shape, String> {
-    if sections.len() < 2 {
-        return Err("a loft needs two sections or more".into());
-    }
-    let mut rows = Vec::with_capacity(sections.len() + 1);
-    for section in sections {
-        rows.push(chain_samples(model, base, std::slice::from_ref(section))?);
-    }
-    if closed {
-        return Err("the kernel cannot close a lofted surface on itself yet".into());
-    }
-    fitted_face(model, &rows, "loft")
+    let shapes = shapes_of(model, base, sections)?;
+    make_loft_surface(model, &shapes, closed, &[], false, tol())
+        .map(|built| built.shape)
+        .map_err(|e| format!("the loft failed: {e}"))
 }
 
-/// A profile swept along a straight path is an extrusion, and exact; along
-/// any other path the kernel sweeps closed profiles into solids only.
+/// Each profile curve swept along the path, turning about it as `frame`
+/// says.
 fn sweep(
     model: &mut Model,
     base: Option<&Shape>,
     profile: &[CurveSource],
     path: &[CurveSource],
+    frame: &PipeFrame,
 ) -> Result<Shape, String> {
     let path_edges = edges_of(model, base, path)?;
-    let [edge] = path_edges.as_slice() else {
-        return Err("the kernel sweeps a surface along a single straight line yet".into());
+    let ordered = ogeom::algo::order_edges(model, &path_edges, tol())
+        .map_err(|e| format!("the path does not run end to end: {e}"))?;
+    let spine = make_wire(model, &ordered, tol())
+        .map_err(|e| format!("the path is not one chain: {e}"))?
+        .shape;
+    let law = match frame {
+        PipeFrame::Frenet => PipeLaw::Frenet,
+        PipeFrame::Fixed => PipeLaw::Fixed,
+        PipeFrame::Binormal { direction } => PipeLaw::Binormal(
+            Direction::new(Vector::new(direction[0], direction[1], direction[2]), tol())
+                .map_err(|_| "the sweep's binormal has no direction".to_string())?,
+        ),
+        PipeFrame::RotationMinimizing | PipeFrame::Auxiliary { .. } => PipeLaw::RotationMinimizing,
     };
-    let points = edge_points(model, edge)?;
-    let (Some(a), Some(b)) = (points.first(), points.last()) else {
-        return Err("the path has no length".into());
-    };
-    let along = Vector::new(b.x - a.x, b.y - a.y, b.z - a.z);
-    let straight = points.iter().all(|p| {
-        let off = Vector::new(p.x - a.x, p.y - a.y, p.z - a.z);
-        off.cross(along).magnitude() <= along.magnitude() * FIT_TOLERANCE
-    });
-    if !straight {
-        return Err("the kernel sweeps a surface along a single straight line yet".into());
-    }
     let mut sheets = Vec::new();
     for curve in shapes_of(model, base, profile)? {
-        let built = make_prism(model, &curve, along, tol())
+        let built = make_sweep_surface(model, &curve, &spine, &law, tol())
             .map_err(|e| format!("sweeping the profile failed: {e}"))?;
         sheets.push(built.shape);
     }
     one_or_compound(model, sheets)
 }
 
-/// A B-spline surface through rows of points, as a natural face.
-fn fitted_face(model: &mut Model, rows: &[Vec<Point>], what: &str) -> Result<Shape, String> {
-    let fitted = ogeom::geom::fit::fit_surface_grid(rows, 3, FIT_TOLERANCE, tol())
-        .map_err(|e| format!("fitting the {what} failed: {e}"))?;
-    if !fitted.met {
-        return Err(format!(
-            "the {what} strays {:.4} mm from its curves, more than {FIT_TOLERANCE} mm",
-            fitted.error
-        ));
+/// The face of `base` a pick names: by name, else the nearest.
+fn picked_face(model: &mut Model, base: &Shape, pick: &FaceProbe) -> Result<Shape, String> {
+    let point = point(pick.point);
+    let by_name = (pick.name != 0)
+        .then(|| crate::naming::find_face(model, base, pick.name, point))
+        .flatten();
+    match by_name {
+        Some(face) => Ok(face),
+        None => super::dressup::nearest_of(model, base, ShapeType::Face, point)
+            .map_err(|e| format!("a picked face is no longer in the body: {e}")),
     }
-    make_natural_face(model, SurfaceGeometry::BSpline(fitted.curve))
-        .map(|b| b.shape)
-        .map_err(|e| format!("making the {what}'s face failed: {e}"))
 }
 
-/// `FIT_SAMPLES` points spread evenly along a chain of curves, from its
-/// start to its end.
-fn chain_samples(
+/// The picked faces (or every sheet of the body, with none picked) copied
+/// out along their normals by `distance`.
+fn offset(
     model: &mut Model,
     base: Option<&Shape>,
-    curves: &[CurveSource],
-) -> Result<Vec<Point>, String> {
-    let edges = edges_of(model, base, curves)?;
-    let mut line: Vec<Point> = Vec::new();
-    for edge in &edges {
-        let points = edge_points(model, edge)?;
-        let skip = usize::from(
-            line.last()
-                .zip(points.first())
-                .is_some_and(|(a, b)| a.distance(*b) <= FIT_TOLERANCE),
-        );
-        line.extend(points.into_iter().skip(skip));
+    faces: &[FaceProbe],
+    distance: f64,
+) -> Result<Shape, String> {
+    let base = base.ok_or("there is no surface in the body to offset yet")?;
+    let mut picked = Vec::with_capacity(faces.len());
+    for pick in faces {
+        picked.push(picked_face(model, base, pick)?);
     }
-    resample(&line, FIT_SAMPLES).ok_or_else(|| "a curve has no length".to_string())
-}
-
-/// Points along an edge, placed, from its start to its end as it runs.
-fn edge_points(model: &Model, edge: &Shape) -> Result<Vec<Point>, String> {
-    let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
-        return Err("a curve is not an edge".into());
-    };
-    let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
-        return Err("an edge has no curve".into());
-    };
-    let geometry = model
-        .geometry()
-        .curve(*curve)
-        .ok_or("an edge's curve is missing")?;
-    let placement = edge
-        .transform(model.datums())
-        .map_err(|e| format!("placing an edge failed: {e}"))?;
-    let deflection = Deflection::with_chord(FIT_TOLERANCE * 0.25)
-        .map_err(|e| format!("sampling an edge: {e}"))?;
-    let line = discretize(geometry, *range, deflection, tol())
-        .map_err(|e| format!("sampling an edge failed: {e}"))?;
-    let mut points: Vec<Point> = line.points.iter().map(|p| placement.apply(*p)).collect();
-    if edge.orientation() == Orientation::Reversed {
-        points.reverse();
-    }
-    Ok(points)
-}
-
-/// `count` points spread evenly by length along a polyline.
-fn resample(line: &[Point], count: usize) -> Option<Vec<Point>> {
-    let lengths: Vec<f64> = std::iter::once(0.0)
-        .chain(line.windows(2).scan(0.0, |run, pair| {
-            *run += pair[0].distance(pair[1]);
-            Some(*run)
-        }))
-        .collect();
-    let total = *lengths.last()?;
-    if total <= FIT_TOLERANCE {
-        return None;
-    }
-    let mut out = Vec::with_capacity(count);
-    let mut segment = 0;
-    for i in 0..count {
-        #[allow(clippy::cast_precision_loss)]
-        let at = total * i as f64 / (count - 1) as f64;
-        while segment + 2 < lengths.len() && lengths[segment + 1] < at {
-            segment += 1;
+    let sheet = match picked.len() {
+        0 => return Err("pick the faces to offset".into()),
+        1 => picked.remove(0),
+        _ => {
+            make_shell(model, &picked)
+                .map_err(|e| format!("the picked faces do not make one sheet: {e}"))?
+                .shape
         }
-        let (a, b) = (line[segment], line[segment + 1]);
-        let span = lengths[segment + 1] - lengths[segment];
-        let t = if span > 0.0 {
-            ((at - lengths[segment]) / span).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        out.push(Point::new(
-            a.x + (b.x - a.x) * t,
-            a.y + (b.y - a.y) * t,
-            a.z + (b.z - a.z) * t,
-        ));
-    }
-    Some(out)
+    };
+    offset_sheet(model, &sheet, distance, tol())
+        .map(|built| built.shape)
+        .map_err(|e| format!("offsetting failed: {e}"))
 }
 
-/// Every face of the body joined where their edges meet; a shell that
-/// closes is made a solid.
-fn sew_all(model: &mut Model, base: &Shape) -> Result<Shape, String> {
+/// A surface bridging two picked edges, meeting each edge's face with
+/// `continuity`.
+fn blend(
+    model: &mut Model,
+    base: Option<&Shape>,
+    first: &EdgeProbe,
+    second: &EdgeProbe,
+    continuity: Continuity,
+) -> Result<Shape, String> {
+    let base = base.ok_or("there are no surfaces in the body to blend yet")?;
+    let side = |model: &mut Model, probe: &EdgeProbe| -> Result<(Shape, Shape), String> {
+        let edge = super::dressup::picked_edges(model, base, std::slice::from_ref(probe))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "a picked edge is no longer in the body".to_string())?;
+        let face = face_holding(model, Some(base), &edge)
+            .ok_or_else(|| "a picked edge belongs to no face".to_string())?;
+        Ok((edge, face))
+    };
+    let (a, fa) = side(model, first)?;
+    let (b, fb) = side(model, second)?;
+    let continuity = kernel_continuity(continuity);
+    ogeom::fillet::make_blend_surface(model, (&a, &fa), (&b, &fb), (continuity, continuity), tol())
+        .map(|built| built.shape)
+        .map_err(|e| format!("blending the edges failed: {e}"))
+}
+
+/// Each sheet of the body given `thickness`: a solid apiece.
+fn thicken(
+    model: &mut Model,
+    base: &Shape,
+    thickness: f64,
+    both_sides: bool,
+) -> Result<Shape, String> {
+    let mut solids = Vec::new();
+    for piece in sheets_of(model, base) {
+        let built = make_thick_sheet(model, &piece, thickness, both_sides, tol())
+            .map_err(|e| format!("thickening failed: {e}"))?;
+        crate::naming::record(&built.history);
+        solids.push(built.shape);
+    }
+    if solids.is_empty() {
+        return Err("the body has no sheet to thicken".into());
+    }
+    one_or_compound(model, solids)
+}
+
+/// The body's sheets one by one: each shell, and each face no shell holds.
+fn sheets_of(model: &Model, base: &Shape) -> Vec<Shape> {
+    let mut out = Vec::new();
+    for piece in pieces_of(model, base) {
+        match model.kind_of(&piece) {
+            Ok(ShapeType::Face | ShapeType::Shell) => out.push(piece),
+            Ok(ShapeType::Compound) => out.extend(sheets_of(model, &piece)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// What of the body lies on the side of the plane its normal points to.
+fn trim(
+    model: &mut Model,
+    base: &Shape,
+    origin: [f64; 3],
+    normal: [f64; 3],
+) -> Result<Shape, String> {
+    let n = direction(normal, "the trimming plane")?;
+    let at = point(origin);
+    let keep = at + Vector::from(n);
+    super::sweep::trim_with_halfspace(model, base, at, n, keep).map_err(|e| {
+        e.replace(
+            "trimming the sweep at the target plane",
+            "trimming the body",
+        )
+    })
+}
+
+/// Picked faces split along curves projected onto them along their normals.
+fn split(
+    model: &mut Model,
+    base: &Shape,
+    faces: &[FaceProbe],
+    curves: &[CurveSource],
+) -> Result<Shape, String> {
+    if faces.is_empty() {
+        return Err("pick the faces to split".into());
+    }
+    let cuts = edges_of(model, Some(base), curves)?;
+    let mut shape = base.clone();
+    for pick in faces {
+        let face = picked_face(model, &shape, pick)?;
+        let built = ogeom::heal::split_face(
+            model,
+            &shape,
+            &face,
+            &cuts,
+            ogeom::heal::Projection::AlongNormals,
+            tol(),
+        )
+        .map_err(|e| format!("splitting a face failed: {e}"))?;
+        crate::naming::record(&built.history);
+        shape = built.shape;
+    }
+    Ok(shape)
+}
+
+/// Faces carried past picked edges by `length`: on their own surface for
+/// G2 (the natural extension), straight on tangent for G1, straight on for
+/// G0.
+fn extend(
+    model: &mut Model,
+    base: &Shape,
+    edges: &[EdgeProbe],
+    length: f64,
+    continuity: Continuity,
+) -> Result<Shape, String> {
+    if edges.is_empty() {
+        return Err("pick the edges to extend past".into());
+    }
+    let mode = match continuity {
+        Continuity::G2 => Extension::Natural,
+        other => Extension::Linear {
+            continuity: kernel_continuity(other),
+        },
+    };
+    let mut shape = base.clone();
+    for probe in edges {
+        let edge = super::dressup::picked_edges(model, &shape, std::slice::from_ref(probe))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "a picked edge is no longer in the body".to_string())?;
+        let built = extend_face(model, &shape, &edge, length, mode, tol())
+            .map_err(|e| format!("extending a face failed: {e}"))?;
+        crate::naming::record(&built.history);
+        shape = built.shape;
+    }
+    Ok(shape)
+}
+
+/// A round of `radius` along picked edges where two faces of a sheet meet.
+fn fillet(
+    model: &mut Model,
+    base: &Shape,
+    edges: &[EdgeProbe],
+    radius: f64,
+) -> Result<Shape, String> {
+    let picked = super::dressup::picked_edges(model, base, edges)?;
+    if picked.is_empty() {
+        return Err("pick the edges to round".into());
+    }
+    // Each sheet holding a picked edge is rounded on its own.
+    let mut pieces = Vec::new();
+    for sheet in sheets_of(model, base) {
+        let own: Vec<Shape> = explore_unique(model, &sheet, ShapeType::Edge)
+            .map_err(|e| format!("reading a sheet's edges failed: {e}"))?
+            .into_iter()
+            .filter(|e| picked.iter().any(|p| p.is_same(e)))
+            .collect();
+        if own.is_empty() {
+            pieces.push(sheet);
+            continue;
+        }
+        let built = ogeom::fillet::fillet_sheet_edges(model, &sheet, &own, radius, tol())
+            .map_err(|e| format!("rounding the edges failed: {e}"))?;
+        crate::naming::record(&built.history);
+        pieces.push(built.shape);
+    }
+    for piece in pieces_of(model, base) {
+        if !matches!(
+            model.kind_of(&piece),
+            Ok(ShapeType::Face | ShapeType::Shell | ShapeType::Compound)
+        ) {
+            pieces.push(piece);
+        }
+    }
+    one_or_compound(model, pieces)
+}
+
+/// Every face of the body joined where their edges meet, or come within
+/// `gap`; a shell that closes is made a solid.
+fn sew_all(model: &mut Model, base: &Shape, gap: f64) -> Result<Shape, String> {
     let faces = explore_unique(model, base, ShapeType::Face)
         .map_err(|e| format!("reading the body's faces failed: {e}"))?;
-    let sewn = sew(model, &faces, tol()).map_err(|e| format!("sewing failed: {e}"))?;
+    let sewn = if gap > 0.0 {
+        sew_within(model, &faces, gap, tol())
+    } else {
+        sew(model, &faces, tol())
+    }
+    .map_err(|e| format!("sewing failed: {e}"))?;
     crate::naming::record(&sewn.history);
     let mut pieces = Vec::with_capacity(sewn.shells.len());
     for shell in sewn.shells {

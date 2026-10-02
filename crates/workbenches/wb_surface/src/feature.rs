@@ -141,7 +141,18 @@ pub enum SurfaceFeature {
         faces: Vec<FacePick>,
         curves: Vec<CurveRef>,
     },
-    Sew,
+    Sew {
+        /// Edges this far apart (mm) are joined too; 0 joins only edges
+        /// that meet.
+        #[serde(default)]
+        gap: f32,
+    },
+    /// A round of `radius` along picked edges where two faces of the
+    /// body's sheets meet.
+    Fillet {
+        edges: Vec<EdgePick>,
+        radius: f32,
+    },
     Thicken {
         thickness: f32,
         #[serde(default)]
@@ -221,31 +232,25 @@ pub const KINDS: &[Kind] = &[
         tool: "surface.offset",
         label: "Offset surface",
         icon: "surface-offset",
-        waits: Some(
-            "Copies faces at a distance along their normals, once the geometry kernel can offset free-form faces",
-        ),
+        waits: None,
     },
     Kind {
         tool: "surface.extend",
         label: "Extend surface",
         icon: "surface-extend",
-        waits: Some("Grows a face past a picked edge, once the geometry kernel can extend faces"),
+        waits: None,
     },
     Kind {
         tool: "surface.blend",
         label: "Blend surface",
         icon: "surface-blend",
-        waits: Some(
-            "Bridges two edges with a tangent or curvature-continuous surface, once the geometry kernel can blend",
-        ),
+        waits: None,
     },
     Kind {
         tool: "surface.split",
         label: "Split surface",
         icon: "surface-split",
-        waits: Some(
-            "Cuts faces along curves projected onto them, once the geometry kernel can split a face",
-        ),
+        waits: None,
     },
     Kind {
         tool: "surface.sew",
@@ -254,18 +259,22 @@ pub const KINDS: &[Kind] = &[
         waits: None,
     },
     Kind {
+        tool: "surface.fillet",
+        label: "Surface fillet",
+        icon: "surface-fillet",
+        waits: None,
+    },
+    Kind {
         tool: "surface.thicken",
         label: "Thicken",
         icon: "surface-thicken",
-        waits: Some(
-            "Gives the body's sheets a thickness, making a solid, once the geometry kernel can thicken a sheet",
-        ),
+        waits: None,
     },
     Kind {
         tool: "surface.trim",
         label: "Trim by plane",
         icon: "surface-trim",
-        waits: Some("Cuts the body's sheets by a plane, once the geometry kernel can cut a sheet"),
+        waits: None,
     },
     Kind {
         tool: "surface.mirror",
@@ -326,7 +335,11 @@ impl SurfaceFeature {
                 faces: Vec::new(),
                 curves: Vec::new(),
             },
-            "surface.sew" => SurfaceFeature::Sew,
+            "surface.sew" => SurfaceFeature::Sew { gap: 0.0 },
+            "surface.fillet" => SurfaceFeature::Fillet {
+                edges: Vec::new(),
+                radius: 2.0,
+            },
             "surface.thicken" => SurfaceFeature::Thicken {
                 thickness: 2.0,
                 both_sides: false,
@@ -358,7 +371,8 @@ impl SurfaceFeature {
             SurfaceFeature::Extend { .. } => "surface.extend",
             SurfaceFeature::Blend { .. } => "surface.blend",
             SurfaceFeature::Split { .. } => "surface.split",
-            SurfaceFeature::Sew => "surface.sew",
+            SurfaceFeature::Sew { .. } => "surface.sew",
+            SurfaceFeature::Fillet { .. } => "surface.fillet",
             SurfaceFeature::Thicken { .. } => "surface.thicken",
             SurfaceFeature::Trim { .. } => "surface.trim",
             SurfaceFeature::Mirror { .. } => "surface.mirror",
@@ -425,7 +439,8 @@ impl SurfaceFeature {
     pub fn constructs(&self) -> bool {
         !matches!(
             self,
-            SurfaceFeature::Sew
+            SurfaceFeature::Sew { .. }
+                | SurfaceFeature::Fillet { .. }
                 | SurfaceFeature::Thicken { .. }
                 | SurfaceFeature::Trim { .. }
                 | SurfaceFeature::Mirror { .. }

@@ -135,11 +135,21 @@ pub fn editor(
             changed |= face_list(ui, "Faces", f, &faces);
             changed |= curve_list(ui, ctx, "Cut along", curves, &picked);
         }
-        SurfaceFeature::Sew => hint(
-            ui,
-            "Joins the body's surfaces where their edges meet. A shell that closes \
-             becomes a solid.",
-        ),
+        SurfaceFeature::Sew { gap } => {
+            hint(
+                ui,
+                "Joins the body's surfaces where their edges meet. A shell that closes \
+                 becomes a solid.",
+            );
+            changed |= row(ui, "Close gaps up to", |ui| {
+                QtyField::new(gap).unit("mm").range(0.0..=5.0).show(ui)
+            });
+        }
+        SurfaceFeature::Fillet { edges, radius } => {
+            hint(ui, "Edges where two faces of the body's surfaces meet.");
+            changed |= edge_list(ui, "Edges", edges, &picked);
+            changed |= length_row(ui, "Radius", radius);
+        }
         SurfaceFeature::Thicken {
             thickness,
             both_sides,

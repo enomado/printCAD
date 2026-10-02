@@ -1409,9 +1409,16 @@ pub enum SurfaceOp {
         faces: Vec<FaceProbe>,
         curves: Vec<CurveSource>,
     },
-    /// The body's faces joined where their edges meet; a shell that closes
-    /// becomes a solid.
-    Sew,
+    /// The body's faces joined where their edges meet, or come within
+    /// `gap` of each other (0 for exactly); a shell that closes becomes a
+    /// solid.
+    Sew {
+        #[serde(default)]
+        gap: f64,
+    },
+    /// A round of `radius` along picked edges where two faces of a sheet
+    /// meet.
+    Fillet { edges: Vec<EdgeProbe>, radius: f64 },
     /// The body's sheets given `thickness` along their normals (both ways
     /// by half when `both_sides`): a solid.
     Thicken {
@@ -1432,7 +1439,8 @@ impl SurfaceOp {
     pub fn constructs(&self) -> bool {
         !matches!(
             self,
-            SurfaceOp::Sew
+            SurfaceOp::Sew { .. }
+                | SurfaceOp::Fillet { .. }
                 | SurfaceOp::Thicken { .. }
                 | SurfaceOp::TrimByPlane { .. }
                 | SurfaceOp::Mirror { .. }

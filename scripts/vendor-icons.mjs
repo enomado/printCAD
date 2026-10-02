@@ -62,6 +62,7 @@ const LOCAL = new Set([
   "surface-trim",
   "surface-mirror",
   "surface-continuity",
+  "surface-fillet",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

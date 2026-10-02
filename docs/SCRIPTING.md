@@ -1323,9 +1323,58 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
 
+`pc.surface.offset`: Make a offset surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.extend`: Make a extend surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.blend`: Make a blend surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.split`: Make a split surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
 `pc.surface.sew`: Make a sew.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- Returns The new feature's id
+
+`pc.surface.fillet`: Make a surface fillet.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.thicken`: Make a thicken.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.trim`: Make a trim by plane.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
 
 `pc.surface.mirror`: Make a mirror.

@@ -5,10 +5,10 @@
 //! body that Design builds goes into a new body. Its steps build in the
 //! kernel's surface chain (`kernel_api::SurfaceOp`): extruded, revolved,
 //! planar, filled, ruled, lofted and swept surfaces added beside one
-//! another, then sewn (a closed shell becomes a solid) or mirrored. The
-//! steps the kernel has no operation for yet (offset, extend, blend,
-//! split, thicken, trim) are tools marked planned; their features, made by
-//! a script, keep their data and fail with the kernel's reason.
+//! another, then sewn (a closed shell becomes a solid), trimmed by a plane,
+//! split along curves, extended, offset, blended, rounded, thickened into
+//! solids or mirrored. A kind of step the kernel cannot build carries a
+//! `waits` note: its tool stays dim with it and it has no command.
 //!
 //! Curves come from sketches (every chain, open or closed) and from edges
 //! of the body's own sheets, picked in the view. A task edits a step live;
@@ -486,7 +486,8 @@ mod panel_free {
                 *first = it.next();
                 *second = it.next();
             }
-            SurfaceFeature::Sew
+            SurfaceFeature::Fillet { edges: e, .. } => e.extend(edges()),
+            SurfaceFeature::Sew { .. }
             | SurfaceFeature::Thicken { .. }
             | SurfaceFeature::Trim { .. }
             | SurfaceFeature::Mirror { .. } => {}
@@ -531,7 +532,7 @@ fn command_args(body: Option<BodyId>, feature: &SurfaceFeature) -> CommandArgs {
 /// Named arguments laid over a step's fields.
 fn merge_fields(data: &mut Value, args: &CommandArgs) -> Result<(), CommandError> {
     let Value::Object(outer) = data else {
-        // A step with no fields (Sew) takes none.
+        // A step with no fields takes none.
         return Ok(());
     };
     let Some(Value::Object(fields)) = outer.values_mut().next() else {
@@ -577,8 +578,10 @@ impl Workbench for SurfaceWorkbench {
         );
         for kind in KINDS {
             let category = match kind.tool {
-                "surface.sew" | "surface.thicken" | "surface.trim" | "surface.mirror"
-                | "surface.offset" | "surface.extend" | "surface.split" => "modify",
+                "surface.sew" | "surface.fillet" | "surface.thicken" | "surface.trim"
+                | "surface.mirror" | "surface.offset" | "surface.extend" | "surface.split" => {
+                    "modify"
+                }
                 _ => "create",
             };
             let mut tool =
@@ -802,6 +805,8 @@ impl Workbench for SurfaceWorkbench {
             SurfaceFeature::Thicken { .. } => {
                 vec![field("thickness", "Thickness", Dim::LENGTH, "thickness")]
             }
+            SurfaceFeature::Fillet { .. } => vec![field("radius", "Radius", Dim::LENGTH, "radius")],
+            SurfaceFeature::Sew { .. } => vec![field("gap", "Gap", Dim::LENGTH, "gap")],
             SurfaceFeature::Trim { .. } | SurfaceFeature::Mirror { .. } => {
                 vec![field("offset", "Offset", Dim::LENGTH, "offset")]
             }
@@ -1012,32 +1017,16 @@ mod tests {
     }
 
     #[test]
-    fn the_planned_tools_are_the_ones_the_kernel_lacks() {
+    fn every_step_has_its_tool_and_its_command() {
         let mut context = WorkbenchContext::default();
         SurfaceWorkbench::default().configure(&mut context);
-        let planned: Vec<&str> = context
-            .tools()
-            .iter()
-            .filter(|t| t.planned.is_some())
-            .map(|t| t.id.as_str())
-            .collect();
-        assert_eq!(
-            planned,
-            [
-                "surface.offset",
-                "surface.extend",
-                "surface.blend",
-                "surface.split",
-                "surface.thicken",
-                "surface.trim"
-            ]
-        );
-        assert!(
-            context
-                .commands()
-                .iter()
-                .all(|c| !planned.contains(&c.id.as_str())),
-            "no command makes a planned step"
-        );
+        assert!(context.tools().iter().all(|t| t.planned.is_none()));
+        for kind in KINDS {
+            assert!(
+                context.commands().iter().any(|c| c.id == kind.tool),
+                "{} has a command",
+                kind.tool
+            );
+        }
     }
 }

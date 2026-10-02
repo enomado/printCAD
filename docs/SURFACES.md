@@ -40,20 +40,27 @@ the cross by a row takes it out.
 | Extruded surface | Each curve swept straight: square to its sketch, or along X, Y or Z; one way, reversed, or half each way. |
 | Revolved surface | Each curve turned about an axis: the sketch's vertical or horizontal axis, or X, Y or Z. |
 | Planar surface | The flat face closed loops bound, a loop inside another a hole. |
-| Filling | The surface four curves meeting end to end bound. |
-| Ruled surface | Straight lines between two curves, end to end. |
-| Lofted surface | A surface through section curves, one per sketch, in order. |
-| Swept surface | A profile moved along a straight path. |
+| Filling | The surface curves meeting end to end bound, three or more. A side picked on a surface meets that surface touching (G0), tangent (G1) or curvature continuous (G2); a sketch's curve is touched. |
+| Ruled surface | Straight lines between two curves, end to end, one face per pair of pieces. |
+| Lofted surface | A surface through section curves, one per sketch, in order; closed back to the first if asked. |
+| Swept surface | A profile moved along a path, straight or curved, turning with it. |
+| Offset surface | Picked faces copied at a distance along their normals. |
+| Blend surface | A surface bridging two picked edges, meeting each edge's face touching, tangent or curvature continuous. |
 
-Extrusions, revolutions and planar surfaces are exact. A ruled surface, a
-loft and a fill are B-spline surfaces fitted through the curves to within
-a thousandth of a millimetre.
+Every surface is bounded by edges: a later step can pick them, and Sew
+joins it to its neighbours. A filling is bounded by the very edges it was
+given.
 
 ## Working on surfaces
 
 | Tool | What it does |
 | --- | --- |
-| Sew | Joins the body's surfaces where their edges meet. A shell that closes becomes a solid. |
+| Sew | Joins the body's surfaces where their edges meet, or come within a gap you set. A shell that closes becomes a solid. |
+| Surface fillet | Rounds picked edges where two faces of a surface meet. |
+| Extend surface | Grows faces past picked edges: on their own surface (G2), straight on tangent (G1), or straight on (G0). |
+| Split surface | Cuts picked faces along curves projected onto them. |
+| Trim by plane | Keeps what of the body lies on one side of a plane. |
+| Thicken | Gives each of the body's sheets a thickness, one way or half each way: a solid apiece. |
 | Mirror | Adds the body's reflection in the YZ, XZ or XY plane, moved by an offset. |
 
 ## Checking how faces meet
@@ -67,27 +74,27 @@ the labels away.
 
 ## Waiting on the geometry kernel
 
-These tools show in the toolbar, dim, until the geometry kernel has their
-operation. A script can make their steps already: each keeps its settings
-and says in its task why it does not build yet.
+A few cases still fail, each with the kernel's reason in its task:
 
-- Offset surface, Extend surface, Blend surface, Split surface, Thicken,
-  Trim by plane.
-- A fill of three sides or more than four, or one tangent (G1) or
-  curvature continuous (G2) to its neighbours.
-- A sweep along a curved path, and a loft closed back on itself.
-- Sewing a fill, a ruled surface or a loft to its neighbours: these come
-  without boundary edges to join.
-- Exporting a surface body as STEP.
+- Filling, blending, extending or rounding from an extruded surface's far
+  edge (its near edge, the sketch's own curve, works).
+- Filling between edges of separate surfaces that meet only at a point:
+  sew them first where they share an edge.
+- A ruled surface or a loft between curves cut into different numbers of
+  pieces.
+- Offsetting or thickening a free-form surface (a filling, a loft); flat
+  and round faces offset.
 
 ## Scripting
 
 Every tool that builds has a command: `pc.surface.extrude`,
 `pc.surface.revolve`, `pc.surface.planar`, `pc.surface.fill`,
 `pc.surface.ruled`, `pc.surface.loft`, `pc.surface.sweep`,
-`pc.surface.sew` and `pc.surface.mirror`. They take `sketches` (a list,
-in order), `body` (a body, or any feature in it) and any field of the step
-by name.
+`pc.surface.offset`, `pc.surface.blend`, `pc.surface.sew`,
+`pc.surface.fillet`, `pc.surface.extend`, `pc.surface.split`,
+`pc.surface.trim`, `pc.surface.thicken` and `pc.surface.mirror`. They
+take `sketches` (a list, in order), `body` (a body, or any feature in it)
+and any field of the step by name.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
