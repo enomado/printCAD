@@ -52,7 +52,7 @@ Not yet filed:
 
 What the Surface workbench waits on in the kernel; each step is wired, its
 tool dim or its step failing with the kernel's reason, and a test marked
-`#[ignore]` in `kernel_ogeom/tests/surface_ops.rs` passes once it lands.
+`#[ignore]` in `kernel_ogeom/tests/kernel/surface_ops.rs` passes once it lands.
 
 - [ ] **Sew a prism's end edges** (ogeom-rs#104). A box of six sheets does
   not close: the top lid does not join the walls.

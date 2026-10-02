@@ -67,6 +67,10 @@ mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
 # stay unoptimized so rebuilds are fast and backtraces stay readable.
 [profile.dev.package."*"]
 opt-level = 3
+# Line tables keep a backtrace through a dependency readable; full debug
+# info for the kernel, wasmtime, egui and the rest made each test program
+# hundreds of megabytes, written again at every link.
+debug = "line-tables-only"
 
 # Uncomment to build against a local checkout instead of the released crate:
 #[patch.crates-io]

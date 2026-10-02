@@ -33,12 +33,12 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Tests
-        run: cargo test --workspace
-
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+
+      - name: Tests, within their time budget
+        run: node scripts/test-budget.mjs
 
       - name: Comment-rot lint
         run: node scripts/lint-comment-rot.mjs --all

@@ -19,7 +19,9 @@ mention outside that section.)
 ```bash
 cargo run -p app_shell            # launch the app (needs Vulkan + Wayland/X11)
 cargo run --release -p app_shell  # for real STEP files; see the profile note
-cargo test --workspace            # full suite (~390 tests)
+cargo test --workspace            # full suite (~1500 tests)
+node scripts/test-budget.mjs      # the same, timed against its budget (what CI runs)
+node scripts/test-budget.mjs $(node scripts/affected-crates.mjs)   # only what a change reaches
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 ```
@@ -300,7 +302,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   pieces in a compound, Sew joining every face (a closed shell made a
   solid), Mirror adding the reflection. The tools for steps the kernel
   lacks are `planned`; their ops fail with the kernel's reason, and
-  `surface_ops.rs` holds an ignored test per gap (ogeom-rs#104 to #115).
+  `tests/kernel/surface_ops.rs` holds an ignored test per gap (ogeom-rs#104 to #115).
   Commands `surface.*` take `sketches`, `body` (a body or a feature in it)
   and any field by name. Check continuity (`surface.check`) asks
   `KernelQueries::continuity` (the kernel's `analyse_blend` over every
@@ -652,7 +654,7 @@ reference is generated; a test fails when it drifts
 (`PRINTCAD_WRITE_DOCS=1` rewrites it).
 Commands never open a task; Design's make features through
 `create_feature`, the toolbar's own path, then merge named fields into the
-feature's JSON. `kernel_ogeom/tests/scripted_part.rs` runs a script through
+feature's JSON. `kernel_ogeom/tests/kernel/scripted_part.rs` runs a script through
 the real benches to a solid.
 
 **AI agents.** The `agents` crate knows no command either: `rpc`
@@ -799,7 +801,7 @@ settled, `preview_rest`), and builds bodies on a pool of 2 to 4 threads
 
 Import performance: the per-solid work and each mesh's face pass go through
 `ogeom_core::parallel::map_ordered` (order-preserving, so output is identical
-at any thread count, which `tests/step_import.rs` asserts). Never nest two
+at any thread count, which `tests/kernel/step_import.rs` asserts). Never nest two
 `map_ordered` passes: `tess::Faces::{Wide, Inline}` says which level owns the
 threads. Import meshes inline from the model already in memory; a deferred
 pass would have to parse every snapshot back, which cost more than the
@@ -896,7 +898,7 @@ hacks, no silently degraded feature). Instead:
 - **Every user-edit mutator on `Document` records exactly one op; derived
   state never does.** Mutators follow validate → resolve (ids, timestamps,
   seq) → build `DocumentOp` → `apply_op` → record; replay runs the same code
-  live edits ran (`core_document/src/op.rs`, tests in `tests/op_replay.rs`).
+  live edits ran (`core_document/src/op.rs`, tests in `tests/document/op_replay.rs`).
   Dirty flags, recompute errors and imported-geometry sidecars are per-replica
   consequences, excluded from the replicated projection. The outbox is
   `#[serde(skip)]` and Clone-EMPTIES: snapshots carry state, never pending
@@ -1086,10 +1088,24 @@ on the start page (`Screen::Start`); the recent list lives in
 
 ## Testing conventions
 
+- Each crate's integration tests are one program (`tests/<name>/main.rs`
+  with a module per file: `kernel_ogeom/tests/kernel/`,
+  `core_document/tests/document/`, `wb_assembly/tests/assembly/`,
+  `wb_sketch/tests/sketcher/`): every program links the crate and its
+  dependencies again, which costs far more than running tests. Add a test
+  file as a module there, never as a new file beside `main.rs`'s
+  directory. Dependencies build with line tables only
+  (`[profile.dev.package."*"]`) for the same reason.
+- The suite has a time budget (`scripts/test-budget.mjs`: 60 s a program,
+  150 s in all, on CI); a test that needs a big model is `#[ignore]` with
+  the reason, run on request. While working, test what a change reaches:
+  `scripts/affected-crates.mjs` (changed crates and everything depending
+  on them, dev-dependencies included); CI runs everything.
+
 - Sketcher end-to-end tests drive `on_input` with real viewport-pixel clicks:
-  `wb_sketch/tests/interaction.rs` (reuse its `Harness`).
+  `wb_sketch/tests/sketcher/interaction.rs` (reuse its `Harness`).
 - Full-stack sketch→feature→solid pipelines:
-  `kernel_ogeom/tests/design_stack.rs` (dev-deps on wb_design/wb_sketch).
+  `kernel_ogeom/tests/kernel/design_stack.rs` (dev-deps on wb_design/wb_sketch).
 - Solver/geometry math is unit-tested next to the code. Assert geometric
   properties (bounds, tangency, closure), not implementation details.
 - Before committing: fmt, clippy (zero warnings), full test suite, and a
