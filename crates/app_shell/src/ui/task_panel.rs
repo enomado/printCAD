@@ -37,8 +37,8 @@ pub struct TaskPanelInputs<'a> {
     pub task: Option<&'a TaskInfo>,
     /// The application's own task, shown while no bench has one open.
     pub host_task: Option<&'a mut super::host_tasks::HostTask>,
-    /// The face selected in the view: its body and index.
-    pub picked_face: Option<(core_document::BodyId, u32)>,
+    /// The faces selected in the view: each its body and index.
+    pub picked_faces: &'a [(core_document::BodyId, u32)],
     pub custom_colors: &'a [[f32; 3]],
 }
 
@@ -51,7 +51,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         active_document_object,
         task,
         host_task,
-        picked_face,
+        picked_faces,
         custom_colors,
     } = inputs;
     let mut result = TaskPanelResult::default();
@@ -69,7 +69,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
                 ui,
                 super::host_tasks::HostTaskInputs {
                     document,
-                    picked_face,
+                    picked_faces,
                     custom_colors,
                 },
                 request.accept,

@@ -150,13 +150,13 @@ impl SurfaceWorkbench {
             }));
         }
         let faces = ctx
-            .selected_face_in(body)
+            .selected_faces_in(body)
+            .into_iter()
             .map(|face| FacePick {
                 point: face.point,
                 normal: face.normal,
                 name: face.name,
             })
-            .into_iter()
             .collect();
         (curves, faces)
     }

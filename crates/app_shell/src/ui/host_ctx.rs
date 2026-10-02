@@ -16,6 +16,7 @@ pub struct HostCtxParams {
     pub view_proj: Option<[[f32; 4]; 4]>,
     pub selected_body_id: Option<uuid::Uuid>,
     pub selected_face: Option<core_document::FaceRef>,
+    pub selected_faces: Vec<core_document::FaceRef>,
     pub selected_edges: Vec<core_document::EdgeRef>,
 }
 
@@ -28,6 +29,7 @@ impl Default for HostCtxParams {
             view_proj: None,
             selected_body_id: None,
             selected_face: None,
+            selected_faces: Vec::new(),
             selected_edges: Vec::new(),
         }
     }
@@ -49,6 +51,7 @@ pub fn panel_ctx<'a>(
     ctx.active_document_object = active_document_object;
     ctx.selected_body_id = params.selected_body_id;
     ctx.selected_face = params.selected_face;
+    ctx.selected_faces = params.selected_faces.clone();
     ctx.selected_edges = params.selected_edges.clone();
     ctx.kernel = Some(&kernel_ogeom::QUERIES);
     ctx

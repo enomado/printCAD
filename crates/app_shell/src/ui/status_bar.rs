@@ -44,6 +44,9 @@ pub struct StatusBarInputs<'a> {
     pub nav_device: Option<&'a str>,
     pub items: Option<&'a StatusItems>,
     pub preselect: Option<&'a str>,
+    /// The view's picks, when several: shown when the bench names no
+    /// selection of its own.
+    pub picks: Option<&'a str>,
     /// "w × h × d" of the selection, already formatted.
     pub dimensions: Option<&'a str>,
     /// The script running, by name, while one is.
@@ -221,7 +224,10 @@ fn draw_left(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, result: &mut Statu
         });
     }
     let (what, name) = match (
-        inputs.items.and_then(|i| i.selection.as_deref()),
+        inputs
+            .items
+            .and_then(|i| i.selection.as_deref())
+            .or(inputs.picks),
         inputs.preselect,
     ) {
         (Some(sel), _) => ("Selected", sel),
@@ -461,6 +467,7 @@ mod tests {
             nav_device: None,
             items: None,
             preselect: None,
+            picks: None,
             dimensions: None,
             script_running: None,
             recording: false,

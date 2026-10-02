@@ -1033,7 +1033,12 @@ cards take bench entries the same way, and a pick runs the bench's
 `on_command`) · wheel = zoom · LMB = select (click sketch → tree-select; click
 solid → face-first, double click → the whole body the face belongs to, one
 part of an assembly, and in Design the tree opens to its row; LMB drag
-in sketch = box select; ctrl = additive). The
+in sketch = box select; ctrl = additive: Ctrl+click adds or removes a
+face of the selected body (`session.earlier_faces` beside the last,
+`last_face_hit`; `input::toggled`), and an edge, faces and edges mixing;
+benches see every picked face as `ctx.selected_faces` /
+`selected_faces_in(body)`, `selected_face` the last; the status bar says
+"3 faces, 2 edges"). The
 face under the cursor draws translucent in the hover paint (an edge within
 reach takes the hover instead, as a line), resolved from the pick's point
 and kept while that point stays on the same face; the

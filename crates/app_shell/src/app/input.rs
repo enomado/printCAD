@@ -531,10 +531,11 @@ impl PrintCadApp {
         true
     }
 
-    /// Drop what is picked in the view: the body, its face and its edges.
+    /// Drop what is picked in the view: the body, its faces and its edges.
     pub(crate) fn clear_view_selection(&mut self) {
         self.session.selected_body = None;
         self.session.last_face_hit = None;
+        self.session.earlier_faces.clear();
         self.session.face_highlight = None;
         self.session.selected_edges.clear();
         self.session.last_select_click = None;
@@ -589,8 +590,10 @@ impl PrintCadApp {
                         self.session.selected_edges.push(edge);
                     }
                 }
-                self.session.face_highlight = None;
-                self.session.last_face_hit = None;
+                if !ctrl || self.session.selected_body != Some(hit.body) {
+                    self.session.face_highlight = None;
+                    self.session.last_face_hit = None;
+                }
                 self.session.selected_body = Some(hit.body);
                 app_log::info(format!(
                     "Selected {} edge(s) along the chain",
@@ -610,8 +613,11 @@ impl PrintCadApp {
                 (true, None) => self.session.selected_edges.push(hit),
                 (false, _) => self.session.selected_edges = vec![hit],
             }
-            self.session.face_highlight = None;
-            self.session.last_face_hit = None;
+            // Ctrl keeps the faces picked on the same body beside the edges.
+            if !ctrl || self.session.selected_body != Some(hit.body) {
+                self.session.face_highlight = None;
+                self.session.last_face_hit = None;
+            }
             self.session.selected_body = Some(hit.body);
             app_log::info(format!(
                 "Selected {} edge(s)",
@@ -641,9 +647,11 @@ impl PrintCadApp {
             // no faces to pick, so a click on one takes the whole body.
             let now = Instant::now();
             let previous = self.session.last_select_click;
-            let is_double = previous
-                .map(|(t, target)| target == hovered && now.duration_since(t).as_millis() < 400)
-                .unwrap_or(false);
+            // Ctrl picks faces one after another, however quick.
+            let is_double = !self.modifiers.control_key()
+                && previous
+                    .map(|(t, target)| target == hovered && now.duration_since(t).as_millis() < 400)
+                    .unwrap_or(false);
             // Whether the last viewport click also landed on this body: a
             // selection made from the tree or by an import is not something
             // the next click should undo.
@@ -679,42 +687,86 @@ impl PrintCadApp {
                 self.session.last_face_hit = None;
                 app_log::info("Deselected body");
             } else {
+                let ctrl = self.modifiers.control_key();
                 // A face pick without Ctrl lets the edges go.
-                if !self.modifiers.control_key() {
+                if !ctrl {
                     self.session.selected_edges.clear();
                 }
+                let hit = self.face_hit_under_cursor(hovered);
+                let highlight = hit.and_then(|face| self.face_highlight_of(hovered, face));
+                // Ctrl adds a face of the body already picked on, or takes
+                // a picked one out; otherwise the pick starts again.
+                let adding = ctrl
+                    && self.session.selected_body == Some(hovered)
+                    && self
+                        .session
+                        .last_face_hit
+                        .is_some_and(|(b, _)| b == hovered)
+                    && self.session.face_highlight.is_some();
                 self.session.selected_body = Some(hovered);
-                self.session.last_face_hit = self
-                    .face_hit_under_cursor(hovered)
-                    .map(|face| (hovered, face));
-                self.session.face_highlight =
-                    self.session.last_face_hit.and_then(|(body, face)| {
-                        let geometry = self
-                            .session
-                            .document
-                            .imported_geometry(core_document::BodyId(body))?;
-                        let submesh = face_submesh(&geometry.mesh, face.point, face.normal)?;
-                        let face_id = face_id_at(&geometry.mesh, face.point);
-                        let revision = self
-                            .session
-                            .face_highlight
-                            .as_ref()
-                            .map(|f| f.revision.wrapping_add(1))
-                            .unwrap_or(0);
-                        Some(FaceHighlight {
-                            body,
-                            face: face_id,
-                            mesh: std::sync::Arc::new(submesh),
-                            revision,
-                        })
-                    });
-                app_log::info("Selected face (double-click for the whole body)");
+                match (adding, hit, highlight) {
+                    (true, Some(face), Some(highlight)) => self.toggle_face(face, highlight),
+                    (_, hit, highlight) => {
+                        self.session.earlier_faces.clear();
+                        self.session.last_face_hit = hit.map(|face| (hovered, face));
+                        self.session.face_highlight = highlight;
+                    }
+                }
+                let picked = self.selected_face_refs().len();
+                if picked > 1 {
+                    app_log::info(format!("Selected {picked} faces"));
+                } else {
+                    app_log::info(
+                        "Selected face (Ctrl adds more; double-click for the whole body)",
+                    );
+                }
             }
         } else if self.session.selected_body.is_some() || !self.session.selected_edges.is_empty() {
             self.clear_view_selection();
             app_log::info("Deselected (clicked empty space)");
         }
         true
+    }
+
+    /// The highlight of `face` of `body`: the triangles it is drawn with.
+    fn face_highlight_of(&self, body: Uuid, face: core_document::FaceRef) -> Option<FaceHighlight> {
+        let geometry = self
+            .session
+            .document
+            .imported_geometry(core_document::BodyId(body))?;
+        let submesh = face_submesh(&geometry.mesh, face.point, face.normal)?;
+        let revision = self
+            .session
+            .face_highlight
+            .as_ref()
+            .map(|f| f.revision.wrapping_add(1))
+            .unwrap_or(0);
+        Some(FaceHighlight {
+            body,
+            face: face_id_at(&geometry.mesh, face.point),
+            mesh: std::sync::Arc::new(submesh),
+            revision,
+        })
+    }
+
+    /// Ctrl's face pick: a face already picked is taken out, any other is
+    /// added as the last ([`toggled`]).
+    fn toggle_face(&mut self, face: core_document::FaceRef, highlight: FaceHighlight) {
+        let mut picked: Vec<PickedFace> = std::mem::take(&mut self.session.earlier_faces);
+        if let (Some((_, last)), Some(last_highlight)) = (
+            self.session.last_face_hit,
+            self.session.face_highlight.take(),
+        ) {
+            picked.push(PickedFace {
+                face: last,
+                highlight: last_highlight,
+            });
+        }
+        let mut picked = toggled(picked, PickedFace { face, highlight });
+        let last = picked.pop();
+        self.session.earlier_faces = picked;
+        self.session.last_face_hit = last.as_ref().map(|p| (p.highlight.body, p.face));
+        self.session.face_highlight = last.map(|p| p.highlight);
     }
 
     /// The visible feature whose geometry passes within a few pixels of the
@@ -920,7 +972,30 @@ pub(crate) fn face_submesh_by_id(
     (!out.indices.is_empty()).then_some(out)
 }
 
-/// Sub-mesh rendered as the single-face selection highlight.
+/// The faces picked, in order, after Ctrl picks `face`: taken out when it
+/// is among them (by its kernel face), added at the end otherwise.
+pub(crate) fn toggled(mut picked: Vec<PickedFace>, face: PickedFace) -> Vec<PickedFace> {
+    let id = face.highlight.face;
+    match picked.iter().position(|p| {
+        id.is_some() && p.highlight.body == face.highlight.body && p.highlight.face == id
+    }) {
+        Some(i) => {
+            picked.remove(i);
+        }
+        None => picked.push(face),
+    }
+    picked
+}
+
+/// A face picked before the last, kept with its highlight.
+#[derive(Debug, Clone)]
+pub(crate) struct PickedFace {
+    pub face: core_document::FaceRef,
+    pub highlight: FaceHighlight,
+}
+
+/// Sub-mesh rendered as a picked face's highlight.
+#[derive(Debug, Clone)]
 pub(crate) struct FaceHighlight {
     pub body: Uuid,
     /// The kernel face, when the mesh records faces.
@@ -1170,5 +1245,56 @@ mod tests {
         let mesh = two_face_mesh();
         // Side plane: no triangles align with +X.
         assert!(coplanar_face_submesh(&mesh, [1.0, 0.5, 0.5], [1.0, 0.0, 0.0]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod picking_faces {
+    use super::*;
+
+    fn face(body: Uuid, id: u32) -> PickedFace {
+        PickedFace {
+            face: core_document::FaceRef {
+                point: [id as f32, 0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                surface: None,
+                name: 0,
+            },
+            highlight: FaceHighlight {
+                body,
+                face: Some(id),
+                mesh: Default::default(),
+                revision: 0,
+            },
+        }
+    }
+
+    fn ids(picked: &[PickedFace]) -> Vec<u32> {
+        picked.iter().filter_map(|p| p.highlight.face).collect()
+    }
+
+    #[test]
+    fn ctrl_adds_new_faces_in_order_and_takes_a_picked_one_out() {
+        let body = Uuid::new_v4();
+        let picked = toggled(vec![face(body, 1)], face(body, 2));
+        let picked = toggled(picked, face(body, 3));
+        assert_eq!(ids(&picked), [1, 2, 3]);
+        let picked = toggled(picked, face(body, 2));
+        assert_eq!(ids(&picked), [1, 3], "picked again, it goes");
+        let picked = toggled(picked, face(body, 3));
+        assert_eq!(
+            ids(&picked),
+            [1],
+            "the last going leaves the one before it last"
+        );
+    }
+
+    #[test]
+    fn a_face_with_no_kernel_id_is_always_added() {
+        let body = Uuid::new_v4();
+        let mut bare = face(body, 7);
+        bare.highlight.face = None;
+        let picked = toggled(vec![bare.clone()], bare);
+        assert_eq!(picked.len(), 2);
     }
 }

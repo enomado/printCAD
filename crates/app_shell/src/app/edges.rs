@@ -199,6 +199,47 @@ impl PrintCadApp {
         (!out.positions.is_empty()).then_some(out)
     }
 
+    /// Every picked face as the benches see them, in the order picked: the
+    /// ones Ctrl added, then the last.
+    pub(crate) fn selected_face_refs(&self) -> Vec<core_document::FaceRef> {
+        let Some((body, last)) = self
+            .session
+            .last_face_hit
+            .filter(|(body, _)| self.session.selected_body == Some(*body))
+        else {
+            return Vec::new();
+        };
+        self.session
+            .earlier_faces
+            .iter()
+            .filter(|p| p.highlight.body == body)
+            .map(|p| p.face)
+            .chain(std::iter::once(last))
+            .collect()
+    }
+
+    /// The view's picks in words when there are several ("3 faces, 2
+    /// edges"); `None` for one pick or none.
+    pub(crate) fn picks_summary(&self) -> Option<String> {
+        let faces = self.selected_face_refs().len();
+        let edges = self.session.selected_edges.len();
+        if faces + edges < 2 {
+            return None;
+        }
+        let count = |n: usize, one: &str, many: &str| match n {
+            0 => None,
+            1 => Some(format!("1 {one}")),
+            n => Some(format!("{n} {many}")),
+        };
+        Some(
+            [count(faces, "face", "faces"), count(edges, "edge", "edges")]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+
     /// The selected edges as the benches see them.
     pub(crate) fn selected_edge_refs(&self) -> Vec<EdgeRef> {
         self.session

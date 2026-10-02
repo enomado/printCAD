@@ -739,6 +739,27 @@ impl PrintCadApp {
         } = viewport_data;
         let planar_view_lock = self.sketch_editing_active();
         let hover_card = self.hover_card();
+        let picks = self.picks_summary();
+        // The faces selected in the view, as their body's mesh
+        // numbers them, in the order picked: what the Appearance
+        // and texture tasks take.
+        let picked_faces: Vec<(core_document::BodyId, u32)> = self
+            .session
+            .selected_body
+            .filter(|_| self.session.face_highlight.is_some())
+            .map(core_document::BodyId)
+            .and_then(|body| {
+                let mesh = &self.session.document.imported_geometry(body)?.mesh;
+                Some(
+                    self.selected_face_refs()
+                        .into_iter()
+                        .filter_map(|face| {
+                            Some((body, crate::app::input::face_id_at(mesh, face.point)?))
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
         let dimensions = self.selection_dimensions();
         let physical = self.panel_physical();
         let host_params = ui::HostCtxParams {
@@ -752,6 +773,7 @@ impl PrintCadApp {
             view_proj: Some(self.session.camera.view_projection()),
             selected_body_id: self.session.active_body_id.map(|id| id.0),
             selected_face: self.session.last_face_hit.as_ref().map(|(_, f)| *f),
+            selected_faces: self.selected_face_refs(),
             selected_edges: self.selected_edge_refs(),
         };
 
@@ -782,20 +804,6 @@ impl PrintCadApp {
                     .camera
                     .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
 
-                // The face selected in the view, as its body's mesh numbers
-                // it: what the Appearance task colours.
-                let picked_face = self
-                    .session
-                    .last_face_hit
-                    .filter(|(body, _)| {
-                        self.session.selected_body == Some(*body)
-                            && self.session.face_highlight.is_some()
-                    })
-                    .and_then(|(body, face)| {
-                        let body = core_document::BodyId(body);
-                        let mesh = &self.session.document.imported_geometry(body)?.mesh;
-                        Some((body, crate::app::input::face_id_at(mesh, face.point)?))
-                    });
                 let ui_started = Instant::now();
                 let ui_result = ui_layer.run(
                     window,
@@ -825,6 +833,7 @@ impl PrintCadApp {
                         status_items,
                         task,
                         hover_card,
+                        picks,
                         dimensions,
                         physical,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),
@@ -864,7 +873,7 @@ impl PrintCadApp {
                         measuring: self.session.measure.is_some(),
                         reveal_body: self.session.reveal_body.take(),
                         viewport_menu: self.session.viewport_menu.clone(),
-                        picked_face,
+                        picked_faces,
                         nav_device: self.nav_device.device_name(),
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.session.step_import_pending.as_mut(),
@@ -1101,6 +1110,17 @@ impl PrintCadApp {
             .workbench(&self.session.active_workbench.0)
             .ok()
             .and_then(|wb| wb.editing_feature());
+        // Faces Ctrl added stand only beside a last face, on the body that
+        // is still selected; whatever dropped that face drops them.
+        let picking_faces = self.session.face_highlight.is_some()
+            && self
+                .session
+                .last_face_hit
+                .is_some_and(|(body, _)| self.session.selected_body == Some(body));
+        if !picking_faces {
+            self.session.earlier_faces.clear();
+        }
+
         let mut region_meshes: Vec<BodySubmission> = Vec::new();
         let mut regions_seen: Vec<core_document::FeatureId> = Vec::new();
         let sketch_meshes: Vec<BodySubmission> = self
@@ -1519,6 +1539,24 @@ impl PrintCadApp {
             .rendering
             .selection_opacity
             .min(settings::MAX_SELECTION_OPACITY);
+        // The faces Ctrl added before the last, each in a slot of its own.
+        for (i, picked) in self.session.earlier_faces.iter().enumerate() {
+            let face = &picked.highlight;
+            let (hi, lo) = face.body.as_u64_pair();
+            all_meshes.push(BodySubmission {
+                id: Uuid::from_u128(self.face_highlight_id.as_u128() ^ (i as u128 + 1)),
+                revision: face.revision ^ hi ^ lo ^ (u64::from(face.face.unwrap_or(0)) << 32),
+                mesh: Arc::clone(&face.mesh),
+                color: paint,
+                opacity,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+                pickable: false,
+                on_top: false,
+                edge_color: None,
+                front_only: false,
+            });
+        }
         if let Some(face) = &self.session.face_highlight {
             all_meshes.push(BodySubmission {
                 id: self.face_highlight_id,
@@ -1601,8 +1639,9 @@ impl PrintCadApp {
             && !self
                 .session
                 .face_highlight
-                .as_ref()
-                .is_some_and(|f| f.body == hover.body && f.face == Some(hover.face))
+                .iter()
+                .chain(self.session.earlier_faces.iter().map(|p| &p.highlight))
+                .any(|f| f.body == hover.body && f.face == Some(hover.face))
         {
             let (hi, lo) = hover.body.as_u64_pair();
             all_meshes.push(BodySubmission {

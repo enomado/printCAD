@@ -27,8 +27,8 @@ pub struct TextureTask {
     start: Vec<FaceTexture>,
     /// Which of the body's textures is being edited.
     current: usize,
-    /// The face last picked in the view, so each pick counts once.
-    last_pick: Option<u32>,
+    /// The faces last picked in the view, so each pick counts once.
+    last_picks: Vec<u32>,
     /// The face the task was opened on, which a body with no texture
     /// gets its first on; taken on the first frame.
     opened_on: Option<Option<u32>>,
@@ -43,7 +43,7 @@ impl TextureTask {
             body,
             start: textures_of(document, body),
             current: 0,
-            last_pick: face,
+            last_picks: face.into_iter().collect(),
             opened_on: Some(face),
         }
     }
@@ -56,7 +56,7 @@ impl TextureTask {
         &mut self,
         ui: &mut Ui,
         document: &mut Document,
-        picked_face: Option<(BodyId, u32)>,
+        picked_faces: &[(BodyId, u32)],
         accept: bool,
         cancel: bool,
         commands: &mut Vec<UiCommand>,
@@ -111,7 +111,7 @@ impl TextureTask {
                     faces: Vec::new(),
                 });
                 self.current = textures.len() - 1;
-                self.last_pick = None;
+                self.last_picks.clear();
             }
         });
         if textures.is_empty() {
@@ -127,18 +127,22 @@ impl TextureTask {
         {
             let edited = &mut textures[self.current];
 
-            // A face picked in the view joins the texture.
+            // The faces picked in the view join the texture, each once.
             heading(ui, "Faces");
-            if let Some((_, index)) = picked_face.filter(|(b, _)| *b == body)
-                && self.last_pick != Some(index)
-            {
-                self.last_pick = Some(index);
+            let picks: Vec<u32> = picked_faces
+                .iter()
+                .filter(|(b, _)| *b == body)
+                .map(|(_, index)| *index)
+                .collect();
+            if !picks.is_empty() && picks != self.last_picks {
                 if let Some(mesh) = &mesh {
-                    let key = FaceKey::of(mesh, index);
-                    if !edited.faces.iter().any(|k| k.is_face(mesh, index)) {
-                        edited.faces.push(key);
+                    for &index in picks.iter().filter(|i| !self.last_picks.contains(i)) {
+                        if !edited.faces.iter().any(|k| k.is_face(mesh, index)) {
+                            edited.faces.push(FaceKey::of(mesh, index));
+                        }
                     }
                 }
+                self.last_picks = picks;
             }
             if edited.faces.is_empty() {
                 note(
@@ -162,7 +166,7 @@ impl TextureTask {
                 }
                 if secondary_button(ui, "Whole body").clicked() {
                     edited.faces.clear();
-                    self.last_pick = None;
+                    self.last_picks.clear();
                 }
             }
 
@@ -352,7 +356,7 @@ mod tests {
         let ctx = egui::Context::default();
         ui_kit::apply_theme(&ctx);
         ctx.run_ui(Default::default(), |ui| {
-            task.show(ui, &mut doc, None, false, false, &mut Vec::new());
+            task.show(ui, &mut doc, &[], false, false, &mut Vec::new());
         })
         .textures_delta
         .clear();
@@ -362,7 +366,7 @@ mod tests {
         assert!(textures[0].faces.is_empty());
         let mut ended = None;
         ctx.run_ui(Default::default(), |ui| {
-            ended = task.show(ui, &mut doc, None, false, true, &mut Vec::new());
+            ended = task.show(ui, &mut doc, &[], false, true, &mut Vec::new());
         })
         .textures_delta
         .clear();
@@ -380,13 +384,13 @@ mod tests {
         let ctx = egui::Context::default();
         ui_kit::apply_theme(&ctx);
         ctx.run_ui(Default::default(), |ui| {
-            task.show(ui, &mut doc, None, false, false, &mut Vec::new());
+            task.show(ui, &mut doc, &[], false, false, &mut Vec::new());
         })
         .textures_delta
         .clear();
         let mut ended = None;
         ctx.run_ui(Default::default(), |ui| {
-            ended = task.show(ui, &mut doc, None, true, false, &mut Vec::new());
+            ended = task.show(ui, &mut doc, &[], true, false, &mut Vec::new());
         })
         .textures_delta
         .clear();

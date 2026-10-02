@@ -84,8 +84,9 @@ pub struct AppearanceTask {
     custom: [f32; 3],
     /// The material is typed in rather than picked from the list.
     own_material: bool,
-    /// The face the task was opened for, until one is selected in the view.
-    face: Option<u32>,
+    /// The faces being coloured: the one the task was opened for, until
+    /// faces are selected in the view.
+    faces: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,8 +108,9 @@ pub enum HostTaskEnd {
 /// What a task reads of the moment.
 pub struct HostTaskInputs<'a> {
     pub document: &'a mut Document,
-    /// The face selected in the view: its body and index.
-    pub picked_face: Option<(BodyId, u32)>,
+    /// The faces selected in the view, in the order picked: each its body
+    /// and index.
+    pub picked_faces: &'a [(BodyId, u32)],
     pub custom_colors: &'a [[f32; 3]],
 }
 
@@ -236,7 +238,7 @@ impl HostTask {
             start_faces: entry.map(|b| b.face_colors.clone()).unwrap_or_default(),
             custom: display.unwrap_or_default().color,
             own_material,
-            face,
+            faces: face.into_iter().collect(),
         })
     }
 
@@ -294,7 +296,7 @@ impl HostTask {
             Self::Texture(t) => t.show(
                 ui,
                 inputs.document,
-                inputs.picked_face,
+                inputs.picked_faces,
                 accept,
                 cancel,
                 commands,
@@ -416,7 +418,7 @@ impl AppearanceTask {
     ) -> Option<HostTaskEnd> {
         let HostTaskInputs {
             document,
-            picked_face,
+            picked_faces,
             custom_colors,
         } = inputs;
         let body = self.body;
@@ -514,28 +516,51 @@ impl AppearanceTask {
         }
 
         heading(ui, "Faces");
-        if let Some((_, index)) = picked_face.filter(|(b, _)| *b == body) {
-            self.face = Some(index);
+        let picked: Vec<u32> = picked_faces
+            .iter()
+            .filter(|(b, _)| *b == body)
+            .map(|(_, index)| *index)
+            .collect();
+        if !picked.is_empty() {
+            self.faces = picked;
         }
-        match self.face {
-            Some(index) => {
-                let own = document.face_color(body, index);
+        match self.faces.as_slice() {
+            [] => note(
+                ui,
+                "Click a face of the body in the view to give it a colour of its own \
+                 (Ctrl adds more faces).",
+            ),
+            faces => {
+                // The colour they share, when they all have the same one.
+                let first = document.face_color(body, faces[0]);
+                let own = faces
+                    .iter()
+                    .all(|f| document.face_color(body, *f) == first)
+                    .then_some(first)
+                    .flatten();
+                let title = match faces {
+                    [one] => format!("Selected face {}", one + 1),
+                    many => format!("{} selected faces", many.len()),
+                };
                 ui.label(
-                    RichText::new(format!("Selected face {}", index + 1))
+                    RichText::new(title)
                         .font(sans_semibold(FONT_SM))
                         .color(TEXT1),
                 );
                 if let Some(color) = swatches(ui, own, custom_colors) {
-                    document.color_face(body, index, Some(color));
+                    for face in faces {
+                        document.color_face(body, *face, Some(color));
+                    }
                 }
-                if own.is_some() && secondary_button(ui, "The body's colour").clicked() {
-                    document.color_face(body, index, None);
+                let any_own = faces
+                    .iter()
+                    .any(|f| document.face_color(body, *f).is_some());
+                if any_own && secondary_button(ui, "The body's colour").clicked() {
+                    for face in faces {
+                        document.color_face(body, *face, None);
+                    }
                 }
             }
-            None => note(
-                ui,
-                "Click a face of the body in the view to give it a colour of its own.",
-            ),
         }
         let coloured = entry.face_colors.len();
         if coloured > 0 {
@@ -742,6 +767,8 @@ mod tests {
     /// Run `f` in a frame of a panel, as the task panel would.
     fn in_frame(f: impl FnOnce(&mut Ui)) {
         let ctx = egui::Context::default();
+        // The design's fonts, which a panel naming them needs.
+        ui_kit::theme::apply_theme(&ctx);
         let mut f = Some(f);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             if let Some(f) = f.take() {
@@ -763,7 +790,7 @@ mod tests {
                 ui,
                 HostTaskInputs {
                     document: doc,
-                    picked_face: None,
+                    picked_faces: &[],
                     custom_colors: &[],
                 },
                 accept,
@@ -772,6 +799,36 @@ mod tests {
             );
         });
         end
+    }
+
+    #[test]
+    fn appearance_takes_every_face_picked_on_its_body() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let other = doc.create_body(None);
+        let mut task = HostTask::appearance(&doc, body, Some(1));
+        let picks = [(body, 2), (other, 4), (body, 5)];
+        in_frame(|ui| {
+            task.show(
+                ui,
+                HostTaskInputs {
+                    document: &mut doc,
+                    picked_faces: &picks,
+                    custom_colors: &[],
+                },
+                false,
+                false,
+                &mut Vec::new(),
+            );
+        });
+        let HostTask::Appearance(t) = &task else {
+            panic!("appearance");
+        };
+        assert_eq!(
+            t.faces,
+            [2, 5],
+            "its own body's, in order, for the swatches to colour"
+        );
     }
 
     #[test]

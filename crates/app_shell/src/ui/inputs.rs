@@ -67,6 +67,9 @@ pub struct UiFrameInputs<'a> {
     pub task: Option<core_document::TaskInfo>,
     /// What sits under the cursor in the viewport.
     pub hover_card: Option<HoverCard>,
+    /// What is picked in the view when it is more than one thing ("3
+    /// faces, 2 edges"), for the status bar.
+    pub picks: Option<String>,
     /// "w × h × d" of the selected body, already formatted.
     pub dimensions: Option<String>,
     /// Volume, area and centre of the body the property panel shows.
@@ -105,8 +108,9 @@ pub struct UiFrameInputs<'a> {
     pub reveal_body: Option<core_document::BodyId>,
     /// The context menu a right click asked for, if one is open.
     pub viewport_menu: Option<super::ViewportMenu>,
-    /// The face selected in the view: its body and index in the body's mesh.
-    pub picked_face: Option<(core_document::BodyId, u32)>,
+    /// The faces selected in the view, in the order picked: each its body
+    /// and index in the body's mesh.
+    pub picked_faces: Vec<(core_document::BodyId, u32)>,
     /// The 6-DoF mouse the reader thread has, if any.
     pub nav_device: Option<String>,
     /// How many buttons it has, so Preferences offers a row per button.

@@ -224,6 +224,18 @@ impl FacePick {
             name: face.name,
         }
     }
+
+    /// Whether `other` names the same face: the same name, or (without
+    /// one) the same point.
+    pub fn same_place(&self, other: &FacePick) -> bool {
+        if self.name != 0 || other.name != 0 {
+            return self.name == other.name;
+        }
+        self.point
+            .iter()
+            .zip(other.point)
+            .all(|(a, b)| (a - b).abs() < 1e-4)
+    }
 }
 
 /// Where a pad/pocket stops along the sweep direction.

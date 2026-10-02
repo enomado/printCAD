@@ -204,6 +204,9 @@ pub(crate) struct DocumentSession {
     pub texture_pictures: crate::app::textures::Pictures,
     /// The edges picked in the viewport; Ctrl adds to them.
     pub selected_edges: Vec<crate::app::edges::EdgeHit>,
+    /// Faces Ctrl added before the last one picked (`last_face_hit`), on
+    /// its body, in the order picked. Empty whenever no face is picked.
+    pub earlier_faces: Vec<crate::app::input::PickedFace>,
     /// Each bench's editing state for this tab while another tab is
     /// active, keyed by bench id; handed back to the benches on switch.
     pub bench_states: HashMap<String, Box<dyn Any + Send>>,
@@ -307,6 +310,7 @@ impl DocumentSession {
             previews: Default::default(),
             physical: Default::default(),
             selected_edges: Vec::new(),
+            earlier_faces: Vec::new(),
             bench_states: HashMap::new(),
         }
     }

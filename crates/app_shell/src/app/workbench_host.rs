@@ -31,6 +31,7 @@ pub(crate) struct WbCtxParams {
     pub active_document_object: Option<FeatureId>,
     pub attach_request: Option<core_document::SketchAttachRequest>,
     pub selected_face: Option<core_document::FaceRef>,
+    pub selected_faces: Vec<core_document::FaceRef>,
     pub selected_edges: Vec<core_document::EdgeRef>,
     pub ctrl_down: bool,
     pub shift_down: bool,
@@ -94,6 +95,7 @@ impl PrintCadApp {
                 .last_face_hit
                 .filter(|(body, _)| self.session.selected_body == Some(*body))
                 .map(|(_, face)| face),
+            selected_faces: self.selected_face_refs(),
             selected_edges: self.selected_edge_refs(),
             ctrl_down: self.modifiers.control_key(),
             shift_down: self.modifiers.shift_key(),
@@ -122,6 +124,7 @@ impl PrintCadApp {
             active_document_object: self.session.active_document_object,
             attach_request: None,
             selected_face: None,
+            selected_faces: Vec::new(),
             selected_edges: self.selected_edge_refs(),
             ctrl_down: false,
             shift_down: false,
@@ -156,6 +159,7 @@ impl PrintCadApp {
         ctx.active_document_object = params.active_document_object;
         ctx.attach_request = params.attach_request;
         ctx.selected_face = params.selected_face;
+        ctx.selected_faces = params.selected_faces;
         ctx.selected_edges = params.selected_edges;
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         ctx.ctrl_down = params.ctrl_down;

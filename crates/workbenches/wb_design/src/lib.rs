@@ -224,10 +224,13 @@ impl DesignWorkbench {
             .map(|(id, _)| id)
     }
 
-    /// The current face pick, in `body`'s frame, when the user has one
-    /// selected in the viewport.
-    fn selected_face_pick(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FacePick> {
-        ctx.selected_face_in(body).map(FacePick::of)
+    /// Every face picked in the viewport (Ctrl adds more), in `body`'s
+    /// frame, in the order picked.
+    fn selected_face_picks(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<FacePick> {
+        ctx.selected_faces_in(body)
+            .into_iter()
+            .map(FacePick::of)
+            .collect()
     }
 
     /// The flat face picked in the viewport, in `body`'s frame, as a
@@ -271,9 +274,11 @@ impl DesignWorkbench {
         if !edges.is_empty() {
             return EdgeSel::Edges(edges.iter().map(EdgePick::of).collect());
         }
-        match Self::selected_face_pick(ctx, body) {
-            Some(pick) => EdgeSel::Faces(vec![pick]),
-            None => EdgeSel::All,
+        let faces = Self::selected_face_picks(ctx, body);
+        if faces.is_empty() {
+            EdgeSel::All
+        } else {
+            EdgeSel::Faces(faces)
         }
     }
 
@@ -566,7 +571,11 @@ impl DesignWorkbench {
             }
             "design.draft" => {
                 need_material(has_solid)?;
-                let pick = Self::selected_face_pick(ctx, body)
+                // The first face picked is the neutral plane, any picked
+                // after it the faces to draft.
+                let mut picks = Self::selected_face_picks(ctx, body).into_iter();
+                let pick = picks
+                    .next()
                     .ok_or("Click a face in the viewport first (the neutral plane)")?;
                 (
                     DesignFeature::Draft {
@@ -574,7 +583,7 @@ impl DesignWorkbench {
                         pull: None,
                         angle_deg: 1.5,
                         neutral: pick,
-                        faces: Vec::new(),
+                        faces: picks.collect(),
                         reversed: false,
                     },
                     "Draft",
@@ -582,11 +591,13 @@ impl DesignWorkbench {
             }
             "design.offset_faces" => {
                 need_material(has_solid)?;
-                let pick = Self::selected_face_pick(ctx, body)
-                    .ok_or("Click the face to offset in the viewport first")?;
+                let faces = Self::selected_face_picks(ctx, body);
+                if faces.is_empty() {
+                    return Err("Click the faces to offset in the viewport first".into());
+                }
                 (
                     DesignFeature::OffsetFaces {
-                        faces: vec![pick],
+                        faces,
                         distance: 1.0,
                     },
                     "OffsetFaces",
@@ -594,14 +605,16 @@ impl DesignWorkbench {
             }
             "design.move_faces" => {
                 need_material(has_solid)?;
-                let pick = Self::selected_face_pick(ctx, body)
-                    .ok_or("Click the face to move in the viewport first")?;
-                // Out along the face, as a first guess to change.
+                let faces = Self::selected_face_picks(ctx, body);
+                let pick = *faces
+                    .last()
+                    .ok_or("Click the faces to move in the viewport first")?;
+                // Out along the last face picked, as a first guess to change.
                 let translation = pick.normal;
                 let axis_point = pick.point;
                 (
                     DesignFeature::MoveFaces {
-                        faces: vec![pick],
+                        faces,
                         translation,
                         angle_deg: 0.0,
                         axis_point,
@@ -612,22 +625,23 @@ impl DesignWorkbench {
             }
             "design.delete_faces" => {
                 need_material(has_solid)?;
-                let pick = Self::selected_face_pick(ctx, body)
-                    .ok_or("Click the face to delete in the viewport first")?;
-                (
-                    DesignFeature::DeleteFaces { faces: vec![pick] },
-                    "DeleteFaces",
-                )
+                let faces = Self::selected_face_picks(ctx, body);
+                if faces.is_empty() {
+                    return Err("Click the faces to delete in the viewport first".into());
+                }
+                (DesignFeature::DeleteFaces { faces }, "DeleteFaces")
             }
             "design.thickness" => {
                 need_material(has_solid)?;
-                let pick = Self::selected_face_pick(ctx, body)
-                    .ok_or("Click the face to open in the viewport first")?;
+                let faces = Self::selected_face_picks(ctx, body);
+                if faces.is_empty() {
+                    return Err("Click the faces to open in the viewport first".into());
+                }
                 (
                     DesignFeature::Thickness {
                         both_sides: false,
                         value: 1.0,
-                        faces: vec![pick],
+                        faces,
                         inward: true,
                         join: kernel_api::ThicknessJoin::Intersection,
                     },

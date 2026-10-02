@@ -88,6 +88,11 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// world space). Lets "New Sketch" attach to the clicked face.
     pub selected_face: Option<FaceRef>,
 
+    /// Host → workbench: every face picked (Ctrl adds to the pick), in the
+    /// order picked, all on the selected body; the last is
+    /// `selected_face`.
+    pub selected_faces: Vec<FaceRef>,
+
     /// Host → workbench: the colors sketch overlays draw in.
     pub sketch_palette: crate::palette::SketchPalette,
 
@@ -397,6 +402,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             recorded: Vec::new(),
             attach_request: None,
             selected_face: None,
+            selected_faces: Vec::new(),
             selected_edges: Vec::new(),
             kernel: None,
             ctrl_down: false,
@@ -410,6 +416,26 @@ impl<'a> WorkbenchRuntimeContext<'a> {
     pub fn selected_face_in(&self, body: crate::BodyId) -> Option<FaceRef> {
         let into_body = self.document.body_placement(body).inverse();
         self.selected_face.map(|face| face.moved(&into_body))
+    }
+
+    /// Every picked face, in the order picked: `selected_faces`, or the one
+    /// `selected_face` names where only it is set (a command standing in
+    /// for a pick).
+    pub fn picked_faces(&self) -> Vec<FaceRef> {
+        if self.selected_faces.is_empty() {
+            self.selected_face.into_iter().collect()
+        } else {
+            self.selected_faces.clone()
+        }
+    }
+
+    /// Every picked face in `body`'s own frame, in the order picked.
+    pub fn selected_faces_in(&self, body: crate::BodyId) -> Vec<FaceRef> {
+        let into_body = self.document.body_placement(body).inverse();
+        self.picked_faces()
+            .iter()
+            .map(|face| face.moved(&into_body))
+            .collect()
     }
 
     /// The picked edges in `body`'s own frame.

@@ -535,17 +535,23 @@ fn face_list_editor(
         faces.remove(i);
         changed = true;
     }
-    let has_selection = ctx.selected_face.is_some();
+    // Every face picked (Ctrl adds more) that the list does not hold yet.
+    let fresh: Vec<FacePick> = picked_faces(ctx)
+        .into_iter()
+        .map(FacePick::of)
+        .filter(|pick| !faces.iter().any(|f| f.same_place(pick)))
+        .collect();
+    let label = match fresh.len() {
+        0 | 1 => "Add selected face".to_string(),
+        n => format!("Add the {n} selected faces"),
+    };
     if ui
-        .add_enabled_ui(has_selection, |ui| {
-            accent_outline_button(ui, "Add selected face")
-        })
+        .add_enabled_ui(!fresh.is_empty(), |ui| accent_outline_button(ui, &label))
         .inner
-        .on_hover_text("Click a face in the viewport first, then press this")
+        .on_hover_text("Click faces in the viewport first (Ctrl adds more), then press this")
         .clicked()
-        && let Some(face) = picked_face(ctx)
     {
-        faces.push(FacePick::of(face));
+        faces.extend(fresh);
         changed = true;
     }
     changed
@@ -3243,6 +3249,15 @@ fn picked_face(ctx: &WorkbenchRuntimeContext) -> Option<core_document::FaceRef> 
     match edited_body(ctx) {
         Some(body) => ctx.selected_face_in(body),
         None => ctx.selected_face,
+    }
+}
+
+/// Every picked face in the edited feature's body frame, in the order
+/// picked.
+fn picked_faces(ctx: &WorkbenchRuntimeContext) -> Vec<core_document::FaceRef> {
+    match edited_body(ctx) {
+        Some(body) => ctx.selected_faces_in(body),
+        None => ctx.picked_faces(),
     }
 }
 
