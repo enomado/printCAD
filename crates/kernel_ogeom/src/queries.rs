@@ -36,6 +36,42 @@ fn other(message: impl std::fmt::Display) -> KernelError {
 const TOUCHING_MM3: f64 = 1e-6;
 
 impl KernelQueries for OgeomQueries {
+    fn continuity(&self, brep: &[u8]) -> KernelResult<Vec<kernel_api::EdgeContinuity>> {
+        // Stations along each edge where the faces are compared.
+        const STATIONS: usize = 9;
+        let tol = tess::tolerances();
+        let (model, root) = tess::read_blob(brep)?;
+        let mut found: Vec<(Shape, f64, f64)> = Vec::new();
+        for face in explore_unique(&model, &root, ShapeType::Face).map_err(other)? {
+            let contacts =
+                ogeom::fillet::analyse_blend(&model, &root, &face, STATIONS, tol).map_err(other)?;
+            for contact in contacts {
+                match found.iter_mut().find(|(e, ..)| e.is_same(&contact.edge)) {
+                    // Each shared edge is met from both its faces.
+                    Some((_, gap, angle)) => {
+                        *gap = gap.max(contact.gap);
+                        *angle = angle.max(contact.tangency_error);
+                    }
+                    None => found.push((contact.edge, contact.gap, contact.tangency_error)),
+                }
+            }
+        }
+        found
+            .into_iter()
+            .map(|(edge, gap, angle)| {
+                let point = edge_samples(&model, &edge, &[0.5])?
+                    .first()
+                    .copied()
+                    .ok_or_else(|| other("an edge has no middle"))?;
+                Ok(kernel_api::EdgeContinuity {
+                    point: [point.x, point.y, point.z],
+                    gap,
+                    angle_deg: angle.to_degrees(),
+                })
+            })
+            .collect()
+    }
+
     fn face_edges(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<([f64; 3], [f64; 3])>> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;

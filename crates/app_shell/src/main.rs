@@ -244,6 +244,8 @@ struct PrintCadApp {
     bench_picture_frames: u32,
     /// `PRINTCAD_BENCH_TASK` has opened its task.
     bench_task_fired: bool,
+    /// `PRINTCAD_BENCH_WORKBENCH` has switched to its bench.
+    bench_workbench_fired: bool,
     bench_repair_fired: bool,
     bench_convert_fired: bool,
     bench_refine_fired: bool,
@@ -476,6 +478,7 @@ impl PrintCadApp {
             bench_select_fired: false,
             bench_picture_frames: 0,
             bench_task_fired: false,
+            bench_workbench_fired: false,
             bench_repair_fired: false,
             bench_convert_fired: false,
             bench_refine_fired: false,

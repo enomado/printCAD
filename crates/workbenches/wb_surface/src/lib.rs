@@ -13,6 +13,10 @@
 //! Curves come from sketches (every chain, open or closed) and from edges
 //! of the body's own sheets, picked in the view. A task edits a step live;
 //! Cancel puts it back, or takes away the step (and the body) the tool made.
+//!
+//! Check continuity measures how the faces of the selected body meet
+//! across every edge they share (the gap, and the crease angle), labels
+//! each edge in the view and lists them in a task of its own.
 
 pub mod build;
 pub mod feature;
@@ -59,10 +63,28 @@ struct Task {
     hidden: Vec<FeatureId>,
 }
 
+/// The tool that measures how a body's faces meet.
+pub const CHECK_TOOL: &str = "surface.check";
+
+/// Below this crease the faces count as meeting tangent (degrees).
+const TANGENT_DEG: f64 = 0.5;
+/// Above this gap the faces count as apart (mm).
+const APART_MM: f64 = 1e-3;
+
+/// A continuity check on show: the body, and how its faces meet at each
+/// shared edge, the points in world space.
+#[derive(Debug, Clone)]
+struct Check {
+    body: BodyId,
+    name: String,
+    joins: Vec<([f32; 3], kernel_api::EdgeContinuity)>,
+}
+
 #[derive(Default)]
 pub struct SurfaceWorkbench {
     options: Options,
     task: Option<Task>,
+    check: Option<Check>,
 }
 
 impl SurfaceWorkbench {
@@ -135,6 +157,42 @@ impl SurfaceWorkbench {
             .into_iter()
             .collect();
         (curves, faces)
+    }
+
+    /// Measure how the selected body's faces meet and show it.
+    fn check(&mut self, ctx: &mut WorkbenchRuntimeContext) -> Result<(), String> {
+        let body = ctx
+            .selected_body_id
+            .map(BodyId)
+            .or_else(|| {
+                ctx.active_document_object
+                    .and_then(|id| ctx.document.get_feature_meta(id))
+                    .and_then(|n| n.body)
+            })
+            .ok_or("Select a body to check")?;
+        let brep = ctx
+            .document
+            .imported_brep_blob(body)
+            .ok_or("The body has no shape to check yet")?;
+        let kernel = ctx.kernel.ok_or("No geometry kernel to measure with")?;
+        let joins = kernel.continuity(brep).map_err(|e| e.to_string())?;
+        let placed = ctx.document.body_placement(body);
+        let name = ctx
+            .document
+            .bodies()
+            .iter()
+            .find(|b| b.id == body)
+            .map(|b| b.name.clone())
+            .unwrap_or_default();
+        self.check = Some(Check {
+            body,
+            name,
+            joins: joins
+                .into_iter()
+                .map(|j| (placed.point(j.point.map(|c| c as f32)), j))
+                .collect(),
+        });
+        Ok(())
     }
 
     /// Make the step `tool` names from the selection and open its task.
@@ -496,6 +554,10 @@ impl Workbench for SurfaceWorkbench {
                 context.register_command(command_spec(kind));
             }
         }
+        context.register_tool(
+            ToolDescriptor::new_action(CHECK_TOOL, "Check continuity", Some("analysis"))
+                .icon("surface-continuity"),
+        );
     }
 
     fn on_input(
@@ -504,6 +566,14 @@ impl Workbench for SurfaceWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let WorkbenchInputEvent::ToolActivated = event
+            && active_tool == Some(CHECK_TOOL)
+        {
+            if let Err(why) = self.check(ctx) {
+                ctx.log_warn(why);
+            }
+            return InputResult::consumed();
+        }
         if let WorkbenchInputEvent::ToolActivated = event
             && let Some(tool) = active_tool
             && SurfaceFeature::for_tool(tool).is_some()
@@ -523,6 +593,14 @@ impl Workbench for SurfaceWorkbench {
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.task.is_none() && self.check.is_some() {
+            return Some(TaskInfo {
+                title: "Continuity".into(),
+                icon: "surface-continuity",
+                confirmable: false,
+                stepwise: false,
+            });
+        }
         let task = self.task.as_ref()?;
         let feature = ctx
             .document
@@ -546,6 +624,13 @@ impl Workbench for SurfaceWorkbench {
     ) -> core_document::TaskOutcome {
         use core_document::TaskOutcome;
         let Some(task) = self.task.clone() else {
+            if let Some(check) = &self.check {
+                if request.accept || request.cancel {
+                    self.check = None;
+                    return TaskOutcome::Cancelled;
+                }
+                panel::continuity(ui, &check.name, &check.joins, TANGENT_DEG, APART_MM);
+            }
             return TaskOutcome::Open;
         };
         // The task closes on its own when its step is gone (an undo).
@@ -574,6 +659,42 @@ impl Workbench for SurfaceWorkbench {
             Self::write(ctx, task.feature, &feature);
         }
         TaskOutcome::Open
+    }
+
+    fn get_screen_space_labels(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceLabel> {
+        let Some(check) = &self.check else {
+            return Vec::new();
+        };
+        if !ctx.document.bodies().iter().any(|b| b.id == check.body) {
+            return Vec::new();
+        }
+        let palette = &ctx.sketch_palette;
+        check
+            .joins
+            .iter()
+            .filter_map(|(at, join)| {
+                let (x, y) = ctx.world_to_viewport(*at)?;
+                let (text, color) = if join.gap > APART_MM {
+                    (format!("gap {:.3}", join.gap), palette.conflict)
+                } else if join.angle_deg < TANGENT_DEG {
+                    ("G1".to_string(), palette.fully_constrained)
+                } else {
+                    (format!("{:.1}°", join.angle_deg), palette.constraint)
+                };
+                Some(core_document::ScreenSpaceLabel {
+                    pos: [x, y],
+                    text,
+                    color,
+                    size: 11.0,
+                    background: true,
+                    mono: true,
+                })
+            })
+            .collect()
     }
 
     fn editing_feature(&self) -> Option<FeatureId> {
@@ -709,7 +830,7 @@ mod tests {
     fn every_tool_names_an_icon_the_set_has() {
         let mut context = WorkbenchContext::default();
         SurfaceWorkbench::default().configure(&mut context);
-        assert_eq!(context.tools().len(), KINDS.len());
+        assert_eq!(context.tools().len(), KINDS.len() + 1);
         #[cfg(feature = "egui")]
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -717,6 +838,69 @@ mod tests {
         }
         #[cfg(feature = "egui")]
         assert!(ui_kit::icon::exists("workbench-surface"));
+    }
+
+    /// A kernel whose shapes all meet at one crease and one tangent join.
+    struct TwoJoins;
+
+    impl kernel_api::KernelQueries for TwoJoins {
+        fn project_edge(
+            &self,
+            _brep: &[u8],
+            _near: [f64; 3],
+            _plane: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("project_edge".into()))
+        }
+
+        fn continuity(
+            &self,
+            _brep: &[u8],
+        ) -> kernel_api::KernelResult<Vec<kernel_api::EdgeContinuity>> {
+            Ok(vec![
+                kernel_api::EdgeContinuity {
+                    point: [1.0, 0.0, 0.0],
+                    gap: 0.0,
+                    angle_deg: 90.0,
+                },
+                kernel_api::EdgeContinuity {
+                    point: [2.0, 0.0, 0.0],
+                    gap: 0.0,
+                    angle_deg: 0.1,
+                },
+            ])
+        }
+    }
+
+    #[test]
+    fn checking_a_body_shows_its_joins_in_a_task_until_closed() {
+        static KERNEL: TwoJoins = TwoJoins;
+        let mut document = Document::new("t");
+        let body = document.create_body(Some("Shell".into()));
+        document.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
+        let mut bench = SurfaceWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.kernel = Some(&KERNEL);
+        ctx.selected_body_id = Some(body.0);
+        bench.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some(CHECK_TOOL),
+            &mut ctx,
+        );
+        assert_eq!(bench.task(&ctx).map(|t| t.title), Some("Continuity".into()));
+        let joins = &bench.check.as_ref().unwrap().joins;
+        assert_eq!(joins.len(), 2);
+        assert_eq!(joins[0].0, [1.0, 0.0, 0.0], "placed where the body sits");
+        bench.check = None;
+        assert!(bench.task(&ctx).is_none());
+    }
+
+    #[test]
+    fn checking_with_nothing_selected_says_so() {
+        let mut document = Document::new("t");
+        let mut bench = SurfaceWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        assert_eq!(bench.check(&mut ctx), Err("Select a body to check".into()));
     }
 
     #[test]

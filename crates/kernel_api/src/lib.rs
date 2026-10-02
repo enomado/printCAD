@@ -1818,7 +1818,23 @@ pub struct RecognizedHole {
 
 /// Geometry questions a workbench may ask while it runs, answered by the
 /// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
+/// How two faces of a shape meet across an edge they share: a point
+/// halfway along it, in the shape's own frame, the largest gap between the
+/// edge and the faces, and the largest angle between the faces' normals
+/// along it (zero where they meet tangent).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EdgeContinuity {
+    pub point: [f64; 3],
+    pub gap: f64,
+    pub angle_deg: f64,
+}
+
 pub trait KernelQueries: Send + Sync {
+    /// Every edge two faces of `brep` share, with how they meet there.
+    fn continuity(&self, _brep: &[u8]) -> KernelResult<Vec<EdgeContinuity>> {
+        Err(KernelError::Unsupported("continuity".into()))
+    }
+
     /// The edges bounding the face of `brep` nearest `near`: a point on
     /// each, halfway along, and its direction there, in the shape's own
     /// frame. A seam (the edge a round face meets itself along) and an

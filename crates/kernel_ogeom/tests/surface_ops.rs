@@ -632,3 +632,69 @@ fn a_sheet_exports_as_step() {
     .unwrap();
     assert_eq!(written.written, 1, "skipped: {:?}", written.skipped);
 }
+
+/// Where faces meet, measured: an L's two walls meet at a right angle, a
+/// line running on into a tangent arc meets it smoothly.
+#[test]
+fn continuity_tells_a_crease_from_a_tangent_join() {
+    use kernel_api::KernelQueries;
+    let walls = |segments| {
+        build(vec![SurfaceOp::Extrude {
+            curves: vec![sketch(xy(0.0), segments)],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        }])
+        .unwrap()
+    };
+    let l = walls(vec![
+        line([0.0, 0.0], [10.0, 0.0]),
+        line([10.0, 0.0], [10.0, 10.0]),
+    ]);
+    let joins = kernel_ogeom::QUERIES.continuity(&l.brep_blob).unwrap();
+    assert_eq!(joins.len(), 1, "{joins:?}");
+    assert!((joins[0].angle_deg - 90.0).abs() < 0.5, "{joins:?}");
+    assert!(joins[0].gap < 1e-6);
+    assert!((joins[0].point[0] - 10.0).abs() < 1e-6 && (joins[0].point[2] - 2.5).abs() < 1e-6);
+
+    // The arc leaves (10, 0) heading along +x, as the line does.
+    let smooth = walls(vec![
+        line([0.0, 0.0], [10.0, 0.0]),
+        arc(
+            [10.0, 0.0],
+            [13.535_533_905_932_737, 1.464_466_094_067_262_4],
+            [15.0, 5.0],
+        ),
+    ]);
+    let joins = kernel_ogeom::QUERIES.continuity(&smooth.brep_blob).unwrap();
+    assert_eq!(joins.len(), 1, "{joins:?}");
+    assert!(joins[0].angle_deg < 0.5, "{joins:?}");
+}
+
+/// Walls with a floor sewn on: every edge two faces share meets with no
+/// gap.
+#[test]
+#[ignore = "kernel: a prism's end edges are matched as the profile's edges they were moved from (ogeom-rs#104)"]
+fn a_sewn_floor_meets_its_walls_with_no_gap() {
+    use kernel_api::KernelQueries;
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![square_loop(0.0, 10.0)],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        },
+        SurfaceOp::PlanarFill {
+            curves: vec![square_loop(0.0, 10.0)],
+        },
+        SurfaceOp::Sew,
+    ])
+    .unwrap();
+    let joins = kernel_ogeom::QUERIES.continuity(&result.brep_blob).unwrap();
+    assert_eq!(
+        joins.len(),
+        8,
+        "four corners and four floor edges: {joins:?}"
+    );
+    assert!(joins.iter().all(|j| j.gap < 1e-6), "{joins:?}");
+}

@@ -61,6 +61,7 @@ const LOCAL = new Set([
   "surface-thicken",
   "surface-trim",
   "surface-mirror",
+  "surface-continuity",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

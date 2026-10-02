@@ -455,6 +455,10 @@ pub const ICONS: &[(&str, &str)] = &[
     ),
     ("surface-blend", include_str!("../icons/surface-blend.svg")),
     (
+        "surface-continuity",
+        include_str!("../icons/surface-continuity.svg"),
+    ),
+    (
         "surface-extend",
         include_str!("../icons/surface-extend.svg"),
     ),

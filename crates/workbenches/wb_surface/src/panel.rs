@@ -408,6 +408,61 @@ fn one_edge(ui: &mut Ui, title: &str, slot: &mut Option<EdgePick>, picked: &[Cur
     items != before
 }
 
+/// A continuity check's findings: how many edges, how many meet tangent,
+/// and each edge from the sharpest crease down.
+pub fn continuity(
+    ui: &mut Ui,
+    body: &str,
+    joins: &[([f32; 3], kernel_api::EdgeContinuity)],
+    tangent_deg: f64,
+    apart_mm: f64,
+) {
+    let apart = joins.iter().filter(|(_, j)| j.gap > apart_mm).count();
+    let tangent = joins
+        .iter()
+        .filter(|(_, j)| j.gap <= apart_mm && j.angle_deg < tangent_deg)
+        .count();
+    hint(
+        ui,
+        &format!(
+            "{body}: {} shared edge(s); {tangent} tangent, {} creased, {apart} apart. \
+             The view labels each edge.",
+            joins.len(),
+            joins.len() - tangent - apart,
+        ),
+    );
+    let mut sorted: Vec<&kernel_api::EdgeContinuity> = joins.iter().map(|(_, j)| j).collect();
+    sorted.sort_by(|a, b| b.angle_deg.total_cmp(&a.angle_deg));
+    egui::Grid::new("surface_continuity")
+        .num_columns(3)
+        .spacing(egui::vec2(SPACE_3, SPACE_1))
+        .show(ui, |ui| {
+            for title in ["Edge at", "Crease", "Gap"] {
+                ui.label(RichText::new(title).font(sans_medium(FONT_XS)).color(TEXT2));
+            }
+            ui.end_row();
+            for join in sorted {
+                let [x, y, z] = join.point;
+                ui.label(
+                    RichText::new(format!("{x:.1}, {y:.1}, {z:.1}"))
+                        .font(ui_kit::mono(FONT_XS))
+                        .color(TEXT2),
+                );
+                ui.label(
+                    RichText::new(format!("{:.2}°", join.angle_deg))
+                        .font(ui_kit::mono(FONT_XS))
+                        .color(TEXT1),
+                );
+                ui.label(
+                    RichText::new(format!("{:.4} mm", join.gap))
+                        .font(ui_kit::mono(FONT_XS))
+                        .color(TEXT1),
+                );
+                ui.end_row();
+            }
+        });
+}
+
 /// The Surface preferences page.
 pub fn settings(ui: &mut Ui, options: &mut Options, filter: &str) {
     pref_group(

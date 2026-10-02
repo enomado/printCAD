@@ -300,7 +300,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   lacks are `planned`; their ops fail with the kernel's reason, and
   `surface_ops.rs` holds an ignored test per gap (ogeom-rs#104 to #115).
   Commands `surface.*` take `sketches`, `body` (a body or a feature in it)
-  and any field by name.
+  and any field by name. Check continuity (`surface.check`) asks
+  `KernelQueries::continuity` (the kernel's `analyse_blend` over every
+  face: gap and crease per shared edge) of the selected body and labels
+  the edges through `get_screen_space_labels`.
 - `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
   planar anchors with offset/flip, Align of two axes, Angle, Hinge, Slider,
   Fixed, Parallel, Perpendicular, Distance and Tangent; Ground keeps a body
@@ -985,6 +988,8 @@ once the scene settles (the renderer's scene readback, `request_capture`);
 `PRINTCAD_AUTOSAVE_SECS` shortens the autosave wait (`app/recovery.rs`:
 copies of edited tabs in the data folder's `recovery/`, taken away when
 saved, closed or on exit, offered on the start page after a crash);
+`PRINTCAD_BENCH_WORKBENCH=<bench id>` switches to that bench once the
+document has a body (so `PRINTCAD_BENCH_TOOL` reaches its tools);
 `PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once,
 `PRINTCAD_BENCH_CONVERT=1` the conversion of every mesh body. Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.

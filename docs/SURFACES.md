@@ -52,6 +52,15 @@ a thousandth of a millimetre.
 | Sew | Joins the body's surfaces where their edges meet. A shell that closes becomes a solid. |
 | Mirror | Adds the body's reflection in the YZ, XZ or XY plane, moved by an offset. |
 
+## Checking how faces meet
+
+Check continuity measures every edge where two faces of the selected body
+meet, a surface body or a solid: the gap between them, and the angle of
+the crease (none where they meet tangent). Each edge is labelled in the
+view: G1 for a tangent join, the crease angle, or the gap where the faces
+are apart; the task lists them from the sharpest crease down. Close puts
+the labels away.
+
 ## Waiting on the geometry kernel
 
 These tools show in the toolbar, dim, until the geometry kernel has their

@@ -491,6 +491,23 @@ impl PrintCadApp {
             }
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_WORKBENCH=<bench id>` switches to
+        // that bench once the document has a body, as the switcher would,
+        // so a capture shows its toolbar and `PRINTCAD_BENCH_TOOL` reaches
+        // its tools.
+        if !self.bench_workbench_fired
+            && let Ok(id) = std::env::var("PRINTCAD_BENCH_WORKBENCH")
+            && !self.session.document.bodies().is_empty()
+        {
+            self.bench_workbench_fired = true;
+            let target = crate::WorkbenchId::from(id.as_str());
+            if self.registry.descriptor(&target).is_some() {
+                self.switch_workbench_for_flow(target);
+            } else {
+                tracing::warn!(target: "printcad.frame", "no bench `{id}` to switch to");
+            }
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_TASK=appearance|placement|history`
         // opens that task of the application's on the first body (its first
         // feature, for history) once it has geometry, as its menu entry
