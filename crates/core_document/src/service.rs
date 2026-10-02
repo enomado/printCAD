@@ -478,6 +478,17 @@ impl DocumentService {
                 if !placement.is_identity() {
                     geometry.mesh = placement.mesh(&geometry.mesh);
                     geometry.revision = mix_placement(geometry.revision, &placement);
+                    if let Some(region) = &mut geometry.region {
+                        let plane = &mut region.profile.plane;
+                        let point =
+                            |p: [f64; 3]| placement.point(p.map(|c| c as f32)).map(f64::from);
+                        let turn =
+                            |d: [f64; 3]| placement.direction(d.map(|c| c as f32)).map(f64::from);
+                        plane.origin = point(plane.origin);
+                        plane.x_axis = turn(plane.x_axis);
+                        plane.y_axis = turn(plane.y_axis);
+                        plane.normal = turn(plane.normal);
+                    }
                 }
                 Some((*id, geometry))
             })

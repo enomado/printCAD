@@ -174,6 +174,10 @@ const BENCH_REPORT_FRAME: u32 = 300;
 /// and the pick readbacks land.
 const INPUT_TAIL: Duration = Duration::from_millis(150);
 
+/// Mixed into a feature's id for the id of the region it shades, so the
+/// two never share a renderer cache slot.
+const REGION_ID_SALT: u128 = 0x5245_4749_4f4e_5f53_4841_4445_0000_0001;
+
 impl PrintCadApp {
     /// The body the tree row under the pointer stands for: a body's row, an
     /// imported part's, or a feature's that builds its body's solid. A
@@ -1097,6 +1101,8 @@ impl PrintCadApp {
             .workbench(&self.session.active_workbench.0)
             .ok()
             .and_then(|wb| wb.editing_feature());
+        let mut region_meshes: Vec<BodySubmission> = Vec::new();
+        let mut regions_seen: Vec<core_document::FeatureId> = Vec::new();
         let sketch_meshes: Vec<BodySubmission> = self
             .registry
             .passive_geometries(&self.session.document, editing_feature)
@@ -1126,6 +1132,40 @@ impl PrintCadApp {
                 // The tint participates in the cache revision so hover /
                 // selection transitions actually re-upload the color.
                 let state_bits = (is_selected as u64) | ((is_hovered as u64) << 1);
+                // What it encloses, shaded see-through behind its lines and
+                // meshed once per revision.
+                if let Some(region) = &geometry.region {
+                    regions_seen.push(feature_id);
+                    let fresh = self
+                        .region_meshes
+                        .get(&feature_id)
+                        .is_some_and(|(revision, _)| *revision == geometry.revision);
+                    if !fresh {
+                        use kernel_api::KernelQueries;
+                        let mesh = kernel_ogeom::QUERIES
+                            .profile_mesh(&region.profile)
+                            .unwrap_or_default();
+                        self.region_meshes
+                            .insert(feature_id, (geometry.revision, Arc::new(mesh)));
+                    }
+                    if let Some((_, mesh)) = self.region_meshes.get(&feature_id)
+                        && !mesh.indices.is_empty()
+                    {
+                        region_meshes.push(BodySubmission {
+                            id: Uuid::from_u128(feature_id.0.as_u128() ^ REGION_ID_SALT),
+                            revision: geometry.revision ^ (state_bits << 62),
+                            mesh: Arc::clone(mesh),
+                            color,
+                            highlight: HighlightState::None,
+                            is_wireframe: false,
+                            opacity: region.opacity,
+                            pickable: false,
+                            on_top: false,
+                            edge_color: None,
+                            front_only: false,
+                        });
+                    }
+                }
                 BodySubmission {
                     id: feature_id.0,
                     revision: geometry.revision ^ (state_bits << 62),
@@ -1141,6 +1181,8 @@ impl PrintCadApp {
                 }
             })
             .collect();
+
+        self.region_meshes.retain(|id, _| regions_seen.contains(id));
 
         // The camera clips to what is drawn now: every visible body, the
         // features drawn beside them and the print bed, never a box kept
@@ -1441,6 +1483,7 @@ impl PrintCadApp {
 
         let mut all_meshes = sketch_meshes;
         all_meshes.extend(imported_meshes);
+        all_meshes.extend(region_meshes);
         // What the feature being edited adds or takes: its tool in the
         // preview colour, faces see-through and edges whole.
         let rendering = &self.user_settings.rendering;

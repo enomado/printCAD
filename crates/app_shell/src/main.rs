@@ -297,6 +297,12 @@ struct PrintCadApp {
     /// Index-stable UUIDs for workbench overlay meshes (slot i -> pool[i]),
     /// so the renderer's per-body cache works for overlays too.
     overlay_id_pool: Vec<Uuid>,
+    /// The regions passive features shade, meshed by the kernel, by
+    /// feature with the revision they were meshed at.
+    region_meshes: std::collections::HashMap<
+        core_document::FeatureId,
+        (u64, std::sync::Arc<kernel_api::TriMesh>),
+    >,
     /// Latest keyboard modifiers from `WindowEvent::ModifiersChanged`.
     modifiers: winit::keyboard::ModifiersState,
     /// Stable renderer id for the face-highlight overlay slot.
@@ -507,6 +513,7 @@ impl PrintCadApp {
             last_step_import_detail: step_import_defaults,
             mouse_buttons_down: 0,
             overlay_id_pool: Vec::new(),
+            region_meshes: Default::default(),
             modifiers: winit::keyboard::ModifiersState::default(),
             face_highlight_id: Uuid::new_v4(),
             face_hover_id: Uuid::new_v4(),

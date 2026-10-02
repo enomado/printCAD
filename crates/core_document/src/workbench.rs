@@ -383,6 +383,18 @@ pub struct PassiveGeometry {
     pub revision: u64,
     /// The colour it draws in while not selected or hovered.
     pub tint: PassiveTint,
+    /// What it encloses, shaded behind its lines: the host meshes the
+    /// profile (once per `revision`) and draws it see-through in the same
+    /// colour, never picked.
+    pub region: Option<PassiveRegion>,
+}
+
+/// Closed loops a feature's lines bound, for the host to shade.
+#[derive(Debug, Clone)]
+pub struct PassiveRegion {
+    /// In the feature's body frame, as the mesh is.
+    pub profile: kernel_api::Profile,
+    pub opacity: f32,
 }
 
 /// Which colour of the sketch palette a feature's 3D presence draws in.

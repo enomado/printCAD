@@ -69,10 +69,11 @@ pub use variables::{DocumentFormulas, formula_candidates};
 pub use variables::{VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
     FeatureInfo, FeatureReference, FileImport, MarkKind, MenuItem, MenuScope, OverlayMesh, OvpRow,
-    OvpWidget, PassiveGeometry, PassiveTint, PropertyHints, ReferenceChoice, ScreenSpaceImage,
-    ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome,
-    TaskRequest, ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
+    OvpWidget, PassiveGeometry, PassiveRegion, PassiveTint, PropertyHints, ReferenceChoice,
+    ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo,
+    TaskOutcome, TaskRequest, ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud,
+    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id,
+    tool_variant,
 };
 
 /// Result type for document operations.

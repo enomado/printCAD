@@ -2661,10 +2661,27 @@ impl Workbench for SketchWorkbench {
         // As its formulas leave it, solved.
         let data = document.feature_values(id)?;
         let feature = SketchFeature::from_json(data).ok()?;
+        // Its closed loops shaded, as while it is edited.
+        let region = self
+            .options
+            .shade_regions
+            .then(|| profile::extract_wires(&feature.sketch).ok())
+            .flatten()
+            .map(|wires| {
+                let mut plane = profile::plane_of(&feature.plane);
+                for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
+                    *o += n * REGION_LIFT_MM;
+                }
+                core_document::PassiveRegion {
+                    profile: kernel_api::Profile { plane, wires },
+                    opacity: REGION_OPACITY,
+                }
+            });
         Some(core_document::PassiveGeometry {
             mesh: render::sketch_to_lines(&feature.sketch, &feature.plane),
             revision: core_document::data_revision(data),
             tint: core_document::PassiveTint::Plain,
+            region,
         })
     }
 
@@ -7204,5 +7221,66 @@ mod wall_thickness {
         );
         wb.on_frame(0.016, &mut ctx);
         assert!(wb.shown_wall_check().is_none());
+    }
+}
+
+#[cfg(test)]
+mod passive_regions {
+    use super::*;
+    use core_document::Document;
+    use sketch::{Line, Point};
+
+    /// A document holding one sketch: a triangle, closed or with one side
+    /// left out.
+    fn triangle(closed: bool) -> (Document, FeatureId) {
+        let mut sketch = Sketch::new("t");
+        let corners: Vec<Uuid> = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+            .iter()
+            .map(|(x, y)| {
+                sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(*x, *y))))
+            })
+            .collect();
+        let sides = if closed { 3 } else { 2 };
+        for i in 0..sides {
+            sketch.add_geometry(GeometryElement::Line(Line::new(
+                corners[i],
+                corners[(i + 1) % 3],
+            )));
+        }
+        let mut doc = Document::new("t");
+        let id = doc
+            .add_feature_in_body(
+                SketchFeature::new(sketch, SketchPlane::xy()),
+                "t".into(),
+                None,
+            )
+            .unwrap();
+        (doc, id)
+    }
+
+    fn region(
+        bench: &SketchWorkbench,
+        doc: &Document,
+        id: FeatureId,
+    ) -> Option<core_document::PassiveRegion> {
+        let node = doc.get_feature_meta(id).unwrap();
+        bench.passive_geometry(doc, id, node).unwrap().region
+    }
+
+    #[test]
+    fn a_closed_sketch_offers_its_loops_to_shade_when_regions_are_shaded() {
+        let (doc, id) = triangle(true);
+        let mut bench = SketchWorkbench::default();
+        let shaded = region(&bench, &doc, id).expect("a region");
+        assert_eq!(shaded.profile.wires.len(), 1);
+        assert!(shaded.profile.plane.origin[2] > 0.0, "a hair off the plane");
+        bench.options.shade_regions = false;
+        assert!(region(&bench, &doc, id).is_none());
+    }
+
+    #[test]
+    fn an_open_sketch_shades_nothing() {
+        let (doc, id) = triangle(false);
+        assert!(region(&SketchWorkbench::default(), &doc, id).is_none());
     }
 }

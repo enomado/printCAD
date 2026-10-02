@@ -79,6 +79,7 @@ impl Workbench for FakeBench {
             },
             revision: 1,
             tint: Default::default(),
+            region: None,
         })
     }
     fn pick_feature(

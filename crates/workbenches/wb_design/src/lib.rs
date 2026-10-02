@@ -1268,6 +1268,7 @@ impl Workbench for DesignWorkbench {
             mesh,
             revision: borrow::lines_revision(document, id, &borrow),
             tint: core_document::PassiveTint::External,
+            region: None,
         })
     }
 
