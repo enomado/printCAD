@@ -25,9 +25,13 @@ A step is built from curves:
 - **Edges.** Edges of the body's own surfaces, picked in the view (Ctrl
   adds to the pick). A fill can close the gap between surfaces this way.
 
-Select a sketch in the tree, or edges in the view, before clicking a tool,
-and the step takes them. In the task, "Add the selection" takes what is
-selected now, and the cross by a row takes it out.
+Create sketch starts a sketch in the selected surface body (or a new
+one); finishing it comes back to Surface with the sketch selected, ready
+for a tool. The tools that build from curves stay dim until a sketch is
+selected in the tree or edges are picked; Sew and Mirror until a surface
+body with a shape is selected. A tool takes what is selected when it is
+clicked; in its task, "Add the selection" takes what is selected now, and
+the cross by a row takes it out.
 
 ## Making surfaces
 

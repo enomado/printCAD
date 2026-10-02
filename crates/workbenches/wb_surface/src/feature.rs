@@ -405,6 +405,21 @@ impl SurfaceFeature {
         out
     }
 
+    /// Whether the step is built from curves, so a tool makes it only with
+    /// one picked.
+    pub fn curves_needed(&self) -> bool {
+        matches!(
+            self,
+            SurfaceFeature::Extrude { .. }
+                | SurfaceFeature::Revolve { .. }
+                | SurfaceFeature::PlanarFill { .. }
+                | SurfaceFeature::Fill { .. }
+                | SurfaceFeature::Ruled { .. }
+                | SurfaceFeature::Loft { .. }
+                | SurfaceFeature::Sweep { .. }
+        )
+    }
+
     /// Whether the step adds a sheet of its own, rather than working on
     /// what the body has.
     pub fn constructs(&self) -> bool {

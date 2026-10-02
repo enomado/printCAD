@@ -65,6 +65,8 @@ struct Task {
 
 /// The tool that measures how a body's faces meet.
 pub const CHECK_TOOL: &str = "surface.check";
+/// The tool that starts a sketch in a surface body.
+pub const SKETCH_TOOL: &str = "surface.new_sketch";
 
 /// Below this crease the faces count as meeting tangent (degrees).
 const TANGENT_DEG: f64 = 0.5;
@@ -159,17 +161,50 @@ impl SurfaceWorkbench {
         (curves, faces)
     }
 
+    /// The body the selection names, whichever bench builds it: the
+    /// selected body, else the selected feature's.
+    fn selected_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
+        ctx.selected_body_id.map(BodyId).or_else(|| {
+            ctx.active_document_object
+                .and_then(|id| ctx.document.get_feature_meta(id))
+                .and_then(|n| n.body)
+        })
+    }
+
+    /// Whether the selection gives a step a curve to start from: a sketch
+    /// in the tree, or edges picked on a body that takes surfaces.
+    fn has_curves(ctx: &WorkbenchRuntimeContext) -> bool {
+        let sketch = ctx
+            .active_document_object
+            .and_then(|id| ctx.document.get_feature_meta(id))
+            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
+        sketch
+            || ctx
+                .selected_edges
+                .iter()
+                .any(|e| Self::takes_surfaces(ctx.document, BodyId(e.body)))
+    }
+
+    /// Open the sketcher on a surface body: the selected one when it takes
+    /// surfaces, else a new one. Finishing the sketch comes back here with
+    /// it selected.
+    fn new_sketch(ctx: &mut WorkbenchRuntimeContext) {
+        let (body, _) = Self::target_body(ctx);
+        ctx.request(HostRequest::StartOn {
+            workbench: core_document::WorkbenchId::from("wb.sketch"),
+            attach: core_document::SketchAttachRequest {
+                body: body.0,
+                face: ctx
+                    .selected_face
+                    .filter(|_| ctx.selected_body_id == Some(body.0)),
+                face_origin: core_document::FaceOrigin::Elsewhere,
+            },
+        });
+    }
+
     /// Measure how the selected body's faces meet and show it.
     fn check(&mut self, ctx: &mut WorkbenchRuntimeContext) -> Result<(), String> {
-        let body = ctx
-            .selected_body_id
-            .map(BodyId)
-            .or_else(|| {
-                ctx.active_document_object
-                    .and_then(|id| ctx.document.get_feature_meta(id))
-                    .and_then(|n| n.body)
-            })
-            .ok_or("Select a body to check")?;
+        let body = Self::selected_body(ctx).ok_or("Select a body to check")?;
         let brep = ctx
             .document
             .imported_brep_blob(body)
@@ -536,6 +571,10 @@ impl Workbench for SurfaceWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        context.register_tool(
+            ToolDescriptor::new_action(SKETCH_TOOL, "Create sketch", Some("structure"))
+                .icon("sketch-new"),
+        );
         for kind in KINDS {
             let category = match kind.tool {
                 "surface.sew" | "surface.thicken" | "surface.trim" | "surface.mirror"
@@ -566,6 +605,12 @@ impl Workbench for SurfaceWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let WorkbenchInputEvent::ToolActivated = event
+            && active_tool == Some(SKETCH_TOOL)
+        {
+            Self::new_sketch(ctx);
+            return InputResult::consumed();
+        }
         if let WorkbenchInputEvent::ToolActivated = event
             && active_tool == Some(CHECK_TOOL)
         {
@@ -701,6 +746,21 @@ impl Workbench for SurfaceWorkbench {
         self.task.as_ref().map(|t| t.feature)
     }
 
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        let shaped = |body: BodyId| ctx.document.imported_brep_blob(body).is_some();
+        match tool_id {
+            SKETCH_TOOL => true,
+            CHECK_TOOL => Self::selected_body(ctx).is_some_and(shaped),
+            "surface.sew" | "surface.mirror" => Self::selected_body(ctx)
+                .is_some_and(|b| build::is_surface_body(ctx.document, b) && shaped(b)),
+            tool => match SurfaceFeature::for_tool(tool) {
+                Some(feature) if !feature.curves_needed() => true,
+                Some(_) => Self::has_curves(ctx),
+                None => true,
+            },
+        }
+    }
+
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
         if self.task.is_some() {
             return;
@@ -830,7 +890,7 @@ mod tests {
     fn every_tool_names_an_icon_the_set_has() {
         let mut context = WorkbenchContext::default();
         SurfaceWorkbench::default().configure(&mut context);
-        assert_eq!(context.tools().len(), KINDS.len() + 1);
+        assert_eq!(context.tools().len(), KINDS.len() + 2);
         #[cfg(feature = "egui")]
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -893,6 +953,54 @@ mod tests {
         assert_eq!(joins[0].0, [1.0, 0.0, 0.0], "placed where the body sits");
         bench.check = None;
         assert!(bench.task(&ctx).is_none());
+    }
+
+    #[test]
+    fn a_curve_tool_waits_for_a_sketch_or_edges() {
+        let mut document = Document::new("t");
+        let body = document.create_body(None);
+        let sketch = document.add_feature_of_kind(
+            core_document::WorkbenchId::new("wb.sketch"),
+            "Sketch".into(),
+            Some(body),
+            Vec::new(),
+            json!({}),
+            core_document::FeatureOrigin::default(),
+        );
+        let bench = SurfaceWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        assert!(!bench.is_tool_enabled("surface.extrude", &ctx));
+        assert!(
+            !bench.is_tool_enabled("surface.sew", &ctx),
+            "no surface body yet"
+        );
+        assert!(bench.is_tool_enabled(SKETCH_TOOL, &ctx));
+        ctx.active_document_object = Some(sketch);
+        assert!(bench.is_tool_enabled("surface.extrude", &ctx));
+        assert!(bench.is_tool_enabled("surface.loft", &ctx));
+    }
+
+    #[test]
+    fn create_sketch_hands_a_surface_body_to_the_sketcher() {
+        let mut document = Document::new("t");
+        let mut bench = SurfaceWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        bench.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some(SKETCH_TOOL),
+            &mut ctx,
+        );
+        let requests = ctx.take_requests();
+        let Some(HostRequest::StartOn { workbench, attach }) = requests.first() else {
+            panic!("{requests:?}");
+        };
+        assert_eq!(workbench.as_str(), "wb.sketch");
+        let body = document
+            .bodies()
+            .iter()
+            .find(|b| b.id.0 == attach.body)
+            .unwrap();
+        assert_eq!(body.name, "Surface", "a new surface body");
     }
 
     #[test]
