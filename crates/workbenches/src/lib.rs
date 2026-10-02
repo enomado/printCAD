@@ -2,10 +2,16 @@ use core_document::{DocumentResult, DocumentService, Workbench};
 use wb_assembly::AssemblyWorkbench;
 use wb_design::DesignWorkbench;
 use wb_sketch::SketchWorkbench;
+use wb_surface::SurfaceWorkbench;
 
 // Defines `register_all_workbenches`: registers the built-in workbenches and
 // records their descriptors for the UI.
-core_document::define_workbenches!(SketchWorkbench, DesignWorkbench, AssemblyWorkbench);
+core_document::define_workbenches!(
+    SketchWorkbench,
+    DesignWorkbench,
+    SurfaceWorkbench,
+    AssemblyWorkbench
+);
 
 pub use core_document::registration::REGISTERED_WORKBENCHES;
 pub use wb_wasm::remote::Source;

@@ -45,6 +45,22 @@ const LOCAL = new Set([
   "assistant",
   "log",
   "chevrons-down",
+  "workbench-surface",
+  "surface-extrude",
+  "surface-revolve",
+  "surface-planar",
+  "surface-fill",
+  "surface-ruled",
+  "surface-loft",
+  "surface-sweep",
+  "surface-offset",
+  "surface-extend",
+  "surface-blend",
+  "surface-split",
+  "surface-sew",
+  "surface-thicken",
+  "surface-trim",
+  "surface-mirror",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

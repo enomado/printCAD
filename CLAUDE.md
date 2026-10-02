@@ -286,6 +286,21 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   deletes a tool-created feature); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution).
+- `workbenches/wb_surface`: the Surface bench (`docs/SURFACES.md`).
+  `SurfaceFeature` (kind `wb.surface`) on surface bodies only:
+  `SurfaceWorkbench::takes_surfaces` (a surface body, or one of sketches
+  and datums), and Design sends its features off a surface body to a new
+  one. `build.rs` turns the body's history into `SolidOp::Surface`
+  steps (`kernel_api::SurfaceOp`, `CurveSource`: a sketch's chains from
+  `wb_sketch::profile::extract_chains`, open or closed, in the body's
+  frame, or a picked `EdgeProbe`); `kernel_ogeom/src/ops/surface.rs`
+  builds them, a constructive step adding its sheet beside the body's
+  pieces in a compound, Sew joining every face (a closed shell made a
+  solid), Mirror adding the reflection. The tools for steps the kernel
+  lacks are `planned`; their ops fail with the kernel's reason, and
+  `surface_ops.rs` holds an ignored test per gap (ogeom-rs#104 to #115).
+  Commands `surface.*` take `sketches`, `body` (a body or a feature in it)
+  and any field by name.
 - `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
   planar anchors with offset/flip, Align of two axes, Angle, Hinge, Slider,
   Fixed, Parallel, Perpendicular, Distance and Tangent; Ground keeps a body

@@ -10,6 +10,7 @@ core_document = { path = "../core_document" }
 wb_sketch = { path = "wb_sketch" }
 wb_design = { path = "wb_design" }
 wb_assembly = { path = "wb_assembly" }
+wb_surface = { path = "wb_surface" }
 wb_wasm = { path = "wb_wasm" }
 tracing.workspace = true
 

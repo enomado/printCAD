@@ -17,7 +17,7 @@
 
 use std::fmt::Display;
 
-use kernel_api::{BooleanOp, SolidOp, SweepKind};
+use kernel_api::{BooleanOp, SolidOp, SurfaceOp, SweepKind};
 
 /// Marks a label as printCAD's own rather than one of the kernel's stages.
 pub const CONTEXT_PREFIX: &str = "printcad: ";
@@ -93,6 +93,23 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::Transform { .. } => "Pattern",
         SolidOp::Boolean { .. } => "Boolean",
         SolidOp::Shape { .. } => "Clone",
+        SolidOp::Surface(op) => match op {
+            SurfaceOp::Extrude { .. } => "Extruded surface",
+            SurfaceOp::Revolve { .. } => "Revolved surface",
+            SurfaceOp::PlanarFill { .. } => "Planar surface",
+            SurfaceOp::Fill { .. } => "Filling",
+            SurfaceOp::Ruled { .. } => "Ruled surface",
+            SurfaceOp::Loft { .. } => "Lofted surface",
+            SurfaceOp::Sweep { .. } => "Swept surface",
+            SurfaceOp::Offset { .. } => "Offset surface",
+            SurfaceOp::Extend { .. } => "Extending faces",
+            SurfaceOp::Blend { .. } => "Blend surface",
+            SurfaceOp::Split { .. } => "Splitting faces",
+            SurfaceOp::Sew => "Sewing",
+            SurfaceOp::Thicken { .. } => "Thickening",
+            SurfaceOp::TrimByPlane { .. } => "Trimming",
+            SurfaceOp::Mirror { .. } => "Mirroring",
+        },
     }
 }
 

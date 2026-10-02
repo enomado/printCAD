@@ -19,6 +19,9 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   standards, fillets, chamfers, draft, thickness, patterns and booleans, all
   editable in a feature tree, with datums and geometry borrowed from other
   bodies.
+- **Surface:** extruded, revolved, planar, filled, ruled, lofted and swept
+  surfaces from open or closed curves, sewn into shells and solids, and
+  mirrored.
 - **Assembly:** joints of every common kind (mate, align, hinge, slider,
   ball, cam, gears and more), components that move as one, linked copies
   and parts linked from other files, motion over time, interference and
@@ -283,6 +286,7 @@ Preferences (Ctrl+,).
 | `axes` | Axis presets, so no code assumes which way is up |
 | `workbenches/wb_sketch` | Sketcher |
 | `workbenches/wb_design` | Design |
+| `workbenches/wb_surface` | Surface: sheets from curves, sewn into shells and solids |
 | `workbenches/wb_assembly` | Assembly: joints between bodies |
 | `workbenches/wb_wasm` | Workbench packages, run sandboxed |
 | `workbenches/fixtures` | Ready-made scenes for tests and demos |
@@ -300,6 +304,7 @@ More detail in [docs](docs/):
 - [Scripting](docs/SCRIPTING.md)
 - [Variables and formulas](docs/VARIABLES.md)
 - [Assembly](docs/ASSEMBLY.md)
+- [Surfaces](docs/SURFACES.md)
 - [Holes](docs/HOLES.md)
 - [Workbench packages](docs/PLUGINS.md)
 - [AI agents](docs/AI.md)

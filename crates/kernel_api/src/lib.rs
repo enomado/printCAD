@@ -1303,9 +1303,155 @@ pub enum SolidOp {
         #[serde(default)]
         tool_transform: Option<[[f64; 4]; 4]>,
     },
+    /// A surface step: a sheet added to the body, or the body's sheets
+    /// joined, trimmed or mirrored.
+    Surface(SurfaceOp),
+}
+
+/// A curve a surface is built from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CurveSource {
+    /// A chain of a sketch's curves, open or closed, on its plane.
+    Sketch {
+        plane: ProfilePlane,
+        wire: ProfileWire,
+    },
+    /// An edge of the body's own shape as it stands where the step comes,
+    /// found as a fillet's picked edges are.
+    Edge(EdgeProbe),
+}
+
+/// How a surface meets the faces beside it across a shared edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Continuity {
+    /// Touching: no gap, a crease allowed.
+    #[default]
+    G0,
+    /// Tangent: no crease.
+    G1,
+    /// Curvature continuous: no change in how sharply it bends.
+    G2,
+}
+
+/// The steps of surface modelling. A constructive step (every one but
+/// `Sew`, `TrimByPlane` and `Mirror`) adds its sheet to the body beside
+/// what is there; the rest act on all of the body's shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SurfaceOp {
+    /// Each curve swept straight along `direction` by `length`, both ways
+    /// by half of it when `symmetric`.
+    Extrude {
+        curves: Vec<CurveSource>,
+        direction: [f64; 3],
+        length: f64,
+        #[serde(default)]
+        symmetric: bool,
+    },
+    /// Each curve turned by `angle_deg` about the axis through `origin`
+    /// along `axis`.
+    Revolve {
+        curves: Vec<CurveSource>,
+        origin: [f64; 3],
+        axis: [f64; 3],
+        angle_deg: f64,
+    },
+    /// The flat face closed planar loops bound, a loop inside another a
+    /// hole in it.
+    PlanarFill { curves: Vec<CurveSource> },
+    /// The surface curves meeting end to end bound, meeting the faces the
+    /// boundary edges belong to with `continuity`.
+    Fill {
+        boundary: Vec<CurveSource>,
+        #[serde(default)]
+        continuity: Continuity,
+    },
+    /// The surface of straight lines between two curves, end to end.
+    Ruled {
+        first: CurveSource,
+        second: CurveSource,
+    },
+    /// A surface through section curves in order, closing back to the first
+    /// when `closed`.
+    Loft {
+        sections: Vec<CurveSource>,
+        #[serde(default)]
+        closed: bool,
+    },
+    /// A profile curve swept along a path.
+    Sweep {
+        profile: Vec<CurveSource>,
+        path: Vec<CurveSource>,
+        #[serde(default)]
+        frame: PipeFrame,
+    },
+    /// Faces carried off along their normals by `distance`, as new faces.
+    Offset {
+        faces: Vec<FaceProbe>,
+        distance: f64,
+    },
+    /// Faces carried past picked edges of their boundary by `length`.
+    Extend {
+        edges: Vec<EdgeProbe>,
+        length: f64,
+        #[serde(default)]
+        continuity: Continuity,
+    },
+    /// A surface bridging two edges, meeting each edge's face with
+    /// `continuity`.
+    Blend {
+        first: EdgeProbe,
+        second: EdgeProbe,
+        #[serde(default)]
+        continuity: Continuity,
+    },
+    /// Picked faces split along curves projected onto them.
+    Split {
+        faces: Vec<FaceProbe>,
+        curves: Vec<CurveSource>,
+    },
+    /// The body's faces joined where their edges meet; a shell that closes
+    /// becomes a solid.
+    Sew,
+    /// The body's sheets given `thickness` along their normals (both ways
+    /// by half when `both_sides`): a solid.
+    Thicken {
+        thickness: f64,
+        #[serde(default)]
+        both_sides: bool,
+    },
+    /// The body's sheets cut by the plane through `origin`, the side
+    /// `normal` points to kept.
+    TrimByPlane { origin: [f64; 3], normal: [f64; 3] },
+    /// The body's shape and its reflection in the plane through `origin`
+    /// square to `normal`.
+    Mirror { origin: [f64; 3], normal: [f64; 3] },
+}
+
+impl SurfaceOp {
+    /// Whether the step makes a new sheet (and so may begin a chain).
+    pub fn constructs(&self) -> bool {
+        !matches!(
+            self,
+            SurfaceOp::Sew
+                | SurfaceOp::Thicken { .. }
+                | SurfaceOp::TrimByPlane { .. }
+                | SurfaceOp::Mirror { .. }
+                | SurfaceOp::Split { .. }
+                | SurfaceOp::Extend { .. }
+        )
+    }
 }
 
 impl SolidOp {
+    /// Whether the step makes a shape of its own, so a chain may begin with
+    /// it: a new solid, or a surface step that adds a sheet.
+    pub fn starts_shape(&self) -> bool {
+        match self {
+            SolidOp::Surface(op) => op.constructs(),
+            _ => self.boolean_op() == Some(BooleanOp::NewSolid),
+        }
+    }
+
     /// The boolean role of a shape-producing step; `None` for modifiers.
     pub fn boolean_op(&self) -> Option<BooleanOp> {
         match self {

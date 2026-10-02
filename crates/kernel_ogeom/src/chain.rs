@@ -312,20 +312,12 @@ pub fn execute_cached(
     if ops_list.is_empty() {
         return Err(chain_err(0, "solid-op chain is empty".into()));
     }
-    match ops_list[0].boolean_op() {
-        Some(BooleanOp::NewSolid) => {}
-        Some(_) => {
-            return Err(chain_err(
-                0,
-                "first solid op in a chain must be NewSolid".into(),
-            ));
-        }
-        None => {
-            return Err(chain_err(
-                0,
-                "first solid op in a chain must produce a shape".into(),
-            ));
-        }
+    if !ops_list[0].starts_shape() {
+        let message = match ops_list[0].boolean_op() {
+            Some(_) => "first solid op in a chain must be NewSolid",
+            None => "first solid op in a chain must produce a shape",
+        };
+        return Err(chain_err(0, message.into()));
     }
     for (index, op) in ops_list.iter().enumerate().skip(1) {
         if op.boolean_op() == Some(BooleanOp::NewSolid) {
@@ -748,6 +740,13 @@ pub fn execute_cached(
                     },
                 );
                 ops::combine_solids(&mut model, &solid, &tool, *kind).map_err(&err)?
+            }
+            SolidOp::Surface(op) => {
+                let made = ops::surface::apply(&mut model, base.as_ref(), op).map_err(&err)?;
+                if let Some(sheet) = &made.sheet {
+                    tool_names = Some(tool_names_fresh(&model, sheet, tag));
+                }
+                made.shape
             }
         };
 

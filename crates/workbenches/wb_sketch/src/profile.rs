@@ -90,6 +90,146 @@ const PROJECTED_JOIN: f64 = 1e-4;
 /// ignored; circles are closed wires by themselves; lines/arcs must form
 /// closed loops via shared endpoints, and those that do not are left out.
 pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> {
+    let (mut wires, edges) = curves(sketch)?;
+    let touching = endpoint_graph(&edges);
+    // What does not close is left out: a curve with a loose end goes, and
+    // then whatever that leaves loose, until only loops remain. A stray
+    // line or a spur off a loop does not stop the loops being a profile.
+    let mut used = vec![false; edges.len()];
+    let mut loose: Option<Uuid> = None;
+    loop {
+        let dangling: Vec<(Uuid, usize)> = touching
+            .iter()
+            .filter_map(|(point, list)| {
+                let live: Vec<usize> = list.iter().copied().filter(|&i| !used[i]).collect();
+                (live.len() == 1).then(|| (*point, live[0]))
+            })
+            .collect();
+        if dangling.is_empty() {
+            break;
+        }
+        for (point, edge) in dangling {
+            loose.get_or_insert(point);
+            used[edge] = true;
+        }
+    }
+    for (point, list) in &touching {
+        if list.iter().filter(|&&i| !used[i]).count() > 2 {
+            return Err(ProfileError::BranchingAt(*point));
+        }
+    }
+    if used.iter().all(|&u| u) && wires.is_empty() {
+        return Err(loose.map_or(ProfileError::Empty, ProfileError::OpenAt));
+    }
+
+    // Walk loops: every vertex left has degree exactly 2, so each unvisited
+    // edge starts a unique cycle.
+    for start_idx in 0..edges.len() {
+        if used[start_idx] {
+            continue;
+        }
+        let mut segments = Vec::new();
+        let mut names = Vec::new();
+        let start_point = edges[start_idx].ends.0;
+        let mut current_point = start_point;
+        let mut current_idx = start_idx;
+        loop {
+            used[current_idx] = true;
+            let edge = &edges[current_idx];
+            // Each segment runs the way the walk goes: a curve drawn from
+            // its other end (an arc turning clockwise round the loop) is
+            // turned about.
+            segments.push(if edge.ends.0 == current_point {
+                edge.segment.clone()
+            } else {
+                reversed(&edge.segment)
+            });
+            names.push(edge.name);
+            current_point = if edge.ends.0 == current_point {
+                edge.ends.1
+            } else {
+                edge.ends.0
+            };
+            if current_point == start_point {
+                break;
+            }
+            // Exactly one other unused edge touches this point (degree 2).
+            let next = touching[&current_point].iter().copied().find(|&i| !used[i]);
+            match next {
+                Some(i) => current_idx = i,
+                // Degree checks above make this unreachable, but never trust
+                // an invariant with a panic in production code.
+                None => return Err(ProfileError::OpenAt(current_point)),
+            }
+        }
+        // A loop that encloses nothing (a line and its copy, a line of no
+        // length) is no region to build.
+        if !encloses_nothing(&segments) {
+            wires.push(ProfileWire { segments, names });
+        }
+    }
+
+    if wires.is_empty() {
+        return Err(loose.map_or(ProfileError::Empty, ProfileError::OpenAt));
+    }
+    Ok(wires)
+}
+
+/// Every chain of the sketch's curves, open or closed, for surfaces: an
+/// open chain runs from one loose end to the other, a closed one round its
+/// loop; a self-closing curve is a chain by itself. A point where three
+/// curves or more meet is refused, as no single chain passes through it.
+pub fn extract_chains(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> {
+    let (mut chains, edges) = curves(sketch)?;
+    let touching = endpoint_graph(&edges);
+    if let Some((point, _)) = touching.iter().find(|(_, list)| list.len() > 2) {
+        return Err(ProfileError::BranchingAt(*point));
+    }
+    let mut used = vec![false; edges.len()];
+    // Open chains first, each from a loose end, in the order the sketch
+    // holds its curves; what is left are loops.
+    let mut starts: Vec<(usize, Uuid)> = Vec::new();
+    for (index, edge) in edges.iter().enumerate() {
+        for end in [edge.ends.0, edge.ends.1] {
+            if touching[&end].len() == 1 {
+                starts.push((index, end));
+            }
+        }
+    }
+    let loops = (0..edges.len()).map(|i| (i, edges[i].ends.0));
+    for (start_idx, start_point) in starts.into_iter().chain(loops) {
+        if used[start_idx] {
+            continue;
+        }
+        let mut segments = Vec::new();
+        let mut names = Vec::new();
+        let mut current_point = start_point;
+        let mut current_idx = start_idx;
+        loop {
+            used[current_idx] = true;
+            let edge = &edges[current_idx];
+            let forward = edge.ends.0 == current_point;
+            segments.push(if forward {
+                edge.segment.clone()
+            } else {
+                reversed(&edge.segment)
+            });
+            names.push(edge.name);
+            current_point = if forward { edge.ends.1 } else { edge.ends.0 };
+            match touching[&current_point].iter().copied().find(|&i| !used[i]) {
+                Some(next) => current_idx = next,
+                None => break,
+            }
+        }
+        chains.push(ProfileWire { segments, names });
+    }
+    Ok(chains)
+}
+
+/// The sketch's curves that count: self-closing ones (circles, ellipses,
+/// periodic splines) as wires of their own, the rest as curves between two
+/// end points, projected ends at one spot joined.
+fn curves(sketch: &Sketch) -> Result<(Vec<ProfileWire>, Vec<EdgeCurve>), ProfileError> {
     let mut wires = Vec::new();
     let mut edges: Vec<EdgeCurve> = Vec::new();
 
@@ -291,94 +431,17 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
         let canon = |id: Uuid| joined.get(&id).copied().unwrap_or(id);
         edge.ends = (canon(edge.ends.0), canon(edge.ends.1));
     }
+    Ok((wires, edges))
+}
 
-    // Endpoint graph: point id -> indices of edges touching it.
+/// Point id -> indices of the curves ending there.
+fn endpoint_graph(edges: &[EdgeCurve]) -> HashMap<Uuid, Vec<usize>> {
     let mut touching: HashMap<Uuid, Vec<usize>> = HashMap::new();
     for (idx, edge) in edges.iter().enumerate() {
         touching.entry(edge.ends.0).or_default().push(idx);
         touching.entry(edge.ends.1).or_default().push(idx);
     }
-    // What does not close is left out: a curve with a loose end goes, and
-    // then whatever that leaves loose, until only loops remain. A stray
-    // line or a spur off a loop does not stop the loops being a profile.
-    let mut used = vec![false; edges.len()];
-    let mut loose: Option<Uuid> = None;
-    loop {
-        let dangling: Vec<(Uuid, usize)> = touching
-            .iter()
-            .filter_map(|(point, list)| {
-                let live: Vec<usize> = list.iter().copied().filter(|&i| !used[i]).collect();
-                (live.len() == 1).then(|| (*point, live[0]))
-            })
-            .collect();
-        if dangling.is_empty() {
-            break;
-        }
-        for (point, edge) in dangling {
-            loose.get_or_insert(point);
-            used[edge] = true;
-        }
-    }
-    for (point, list) in &touching {
-        if list.iter().filter(|&&i| !used[i]).count() > 2 {
-            return Err(ProfileError::BranchingAt(*point));
-        }
-    }
-    if used.iter().all(|&u| u) && wires.is_empty() {
-        return Err(loose.map_or(ProfileError::Empty, ProfileError::OpenAt));
-    }
-
-    // Walk loops: every vertex left has degree exactly 2, so each unvisited
-    // edge starts a unique cycle.
-    for start_idx in 0..edges.len() {
-        if used[start_idx] {
-            continue;
-        }
-        let mut segments = Vec::new();
-        let mut names = Vec::new();
-        let start_point = edges[start_idx].ends.0;
-        let mut current_point = start_point;
-        let mut current_idx = start_idx;
-        loop {
-            used[current_idx] = true;
-            let edge = &edges[current_idx];
-            // Each segment runs the way the walk goes: a curve drawn from
-            // its other end (an arc turning clockwise round the loop) is
-            // turned about.
-            segments.push(if edge.ends.0 == current_point {
-                edge.segment.clone()
-            } else {
-                reversed(&edge.segment)
-            });
-            names.push(edge.name);
-            current_point = if edge.ends.0 == current_point {
-                edge.ends.1
-            } else {
-                edge.ends.0
-            };
-            if current_point == start_point {
-                break;
-            }
-            // Exactly one other unused edge touches this point (degree 2).
-            let next = touching[&current_point].iter().copied().find(|&i| !used[i]);
-            match next {
-                Some(i) => current_idx = i,
-                // Degree checks above make this unreachable, but never trust
-                // an invariant with a panic in production code.
-                None => return Err(ProfileError::OpenAt(current_point)),
-            }
-        }
-        // A loop that encloses nothing (a line and its copy, a line of no
-        // length) is no region to build.
-        if !encloses_nothing(&segments) {
-            wires.push(ProfileWire { segments, names });
-        }
-    }
-
-    if wires.is_empty() {
-        return Err(loose.map_or(ProfileError::Empty, ProfileError::OpenAt));
-    }
-    Ok(wires)
+    touching
 }
 
 /// Whether a loop of lines and arcs has no area: its corners and arcs'
@@ -588,6 +651,52 @@ mod tests {
         line(sketch, c, d);
         line(sketch, d, a);
         [a, b, c, d]
+    }
+
+    #[test]
+    fn chains_take_open_curves_and_loops_alike() {
+        let mut sketch = Sketch::new("t");
+        rectangle(&mut sketch);
+        // An open L away from the rectangle, drawn from its middle out.
+        let a = pt(&mut sketch, 20.0, 0.0);
+        let b = pt(&mut sketch, 30.0, 0.0);
+        let c = pt(&mut sketch, 30.0, 8.0);
+        line(&mut sketch, b, c);
+        line(&mut sketch, a, b);
+        let chains = extract_chains(&sketch).unwrap();
+        assert_eq!(chains.len(), 2);
+        let open = chains
+            .iter()
+            .find(|w| w.segments.len() == 2)
+            .expect("the L");
+        let ends: Vec<_> = open
+            .segments
+            .iter()
+            .map(|s| match s {
+                ProfileSegment::Line { start, end } => (*start, *end),
+                _ => panic!("lines"),
+            })
+            .collect();
+        assert_eq!(ends[0].1, ends[1].0, "the chain runs end to end");
+        assert!(
+            ends[0].0 == [20.0, 0.0] || ends[0].0 == [30.0, 8.0],
+            "it starts at a loose end: {ends:?}"
+        );
+        assert!(chains.iter().any(|w| w.segments.len() == 4), "the loop");
+    }
+
+    #[test]
+    fn a_branch_is_no_chain() {
+        let mut sketch = Sketch::new("t");
+        let o = pt(&mut sketch, 0.0, 0.0);
+        for (x, y) in [(10.0, 0.0), (0.0, 10.0), (-10.0, 0.0)] {
+            let p = pt(&mut sketch, x, y);
+            line(&mut sketch, o, p);
+        }
+        assert!(matches!(
+            extract_chains(&sketch),
+            Err(ProfileError::BranchingAt(_))
+        ));
     }
 
     #[test]

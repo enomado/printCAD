@@ -453,6 +453,42 @@ pub const ICONS: &[(&str, &str)] = &[
         "subtractive-wedge",
         include_str!("../icons/subtractive-wedge.svg"),
     ),
+    ("surface-blend", include_str!("../icons/surface-blend.svg")),
+    (
+        "surface-extend",
+        include_str!("../icons/surface-extend.svg"),
+    ),
+    (
+        "surface-extrude",
+        include_str!("../icons/surface-extrude.svg"),
+    ),
+    ("surface-fill", include_str!("../icons/surface-fill.svg")),
+    ("surface-loft", include_str!("../icons/surface-loft.svg")),
+    (
+        "surface-mirror",
+        include_str!("../icons/surface-mirror.svg"),
+    ),
+    (
+        "surface-offset",
+        include_str!("../icons/surface-offset.svg"),
+    ),
+    (
+        "surface-planar",
+        include_str!("../icons/surface-planar.svg"),
+    ),
+    (
+        "surface-revolve",
+        include_str!("../icons/surface-revolve.svg"),
+    ),
+    ("surface-ruled", include_str!("../icons/surface-ruled.svg")),
+    ("surface-sew", include_str!("../icons/surface-sew.svg")),
+    ("surface-split", include_str!("../icons/surface-split.svg")),
+    ("surface-sweep", include_str!("../icons/surface-sweep.svg")),
+    (
+        "surface-thicken",
+        include_str!("../icons/surface-thicken.svg"),
+    ),
+    ("surface-trim", include_str!("../icons/surface-trim.svg")),
     (
         "symmetry-geometry",
         include_str!("../icons/symmetry-geometry.svg"),
@@ -515,5 +551,9 @@ pub const ICONS: &[(&str, &str)] = &[
     (
         "workbench-sketcher",
         include_str!("../icons/workbench-sketcher.svg"),
+    ),
+    (
+        "workbench-surface",
+        include_str!("../icons/workbench-surface.svg"),
     ),
 ];

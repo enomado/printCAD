@@ -2059,6 +2059,7 @@ dependencies = [
  "tracing-subscriber",
  "wb_design",
  "wb_sketch",
+ "wb_surface",
 ]
 
 [[package]]
@@ -5396,6 +5397,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wb_surface"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "egui",
+ "kernel_api",
+ "serde",
+ "serde_json",
+ "ui_kit",
+ "uuid",
+ "wb_sketch",
+]
+
+[[package]]
 name = "wb_wasm"
 version = "0.1.0"
 dependencies = [
@@ -5878,6 +5893,7 @@ dependencies = [
  "wb_assembly",
  "wb_design",
  "wb_sketch",
+ "wb_surface",
  "wb_wasm",
 ]
 

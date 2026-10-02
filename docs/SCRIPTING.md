@@ -1272,6 +1272,68 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: sections = {{length, diameter, chamfer, fillet}, ...}, start_chamfer, and loads = {bearings = {a, b}, forces = {{at, force, angle_deg}, ...}, torque (N·m), torque_from, torque_to, modulus (GPa)} for its stresses and deflection
 - Returns the sketch's id
 
+### surface
+
+`pc.surface.extrude`: Make a extruded surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.revolve`: Make a revolved surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.planar`: Make a planar surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.fill`: Make a filling.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.ruled`: Make a ruled surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.loft`: Make a lofted surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.sweep`: Make a swept surface.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
+- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- Returns The new feature's id
+
+`pc.surface.sew`: Make a sew.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- Returns The new feature's id
+
+`pc.surface.mirror`: Make a mirror.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- Other arguments: `plane` ("YZ", "XZ", "XY" or {"Custom": {"origin", "normal"}}) and `offset`
+- Returns The new feature's id
+
 ### asm
 
 `pc.asm.mate`: Put two flat faces against each other.

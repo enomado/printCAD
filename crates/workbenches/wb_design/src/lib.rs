@@ -920,6 +920,19 @@ impl DesignWorkbench {
             // Its imported solid becomes the start of its history.
             given_base = Some(taken);
             body
+        } else if surface_body(ctx.document, body) {
+            let name = ctx
+                .document
+                .bodies()
+                .iter()
+                .find(|b| b.id == body)
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| "the surface body".to_string());
+            let fresh = ctx.document.create_body(None);
+            ctx.log_warn(format!(
+                "`{name}` is built from surfaces; the feature goes into a new body"
+            ));
+            fresh
         } else if ctx.document.body_solid_is_imported(body) {
             let imported = ctx
                 .document
@@ -964,6 +977,15 @@ impl DesignWorkbench {
             base: given_base,
         })
     }
+}
+
+/// Whether the Surface bench builds `body`: its features are surface
+/// steps, and a Design feature beside them would build over them.
+fn surface_body(document: &Document, body: BodyId) -> bool {
+    document
+        .feature_tree()
+        .all_nodes()
+        .any(|(_, n)| n.workbench_id.as_str() == "wb.surface" && n.body == Some(body))
 }
 
 /// Give an imported body a history: its solid kept as its base, and a

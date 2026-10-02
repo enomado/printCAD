@@ -48,6 +48,39 @@ Not yet filed:
   log line, and the failed feature's task); the kernel's owner is working
   on the boolean itself.
 
+## Surfaces
+
+What the Surface workbench waits on in the kernel; each step is wired, its
+tool dim or its step failing with the kernel's reason, and a test marked
+`#[ignore]` in `kernel_ogeom/tests/surface_ops.rs` passes once it lands.
+
+- [ ] **Sew a prism's end edges** (ogeom-rs#104). A box of six sheets does
+  not close: the top lid does not join the walls.
+- [ ] **Sew across a gap** (ogeom-rs#105). Surfaces a hair apart, as
+  imported or fitted ones often are.
+- [ ] **Trim and split sheets** (ogeom-rs#106, ogeom-rs#107). Trim by plane,
+  by a surface or by a solid; Split surface along curves.
+- [ ] **N-sided, tangent and sewable fills** (ogeom-rs#108). Three sides or
+  more than four, G1 and G2 to the neighbours, and boundary edges so a
+  fill sews.
+- [ ] **Surface lofts and sweeps** (ogeom-rs#109). Sweeps along curved
+  paths, closed lofts, guide curves, two rails, an exact ruled surface,
+  and boundary edges on fitted surfaces.
+- [ ] **Blend surface** (ogeom-rs#110).
+- [ ] **Thicken and offset sheets** (ogeom-rs#111).
+- [ ] **Extend surface** (ogeom-rs#112).
+- [ ] **STEP export of surface bodies** (ogeom-rs#113).
+- [ ] **Fillets on surfaces** (ogeom-rs#114). Then a fillet tool for the
+  edges where sheets meet and between two sheets.
+- [ ] **Curvature analysis** (ogeom-rs#115). Then a continuity check
+  between faces, and curvature and zebra displays.
+
+And in printCAD, once those land:
+
+- [ ] Picked edges of other bodies as curves (the body's own only today).
+- [ ] A pick of a face's edges by clicking the face, as external geometry
+  does in the sketcher.
+
 ## Faster kernel operations
 
 The rebuild skips the history an edit did not change; the operations
