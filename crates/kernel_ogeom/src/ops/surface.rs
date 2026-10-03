@@ -313,13 +313,7 @@ fn fill(
     boundary: &[CurveSource],
     continuity: Continuity,
 ) -> Result<Shape, String> {
-    let mut edges = Vec::new();
-    for curve in boundary {
-        let own = edges_of(model, base, std::slice::from_ref(curve))?;
-        let drawn = matches!(curve, CurveSource::Sketch { .. });
-        edges.extend(own.into_iter().map(|e| (e, drawn)));
-    }
-    let sides: Vec<FillBoundary> = joined(model, edges)?
+    let sides: Vec<FillBoundary> = edges_of(model, base, boundary)?
         .into_iter()
         .map(|edge| {
             let support = face_holding(model, base, &edge);
@@ -338,73 +332,6 @@ fn fill(
     make_filling_n(model, &sides, &[], FILL_TOLERANCE, tol())
         .map(|filled| filled.built.shape)
         .map_err(|e| format!("filling the boundary failed: {e}"))
-}
-
-/// The sides of a fill, those drawn in sketches rebuilt to end on shared
-/// vertices: the kernel chains sides by the vertices they share, and each
-/// sketch builds its own. A drawn side's end meets a vertex already there
-/// (a picked edge's, or another drawn side's) when it lies within the
-/// model's tolerance of it; picked edges stay as they are, since the fill
-/// is bounded by them to sew to their faces.
-fn joined(model: &mut Model, sides: Vec<(Shape, bool)>) -> Result<Vec<Shape>, String> {
-    use ogeom::algo::{edge_vertices, make_edge_between};
-    use ogeom::geom::Curve3d as _;
-    use ogeom::topo::{EdgeRepr, NodeData};
-    let near = tol().confusion() * 100.0;
-    let at = |model: &Model, vertex: &Shape| -> Option<Point> {
-        let NodeData::Vertex(data) = model.node(vertex)?.data() else {
-            return None;
-        };
-        Some(vertex.transform(model.datums()).ok()?.apply(data.point))
-    };
-    let mut vertices: Vec<(Point, Shape)> = Vec::new();
-    for (edge, drawn) in &sides {
-        if !drawn && let Ok(Some((a, b))) = edge_vertices(model, edge) {
-            for v in [a, b] {
-                if let Some(p) = at(model, &v) {
-                    vertices.push((p, v));
-                }
-            }
-        }
-    }
-    let mut out = Vec::with_capacity(sides.len());
-    for (edge, drawn) in sides {
-        if !drawn {
-            out.push(edge);
-            continue;
-        }
-        let Some(NodeData::Edge(data)) = model.node(&edge).map(|n| n.data()) else {
-            return Err("a side is not an edge".into());
-        };
-        let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
-            return Err("a side has no curve".into());
-        };
-        let range = *range;
-        let curve = model
-            .geometry()
-            .curve(*curve)
-            .cloned()
-            .ok_or("a side's curve is missing")?;
-        let ends = [range.0, range.1].map(|t| curve.point_at(t, tol()));
-        let [Ok(start), Ok(end)] = ends else {
-            return Err("a side's ends do not evaluate".into());
-        };
-        let mut vertex_at = |model: &mut Model, p: Point| -> Shape {
-            if let Some((_, v)) = vertices.iter().find(|(q, _)| q.distance(p) <= near) {
-                return v.clone();
-            }
-            let v = model.add_vertex(ogeom::topo::VertexData::new(p));
-            vertices.push((p, v.clone()));
-            v
-        };
-        let from = vertex_at(model, start);
-        let to = vertex_at(model, end);
-        let rebuilt = make_edge_between(model, curve, range, &from, &to, tol())
-            .map_err(|e| format!("joining a side's ends failed: {e}"))?
-            .shape;
-        out.push(rebuilt);
-    }
-    Ok(out)
 }
 
 /// How near a fill meets its sides: a distance (mm) for a gap, an angle

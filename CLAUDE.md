@@ -301,10 +301,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   builds them, a constructive step adding its sheet beside the body's
   pieces in a compound, Sew joining every face (a closed shell made a
   solid, across a gap when given one), the other steps the kernel's sheet
-  operations. A fill's sketch sides are rebuilt to end on shared vertices
-  (`joined`), since the kernel chains sides by vertex. A kind the kernel
-  cannot build carries `waits` (tool `planned`, no command);
-  `tests/kernel/surface_ops.rs` holds an ignored test per remaining gap.
+  operations. A kind the kernel cannot build carries `waits` (tool
+  `planned`, no command), with an ignored test per gap in
+  `tests/kernel/surface_ops.rs`.
   Commands `surface.*` take `sketches`, `body` (a body or a feature in it)
   and any field by name. Check continuity (`surface.check`) asks
   `KernelQueries::continuity` (the kernel's `analyse_blend` over every

@@ -72,19 +72,6 @@ view: G1 for a tangent join, the crease angle, or the gap where the faces
 are apart; the task lists them from the sharpest crease down. Close puts
 the labels away.
 
-## Waiting on the geometry kernel
-
-A few cases still fail, each with the kernel's reason in its task:
-
-- Filling, blending, extending or rounding from an extruded surface's far
-  edge (its near edge, the sketch's own curve, works).
-- Filling between edges of separate surfaces that meet only at a point:
-  sew them first where they share an edge.
-- A ruled surface or a loft between curves cut into different numbers of
-  pieces.
-- Offsetting or thickening a free-form surface (a filling, a loft); flat
-  and round faces offset.
-
 ## Scripting
 
 Every tool that builds has a command: `pc.surface.extrude`,

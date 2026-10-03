@@ -269,7 +269,6 @@ fn a_ruled_surface_spans_two_curves() {
 
 /// A ruled surface between a chain of two curves and a single line.
 #[test]
-#[ignore = "kernel: a ruled surface pairs its curves edge for edge (ogeom-rs#118)"]
 fn a_ruled_surface_spans_curves_of_different_counts() {
     let result = build(vec![SurfaceOp::Ruled {
         first: open_chain(0.0),
@@ -416,7 +415,6 @@ fn three_curves_meeting_end_to_end_fill() {
 
 /// A tray's top edges, picked, filled and sewn: a closed box.
 #[test]
-#[ignore = "kernel: a fill refuses an extrusion's far edges, which are placed, and a sheet cannot be baked (ogeom-rs#116)"]
 fn a_fill_closes_a_tray_into_a_solid() {
     let mut ops = tray();
     let top = |a: [f64; 3], b: [f64; 3]| {
@@ -440,38 +438,38 @@ fn a_fill_closes_a_tray_into_a_solid() {
     assert_eq!(census(&result), (6, 1), "the tray and its lid close");
 }
 
-/// Four strips sloping out and down from a square, filled tangent to
-/// them: the fill crowns over the square, meeting every strip without a
-/// crease.
+/// A cone sloping out and down from a circle, in four quarters, filled
+/// tangent to them: the fill crowns over the circle, meeting every quarter
+/// without a crease.
 #[test]
-#[ignore = "kernel: a fill chains its sides only by shared vertices, so edges of separate sheets meeting at a point do not close (ogeom-rs#117)"]
 fn a_tangent_fill_meets_its_neighbours_without_a_crease() {
     use kernel_api::KernelQueries;
-    // Each side of a 10 mm square at z = 5, and the way out from it.
-    let sides = [
-        ([0.0, 0.0], [10.0, 0.0], [0.0, -1.0]),
-        ([10.0, 0.0], [10.0, 10.0], [1.0, 0.0]),
-        ([10.0, 10.0], [0.0, 10.0], [0.0, 1.0]),
-        ([0.0, 10.0], [0.0, 0.0], [-1.0, 0.0]),
-    ];
-    let mut ops: Vec<SurfaceOp> = sides
+    let turns = [0.0f64, 90.0, 180.0, 270.0];
+    let mut ops: Vec<SurfaceOp> = turns
         .iter()
-        .map(|(a, b, out)| SurfaceOp::Extrude {
-            curves: vec![sketch(xy(5.0), vec![line(*a, *b)])],
-            direction: [out[0], out[1], -1.0],
-            length: 4.0,
-            symmetric: false,
+        .map(|deg| {
+            let (s, c) = deg.to_radians().sin_cos();
+            SurfaceOp::Revolve {
+                curves: vec![sketch(
+                    plane([0.0, 0.0, 0.0], [c, s, 0.0], [0.0, 0.0, 1.0]),
+                    vec![line([5.0, 5.0], [9.0, 1.0])],
+                )],
+                origin: [0.0, 0.0, 0.0],
+                axis: [0.0, 0.0, 1.0],
+                angle_deg: 90.0,
+            }
         })
         .collect();
-    let top = |(a, b, _): &([f64; 2], [f64; 2], [f64; 2])| {
+    let rim = |deg: &f64| {
+        let (s, c) = (deg + 45.0).to_radians().sin_cos();
         CurveSource::Edge(kernel_api::EdgeProbe {
-            point: [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 5.0],
-            direction: [b[0] - a[0], b[1] - a[1], 0.0],
+            point: [5.0 * c, 5.0 * s, 5.0],
+            direction: [-s, c, 0.0],
             faces: [0, 0],
         })
     };
     ops.push(SurfaceOp::Fill {
-        boundary: sides.iter().map(top).collect(),
+        boundary: turns.iter().map(rim).collect(),
         continuity: Continuity::G1,
     });
     ops.push(SurfaceOp::Sew { gap: 0.0 });
@@ -574,7 +572,6 @@ fn a_sheet_offsets() {
 }
 
 #[test]
-#[ignore = "kernel: a free-form face's offset must fit within 1e-6 (ogeom-rs#119)"]
 fn a_free_form_sheet_offsets() {
     let result = build(vec![
         SurfaceOp::Fill {

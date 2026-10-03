@@ -50,22 +50,15 @@ Not yet filed:
 
 ## Surfaces
 
-What the Surface workbench waits on in the kernel; each case fails with the
-kernel's reason, and a test marked `#[ignore]` in
-`kernel_ogeom/tests/kernel/surface_ops.rs` passes once it lands.
+What the Surface workbench needed of the kernel, all in ogeom 0.9.0.
 
 - [x] Sew, sew across a gap, trim and split sheets, N-sided and tangent
   fills, surface lofts and sweeps, blend, thicken and offset, extend, STEP
   export of sheets, fillets on sheets (ogeom-rs#104 to #114, ogeom 0.7.0).
-- [ ] **Placed edges** (ogeom-rs#116). Fill, blend and extend refuse an
-  extruded surface's far edges, which are placed, and a sheet cannot be
-  baked.
-- [ ] **Fill sides meeting at a point** (ogeom-rs#117). Edges of separate
-  surfaces whose ends meet do not close a fill's loop.
-- [ ] **Ruled surfaces and lofts between different piece counts**
-  (ogeom-rs#118).
-- [ ] **Offset of free-form faces** (ogeom-rs#119). The fit must reach
-  1e-6, which a fitted surface misses.
+- [x] Fills, blends and extensions from an extruded surface's far edges,
+  fill sides of separate surfaces meeting at a point, ruled surfaces and
+  lofts between different piece counts, offsets of free-form faces
+  (ogeom-rs#116 to #119, ogeom 0.9.0).
 
 And in printCAD:
 
