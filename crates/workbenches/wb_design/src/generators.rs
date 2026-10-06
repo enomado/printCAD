@@ -62,7 +62,8 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
         ),
     ];
     for (id, summary, extra) in fields {
-        context.register_command(
+        context.register_command(explained(
+            id,
             CommandSpec::new(id, summary)
                 .optional(
                     "body",
@@ -88,8 +89,88 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
                 )
                 .optional("name", ParamKind::String, "Its name in the tree")
                 .extra_args(extra)
-                .returns("the sketch's id"),
-        );
+                .returns("the sketch's id")
+                .note(
+                    "It makes only the sketch, whose curves its numbers fix: a pad or a \
+                     revolution built from it makes the solid, and `sketch.generator` \
+                     changes the numbers afterwards.",
+                )
+                .note(
+                    "Without `body` it goes in the selected body, else in a new one: in a \
+                     script each call without `body` starts a body of its own.",
+                )
+                .note(
+                    "A field the generator lacks is refused, naming the ones it has; \
+                     fields left out keep their defaults, which `pc.doc.feature{id = \
+                     ...}.fields.generator` shows.",
+                )
+                .see_also("sketch.generator"),
+        ));
+    }
+}
+
+/// Generator command `id`'s own notes and example.
+fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
+    match id {
+        "design.gear" => spec
+            .note(
+                "`module` is in mm (2 when left out) and `teeth` 20: the pitch diameter is \
+                 module times teeth, the tip diameter two modules more. It lies on XY \
+                 centred on the origin, with a 5 mm `bore` (0 for none).",
+            )
+            .note("A bore that does not fit inside the root circle is refused.")
+            .see_also("design.pad")
+            .example(
+                "A 12-tooth gear padded 5 mm",
+                r#"
+                local gear = pc.design.gear{module = 2, teeth = 12, bore = 6}
+                local pad = pc.design.pad{sketch = gear, length = 5}
+                assert(#pc.doc.rebuild() == 0, "the gear builds")
+                local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+                -- The tip circle is 2 * (12 + 2) = 28 mm across; a tooth points along X.
+                assert(math.abs(m.max[1] - 14) < 1e-3 and math.abs(m.min[1] + 14) < 1e-3)
+                assert(math.abs(m.max[3] - 5) < 1e-6)
+                "#,
+            ),
+        "design.sprocket" => spec
+            .note(
+                "`pitch` and `roller` are the chain's, in mm (12.7 and 8.51 when left out), \
+                 with 18 `teeth` and an 8 mm `bore`. It lies on XY centred on the origin.",
+            )
+            .see_also("design.pad")
+            .example(
+                "A 9-tooth sprocket, its diameters read back",
+                r#"
+                local sprocket = pc.design.sprocket{teeth = 9, bore = 6}
+                local size = pc.sketch.generator{sketch = sprocket}
+                -- A chain's pitch circle: the pitch over the sine of half a tooth's angle.
+                assert(math.abs(size.pitch_diameter - 12.7 / math.sin(math.pi / 9)) < 1e-3)
+                local pad = pc.design.pad{sketch = sprocket, length = 3}
+                assert(#pc.doc.rebuild() == 0, "the sprocket builds")
+                "#,
+            ),
+        "design.shaft" => spec
+            .note(
+                "It draws the half section on XZ, its sections from z = 0 upward, each a \
+                 `length` and a `diameter` in mm, with a `chamfer` and a `fillet`; \
+                 `start_chamfer` (0.5 mm when left out) breaks the bottom edge. \
+                 `design.revolve` with no axis turns it about Z into the shaft.",
+            )
+            .see_also("design.revolve")
+            .example(
+                "A two-step shaft turned from its section",
+                r#"
+                local section = pc.design.shaft{start_chamfer = 0,
+                  sections = {{length = 20, diameter = 10}, {length = 30, diameter = 16}}}
+                local turn = pc.design.revolve{sketch = section}
+                assert(#pc.doc.rebuild() == 0, "the shaft builds")
+                local m = pc.doc.measure{body = pc.doc.feature{id = turn}.body}
+                local volume = math.pi * (5 ^ 2 * 20 + 8 ^ 2 * 30)
+                assert(math.abs(m.volume - volume) < 1e-3, m.volume)
+                assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
+                "#,
+            ),
+        _ => spec,
     }
 }
 

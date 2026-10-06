@@ -1211,8 +1211,24 @@ assert(#pc.doc.faces{body = body} == 10, "six faces and four walls")
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It turns the sketch about the sketch's own y axis through its origin (`axis = "SketchY"`; on an XZ sketch that is the world's Z), 360 degrees when `angle_deg` is left out; `axis = "SketchX"` or `axis = {Custom = {origin = {x, y}, dir = {x, y}}}` in sketch coordinates turn it about another.
+- A profile that touches the axis makes a solid of revolution; one that crosses it fails at `pc.doc.rebuild()` (the profile sits on the axis).
+- It is refused without a sketch.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.groove`, `pc.design.helix`.
+
+Example: A tube turned from a rectangle beside the axis.
+
+```lua
+local s = pc.sketch.new{plane = "XZ"}
+pc.sketch.rect{sketch = s, x = 10, y = 0, width = 5, height = 20}
+local tube = pc.design.revolve{sketch = s}
+assert(#pc.doc.rebuild() == 0, "the revolution builds")
+local body = pc.doc.feature{id = tube}.body
+-- The sketch's y axis on XZ is the world's Z: a tube 10 to 15 mm out, 20 tall.
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - math.pi * (15 ^ 2 - 10 ^ 2) * 20) < 1e-3, volume)
+```
 
 `pc.design.groove`: Cut a sketch turned about an axis.
 
@@ -1227,8 +1243,26 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It takes away what `design.revolve` would add: turned about the y axis through the origin, 360 degrees; `axis` and `angle_deg` are the same fields.
+- It is refused where no solid is built yet, and its profile must be drawn in the same history as that solid.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.revolve`, `pc.design.pocket`.
+
+Example: A ring groove cut into a turned shaft.
+
+```lua
+local s = pc.sketch.new{plane = "XZ"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 20}
+local shaft = pc.design.revolve{sketch = s}
+local body = pc.doc.feature{id = shaft}.body
+local ring = pc.sketch.new{body = body, plane = "XZ"}
+pc.sketch.rect{sketch = ring, x = 8, y = 8, width = 2, height = 4}
+pc.design.groove{sketch = ring}
+assert(#pc.doc.rebuild() == 0, "the groove builds")
+-- A 4 mm wide ring cut 2 mm deep into a 10 mm radius shaft.
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (math.pi * 100 * 20 - math.pi * (100 - 64) * 4)) < 1e-3, volume)
+```
 
 `pc.design.loft`: Loft through sketches.
 
@@ -1243,8 +1277,27 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `sections = {a, b, ...}` lists the sketches in order; given only `sketch`, the loft has that one section and fails at `pc.doc.rebuild()` (a loft needs at least two sections).
+- It goes in the first section's body; later sections may be sketches of other bodies. A sketch of a single point as the first or last section closes the loft to a tip.
+- `ruled = true` joins the sections with straight walls; else the walls run smoothly through them. `closed = true` loops back to the first.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.subtractive_loft`, `pc.design.pipe`.
+
+Example: A square frustum lofted between two rectangles.
+
+```lua
+local base = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = base, x = -10, y = -10, width = 20, height = 20}
+local body = pc.doc.feature{id = base}.body
+local top = pc.sketch.new{body = body, plane = "XY", offset = 15}
+pc.sketch.rect{sketch = top, x = -5, y = -5, width = 10, height = 10}
+pc.design.loft{sections = {base, top}, ruled = true}
+assert(#pc.doc.rebuild() == 0, "the loft builds")
+-- A frustum of a square pyramid: h / 3 * (A1 + A2 + sqrt(A1 * A2)).
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - 15 / 3 * (400 + 100 + 200)) < 1e-3, volume)
+assert(#pc.doc.faces{body = body} == 6)
+```
 
 `pc.design.subtractive_loft`: Cut a loft through sketches.
 
@@ -1259,8 +1312,29 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `sections = {a, b, ...}` lists the sketches in order; given only `sketch`, the loft has that one section and fails at `pc.doc.rebuild()` (a loft needs at least two sections).
+- It goes in the first section's body; later sections may be sketches of other bodies. A sketch of a single point as the first or last section closes the loft to a tip.
+- `ruled = true` joins the sections with straight walls; else the walls run smoothly through them. `closed = true` loops back to the first.
+- It is refused in a body with no solid feature yet.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.loft`.
+
+Example: A conical dimple: a circle lofted down to a point and cut.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = -10, y = -10, width = 20, height = 20}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+local mouth = pc.sketch.new{body = body, plane = "XY", offset = 10}
+pc.sketch.circle{sketch = mouth, x = 0, y = 0, radius = 5}
+local tip = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.point{sketch = tip, x = 0, y = 0}
+pc.design.subtractive_loft{sections = {mouth, tip}}
+assert(#pc.doc.rebuild() == 0, "the cut builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (4000 - math.pi * 25 * 6 / 3)) < 1e-3, volume)
+```
 
 `pc.design.pipe`: Sweep a sketch along a path.
 
@@ -1275,8 +1349,27 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `sketch` is the profile. The path is `spine`, a sketch id; left out, it is the latest other sketch of the profile's body. The profile sits at either end of the path, and the pipe runs from there.
+- It is refused when the profile's body has no other sketch (a pipe needs a second sketch for its path).
+- A path's sharp corners are mitred (`corner = "Transformed"`); `orientation` sets how the profile turns along it.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.subtractive_pipe`, `pc.sketch.polyline`.
+
+Example: A rod swept up and across along a bent path.
+
+```lua
+local profile = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = profile, x = 0, y = 0, radius = 2}
+local body = pc.doc.feature{id = profile}.body
+local path = pc.sketch.new{body = body, plane = "XZ"}
+pc.sketch.polyline{sketch = path, points = {{0, 0}, {0, 20}, {15, 20}}}
+-- Up 20 mm and across 15: the path is the body's latest other sketch.
+local pipe = pc.design.pipe{sketch = profile}
+assert(#pc.doc.rebuild() == 0, "the pipe builds")
+assert(pc.doc.feature{id = pipe}.fields.Pipe.spine == path)
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - math.pi * 4 * 35) < 1e-3, volume)
+```
 
 `pc.design.subtractive_pipe`: Cut a sketch swept along a path.
 
@@ -1291,8 +1384,29 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `sketch` is the profile. The path is `spine`, a sketch id; left out, it is the latest other sketch of the profile's body. The profile sits at either end of the path, and the pipe runs from there.
+- It is refused when the profile's body has no other sketch (a pipe needs a second sketch for its path).
+- A path's sharp corners are mitred (`corner = "Transformed"`); `orientation` sets how the profile turns along it.
+- It is refused in a body with no solid feature yet.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.pipe`.
+
+Example: A half-round channel cut along the top of a block.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+local profile = pc.sketch.new{body = body, plane = "YZ"}
+pc.sketch.circle{sketch = profile, x = 5, y = 10, radius = 2}
+local path = pc.sketch.new{body = body, plane = "XZ", offset = -5}
+pc.sketch.line{sketch = path, x1 = 0, y1 = 10, x2 = 20, y2 = 10}
+pc.design.subtractive_pipe{sketch = profile, spine = path}
+assert(#pc.doc.rebuild() == 0, "the channel builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (2000 - math.pi * 4 * 20 / 2)) < 1e-3, volume)
+```
 
 `pc.design.helix`: Sweep a sketch along a helix.
 
@@ -1307,8 +1421,23 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It sweeps the sketch along a helix about the sketch's y axis through its origin (`axis`, as `design.revolve` takes it). `mode` says which two of `pitch`, `height` and `turns` count: PitchHeight (the default: 5 mm pitch, 20 mm high; `turns` is then ignored), PitchTurns, HeightTurns, or HeightTurnsGrowth with `growth` per turn.
+- `left_handed`, `cone_angle_deg` and `reversed` are fields too.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.subtractive_helix`, `pc.design.revolve`.
+
+Example: A square section swept a quarter turn.
+
+```lua
+local s = pc.sketch.new{plane = "XZ"}
+pc.sketch.rect{sketch = s, x = 9, y = 0, width = 2, height = 2}
+local coil = pc.design.helix{sketch = s, mode = "PitchTurns", pitch = 4, turns = 0.25}
+assert(#pc.doc.rebuild() == 0, "the helix builds")
+local body = pc.doc.feature{id = coil}.body
+-- A 2 x 2 square whose centre runs a quarter turn at radius 10.
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - 4 * 2 * math.pi * 10 / 4) < 1e-3, volume)
+```
 
 `pc.design.subtractive_helix`: Cut a sketch swept along a helix.
 
@@ -1323,42 +1452,97 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It sweeps the sketch along a helix about the sketch's y axis through its origin (`axis`, as `design.revolve` takes it). `mode` says which two of `pitch`, `height` and `turns` count: PitchHeight (the default: 5 mm pitch, 20 mm high; `turns` is then ignored), PitchTurns, HeightTurns, or HeightTurnsGrowth with `growth` per turn.
+- `left_handed`, `cone_angle_deg` and `reversed` are fields too.
+- It is refused in a body with no solid feature yet. `keep_inside = true` keeps what the sweep shares with the body instead of cutting it.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.helix`, `pc.design.hole`.
 
-`pc.design.primitive`: Add a box, cylinder, sphere, cone, torus or wedge.
+Example: A thread-like groove cut a quarter turn into a cylinder.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+local groove = pc.sketch.new{body = body, plane = "XZ"}
+pc.sketch.rect{sketch = groove, x = 9, y = 4, width = 2, height = 2}
+pc.design.subtractive_helix{sketch = groove, mode = "PitchTurns", pitch = 4, turns = 0.25}
+assert(#pc.doc.rebuild() == 0, "the cut builds")
+-- Only the half of the square inside the cylinder (1 x 2, centre at radius 9.5) is cut.
+local cut = 2 * 2 * math.pi * 9.5 / 4
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (math.pi * 100 * 10 - cut)) < 1e-2, volume)
+```
+
+`pc.design.primitive`: Add a box, cylinder, sphere, cone, torus, ellipsoid, prism or wedge.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
 - `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
-- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus or wedge
+- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism or wedge
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It takes no sketch, so `body` is required. Left as it comes, a shape is about 10 mm across and placed at the body's origin: a box from 0 to 10 along each axis, a cylinder of radius 5 standing 10 tall on it.
+- `kind` replaces the shape whole: `kind = {Cylinder = {radius = 3, height = 8, angle_deg = 360}}`, every field of it given, else it is refused (missing field). `pc.doc.feature{id = ...}` shows a shape's fields.
+- `placement = {origin = {x, y, z}, x_axis = {..}, z_axis = {..}}` places it in the body's frame; an `x_axis` along the `z_axis` fails at `pc.doc.rebuild()`.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.subtractive_primitive`, `pc.doc.new_body`.
 
-`pc.design.subtractive_primitive`: Cut a box, cylinder, sphere, cone, torus or wedge.
+Example: A box with a cylinder standing on it.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body, kind = {Box = {length = 20, width = 10, height = 5}}}
+pc.design.primitive{body = body, variant = "cylinder",
+  kind = {Cylinder = {radius = 2, height = 6, angle_deg = 360}},
+  placement = {origin = {10, 5, 5}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+assert(#pc.doc.rebuild() == 0, "the box and the post build")
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - (1000 + math.pi * 4 * 6)) < 1e-3, m.volume)
+assert(math.abs(m.max[3] - 11) < 1e-6, "the post stands on the box")
+```
+
+`pc.design.subtractive_primitive`: Cut a box, cylinder, sphere, cone, torus, ellipsoid, prism or wedge.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
 - `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
-- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus or wedge
+- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism or wedge
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It takes no sketch, so `body` is required. Left as it comes, a shape is about 10 mm across and placed at the body's origin: a box from 0 to 10 along each axis, a cylinder of radius 5 standing 10 tall on it.
+- `kind` replaces the shape whole: `kind = {Cylinder = {radius = 3, height = 8, angle_deg = 360}}`, every field of it given, else it is refused (missing field). `pc.doc.feature{id = ...}` shows a shape's fields.
+- `placement = {origin = {x, y, z}, x_axis = {..}, z_axis = {..}}` places it in the body's frame; an `x_axis` along the `z_axis` fails at `pc.doc.rebuild()`.
+- It is refused in a body with no solid feature yet.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.primitive`, `pc.design.hole`.
+
+Example: A cylinder cut through the default box.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body}
+pc.design.subtractive_primitive{body = body, variant = "cylinder",
+  kind = {Cylinder = {radius = 3, height = 10, angle_deg = 360}},
+  placement = {origin = {5, 5, 0}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+assert(#pc.doc.rebuild() == 0, "the box and the bore build")
+-- The default box is 10 mm each way from the origin.
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1000 - math.pi * 9 * 10)) < 1e-3, volume)
+```
 
 `pc.design.hole`: Drill holes at a sketch's circles and points.
 
@@ -1489,8 +1673,28 @@ assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `face_point` and `face_normal` name the neutral plane's face and are required; `faces = {{point = .., normal = ..}, ...}` are the faces to tilt. Without `faces` it fails at `pc.doc.rebuild()` (no faces to tilt).
+- `angle_deg` is 1.5 when left out. The faces keep their place on the neutral plane and lean outward away from it, against its outward normal; `reversed = true` leans them in.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.thickness`.
+
+Example: One side of a block drafted 10 degrees from its bottom.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+-- The bottom is the neutral plane; the right side leans out 10 degrees above it.
+pc.design.draft{body = body, angle_deg = 10,
+  face_point = {10, 5, 0}, face_normal = {0, 0, -1},
+  faces = {{point = {20, 5, 5}, normal = {1, 0, 0}}}}
+assert(#pc.doc.rebuild() == 0, "the draft builds")
+local lean = 10 * math.tan(math.rad(10))
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.max[1] - (20 + lean)) < 1e-4, m.max[1])
+assert(math.abs(m.volume - (2000 + lean * 10 / 2 * 10)) < 1e-3, m.volume)
+```
 
 `pc.design.thickness`: Hollow the solid.
 
@@ -1505,8 +1709,24 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `face_point` and `face_normal` name the face it opens and are required; `faces = {{point = .., normal = ..}, ...}` opens several, replacing that one.
+- `value` is the wall, 1 mm when left out, inside the solid; `inward = false` puts the walls outside it, `both_sides = true` on both.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.draft`.
+
+Example: A block hollowed into an open box.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+-- An open box: the top face taken away, 1 mm walls left inside.
+pc.design.thickness{body = body, face_point = {10, 5, 10}, face_normal = {0, 0, 1}}
+assert(#pc.doc.rebuild() == 0, "the shell builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (2000 - 18 * 8 * 9)) < 1e-3, volume)
+```
 
 `pc.design.delete_faces`: Delete faces and close the openings from their neighbours.
 
@@ -1521,8 +1741,26 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `face_point` and `face_normal` name a face and are required; `faces = {{point = .., normal = ..}, ...}` deletes several, replacing that one. A bore's wall faces its axis: its normal points inward.
+- Faces whose removal leaves a neighbour with nothing around it (a blind hole's wall without its bottom) fail at `pc.doc.rebuild()`; delete them together.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.recognize_holes`.
+
+Example: A through hole closed by deleting its wall.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body, kind = {Box = {length = 20, width = 10, height = 5}}}
+local at = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.circle{sketch = at, x = 10, y = 5, radius = 2}
+pc.design.pocket{sketch = at, through_all = true}
+-- The bore's wall, picked at x = 12 where it faces the axis: the hole closes.
+pc.design.delete_faces{body = body, face_point = {12, 5, 2.5}, face_normal = {-1, 0, 0}}
+assert(#pc.doc.rebuild() == 0, "the deletion builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - 1000) < 1e-3, volume)
+assert(#pc.doc.faces{body = body} == 6)
+```
 
 `pc.design.offset_faces`: Push or pull faces along their normals, their neighbours following.
 
@@ -1537,8 +1775,28 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `face_point` and `face_normal` name a face and are required; `faces` lists several, replacing that one.
+- `distance` (1 mm when left out) moves the faces along their outward normals. A bore's outward normal points at its axis, so a positive distance makes a hole smaller and a negative one wider.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.move_faces`, `pc.doc.faces`.
+
+Example: A hole widened by 1 mm all round.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.circle{sketch = at, x = 10, y = 5, radius = 2}
+pc.design.pocket{sketch = at, through_all = true}
+-- A bore's outward normal points at its axis: a negative distance widens it.
+pc.design.offset_faces{body = body, distance = -1,
+  face_point = {12, 5, 2.5}, face_normal = {-1, 0, 0}}
+assert(#pc.doc.rebuild() == 0, "the offset builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1000 - math.pi * 9 * 5)) < 1e-3, volume)
+```
 
 `pc.design.move_faces`: Move or turn faces, their neighbours following.
 
@@ -1553,8 +1811,26 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `face_point` and `face_normal` name a face and are required; `faces` lists several, replacing that one.
+- `translation` is 1 mm out along the face's normal when left out; give `translation = {0, 0, 0}` for a turn alone. `angle_deg` turns the faces about the line through `axis_point` (the face's point) along `axis_dir` (Z), in the body's own frame.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.offset_faces`, `pc.doc.faces`.
+
+Example: A block's top face tilted about its middle.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+-- The top face turned 10 degrees about a line across its middle.
+pc.design.move_faces{body = body, face_point = {10, 5, 10}, face_normal = {0, 0, 1},
+  translation = {0, 0, 0}, angle_deg = 10, axis_point = {10, 0, 10}, axis_dir = {0, 1, 0}}
+assert(#pc.doc.rebuild() == 0, "the move builds")
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - 2000) < 1e-3, "what one end gains the other loses")
+assert(math.abs(m.max[3] - (10 + 10 * math.tan(math.rad(10)))) < 1e-4, m.max[3])
+```
 
 `pc.design.mirror`: Mirror the last feature.
 
@@ -1569,8 +1845,27 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- The plane is YZ through the body's origin when left out; `plane = "XY"` or `"XZ"` takes another, and `face_point` with `face_normal` a flat face of the solid.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
+
+Example: A post mirrored across the YZ plane.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = -10, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local corner = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.rect{sketch = corner, x = 5, y = 0, width = 3, height = 3}
+local post = pc.design.pad{sketch = corner, length = 4}
+pc.design.mirror{body = body, originals = {post}, plane = "YZ"}
+assert(#pc.doc.rebuild() == 0, "the mirror builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1000 + 2 * 36)) < 1e-6, volume)
+```
 
 `pc.design.linear_pattern`: Repeat the last feature along a line.
 
@@ -1585,8 +1880,34 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `axis` is X when left out (Y, Z, or `{Custom = {origin = {x, y, z}, dir = {x, y, z}}}`); `occurrences` (3) counts the original; `length` (30 mm) runs from the first to the last, or is the gap between them with `spacing_mode = true`.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.polar_pattern`.
+
+Example: A hole repeated three times along X.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 10}
+local pad = pc.design.pad{sketch = s, length = 4}
+local body = pc.doc.feature{id = pad}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 2}
+local hole = pc.design.pocket{sketch = at, through_all = true}
+-- Three holes 10 mm apart: 20 mm from the first to the last.
+pc.design.linear_pattern{body = body, originals = {hole}, axis = "X", length = 20, occurrences = 3}
+assert(#pc.doc.rebuild() == 0, "the pattern builds")
+local xs = {}
+for _, face in ipairs(pc.doc.faces{body = body}) do
+  if face.kind == "cylinder" then xs[#xs + 1] = face.axis.point[1] end
+end
+table.sort(xs)
+assert(#xs == 3 and math.abs(xs[1] - 5) < 1e-6 and math.abs(xs[3] - 25) < 1e-6)
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (30 * 10 - 3 * math.pi * 4) * 4) < 1e-3, volume)
+```
 
 `pc.design.polar_pattern`: Repeat the last feature about an axis.
 
@@ -1601,8 +1922,28 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `axis` is Z through the body's origin when left out; `occurrences` (4) counts the original. `angle_deg` of 360 (the default) spreads them evenly round the turn; less puts the first and the last at its two ends.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
+
+Example: Six holes round a disc.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 20}
+local disc = pc.design.pad{sketch = s, length = 3}
+local body = pc.doc.feature{id = disc}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 3}
+pc.sketch.circle{sketch = at, x = 12, y = 0, radius = 2}
+local hole = pc.design.pocket{sketch = at, through_all = true}
+-- Six holes around Z: 360 degrees is the whole turn, not a seventh copy on the first.
+pc.design.polar_pattern{body = body, originals = {hole}, axis = "Z", angle_deg = 360, occurrences = 6}
+assert(#pc.doc.rebuild() == 0, "the pattern builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (math.pi * 400 - 6 * math.pi * 4) * 3) < 1e-3, volume)
+```
 
 `pc.design.scaled`: Scale the last feature.
 
@@ -1617,8 +1958,28 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- It makes a Multi Transform whose fields are `originals` and `steps`, one `{Scale = {factor, center, occurrences}}`: 1.5 about the body's origin, 2 occurrences, when left out. The occurrences count the original and grow evenly up to `factor`. A `factor` given on its own is refused.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
+
+Example: A block repeated at 1.5 and 2 times its size.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 10, y = 0, width = 10, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+-- Three occurrences, the original counted: scaled 1, 1.5 and 2 about the origin.
+pc.design.scaled{body = body, originals = {pad},
+  steps = {{Scale = {factor = 2, center = {0, 0, 0}, occurrences = 3}}}}
+assert(#pc.doc.rebuild() == 0, "the scaled copies build")
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.max[1] - 40) < 1e-6, m.max[1])
+-- 1000 + 3375 + 8000, less the two overlaps (500 and 2250).
+assert(math.abs(m.volume - 9625) < 1e-3, m.volume)
+```
 
 `pc.design.boolean`: Combine with another body.
 
@@ -1633,13 +1994,55 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `body` is the one it changes; `tool_body` (the latest other body when left out) is what it takes, and keeps its own solid. It is refused while the document has no other body.
+- `kind` is Fuse when left out, or Cut or Common; `more_tools = {id, ...}` takes further bodies the same way.
 
-See also `pc.doc.rebuild`, `pc.design.set`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.new_body`, `pc.doc.set_visible`.
+
+Example: A corner cut out of a block by another body.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+local block = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = block}.body
+local t = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = t, x = 20, y = 20, radius = 5}
+local post = pc.design.pad{sketch = t, length = 30}
+local tool = pc.doc.feature{id = post}.body
+pc.design.boolean{body = body, tool_body = tool, kind = "Cut"}
+assert(#pc.doc.rebuild() == 0, "the boolean builds")
+-- A quarter of the post stands in the block's corner.
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (4000 - math.pi * 25 / 4 * 10)) < 1e-3, volume)
+assert(pc.doc.measure{body = tool}.volume > 0, "the tool body keeps its own solid")
+```
 
 `pc.design.set`: Change fields of a Design feature or a datum.
 
 - `feature` (id): The feature to change
 - Other arguments: The fields to change, such as length = 25; a datum takes offset {x, y, z}, rotation and flip as design.datum does
+
+Notes:
+
+- It builds nothing: `pc.doc.rebuild()` builds the change and tells what fails. A misspelt field is refused, naming the fields the feature has.
+- A sketch is not a Design feature and is refused; the `sketch.*` commands change it.
+
+See also `pc.doc.feature`, `pc.doc.set_formula`.
+
+Example: A pad made taller.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+pc.design.set{feature = pad, length = 8}
+assert(pc.doc.feature{id = pad}.fields.Pad.length == 8)
+assert(#pc.doc.rebuild() == 0, "the pad builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - 20 * 10 * 8) < 1e-3, volume)
+```
 
 `pc.design.datum`: Add a datum plane, line, point or coordinate system.
 
@@ -1662,6 +2065,34 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 - `name` (string, optional): Its name in the tree
 - Returns the datum's id
 
+Notes:
+
+- A plane on a face (`mode = "face"`) has its origin at `face_point` and follows the face when the solid changes; a sketch stands on the datum with `pc.sketch.new{body = ..., on = datum}`.
+- `design.set{feature = datum, offset = {x, y, z}}` moves it later, and what stands on it follows at the next `pc.doc.rebuild()`.
+
+See also `pc.sketch.new`, `pc.design.set`.
+
+Example: A boss on a plane that follows the top face.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+-- A plane on the top face, its origin where the face was given.
+local plane = pc.design.datum{kind = "plane", body = body, mode = "face",
+  face_point = {10, 5, 5}, face_normal = {0, 0, 1}}
+local on = pc.sketch.new{body = body, on = plane}
+pc.sketch.circle{sketch = on, x = 0, y = 0, radius = 2}
+pc.design.pad{sketch = on, length = 3}
+assert(#pc.doc.rebuild() == 0, "the boss builds")
+assert(math.abs(pc.doc.measure{body = body}.volume - (1000 + math.pi * 4 * 3)) < 1e-3)
+-- The plane follows the face: a taller block lifts the boss with it.
+pc.design.set{feature = pad, length = 8}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.max[3] - 11) < 1e-6)
+```
+
 `pc.design.borrow`: Borrow another body's sketch, or faces and edges of its solid.
 
 - `body` (id): The body that borrows
@@ -1674,15 +2105,98 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 - `name` (string, optional): Its name in the tree
 - Returns the borrow's id
 
+Notes:
+
+- A feature takes a borrowed sketch by the borrow's id as its `sketch`. A pad or a pocket takes a lent face with `profile_borrowed = {borrow = id, index = 0}`, once the lending body is built (`pc.doc.rebuild()`); before, it is refused asking for a sketch.
+- Borrowing a sketch of the same body is refused (a feature takes it directly), as is giving both `sketch` and `from`.
+
+See also `pc.design.freeze`, `pc.doc.faces`.
+
+Example: A sketch and a face of one body padded in another.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local base = pc.design.pad{sketch = s, length = 5}
+local lender = pc.doc.feature{id = base}.body
+local body = pc.doc.new_body{}
+-- The other body's sketch, borrowed: a feature takes the borrow as its sketch.
+local lent = pc.design.borrow{body = body, sketch = s}
+local copy = pc.design.pad{sketch = lent, length = 3}
+assert(pc.doc.feature{id = copy}.body == body)
+-- Its top face, borrowed once the lender is built: a pad takes it as its profile.
+assert(#pc.doc.rebuild() == 0)
+local face = pc.design.borrow{body = body, from = lender,
+  faces = {{point = {10, 5, 5}, normal = {0, 0, 1}}}}
+pc.design.pad{body = body, profile_borrowed = {borrow = face, index = 0}, length = 2}
+assert(#pc.doc.rebuild() == 0, "both pads build")
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - 20 * 10 * (3 + 2)) < 1e-3, m.volume)
+assert(math.abs(m.max[3] - 7) < 1e-6, "the second pad stands on the lent face")
+```
+
 `pc.design.recognize_holes`: Make the round holes of a body's solid Hole features: their faces deleted, and each set of alike holes drilled again from a sketch of their centres.
 
 - `body` (id): The body
 - Returns {holes, left, features}: the holes made features, the bores left as they are (counterbores, slots) and the features added
 
+Notes:
+
+- The body must be built first (`pc.doc.rebuild()`); a body with no round holes gets nothing, `holes = 0`.
+- Per set of alike holes it adds one Delete Faces, a sketch of their centres and a Hole, the Hole last; `design.set` on that Hole resizes them all.
+
+See also `pc.design.hole`, `pc.design.delete_faces`.
+
+Example: Two bores made a Hole feature and widened.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body, kind = {Box = {length = 20, width = 10, height = 5}}}
+local at = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 2}
+pc.sketch.circle{sketch = at, x = 15, y = 5, radius = 2}
+pc.design.pocket{sketch = at, through_all = true}
+assert(#pc.doc.rebuild() == 0)
+local made = pc.design.recognize_holes{body = body}
+-- The two alike bores: one Delete Faces, one sketch of centres and one Hole.
+assert(made.holes == 2 and made.left == 0 and #made.features == 3)
+assert(#pc.doc.rebuild() == 0, "the holes drill again")
+local hole = made.features[3]
+assert(pc.doc.feature{id = hole}.fields.Hole.diameter == 4)
+pc.design.set{feature = hole, diameter = 6}
+assert(#pc.doc.rebuild() == 0)
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1000 - 2 * math.pi * 9 * 5)) < 1e-3, volume)
+```
+
 `pc.design.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
 
 - `feature` (id): The borrow
 - `frozen` (boolean, optional): true (the default) takes the source as it is now; false follows it again
+
+Notes:
+
+- Any feature other than a borrow is refused.
+
+See also `pc.design.borrow`.
+
+Example: A borrowed sketch frozen, then followed again.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local body = pc.doc.new_body{}
+local lent = pc.design.borrow{body = body, sketch = s}
+pc.design.pad{sketch = lent, length = 3}
+pc.design.freeze{feature = lent}
+-- A rectangle added to the source after the freeze is not taken.
+pc.sketch.rect{sketch = s, x = 30, y = 0, width = 10, height = 10}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 600) < 1e-3)
+pc.design.freeze{feature = lent, frozen = false}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 900) < 1e-3, "following it again")
+```
 
 `pc.design.move_to_body`: Move a feature into another body's history, with the sketch and datums only it uses.
 
@@ -1690,11 +2204,59 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 - `body` (id): The body it goes to, in at its tip
 - Returns the ids of the features moved, the given one last
 
+Notes:
+
+- It is refused when the feature reads a sketch other features read too; `design.duplicate` with `body` copies it there with a sketch of its own.
+
+See also `pc.design.duplicate`, `pc.doc.new_body`.
+
+Example: A boss moved into a body of its own.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.rect{sketch = top, x = 0, y = 0, width = 5, height = 5}
+local boss = pc.design.pad{sketch = top, length = 5}
+local other = pc.doc.new_body{}
+local moved = pc.design.move_to_body{feature = boss, body = other}
+-- The boss went with the sketch only it used.
+assert(#moved == 2 and moved[1] == top and moved[2] == boss)
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-3)
+assert(math.abs(pc.doc.measure{body = other}.volume - 125) < 1e-3)
+```
+
 `pc.design.duplicate`: Make a copy of a feature, with its own copies of the sketches and datums it reads.
 
 - `feature` (id): The feature
 - `body` (id, optional): The body the copy goes in, at its tip (the feature's own when left out)
 - Returns the ids of the features made, the copy of the given one last
+
+Notes:
+
+- The copy is made exactly where the feature is, so in the same body it adds nothing to the solid until `design.set` changes it.
+
+See also `pc.design.set`, `pc.design.move_to_body`.
+
+Example: A pad copied and turned to grow the other way.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local made = pc.design.duplicate{feature = pad}
+-- A sketch of its own and the copied pad, last.
+assert(#made == 2 and made[1] ~= s)
+local copy = made[2]
+pc.design.set{feature = copy, reversed = true}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - 1000) < 1e-3 and math.abs(m.min[3] + 5) < 1e-6, m.volume)
+```
 
 `pc.design.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
 
@@ -1706,6 +2268,28 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 - `tolerance` (number, optional): How closely it follows the sections' centres, mm (0.02 when left out)
 - Returns {length, points, deviation, straight}: its length in mm, points along it in the body's frame, the largest distance measured from a section's centre to it, and whether it is one straight segment
 
+Notes:
+
+- The body must be built first (`pc.doc.rebuild()`). The two faces are its ends, each given by a point on it and its outward normal.
+
+See also `pc.doc.faces`, `pc.doc.measure`.
+
+Example: The centre line of a quarter bend.
+
+```lua
+local s = pc.sketch.new{plane = "XZ"}
+pc.sketch.circle{sketch = s, x = 10, y = 0, radius = 2}
+local bend = pc.design.revolve{sketch = s, angle_deg = 90}
+assert(#pc.doc.rebuild() == 0, "the bend builds")
+local body = pc.doc.feature{id = bend}.body
+local line = pc.design.centre_line{body = body,
+  from_point = {10, 0, 0}, from_normal = {0, -1, 0},
+  to_point = {0, 10, 0}, to_normal = {-1, 0, 0}}
+-- A quarter circle of radius 10.
+assert(math.abs(line.length - math.pi * 10 / 2) < 0.05, line.length)
+assert(not line.straight)
+```
+
 `pc.design.gear`: Make an involute spur gear's profile, outer or internal (ring): a sketch to pad.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
@@ -1715,6 +2299,28 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 - `name` (string, optional): Its name in the tree
 - Other arguments: module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in modules), backlash, root_fillet (in modules), bore, internal (true for a ring), rim (a ring's outside diameter)
 - Returns the sketch's id
+
+Notes:
+
+- It makes only the sketch, whose curves its numbers fix: a pad or a revolution built from it makes the solid, and `sketch.generator` changes the numbers afterwards.
+- Without `body` it goes in the selected body, else in a new one: in a script each call without `body` starts a body of its own.
+- A field the generator lacks is refused, naming the ones it has; fields left out keep their defaults, which `pc.doc.feature{id = ...}.fields.generator` shows.
+- `module` is in mm (2 when left out) and `teeth` 20: the pitch diameter is module times teeth, the tip diameter two modules more. It lies on XY centred on the origin, with a 5 mm `bore` (0 for none).
+- A bore that does not fit inside the root circle is refused.
+
+See also `pc.sketch.generator`, `pc.design.pad`.
+
+Example: A 12-tooth gear padded 5 mm.
+
+```lua
+local gear = pc.design.gear{module = 2, teeth = 12, bore = 6}
+local pad = pc.design.pad{sketch = gear, length = 5}
+assert(#pc.doc.rebuild() == 0, "the gear builds")
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+-- The tip circle is 2 * (12 + 2) = 28 mm across; a tooth points along X.
+assert(math.abs(m.max[1] - 14) < 1e-3 and math.abs(m.min[1] + 14) < 1e-3)
+assert(math.abs(m.max[3] - 5) < 1e-6)
+```
 
 `pc.design.sprocket`: Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad.
 
@@ -1726,6 +2332,26 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 - Other arguments: pitch, roller (the roller's diameter), teeth, bore
 - Returns the sketch's id
 
+Notes:
+
+- It makes only the sketch, whose curves its numbers fix: a pad or a revolution built from it makes the solid, and `sketch.generator` changes the numbers afterwards.
+- Without `body` it goes in the selected body, else in a new one: in a script each call without `body` starts a body of its own.
+- A field the generator lacks is refused, naming the ones it has; fields left out keep their defaults, which `pc.doc.feature{id = ...}.fields.generator` shows.
+- `pitch` and `roller` are the chain's, in mm (12.7 and 8.51 when left out), with 18 `teeth` and an 8 mm `bore`. It lies on XY centred on the origin.
+
+See also `pc.sketch.generator`, `pc.design.pad`.
+
+Example: A 9-tooth sprocket, its diameters read back.
+
+```lua
+local sprocket = pc.design.sprocket{teeth = 9, bore = 6}
+local size = pc.sketch.generator{sketch = sprocket}
+-- A chain's pitch circle: the pitch over the sine of half a tooth's angle.
+assert(math.abs(size.pitch_diameter - 12.7 / math.sin(math.pi / 9)) < 1e-3)
+local pad = pc.design.pad{sketch = sprocket, length = 3}
+assert(#pc.doc.rebuild() == 0, "the sprocket builds")
+```
+
 `pc.design.shaft`: Make a stepped shaft's half section: a sketch to revolve about its vertical axis.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
@@ -1735,6 +2361,28 @@ See also `pc.doc.rebuild`, `pc.design.set`.
 - `name` (string, optional): Its name in the tree
 - Other arguments: sections = {{length, diameter, chamfer, fillet}, ...}, start_chamfer, and loads = {bearings = {a, b}, forces = {{at, force, angle_deg}, ...}, torque (N·m), torque_from, torque_to, modulus (GPa)} for its stresses and deflection
 - Returns the sketch's id
+
+Notes:
+
+- It makes only the sketch, whose curves its numbers fix: a pad or a revolution built from it makes the solid, and `sketch.generator` changes the numbers afterwards.
+- Without `body` it goes in the selected body, else in a new one: in a script each call without `body` starts a body of its own.
+- A field the generator lacks is refused, naming the ones it has; fields left out keep their defaults, which `pc.doc.feature{id = ...}.fields.generator` shows.
+- It draws the half section on XZ, its sections from z = 0 upward, each a `length` and a `diameter` in mm, with a `chamfer` and a `fillet`; `start_chamfer` (0.5 mm when left out) breaks the bottom edge. `design.revolve` with no axis turns it about Z into the shaft.
+
+See also `pc.sketch.generator`, `pc.design.revolve`.
+
+Example: A two-step shaft turned from its section.
+
+```lua
+local section = pc.design.shaft{start_chamfer = 0,
+  sections = {{length = 20, diameter = 10}, {length = 30, diameter = 16}}}
+local turn = pc.design.revolve{sketch = section}
+assert(#pc.doc.rebuild() == 0, "the shaft builds")
+local m = pc.doc.measure{body = pc.doc.feature{id = turn}.body}
+local volume = math.pi * (5 ^ 2 * 20 + 8 ^ 2 * 30)
+assert(math.abs(m.volume - volume) < 1e-3, m.volume)
+assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
+```
 
 ### surface
 
