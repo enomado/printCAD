@@ -185,9 +185,11 @@ booleans, fillets and the rest), each naming the feature it is for. The
 kernel runs them natively; a failing op marks its feature.
 
 **Panels.** A bench declares its task panel and Preferences page as
-widgets (`Widget`): headings, text, notes, numbers, choices, toggles, text
-fields, buttons, pick rows, lists, tables, groups, progress, separators
-and diagrams. A table's columns marked `editable` take typing, each cell
+widgets (`Widget`): headings, a header with an icon, text, read-only
+values, notes, numbers, choices, toggles, text fields, buttons (a small
+one for an action on its row), pick rows, lists, tables, groups, rows of
+widgets side by side, a hint on any widget, progress, separators and
+diagrams. A table's columns marked `editable` take typing, each cell
 left coming back as `PanelEvent::Cell` (the CAM example's tool table is
 one). A number bound
 to a feature's parameter (`bind`) takes formulas like any field of the

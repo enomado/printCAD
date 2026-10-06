@@ -750,6 +750,28 @@ pub enum Widget {
         #[serde(default)]
         callouts: Vec<Callout>,
     },
+    /// A task panel's title with an icon, on a raised band.
+    Header {
+        icon: String,
+        title: String,
+    },
+    /// A label and a value beside it, read only.
+    Value {
+        label: String,
+        value: String,
+        #[serde(default)]
+        mono: bool,
+    },
+    /// Widgets side by side, going on to the next line when the panel is
+    /// narrow. A field with an empty label takes no label column here.
+    Row {
+        children: Vec<Widget>,
+    },
+    /// A widget with words shown while the pointer rests on it.
+    Hinted {
+        hint: String,
+        widget: Box<Widget>,
+    },
 }
 
 /// A line of a [`Widget::Diagram`]: what it stands for, not its colour,
@@ -854,6 +876,8 @@ pub enum ButtonStyle {
     #[default]
     Secondary,
     Destructive,
+    /// A small secondary button, for an action on the row it sits in.
+    Small,
 }
 
 /// A number field's parameter: feature `feature`'s parameter `key`.
@@ -1080,6 +1104,39 @@ mod tests {
         assert_eq!(
             event,
             r#"{"type":"job_finished","job":3,"result":{"Ok":"x"}}"#
+        );
+    }
+
+    #[test]
+    fn layout_widgets_read_as_a_guest_writes_them() {
+        let widget: Widget = serde_json::from_str(
+            r#"{"type":"row","children":[
+                {"type":"value","label":"Moves","value":"Part"},
+                {"type":"hinted","hint":"Why","widget":
+                    {"type":"button","id":"x","label":"X","style":"small"}}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            widget,
+            Widget::Row {
+                children: vec![
+                    Widget::Value {
+                        label: "Moves".into(),
+                        value: "Part".into(),
+                        mono: false,
+                    },
+                    Widget::Hinted {
+                        hint: "Why".into(),
+                        widget: Box::new(Widget::Button {
+                            id: "x".into(),
+                            label: "X".into(),
+                            style: ButtonStyle::Small,
+                            enabled: true,
+                        }),
+                    },
+                ],
+            }
         );
     }
 

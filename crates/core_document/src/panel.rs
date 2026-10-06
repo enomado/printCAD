@@ -227,6 +227,7 @@ fn show_one(
                     ButtonStyle::Primary => widgets::primary_button(ui, label),
                     ButtonStyle::Secondary => widgets::secondary_button(ui, label),
                     ButtonStyle::Destructive => widgets::destructive_button(ui, label),
+                    ButtonStyle::Small => widgets::small_secondary_button(ui, label),
                 })
                 .inner
                 .clicked();
@@ -379,7 +380,50 @@ fn show_one(
             callouts,
             ..
         } => diagram(ui, *width, *height, shapes, dimensions, callouts),
+        Widget::Header { icon, title } => header(ui, icon, title),
+        Widget::Value { label, value, mono } => row(ui, label, |ui| {
+            let font = if *mono {
+                ui_kit::theme::mono(FONT_SM)
+            } else {
+                ui_kit::theme::sans(FONT_SM)
+            };
+            ui.label(RichText::new(value).font(font).color(TEXT1));
+        }),
+        Widget::Row { children } => {
+            ui.horizontal_wrapped(|ui| {
+                for child in children {
+                    show_one(ui, id, child, document, out);
+                }
+            });
+        }
+        Widget::Hinted { hint, widget } => {
+            ui.scope(|ui| show_one(ui, id, widget, document, out))
+                .response
+                .on_hover_text(hint);
+        }
     }
+}
+
+/// A task panel's title: its icon in the accent colour and the title, on a
+/// raised band the panel's width.
+fn header(ui: &mut Ui, icon: &str, title: &str) {
+    egui::Frame::new()
+        .fill(BG2)
+        .stroke(egui::Stroke::new(1.0, BORDER))
+        .corner_radius(RADIUS_MD)
+        .inner_margin(egui::Margin::symmetric(SPACE_2 as i8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_2;
+                ui_kit::icon::draw(ui, icon, 18.0, ACCENT);
+                ui.label(
+                    RichText::new(title)
+                        .font(ui_kit::theme::sans_semibold(FONT_MD))
+                        .color(TEXT1),
+                );
+            });
+        });
 }
 
 /// The tallest a diagram grows, in pixels; a wide one takes the panel's
@@ -567,9 +611,14 @@ fn cell_edit(ui: &mut Ui, key: egui::Id, value: &str) -> Option<String> {
 /// The width of an editable table cell.
 const CELL_WIDTH: f32 = 64.0;
 
-/// A labelled row: the label column, then the control.
+/// A labelled row: the label column, then the control. An empty label
+/// takes no column, for a control in a [`Widget::Row`].
 fn row(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
+        if label.is_empty() {
+            control(ui);
+            return;
+        }
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(LABEL_COLUMN, INPUT), egui::Sense::hover());
         ui.put(rect, |ui: &mut Ui| {
@@ -749,6 +798,44 @@ mod tests {
                     text: "bore".into(),
                     emphasis: false,
                 }],
+            },
+            Widget::Header {
+                icon: "gear".into(),
+                title: "Task".into(),
+            },
+            Widget::Value {
+                label: "Moves".into(),
+                value: "Part".into(),
+                mono: false,
+            },
+            Widget::Row {
+                children: vec![
+                    Widget::Number {
+                        id: "by".into(),
+                        label: String::new(),
+                        value: 90.0,
+                        dim: Dim::Angle,
+                        bind: None,
+                        min: None,
+                        max: None,
+                        decimals: 2,
+                        error: None,
+                    },
+                    Widget::Button {
+                        id: "remove".into(),
+                        label: "Remove".into(),
+                        style: ButtonStyle::Small,
+                        enabled: true,
+                    },
+                ],
+            },
+            Widget::Hinted {
+                hint: "Why".into(),
+                widget: Box::new(Widget::Toggle {
+                    id: "h".into(),
+                    label: "Hinted".into(),
+                    on: false,
+                }),
             },
         ]
     }

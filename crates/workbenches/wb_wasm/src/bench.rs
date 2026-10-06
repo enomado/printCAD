@@ -360,6 +360,17 @@ impl WasmWorkbench {
                     open: *open,
                     children: Self::with_progress(inner, children),
                 },
+                Widget::Row { children } => Widget::Row {
+                    children: Self::with_progress(inner, children),
+                },
+                Widget::Hinted { hint, widget } => Widget::Hinted {
+                    hint: hint.clone(),
+                    widget: Box::new(
+                        Self::with_progress(inner, std::slice::from_ref(widget))
+                            .pop()
+                            .unwrap_or(Widget::Separator),
+                    ),
+                },
                 other => other.clone(),
             })
             .collect()
