@@ -772,6 +772,23 @@ pub enum Widget {
         hint: String,
         widget: Box<Widget>,
     },
+    /// A number dragged along a range, for a spread or a place in time
+    /// rather than a measure; it comes back as `PanelEvent::Number`.
+    Slider {
+        id: String,
+        label: String,
+        value: f64,
+        min: f64,
+        max: f64,
+        /// The values it stops at, every `step` from `min`.
+        #[serde(default)]
+        step: Option<f64>,
+        #[serde(default = "two")]
+        decimals: usize,
+        /// The value written beside it.
+        #[serde(default = "yes")]
+        show_value: bool,
+    },
 }
 
 /// A line of a [`Widget::Diagram`]: what it stands for, not its colour,

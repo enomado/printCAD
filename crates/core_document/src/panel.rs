@@ -396,6 +396,30 @@ fn show_one(
                 }
             });
         }
+        Widget::Slider {
+            id: wid,
+            label,
+            value,
+            min,
+            max,
+            step,
+            decimals,
+            show_value,
+        } => row(ui, label, |ui| {
+            let mut v = *value;
+            let mut slider = egui::Slider::new(&mut v, *min..=*max)
+                .fixed_decimals(*decimals)
+                .show_value(*show_value);
+            if let Some(step) = step {
+                slider = slider.step_by(*step);
+            }
+            if ui.add(slider).changed() {
+                out.events.push(PanelEvent::Number {
+                    id: wid.clone(),
+                    value: v,
+                });
+            }
+        }),
         Widget::Hinted { hint, widget } => {
             ui.scope(|ui| show_one(ui, id, widget, document, out))
                 .response
@@ -828,6 +852,16 @@ mod tests {
                         enabled: true,
                     },
                 ],
+            },
+            Widget::Slider {
+                id: "s".into(),
+                label: "Spread".into(),
+                value: 1.0,
+                min: 0.0,
+                max: 3.0,
+                step: Some(0.5),
+                decimals: 2,
+                show_value: false,
             },
             Widget::Hinted {
                 hint: "Why".into(),
