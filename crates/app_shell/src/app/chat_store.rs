@@ -19,6 +19,9 @@ pub(crate) struct SavedChat {
     /// The agent's session id.
     pub session: String,
     pub title: String,
+    /// The folder the agent ran the session in, which it is resumed in;
+    /// a chat kept before this was recorded resumes in the file's folder.
+    pub folder: Option<PathBuf>,
 }
 
 /// Every document's chats, by file.
@@ -29,7 +32,11 @@ struct Store {
 
 impl SavedChat {
     fn to_json(&self) -> Value {
-        json!({"agent": self.agent, "session": self.session, "title": self.title})
+        let mut out = json!({"agent": self.agent, "session": self.session, "title": self.title});
+        if let Some(folder) = &self.folder {
+            out["folder"] = json!(folder.display().to_string());
+        }
+        out
     }
 
     fn from_json(value: &Value) -> Option<Self> {
@@ -38,6 +45,7 @@ impl SavedChat {
             agent: text("agent")?,
             session: text("session")?,
             title: text("title").unwrap_or_default(),
+            folder: text("folder").map(PathBuf::from),
         })
     }
 }
@@ -173,6 +181,7 @@ mod tests {
             agent: "Claude".into(),
             session: session.into(),
             title: "Chat 1".into(),
+            folder: Some(dir.clone()),
         };
         keep_in(&store, &a, vec![chat("s1"), chat("s2")]);
         keep_in(&store, &b, vec![chat("s3")]);
@@ -186,6 +195,21 @@ mod tests {
         assert!(chats_in(&store, &a).is_empty());
         assert_eq!(chats_in(&store, &b).len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A chat kept before its folder was recorded reads with none, and the
+    /// chat resumes in its file's folder.
+    #[test]
+    fn a_chat_kept_without_its_folder_still_reads() {
+        let store = Store::from_json(&json!({"documents": {"/x/a.prtcad": [
+            {"agent": "Claude", "session": "s1", "title": "Chat 1"},
+            {"agent": "Claude", "session": "s2", "title": "Chat 2", "folder": "/home/u"}
+        ]}}));
+        let chats = &store.documents["/x/a.prtcad"];
+        assert_eq!(chats[0].folder, None);
+        assert_eq!(chats[1].folder, Some(PathBuf::from("/home/u")));
+        let again = Store::from_json(&store.to_json());
+        assert_eq!(again.documents["/x/a.prtcad"], *chats);
     }
 
     /// A store that does not read is never written over: the chats of
@@ -202,6 +226,7 @@ mod tests {
             agent: "Claude".into(),
             session: "s1".into(),
             title: "Chat 1".into(),
+            folder: None,
         };
         keep_in(&store, &file, vec![chat]);
         assert_eq!(std::fs::read_to_string(&store).unwrap(), "{ not json");

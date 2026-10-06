@@ -105,6 +105,10 @@ pub(crate) struct Chat {
     /// The agent's session, kept with the document's file so the chat can
     /// continue when the file is opened again.
     pub session_id: Option<String>,
+    /// The folder the agent was first started in: an agent keeps its
+    /// sessions by the folder it ran in, so a resumed session must start
+    /// there again, wherever the document has since been saved.
+    pub folder: PathBuf,
     /// The running agent; `None` while the chat rests.
     session: Option<AgentChat>,
 }
@@ -226,7 +230,8 @@ impl PrintCadApp {
             return;
         };
         let id = uuid::Uuid::new_v4().to_string();
-        let session = self.start_agent(&config, &id, None);
+        let folder = working_folder(self.session.current_file.as_deref());
+        let session = self.start_agent(&config, &id, None, &folder);
         let number = self.chats_made + 1;
         self.chats_made = number;
         self.chats.push(Chat {
@@ -247,18 +252,19 @@ impl PrintCadApp {
             rules_sent: String::new(),
             tab: self.session.tab,
             session_id: None,
+            folder,
             session: Some(session),
         });
     }
 
     /// Start `config`'s program for chat `id`, with this application's MCP
-    /// server, in the folder of the chat's document; in session `resume`
-    /// when there is one.
+    /// server, in `folder`; in session `resume` when there is one.
     fn start_agent(
         &self,
         config: &settings::AgentSettings,
         id: &str,
         resume: Option<String>,
+        folder: &std::path::Path,
     ) -> AgentChat {
         let mut mcp = Vec::new();
         if let (Some(server), Ok(exe)) = (&self.mcp, std::env::current_exe()) {
@@ -283,7 +289,7 @@ impl PrintCadApp {
                 args: config.args.clone(),
                 env: config.env.clone(),
             },
-            working_folder(self.session.current_file.as_deref()),
+            folder.to_path_buf(),
             mcp,
             resume,
             self.waker.clone(),
@@ -328,6 +334,9 @@ impl PrintCadApp {
                 rules_sent: String::new(),
                 tab,
                 session_id: Some(kept.session),
+                folder: kept
+                    .folder
+                    .unwrap_or_else(|| working_folder(Some(file.as_path()))),
                 session: None,
             });
             restored = true;
@@ -346,7 +355,11 @@ impl PrintCadApp {
         if chat.status != ChatStatus::Resting {
             return;
         }
-        let (agent, resume) = (chat.agent.clone(), chat.session_id.clone());
+        let (agent, resume, folder) = (
+            chat.agent.clone(),
+            chat.session_id.clone(),
+            chat.folder.clone(),
+        );
         let config = self
             .user_settings
             .ai
@@ -354,7 +367,7 @@ impl PrintCadApp {
             .iter()
             .find(|a| a.name == agent)
             .cloned();
-        let session = config.map(|config| self.start_agent(&config, id, resume));
+        let session = config.map(|config| self.start_agent(&config, id, resume, &folder));
         let Some(chat) = self.chat_mut(id) else {
             return;
         };
@@ -395,6 +408,7 @@ impl PrintCadApp {
                         agent: c.agent.clone(),
                         session: c.session_id.clone()?,
                         title: c.title.clone(),
+                        folder: Some(c.folder.clone()),
                     })
                 })
                 .collect();
@@ -672,6 +686,7 @@ impl Chat {
             rules_sent: String::new(),
             tab: uuid::Uuid::nil(),
             session_id: None,
+            folder: PathBuf::new(),
             session: Some(AgentChat::over(
                 ours.try_clone().unwrap(),
                 ours,
@@ -869,6 +884,7 @@ mod tests {
             rules_sent: String::new(),
             tab: uuid::Uuid::nil(),
             session_id: None,
+            folder: PathBuf::new(),
             session: Some(AgentChat::over(
                 ours.try_clone().unwrap(),
                 ours,
