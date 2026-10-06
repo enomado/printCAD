@@ -50,7 +50,7 @@ own agent and history, and several can run at once.
 - The "+" at the left of the bar attaches files, or a picture of the view,
   to the next message; so does pasting files copied in a file manager, or
   dropping them on the panel (on X11; Wayland does not deliver drops to
-  the app yet). Pictures go as pictures and small text files with their
+  the app). Pictures go as pictures and small text files with their
   text; anything else, such as a STEP or STL file, goes as its path for the
   agent to open. Click an attachment to take it off.
 - The agent's thinking, the tools it calls and their results, and its
@@ -86,8 +86,9 @@ and closing a tab would end its own session. The rules the agent keeps to
 are yours to set, so it cannot change them either. Commands that reach past
 the document wait for your OK every time, even in a chat where changes run
 without asking: new and open, save as, import, export, send to slicer, undo
-and redo, and switching tabs. An agent runs those one at a time, never from
-a script.
+and redo, opening, reopening and switching tabs, and reading a file into
+the document (replacing a body's shape, laying a picture in a sketch). An
+agent runs those one at a time, never from a script.
 
 ## Rules
 
@@ -114,7 +115,8 @@ change shows at the top of the panel as what the agent says it is for
 and the call it makes, with Allow,
 Deny, and Allow all in this chat, which turns asking off for that chat.
 Commands that only read (listing bodies, measuring, looking at the view)
-never wait.
+never wait when called on their own; a Lua script is held whatever it
+does.
 
 Each call an agent makes is one undo step, labelled with the agent.
 

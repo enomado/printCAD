@@ -167,8 +167,10 @@ with only the package's own features on it, never an imported, linked or
 copied one; a body removed with features still on it clears the undo
 history, as deleting one in the app does, so a cancelled part removes its
 feature first and then the empty body it made, which undoes), and
-`host::call(api::calls::…)` for the rest. A feature's data is any JSON the
-bench likes.
+`host::call(api::calls::…)` for the rest (renaming a feature, showing or
+hiding it, placing a body). Calls are allowed while the bench handles an
+event, a panel change, a menu entry or a command, and refused while it
+draws or plans. A feature's data is any JSON the bench likes.
 
 **Parameters and formulas.** `parameters` lists a feature's numbers: a key,
 a JSON pointer into its data, a dimension. Those numbers take formulas
@@ -181,8 +183,9 @@ booleans, fillets and the rest), each naming the feature it is for. The
 kernel runs them natively; a failing op marks its feature.
 
 **Panels.** A bench declares its task panel and Preferences page as
-widgets (`Widget`): numbers, choices, toggles, text fields, buttons, pick
-rows, lists, tables, groups, progress, notes and diagrams. A number bound
+widgets (`Widget`): headings, text, notes, numbers, choices, toggles, text
+fields, buttons, pick rows, lists, tables, groups, progress, separators
+and diagrams. A number bound
 to a feature's parameter (`bind`) takes formulas like any field of the
 app's own. Changes come back as `panel_event`; OK and Cancel as
 `task_close`. A bench whose Preferences page declares no widgets gets no
@@ -194,7 +197,8 @@ a space of its own, `[0, width] × [0, height]` with y up, in whatever unit
 suits (a part's millimetres); the host fits that space to the panel's
 width, at most 220 px tall, and keeps strokes, arrowheads and text at
 their pixel size whatever the fit, so leave a margin for the labels.
-`shapes` are paths and circles with a `DiagramStroke` naming their role
+`shapes` are paths, circles and text; a path or circle has a
+`DiagramStroke` naming its role
 (`outline`, `hidden` dashed, `axis` long-dashed, `thin`, `accent`) rather
 than a colour, so they follow the theme; a filled path is shaded, which
 reads right only for a convex outline, so shade a part as several convex
@@ -219,6 +223,10 @@ the point and body hit, the picked face and edges, the active feature).
 A double click on a feature's tree row arrives as `Event::EditFeature`,
 the cue to open its task; selecting a feature alone never opens one.
 
+**Menus.** `menu_items` adds entries to the viewport's body menu, the
+tree's feature and body rows, the start page's New cards and the Edit
+menu (`MenuScope`); a pick runs `menu_command` with the entry's id.
+
 **Commands.** Commands in `describe` appear to Lua scripts
 (`pc.acme.hello.…`), AI agents and recordings, and run in `run_command`.
 
@@ -232,8 +240,10 @@ that needs every core.
 
 ## Limits
 
-A call that draws or handles input has 25 ms, any other call 1 s; a job
-has no limit and stops when the user stops it. A call over its budget, a
+A call the window waits on has 25 ms: `frame`, `input`, and the feature
+info, parameters and menu entries the tree and menus ask for. Any other
+call has 1 s, and so do two events: a double click that opens a feature's
+task (`Event::EditFeature`) and a finished job (`Event::JobFinished`). A job has no limit and stops when the user stops it. A call over its budget, a
 panic or memory past `memory_mb` stops the bench's instance, which starts
 afresh (its state lost); after three such failures in a session the bench
 is turned off until the app starts again.

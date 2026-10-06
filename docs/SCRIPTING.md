@@ -11,21 +11,21 @@ local pad = pc.design.pad{sketch = s, length = 12}
 pc.design.set{feature = pad, length = 20}
 ```
 
-The Design workbench's commands were once under `part` (`pc.part.pad`,
-`part.set`); those names still run the same commands, so older scripts,
-recordings and key settings keep working.
+The Design workbench's commands also answer to `part` (`pc.part.pad`,
+`part.set`), so older scripts, recordings and key settings keep working.
 
 ## Where scripts run
 
 - **The console.** Windows › Console, Scripts › Console, or the toolbar's
   Scripts button. Enter runs what is typed, Shift+Enter starts another
   line, Tab completes a command name, Up and Down go back through what was
-  run. An expression shows its value. Globals stay set between runs, and
+  run, earlier sessions included. An expression shows its value. Globals stay set between runs, and
   `local` names last one run only. Save as script writes everything run
   in the console since the start as a new script in the scripts folder.
 - **Script files.** Scripts › Run script… runs any `.lua` file. Every
-  `.lua` file in the scripts folder (`~/.config/printcad/scripts`) is also
-  a command of its own: it shows in the Scripts menu, the toolbar's Scripts
+  `.lua` file in the scripts folder (`~/.config/printcad/scripts` on
+  Linux; Scripts › Open scripts folder opens it) is also a command of its
+  own: it shows in the Scripts menu, the toolbar's Scripts
   button and the command palette, and takes a key in Preferences ›
   Keyboard. Its first comment line is its description. Scripts › New
   script starts one from a template.
@@ -37,14 +37,15 @@ recordings and key settings keep working.
 
   `--open` and `--save` are optional. The words after `--` are the
   script's `arg` table. Output goes to stdout and log lines to stderr. The
-  exit code is 0 when the script finishes and 1 when it stops on an error.
-  Commands that need a window (the view, the selection, tools) are not
-  available there.
+  exit code is 0 when the script finishes, 1 when it stops on an error and
+  2 when the command line is wrong. Commands that need a window (the view,
+  the selection, tools) are not available there; `pc.file.save_as` and
+  `pc.file.export` take a `path`.
 
 ## Working with commands
 
 - `help()` lists every command; `help("sketch")` those starting with
-  `sketch`. `show(value)` prints a table.
+  `sketch`. `show(value)` gives a table as readable text, for `print`.
 - Ids of bodies, features, sketch elements and constraints are strings.
   Commands that make something answer its id.
 - An empty `{}` in a command's arguments is the empty list. `array()`
@@ -96,15 +97,18 @@ stands for, and the recording is the list of those commands.
 - A Design feature records when its task closes with OK, as the
   command that makes it with the fields that differ from what that command
   makes on its own. An edit records as `design.set` with the fields changed.
+  A new Surface step records as the command that makes it, with all its
+  fields.
 - A joint records with its faces where the bodies were before it moved
   them; a move records the placement it ended at.
 - The sketcher's other actions record too: arrays, cut and paste (the
   pasted geometry goes into the script), mirrored and merged sketches,
   carbon copies, external geometry, a new plane, driving and active flags.
 - Renaming, showing or hiding, suppressing, reordering, moving the tip of
-  and deleting tree rows record as `doc.*`, as do Repair shape and Convert
-  to solid; an import records as `file.import` with its path; the Solve
-  button as `asm.solve`.
+  and deleting tree rows record as `doc.*`, as do Repair shape, Convert
+  to solid and Refine shape; variables and formulas as `var.*`,
+  `doc.set_formula` and `doc.set_value`; an import records as
+  `file.import` with its path; the Solve button as `asm.solve`.
 - What a recording makes is named (`pad1`, `rect2.elements[3]`), and later
   lines use the name, so a replay works on the things it makes. Things
   that were there before the recording started are named by their id: the
@@ -1580,6 +1584,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `radius` (number, optional): A tangent's radius, mm
 - `drive` (any, optional): A hinge's angle (degrees from where it was made) or a slider's position (mm) to hold it at; false lets it move again
 - `limits` (any, optional): {low, high}: the range a hinge's angle or a slider's position stays in while not driven; false takes the limits away
+- `kind` (string, optional): A joint's new kind (mate, align, hinge, ...), from where the bodies stand
+- `face` (any, optional): The moving body's face, picked afresh, as the joint's command takes it
+- `other` (id, optional): The body it is held against, picked afresh
+- `other_face` (any, optional): The other body's face, picked afresh
+- `moving_end` (number, optional): How far the moving end sits along its own normal or axis, mm
+- `fixed_end` (number, optional): How far the fixed end sits along its own normal or axis, mm
 - `turn_drive` (any, optional): An alignment's turn (degrees from where it was made) to hold it at; false lets it turn
 - `turn_limits` (any, optional): {low, high}: the range an alignment's turn stays in; false takes it away
 - `slide_drive` (any, optional): How far along the axis (mm) to hold an alignment; false lets it slide

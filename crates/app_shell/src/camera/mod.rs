@@ -1,11 +1,13 @@
-//! CAD-style viewport camera for printCAD (`camera_system.md`).
+//! CAD-style viewport camera for printCAD (`docs/CAMERA.md`).
 //!
 //! Invariants worth preserving:
 //! - **`focal_distance`** measured along **`forward`** (eye→focal ray), not spherical radius quirks.
 //! - **Pan** translates `eye`; focal point stays `eye + forward * focal_distance` (orientation fixed).
 //! - **Perspective zoom** dolls along **forward** so the pivot stays fixed unless zoom-to-cursor corrects.
 //!
-//! Vulkan Y-flip, unproject parity, and large-coordinate pitfalls are summarized in **`camera_system.md`** (floating origin, clipping).
+//! `view_projection` bakes Vulkan's Y-down clip space into the matrix; the
+//! helpers that project and unproject through it live in
+//! `core_document::runtime`, and every caller goes through them.
 
 mod animate;
 mod auto_clip;

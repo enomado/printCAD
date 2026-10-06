@@ -10,10 +10,14 @@ workbench reads and writes its own.
 | --- | --- | --- |
 | Metadata | `DocumentMetadata` | Id, name, revision |
 | Features | `FeatureTree` | Every feature, with its dependencies |
-| Bodies | `Vec<Body>` | Id, name, tip, display colour, hidden flag |
+| Bodies | `Vec<Body>` | Id, name, tip, placement, display colour, material, face colours and textures, hidden and frozen flags, linked copy or file link |
+| Components | `Vec<Component>` | Groups of bodies, nested, that move as one |
 | Workbench storage | `WorkbenchId -> JSON` | Data a workbench keeps outside features |
 | Assets | `AssetReference` | Files an import came from, kept verbatim |
 | Geometry | `ImportedGeometry` per body | The mesh, and for solids the kernel shape |
+| Base solids | `ImportedGeometry` per body | The shape a body's features start from |
+| Imported structure | `ImportedObjectNode` | An import's assemblies, parts, annotations and layers |
+| Display unit, agent rules | `Unit`, `String` | How lengths are shown; what an AI agent working on it follows |
 
 ## Features
 
@@ -25,6 +29,9 @@ A feature is a `FeatureNode`:
 - `seq`: its place in the build history. Always order history by `seq`,
   never by `created_at`.
 - `data`: the feature itself, as JSON
+- `formulas`: formulas setting its numbers, by parameter key
+- `made_by` and `package_source`: the workbench package that last wrote
+  it, and where that package came from
 
 A workbench defines a feature type by implementing `WorkbenchFeature`:
 
@@ -91,8 +98,9 @@ They come from the file, so a reload does not re-derive them.
 - **Undo applies inverse operations.** Each edit computes its inverse before
   it applies. One gesture, such as a drag or one task in the task panel, is
   one undo step.
-- **Some operations cannot be undone.** An import or a new asset clears the
-  undo history.
+- **Some operations cannot be undone.** An import, a new asset, a shape
+  repair, a mesh conversion or refine and a replaced shape clear the undo
+  history.
 
 ## The file
 
@@ -105,6 +113,7 @@ document.json        Metadata, features, bodies, meshes
 assets/<id>.<ext>    The files imports came from
 brep/<id>.bin        Each body's kernel shape, ogeom native text
 brep/<id>.colors     Each body's face colours
+brep/<id>.base.bin   A body's base solid, and .base.colors its face colours
 ```
 
 A document with an import can be hundreds of megabytes, so saving and
@@ -116,10 +125,10 @@ opening.
 ## The document server
 
 The application does not write the file itself. Each document has a server
-process, `printcad-serverd`, reached over a Unix socket. The application
+process, `printcad-serverd`, reached over a local socket. The application
 sends it the saved bytes and every operation. The server stores them without
 reading them: the file, and the operation log beside it
 (`<file>.oplog.jsonl`).
 
 If the server cannot start, the application writes the file directly and
-says so in the status bar.
+logs a warning.

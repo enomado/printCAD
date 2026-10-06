@@ -1,6 +1,6 @@
 //! Near/far adjustment from scene AABB (depth along view forward).
 //!
-//! See `camera_system.md` §5: handles empty/degenerate bounds and caps the `far/near` ratio.
+//! See `docs/CAMERA.md`, Near and far planes: handles empty/degenerate bounds and caps the `far/near` ratio.
 
 use glam::Vec3;
 use settings::{CameraSettings, ProjectionMode};

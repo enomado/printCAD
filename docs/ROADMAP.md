@@ -20,8 +20,7 @@ kernel has it.
 - [ ] **Thickness pipe mode** (S). How it should differ from the kernel's
   hollowing, which already ends walls flush with the openings, is still
   to be settled.
-- [ ] **Generators** (M). Undercut on small pinions, keyways, and a task
-  panel of their own.
+- [ ] **Generators** (M). Undercut on small pinions, and keyways.
 
 ## Sketcher
 
@@ -54,13 +53,8 @@ What the Surface workbench needs of the kernel; each open case fails with
 the kernel's reason, and a test marked `#[ignore]` in
 `kernel_ogeom/tests/kernel/surface_ops.rs` passes once it lands.
 
-- [x] Sew, sew across a gap, trim and split sheets, N-sided and tangent
-  fills, surface lofts and sweeps, blend, thicken and offset, extend, STEP
-  export of sheets, fillets on sheets (ogeom-rs#104 to #114, ogeom 0.7.0).
-- [x] Fills, blends and extensions from an extruded surface's far edges,
-  fill sides of separate surfaces meeting at a point, ruled surfaces and
-  lofts between different piece counts, offsets of free-form faces
-  (ogeom-rs#116 to #119, ogeom 0.9.0).
+Fixed in ogeom 0.9.5; open until `ogeom` is bumped and the tests' `#[ignore]`
+comes off:
 
 - [ ] Sweeps along a line into a tangent arc (ogeom-rs#120).
 - [ ] Fills of loops rising out of their plane: two semicircles
@@ -107,7 +101,8 @@ And in printCAD, as each lands:
   bounds reuse key on the face itself instead of hashing its geometry.
 - [ ] With C: the refine after a feature looks only at the faces it made.
 - [ ] A "large solid, small edit" case in `rebuild_bench` (an imported
-  part with a pocket cut into it), measured before and after each item.
+  part with a pocket cut into it; its imported case puts a boss beside the
+  part, so no boolean touches it), measured before and after each item.
 
 Each goes to the kernel's repository as an issue with its API, a repro, the
 bench numbers and an acceptance test (the time follows the touched region,

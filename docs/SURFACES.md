@@ -7,9 +7,9 @@ lid whose edge follows a free-form curve.
 
 ## Surface bodies
 
-Surface steps go into a surface body. The first step goes into the body
-of the selected sketch when that body holds only sketches and datums, and
-into a new body named Surface otherwise. A Design feature asked for on a
+Surface steps go into a surface body: the selected one, or the body of
+the selected sketch when that body holds only sketches and datums, or a
+new body named Surface otherwise. A Design feature asked for on a
 surface body goes into a new body of its own, so the two never build over
 each other. To build solid features on a surface model, sew it closed
 into a solid and use the body in Design (a body boolean, or borrowing its
@@ -25,13 +25,17 @@ A step is built from curves:
 - **Edges.** Edges of the body's own surfaces, picked in the view (Ctrl
   adds to the pick). A fill can close the gap between surfaces this way.
 
+A sketch a new step reads is hidden, the surface standing in for it
+(Preferences › Surface turns this off).
+
 Create sketch starts a sketch in the selected surface body (or a new
 one); finishing it comes back to Surface with the sketch selected, ready
 for a tool. The tools that build from curves stay dim until a sketch is
 selected in the tree or edges are picked; Sew and Mirror until a surface
-body with a shape is selected. A tool takes what is selected when it is
-clicked; in its task, "Add the selection" takes what is selected now, and
-the cross by a row takes it out.
+body with a shape is selected, and Check continuity until any body with a
+shape is. A tool takes what is selected when it is clicked; in its task,
+"Add the selection" takes what is selected now, and the cross by a row
+takes it out.
 
 ## Making surfaces
 
@@ -39,7 +43,7 @@ the cross by a row takes it out.
 | --- | --- |
 | Extruded surface | Each curve swept straight: square to its sketch, or along X, Y or Z; one way, reversed, or half each way. |
 | Revolved surface | Each curve turned about an axis: the sketch's vertical or horizontal axis, or X, Y or Z. |
-| Planar surface | The flat face closed loops bound, a loop inside another a hole. |
+| Planar surface | The flat face closed loops bound, a loop inside another a hole; or the face picked edges closing a flat loop bound. |
 | Filling | The surface curves meeting end to end bound, three or more. A side picked on a surface meets that surface touching (G0), tangent (G1) or curvature continuous (G2); a sketch's curve is touched. |
 | Ruled surface | Straight lines between two curves, end to end, one face per pair of pieces. |
 | Lofted surface | A surface through section curves, one per sketch, in order; closed back to the first if asked. |
@@ -102,8 +106,9 @@ Every tool that builds has a command: `pc.surface.extrude`,
 `pc.surface.fillet`, `pc.surface.extend`, `pc.surface.split`,
 `pc.surface.trim`, `pc.surface.thicken` and `pc.surface.mirror`. They
 take `sketches` (a list, in order), `body` (a body, or any feature in it)
-and any field of the step by name. A step missing what it builds from
-is refused, naming the field.
+and any field of the step by name; Sew takes only `body` (its `gap` is
+set with `pc.surface.set`), Mirror `body`, `plane` and `offset`. A step
+missing what it builds from is refused, naming the field.
 
 `pc.surface.set{feature = id, length = 8}` changes a step after it is
 made, its curves too (`sketches`); `pc.surface.check{body = id}` returns
@@ -113,7 +118,7 @@ starts a sketch in a surface body, as Create sketch does.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
-pc.sketch.polyline{sketch = s, points = {{0, 0}, {10, 0}, {10, 10}, {0, 10}, {0, 0}}}
+pc.sketch.polyline{sketch = s, points = {{0, 0}, {10, 0}, {10, 10}, {0, 10}}, closed = true}
 local walls = pc.surface.extrude{sketches = {s}, length = 5}
 pc.surface.planar{body = walls, sketches = {s}}
 pc.surface.sew{body = walls}

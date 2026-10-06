@@ -1,4 +1,4 @@
-//! Zoom‑to‑cursor: keep the world point under the cursor stable after zoom (`camera_system.md` §3).
+//! Zoom‑to‑cursor: keep the world point under the cursor stable after zoom (`docs/CAMERA.md`, Navigation).
 
 use glam::{DVec3, Vec2, Vec3, Vec4};
 use settings::{CameraSettings, ProjectionMode};

@@ -1,7 +1,10 @@
 # Holes
 
-Design's Hole drills at every circle centre and lone point of a
-sketch. The task panel sets the rows below; a script sets the same fields
+Design's Hole (Shift+H, with a sketch selected on a body that has a
+solid) drills at every circle centre and lone point of the sketch,
+construction geometry left out. It starts as a custom 5 mm hole, 10 mm
+deep, drilled against the sketch's normal; **Reversed** drills the other
+way. The task panel sets the rows below; a script sets the same fields
 by name (`pc.design.hole`, `pc.design.set`).
 
 ## Size
@@ -17,11 +20,12 @@ by name (`pc.design.hole`, `pc.design.set`).
 | BSP taper (Rc) | 1/16 to 2 | 55°, 1:16 taper |
 | NPT | 1/16 to 2 | 60°, 1:16 taper |
 
-A sized hole drills the tap drill when **Threaded** is on, otherwise the
-clearance of its **Fit** (close, normal, loose: ISO 273 for metric sizes,
-ASME B18.2.8 for unified ones; the other standards drill the major
-diameter), or **Custom**, a clearance diameter of your own. A tapped taper thread drills the thread's minor diameter at the
-face and narrows 1:16 on the diameter from there.
+A sized hole drills the tap drill when **Threaded (tap drill)** is on,
+otherwise the clearance of its **Fit** (close, normal, loose: ISO 273 for
+metric sizes, ASME B18.2.8 for unified ones; the other standards drill
+the major diameter), or **Custom**, a clearance diameter of your own. A
+tapped taper thread drills the thread's minor diameter at the face and
+narrows 1:16 on the diameter from there.
 
 **Class** is the internal thread's class: 4H to 8H and 4G to 8G for metric
 (a G class moves the diameters out by the ISO 965-1 allowance,
@@ -29,19 +33,22 @@ face and narrows 1:16 on the diameter from there.
 threads have none. **Left-hand thread** turns a modeled thread the other
 way.
 
-**Modeled thread** cuts the thread itself into the wall, for printing it
-rather than tapping it: the standard's flank angle, out to its major
-diameter, along a cone for a taper thread. **Thread length** is the
-**Thread depth** given, the **Whole hole**, or the hole **Less the
-run-out** of three pitches a tap leaves at the bottom.
+**Modeled thread** (offered once Threaded is on) cuts the thread itself
+into the wall, for printing it rather than tapping it: the standard's
+flank angle, out to its major diameter, along a cone for a taper thread.
+**Thread length** is **Depth given** (the **Thread depth** row), the
+**Whole hole**, or the hole **Less the run-out** of three pitches a tap
+leaves at the bottom. A through hole's thread needs the solid built
+first, to know how far it runs.
 
 ## Depth and bottom
 
 **Through all** or a **Depth**. A blind hole's **Drill point** is flat or
-angled (118°, 135° or any **Point angle**); **Point within the depth**
-makes the depth run to the tip rather than to the end of the wall.
-**Taper** leans the wall in toward the bottom (a tapped taper thread uses
-its own).
+angled (118°, 135° or any **Point angle** from 10° to 170°); **Point
+within the depth** makes the depth run to the tip rather than to the end
+of the wall.
+**Taper** leans the wall in toward the bottom, up to 44° either way (a
+tapped taper thread uses its own).
 
 ## Hole cut
 
@@ -50,6 +57,10 @@ its own).
 - **Countersink:** a cone, diameter at the face and included angle.
 - **Counterdrill:** a wider bore ending in a cone down to the hole:
   diameter, depth and the cone's angle.
+
+The seats below are offered only for a hole sized from an ISO metric
+thread, and a size the seat's table lacks says so in the panel.
+
 - **ISO 4762 seat:** the counterbore for a socket head cap screw of the
   hole's metric size (DIN 974-1 diameters).
 - **ISO 10642 seat:** the 90° countersink for a countersunk socket screw of
@@ -66,10 +77,11 @@ its own).
 ## Your own cuts
 
 Cuts you use often go in `hole_cuts.json` in the application's
-configuration folder (`~/.config/printcad/` on most systems, beside
-`settings.json`). It is read when the application starts; its profiles are
-listed under the standard cuts, and picking one copies its sizes into the
-hole.
+configuration folder (`~/.config/printcad/` on Linux, beside
+`settings.json`). It is read once a run, the first time a hole lists its
+cuts; its profiles are listed under the standard cuts, and picking one
+copies its sizes into the hole. Screw seats and `None` are left out of it,
+since a seat needs the hole's size.
 
 ```json
 {
@@ -104,3 +116,11 @@ designation the panel lists. A size alone, `thread = "M6"` or
 `"CrossCountersunk"`, `"LowHeadCap"`, `"CapScrewWithWasher"`, `"HexHead"`.
 `clearance` sets a clearance of your own; `thread_length` is `"Given"`,
 `"HoleDepth"` or `"RunOut"`.
+
+## Holes already in a solid
+
+**Recognize holes** (`pc.design.recognize_holes`) turns the round bores
+of a body's solid, imported ones included, into Hole features: their
+faces go in one Delete faces feature, and each set of alike holes on one
+plane is drilled again from a hidden sketch of their centres. Bores it
+cannot describe (counterbores, countersinks, slots) stay as they are.

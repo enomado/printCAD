@@ -69,8 +69,8 @@ after a number is taken as a unit (`2 in`) and is left alone.
 ## What a formula can say
 
 - Numbers and arithmetic: `+ - * / % ^` and brackets.
-- Units after a number: `mm`, `cm`, `m`, `um`, `in`, `ft`, `deg` (or `°`),
-  `rad`.
+- Units after a number: `mm`, `cm`, `m`, `um` (or `µm`), `in`, `ft`, `deg`
+  (or `°`), `rad`.
 - References: `Printer.wall`, `Pad.length`, a named sketch dimension such
   as `Profile.width`. A name with spaces goes in backticks:
   `` `Top plate`.thickness ``.
@@ -96,8 +96,8 @@ datum's `offset_z`. A sketch dimension can be read once it has a name.
 `pc.doc.parameters{id = ...}` lists them all.
 
 Renaming an object or a variable rewrites every formula that refers to
-it. A formula that reads itself, however far round, is reported as a loop,
-as is a name that is missing or that two objects share.
+it. A formula that reads itself, however far round, is reported as a loop;
+a name that is missing, or that two objects share, is reported too.
 
 ## Configurations
 
@@ -108,8 +108,8 @@ select the table: its Data tab has the one in effect at the top, the
 variables the configurations set ("+ Variable" adds one), and the
 configurations themselves ("Add a configuration"). Click a configuration
 to give each variable a formula, or leave it empty to keep the variable's
-own; "Put in effect", or the selector at the top, switches to it, and
-everything that follows those variables rebuilds.
+own, and Apply (or Enter); "Put in effect", or the selector at the top,
+switches to it, and everything that follows those variables rebuilds.
 
 A row's value takes the place of the variable's formula, so it cannot
 read that same variable (that would be a loop).

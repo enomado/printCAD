@@ -9,12 +9,18 @@ and macOS and is written in Rust.
 | --- | --- | --- |
 | Application | `app_shell` | Window, frame loop, input, UI, tabs |
 | Design system | `ui_kit` | Colours, sizes, widgets, icons, fonts |
-| Workbenches | `wb_sketch`, `wb_design`, `wb_assembly` | Tools and features, behind the `Workbench` trait |
-| Document | `core_document` | Feature tree, bodies, undo, `.prtcad` files |
+| Workbenches | `wb_sketch`, `wb_design`, `wb_surface`, `wb_assembly` | Tools and features, behind the `Workbench` trait |
+| Workbench packages | `wb_wasm`, `bench_api` | Workbenches built for WebAssembly, run sandboxed, and what they exchange with the app |
+| Workbench registry | `workbenches`, `fixtures` | Registers the built-in workbenches and installed packages; ready-made scenes for tests |
+| Scripting | `scripting` | The Lua engine scripts and the console run in |
+| AI agents | `agents` | Agent Client Protocol client and MCP server core |
+| Document | `core_document` | Feature tree, bodies, undo, formulas, `.prtcad` files |
 | Document server | `doc_server` | Owns the file on disk, one process per document |
 | Geometry interface | `kernel_api` | Meshes, profiles and solid operations as plain data |
 | Geometry kernel | `kernel_ogeom` | The interface implemented with the ogeom kernel |
 | Renderer | `render_vk` | Vulkan: scene data in, pixels out |
+| Surface textures | `surface_texture` | Patterns pressed into faces of a mesh for printing |
+| Local IPC | `local_ipc` | Local sockets and system helpers on every platform |
 | Settings | `settings` | User preferences on disk |
 | Axes | `axes` | Axis presets, so no code assumes which way is up |
 
@@ -44,7 +50,8 @@ and macOS and is written in Rust.
 2. Changed features and everything that depends on them are marked dirty.
 3. Each frame, the workbenches turn dirty bodies into lists of solid
    operations.
-4. The kernel thread runs them and returns a mesh per body.
+4. The kernel worker runs them on background threads, resuming from what
+   the last build of the body kept, and returns a mesh per body.
 5. The renderer draws the meshes and answers pick requests.
 
 ## What comes next

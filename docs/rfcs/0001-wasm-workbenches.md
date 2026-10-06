@@ -1,6 +1,7 @@
 # RFC 0001: WebAssembly workbenches
 
-- Status: built (milestones 1 to 4); milestone 0 in part, see "As built"
+- Status: built (milestones 1 to 4, without the CAM prototype, the
+  contract still at 0.1); milestone 0 in part, see "As built"
 - Date: 2026-09-25
 - Scope: `core_document` (workbench seam), a new `wb_wasm` crate, `ui_kit`,
   the `workbenches` facade, the plugin SDK
@@ -45,16 +46,28 @@ it. `docs/PLUGINS.md` is the guide for package authors.
   camera move and only an event, a document or selection change, or
   `redraw` asks the bench again. `frame` takes the pointer (selection and
   active feature), so a bench knows what is selected when it draws.
-- **Meshes.** `body-mesh` answers a record of lists rather than a
-  chunked resource; the canonical ABI copies them in one go.
+- **Meshes and shapes.** `body-mesh` answers a record of lists rather
+  than a chunked resource; the canonical ABI copies them in one go.
+  `body-shape` hands a body's solid over as the kernel's native-format
+  bytes, for `SolidOp::Shape` and `SolidOp::Boolean`.
 - **Versions.** No `migrate` export: every node a bench sees carries
   `made_by` (package and version), and a package keeps its own schema
-  version in its data if it needs one.
-- **Busy work.** `Workbench::busy` (new) keeps frames coming while a job
-  runs; a finished job is told to the bench on its next frame as active.
-- **Budgets.** Frame and input calls get 25 ms, the rest 1 s (a 5 ms
-  epoch tick, running only while a call or a job does). Three failures
-  in a session turn a bench off.
+  version in its data if it needs one. The contract is
+  `printcad:workbench@0.1`; before 1.0 a package loads only against the
+  same minor version, with no shims for older ones.
+- **Busy work.** `Workbench::busy` keeps frames coming while a job runs;
+  a finished job is told to the bench on its next frame as active.
+- **Budgets.** `frame`, `input` and the feature info, parameters and
+  menu entries the tree and menus ask for get 25 ms; everything else,
+  including the double click that opens a feature's task
+  (`Event::EditFeature`) and a finished job's event, gets 1 s (a 5 ms
+  epoch tick, running only while a call or a job does). An overrun, a
+  trap or memory past the cap replaces the instance with a fresh one;
+  three in a session turn the bench off until the app starts again.
+- **Files and helpers.** Outside its data folder a package reaches files
+  only through the save dialog (`Request::SaveFile`, the `save_dialog`
+  grant); there is no open dialog request. A job runs a helper through
+  the WIT `helper` function rather than a `job.helper` call.
 - **Missing packages.** Implemented as described, except that bodies
   mixing a missing package's features with other benches' are not made
   read-only; a package normally builds its own bodies.
@@ -63,6 +76,13 @@ it. `docs/PLUGINS.md` is the guide for package authors.
   (`wb_wasm::remote`); `source.json` in the package folder records the
   repository and tag, updates are checked at start and on request, and an
   update must hold the same package id and match GitHub's checksum.
+- **Store.** Preferences browses workbench stores (`wb_wasm::store`):
+  registry indexes listing packages from their authors' repositories,
+  each release with its sha256, installed and updated as a GitHub
+  install is. The user keeps the list of stores.
+- **Examples.** The SDK's example is the Gear bench (`sdk/examples/gear`,
+  which runs a job); `sdk/tests/rogue` misbehaves on request for the host's
+  tests, and exercises helpers. No CAM prototype was built in tree.
 - **Milestone 0.** The declared panels (`core_document::panel`), runtime
   icons (`ui_kit::icon::register`), world-space polylines and jobs exist
   and are exercised by packages. The built-in benches keep their egui

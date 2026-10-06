@@ -29,6 +29,13 @@ exist.
 
 ## Projection
 
+`view_projection` folds Vulkan's Y-down clip space into the matrix, so
+screen Y grows downward everywhere. Projecting a point to the screen and
+back (`core_document::runtime`, `world_to_viewport` and
+`viewport_to_plane`) goes through helpers that use the same matrix; code
+that maps between the screen and the world uses them rather than its own
+maths.
+
 - Switching between perspective and orthographic keeps the size of what is
   at the focal point.
 - Changing the field of view (10° to 120°) moves the eye so the focal point

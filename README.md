@@ -15,13 +15,15 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   slots, text and more, with geometric and dimensional constraints solved
   live. Solid edges, other sketches and datums come in as references, and
   generators draw gears, sprockets and shafts from their numbers.
-- **Design:** pad, pocket, revolve, loft, pipe, helix, holes to thread
-  standards, fillets, chamfers, draft, thickness, patterns and booleans, all
-  editable in a feature tree, with datums and geometry borrowed from other
-  bodies.
+- **Design:** pad, pocket, revolve, loft, pipe, helix, primitives, holes to
+  thread standards, fillets, chamfers, draft, thickness, patterns and
+  booleans, all editable in a feature tree, with datums and geometry
+  borrowed from other bodies. Imported solids take features too, and their
+  faces can be deleted, offset or moved, their holes recognized.
 - **Surface:** extruded, revolved, planar, filled, ruled, lofted and swept
-  surfaces from open or closed curves, sewn into shells and solids, and
-  mirrored.
+  surfaces from open or closed curves; offset, extended, blended, split,
+  filleted, trimmed and mirrored; sewn into shells and solids or thickened,
+  with a continuity check.
 - **Assembly:** joints of every common kind (mate, align, hinge, slider,
   ball, cam, gears and more), components that move as one, linked copies
   and parts linked from other files, motion over time, interference and
@@ -40,6 +42,8 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   between sizes.
 - **AI agents:** chat with ACP agents that work the document through the
   same commands, and an MCP server for any other client.
+- **Workbench packages:** workbenches built for WebAssembly, installed from
+  a file, a GitHub release or a store, and run sandboxed.
 
 The geometry kernel, [ogeom](https://github.com/gilbertorconde/ogeom-rs), is
 pure Rust. No system CAD libraries are needed.
@@ -106,6 +110,7 @@ Every shortcut can be changed in Preferences › Keyboard. The defaults:
 | New, Open, Save, Save As | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S |
 | Import, Export | Ctrl+I, Ctrl+E |
 | Send to slicer | Ctrl+P |
+| Quit | Ctrl+Q |
 | Undo, Redo | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y |
 | New tab, Close tab | Ctrl+T, Ctrl+W |
 | Reopen the last tab closed | Ctrl+Shift+T |
@@ -145,8 +150,10 @@ what was there.
 - A body: Select, Rename, Hide, Show only this, Show all, Appearance,
   Placement, Freeze (its features are not rebuilt until it thaws; the row
   shows FROZEN), Make unselectable (clicks in the view pass through it),
-  Linked copy, Select the original of a copy, Cut, Copy, Paste, Delete,
-  Recompute, Send to console, Properties.
+  Linked copy, Select the original of a copy, Replace shape…, Cut, Copy,
+  Paste, Delete, Recompute, Send to console, Properties.
+- An imported body also offers Repair shape when the checker finds it
+  broken, a mesh body Convert to solid, and a converted one Refine shape.
 - In the view, Repeat for the last tool started, Look at (turns the view
   square to the face under the pointer), the body's entries, and Face
   colour for that face.
@@ -192,6 +199,7 @@ A plain letter picks a tool; Shift and a letter picks its partner.
 | Point, line, polyline, arc, circle | O, L, P, A, C |
 | Ellipse, B-spline, rectangle, polygon, slot | E, B, R, G, S |
 | Trim, external geometry, construction | T, X, N |
+| Show or hide internal geometry | I |
 | Switch a polyline between lines and arcs | M |
 | Coincident, point on object | Shift+C, Shift+O |
 | Horizontal, vertical | Shift+H, Shift+V |
@@ -252,24 +260,26 @@ pc.design.set{feature = pad, length = 20}
 ```
 
 Run them in the console (Windows › Console), from the Scripts menu and
-toolbar button (every `.lua` file in `~/.config/printcad/scripts`), or
+toolbar button (every `.lua` file in the configuration folder's `scripts`
+folder, `~/.config/printcad/scripts` on Linux), or
 without a window: `printcad --script build.lua`. See
 [Scripting](docs/SCRIPTING.md) for the guide and every command.
 
 ## Settings
 
-Settings are stored in `~/.config/printcad/settings.json`. Change them in
+Settings are stored in `settings.json` in the configuration folder
+(`~/.config/printcad/` on Linux). Change them in
 Preferences (Ctrl+,).
 
 ## Reporting an import problem
 
 1. Turn on **Preferences › General › Diagnostics › Write a report for every
-   STEP import**.
+   STEP or IGES import**.
 2. Import the file again. The log shows where the report was written, under
-   `/tmp/printcad/import-reports/`.
+   `printcad/import-reports/` in the system's temp folder (`/tmp` on Linux).
 3. Open an issue on the
    [kernel tracker](https://github.com/gilbertorconde/ogeom-rs/issues) with
-   the report, and the STEP file if you can share it.
+   the report, and the file if you can share it.
 
 ## Project layout
 
@@ -283,12 +293,14 @@ Preferences (Ctrl+,).
 | `render_vk` | Vulkan renderer |
 | `settings` | User settings |
 | `ui_kit` | Colours, widgets, icons and fonts |
+| `surface_texture` | Patterns pressed into faces for printing |
 | `axes` | Axis presets, so no code assumes which way is up |
 | `workbenches/wb_sketch` | Sketcher |
 | `workbenches/wb_design` | Design |
 | `workbenches/wb_surface` | Surface: sheets from curves, sewn into shells and solids |
 | `workbenches/wb_assembly` | Assembly: joints between bodies |
 | `workbenches/wb_wasm` | Workbench packages, run sandboxed |
+| `workbenches` | Registers the built-in workbenches and installed packages |
 | `workbenches/fixtures` | Ready-made scenes for tests and demos |
 | `bench_api` | What a workbench package and the app exchange |
 | `local_ipc` | Local sockets and helpers the app's processes talk through |
@@ -297,8 +309,8 @@ Preferences (Ctrl+,).
 
 More detail in [docs](docs/):
 
-- [Architecture](docs/plan.md)
-- [Editing workflow](docs/WB_IMP.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Editing workflow](docs/EDITING.md)
 - [Document model](docs/DOCUMENT_MODEL.md)
 - [Writing a workbench](docs/WORKBENCH_GUIDE.md)
 - [Scripting](docs/SCRIPTING.md)
@@ -306,10 +318,11 @@ More detail in [docs](docs/):
 - [Assembly](docs/ASSEMBLY.md)
 - [Surfaces](docs/SURFACES.md)
 - [Holes](docs/HOLES.md)
+- [Surface textures](docs/TEXTURES.md)
 - [Workbench packages](docs/PLUGINS.md)
 - [AI agents](docs/AI.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Camera](camera_system.md)
+- [Camera](docs/CAMERA.md)
 
 ## Roadmap
 

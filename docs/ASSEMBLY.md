@@ -104,10 +104,14 @@ feature: click each body (a second click takes one out) and press OK. The
 group moves as one, the first body the one the rest hold to; its settings
 change the members or dissolve it. `asm.group` makes one from a script.
 
-Ground (F) keeps a body where it is; the bodies joined to it are placed
-against it. The first joint of an assembly grounds the body it holds to
-when nothing is grounded yet. The status bar says how many motions the joints leave open,
-and for the selected body which ones.
+Ground body (F) keeps the selected body where it is, and the bodies
+joined to it are placed against it; on a grounded body it lets go. The
+first joint of an assembly grounds the body it holds to when nothing is
+grounded yet. Solve joints (S) places every body its joints hold again.
+The status bar says how many motions the joints leave open, and for the
+selected body which ones, and counts the joints that hold nothing the
+body's other joints do not; such a joint's settings call it Redundant
+(`asm.redundant` lists them).
 
 ## Driving and limits
 
@@ -117,7 +121,8 @@ A hinge's angle counts from where it sat when the joint was made. Limits
 keep the motion within a range while it is not driven; a joint resting
 on a limit shows its motion as "one way, at its limit". Play sweeps a
 driven joint through its limits (or a whole turn, or 25 mm either way) to
-show the motion, and puts it back when stopped. Record saves the same
+show the motion, and puts it back when stopped; a drive set by a formula
+has no Play. Record saves the same
 sweep, there and back, seen from the current view: as an animated PNG, a
 GIF, or a folder of numbered PNG frames, by the kind of file chosen.
 
@@ -237,8 +242,9 @@ parts under it, nested as the components are (a bolt in two components
 shows in each with its own count); the CSV then starts every row with its
 level, 0 at the top. `asm.parts` with `by_component` answers the same.
 
-Mass and centre of mass (W) measures every visible solid body at the
-density you set (g/cm³), with each body's share, and marks the centre of
+Mass and centre of mass (W) measures every visible solid body at its
+material's density, or at the density you set (g/cm³) for a body with no
+material, with each body's share, and marks the centre of
 mass in the view: what a tip-over check needs. `asm.mass` answers the
 same to a script.
 
@@ -253,9 +259,10 @@ apart (Delete) removes it and leaves its bodies one level up.
 
 A component is rigid when made: its bodies move as one, whichever of them
 a joint or a drag moves, and the joints between them rest. Make flexible
-(its row's menu) keeps those joints live, so a hinge inside a
-sub-assembly still turns in the assembly around it; a rigid component
-inside a flexible one still moves as one. `asm.component`,
+(its row's menu, Make rigid to undo it) keeps those joints live, so a
+hinge inside a sub-assembly still turns in the assembly around it; a
+rigid component inside a flexible one still moves as one. New component
+inside, on a component's row, makes an empty one in it. `asm.component`,
 `asm.component_set`, `asm.component_add` and `asm.component_remove` do
 the same from a script.
 

@@ -9,32 +9,37 @@ slicer. STEP export writes the solid without it.
 ## Adding one
 
 Right click a body (in the tree or the view) and pick **Surface
-texture…**. Opened on a face, the texture starts on that face; otherwise
-on the whole body. The task in the right panel shows the changes in the
-view as you make them. OK keeps them as one undo step, Cancel puts back
-what was there.
+texture…**. The texture starts on the face under the pointer and every
+face selected in the view (Ctrl+click picks several); with none, on the
+whole body. A new texture is Knurl, Triplanar, a 3 mm tile, 0.4 mm
+deep. The task in the right panel shows the changes in the view as you
+make them. OK keeps them as one undo step, Cancel puts back what was
+there.
 
-- **Faces**: click faces in the view to add them. Each listed face has a
-  × to leave it smooth again. **Whole body** textures every face.
+- **Faces**: click faces in the view to add them, Ctrl+click for several
+  at once. Each listed face has a × to leave it smooth again. **Whole
+  body** textures every face.
 - **Pattern**: pick one from the gallery, or **Picture…** for a greyscale
   PNG or JPEG, white standing highest. The picture is kept in the document.
-- **Projection**: how the flat pattern is laid on the faces.
+- **Projection**: how the flat pattern is laid on the faces, along the
+  body's own axes.
   - *Triplanar* blends three flat projections and suits any shape.
   - *Flat along X, Y or Z* projects straight along one axis.
   - *Round X, Y or Z* wraps the pattern round an axis, a whole number of
     tiles round, so it closes without a seam: knurling on a cylinder.
-  - *Spherical* wraps round the texture's centre.
-- **Tile**: the size of one repeat of the pattern.
+  - *Spherical* wraps round the middle of the textured faces.
+- **Tile**: the size of one repeat of the pattern (0.2 to 500 mm).
 - **Turn**: the pattern's rotation on the surface.
-- **Depth**: how far the pattern's high points stand from the surface.
-  **Into the surface** cuts it in instead.
-- **Keep flat**: faces within this angle of facing straight up or down
-  stay smooth, a print's top and the side it stands on. 0 textures them
-  too.
+- **Depth**: how far the pattern's high points stand from the surface
+  (up to 20 mm). **Into the surface** cuts it in instead.
+- **Keep flat**: faces within this angle (up to 89°) of facing straight
+  up or down the body's Z stay smooth, a print's top and the side it
+  stands on. 0 textures them too.
 
 A body can carry several textures on different faces: **Add** starts
-another, and the tabs switch between them. **Remove this texture** takes
-the one shown away. A textured body shows TEXTURED in the tree.
+another, and the Texture 1, Texture 2 labels switch between them.
+**Remove this texture** takes the one shown away. A textured body shows
+TEXTURED in the tree.
 
 The texture follows its faces through edits: faces are kept by the names
 the model gives them, so changing a pad's length keeps the grip knurled.
@@ -49,7 +54,10 @@ Send to slicer always includes them.
 ## Scripts
 
 `pc.doc.set_textures{body = b, textures = {...}}` sets all of a body's
-textures at once; see the command reference in `SCRIPTING.md`.
+textures at once; see the command reference in `SCRIPTING.md`. Each
+entry's `faces` lists face numbers as `doc.faces` gives them; without it
+the texture covers the whole body, and an empty `textures` list takes
+them all away.
 
 ```lua
 pc.doc.set_textures{body = b, textures = {

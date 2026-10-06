@@ -5,8 +5,11 @@ application never refers to a workbench by name. Everything a workbench
 shows, draws, picks, rebuilds or asks for goes through this trait and the
 workbench registry (`DocumentService`).
 
-Design (`crates/workbenches/wb_design`) and the Sketcher
-(`crates/workbenches/wb_sketch`) are complete examples.
+Design (`crates/workbenches/wb_design`), the Sketcher
+(`crates/workbenches/wb_sketch`), Surface and Assembly are complete
+examples. This guide is for a built-in workbench; one installed as a
+package is written against the guest SDK instead ([Workbench
+packages](PLUGINS.md)).
 
 ## 1. Create the crate
 
@@ -30,14 +33,22 @@ ui_kit = { path = "../../ui_kit", optional = true }
 The `egui` feature enables the panel methods. Panel code takes colours and
 sizes from `ui_kit::tokens`, never as literal values.
 
-Register the workbench in `crates/workbenches/src/lib.rs`:
+Add it to the workspace members and to the `workbenches` crate's
+dependencies, then register it in `crates/workbenches/src/lib.rs`:
 
 ```rust
-core_document::define_workbenches!(SketchWorkbench, DesignWorkbench, MyWorkbench);
+core_document::define_workbenches!(
+    SketchWorkbench,
+    DesignWorkbench,
+    SurfaceWorkbench,
+    AssemblyWorkbench,
+    MyWorkbench
+);
 ```
 
 The order matters. A new document opens in the first workbench that is not
-modal, and Preferences lists workbenches in this order.
+modal, and Preferences lists workbench pages in this order. The switcher
+and menus sort by label.
 
 ## 2. Describe the workbench
 
@@ -106,9 +117,9 @@ context.register_action(
 - A workbench's keys work only while it is active, and win over the
   application's keys there.
 - Keys without Ctrl or Alt are left to text fields while one has focus.
-- The application uses 0 to 6, O, P, F, Shift+F, H, Space and Delete
-  without modifiers. A workbench key on one of them hides it while the
-  workbench is active.
+- The application uses 0 to 6, O, P, F, Shift+F, H, F2, Space,
+  Shift+Space and Delete without Ctrl or Alt. A workbench key on one of
+  them hides it while the workbench is active.
 - A workbench that takes typed numbers from the viewport returns `true`
   from `takes_numeric_input` meanwhile, so the digit keys, `.`, `,` and
   `-` reach it rather than their shortcuts.
@@ -131,7 +142,11 @@ context.register_command(
 fn run_command(&mut self, id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
     match id {
-        "mine.slab" => { /* read a.number("width")?, edit ctx.document */ Ok(json!(id)) }
+        "mine.slab" => {
+            let width = a.number("width")?;
+            let made: FeatureId = todo!("add a {width} mm slab to ctx.document");
+            Ok(json!(made.0.to_string()))
+        }
         _ => Err(CommandError::Unknown(id.to_string())),
     }
 }
@@ -140,6 +155,12 @@ fn run_command(&mut self, id: &str, args: &CommandArgs, ctx: &mut WorkbenchRunti
 - The host checks the arguments against the spec before the call.
 - A command changes the document through its mutators, so the change is
   undoable like a click. It never opens a task or waits for input.
+- `.read_only()` marks one that changes nothing (an AI agent never waits
+  for approval to run it); `.agent_always_asks()` and
+  `.agent_never(reason)` restrict what an agent may do with it.
+- A tool or panel action that ends in what a command does calls
+  `ctx.record(id, args, result)`, so recordings and scripts see the same
+  call.
 - Ids are unique across the application; registration fails on a
   duplicate.
 - Scripts reach it as `pc.mine.slab{width = 20}`.
@@ -169,7 +190,9 @@ For each kind it owns, the workbench answers these:
 fn feature_info(&self, node: &FeatureNode) -> FeatureInfo;
 
 /// What to draw for the feature when it is visible and not being edited.
-/// `node_revision(node)` gives a revision that changes with the data.
+/// `node_revision(node)` gives a revision that changes with the data;
+/// `region` (a `PassiveRegion`: a profile and an opacity) has the host
+/// shade what the lines enclose.
 fn passive_geometry(&self, doc: &Document, id: FeatureId, node: &FeatureNode)
     -> Option<PassiveGeometry>;
 
@@ -184,10 +207,6 @@ fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -
 /// Which data fields are lengths and which refer to other features,
 /// for the property panel.
 fn property_hints(&self) -> PropertyHints;
-
-/// Bring a feature's working data up to date with the bodies' geometry
-/// as it stands (a joint finding its faces again by name). Derived.
-fn derive_on_geometry(&self, node: &FeatureNode, values: &mut Value, doc: &Document) -> bool;
 
 /// Bodies that are not made (bought parts): an export of every visible
 /// body and the slicer leave them out.
@@ -212,10 +231,29 @@ fn set_reference(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId,
 A click on a feature in the tree only selects it: it becomes the active
 document object. A double click switches to its owner and calls
 `edit_feature`, which is where the workbench opens the feature's task; never
-open one on selection alone. `locks_view_to_plane` keeps the camera square
-to the plane while editing.
+open one on selection alone. `editing_feature` names the feature under
+edit (the tree badges it, and a feature that builds solid gets a preview);
+`locks_view_to_plane` keeps the camera square to the plane while
+`editing_feature` is `Some`.
 
-## 7. Build solids
+## 7. Take formulas
+
+`parameters` lists an owned feature's numbers that formulas may set and
+read: a `Parameter` with a stable key, the name formulas call it, a JSON
+pointer into the feature's data, a `Dim` (length, angle, number), a scale
+for an angle kept in radians, and whether it is a count. The workbench
+builds, draws and edits from `Document::feature_values`, which has every
+formula's value in; its own data keeps plain numbers.
+
+- `settle` makes the data whole once values are in (a sketch solves).
+- `derive`, `derive_on_solid` and `derive_on_geometry` bring working data
+  up to what it follows: another feature, what the last build found of the
+  solid (`BuildPlan::probes`), the bodies' geometry. All are derived and
+  never recorded.
+- `values_moved` records results that follow formulas but are kept rather
+  than derived (placements a joint solves for), in the same undo step.
+
+## 8. Build solids
 
 A workbench whose features make a body's solid implements:
 
@@ -232,27 +270,37 @@ fn invalidate_body(&self, doc: &mut Document, body: BodyId);
 fn invalidate_all(&self, doc: &mut Document);
 ```
 
-A `BuildPlan` is a list of `kernel_api::SolidOp`s with the feature that
-made each one. The application runs it on the kernel thread. A failure is
-shown on the feature named in `BuildError::feature`.
+A `BuildPlan` is a list of `kernel_api::SolidOp`s (`ops`) with the feature
+that made each one (`op_features`); the application runs it on the kernel
+worker, and a kernel failure is shown on the feature whose op failed. A
+feature that cannot be planned stops the plan: put its `BuildError` in
+`failed` and the features after it in `unbuilt`, and the body shows the
+history before it. `probes` asks the solid questions part way through (where
+a face a sketch stands on is now); the answers come back through
+`derive_on_solid`. A job whose plan is `Err(BuildError)` puts the error on its
+feature and builds nothing; an empty plan drops the body's derived solid.
 
-## 8. Add menu entries
+## 9. Add menu entries
 
 ```rust
 fn menu_items(&self, scope: &MenuScope, doc: &Document) -> Vec<MenuItem>;
 fn on_command(&mut self, id: &str, scope: &MenuScope, ctx: &mut WorkbenchRuntimeContext) -> bool;
 ```
 
-The scopes are the right-click menu on a body, a feature row in the tree,
-a body row in the tree, the Edit menu, and the start page. A start page
+The scopes are the right-click menu on a body, a feature, body or
+component row in the tree, the Edit menu (`edit.cut`, `edit.copy`,
+`edit.paste` on the active workbench), and the start page. A start page
 item becomes a New card. Its command runs in a fresh document with one
 body.
 
-## 9. Ask the host for things
+## 10. Ask the host for things
 
-Every method gets a `WorkbenchRuntimeContext`: the document, the camera
-and viewport, hover and selection, the active document object, projection
-helpers, and logging (`log_info` and others).
+Every hook that acts gets a `WorkbenchRuntimeContext`: the document, the
+camera and viewport, hover and selection (`selected_faces`,
+`selected_edges`, `selected_face_in(body)` for a body's own frame), the
+active document object, the kernel's queries (`kernel`), the colours to
+draw in (`sketch_palette`), projection helpers, and logging (`log_info` and
+others).
 
 Anything else goes through a request:
 
@@ -264,28 +312,36 @@ ctx.request(HostRequest::StartOn { workbench: WorkbenchId::from("wb.sketch"), at
 ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.design")));
 ctx.request(HostRequest::OrientCamera(CameraOrientRequest { .. }));
 ctx.request(HostRequest::FinishEditing);
+ctx.request(HostRequest::SaveFile { name, kind, extension, contents });
 ```
 
-The host applies requests after the method returns. Requests from
+The host applies requests after the method returns, collected with
+everything else the hook left (`HookOutcome`). Requests from
 `on_activate` and `on_deactivate` that switch workbench are ignored, since
 those run during a switch. `StartOn` switches workbench and passes `attach`
 to the new one as `ctx.attach_request`.
 
-## 10. Draw panels
+## 11. Draw panels
 
 - `task()` opens the task panel on the right; `ui_task_panel` draws it and
-  handles OK and Cancel. One task is one undo step.
-- `ui_left_panel` draws under the model tree.
+  handles OK and Cancel. One task is one undo step, unless its `TaskInfo`
+  is `stepwise` (the sketcher's session, where each edit is a step).
+- `ui_left_panel` draws above the model tree.
 - `viewport_hud` and `status_items` fill the viewport corners and the
   status bar.
-- `get_overlay_meshes` and `get_screen_space_overlays`, `_marks` and
-  `_labels` draw over the scene while the workbench is active.
+- `get_overlay_meshes` and `get_screen_space_overlays`, `_images`,
+  `_marks` and `_labels` draw over the scene while the workbench is active.
 - `clip_plane` cuts the scene at a plane of any direction while it returns
   one (the sketcher's section view), in drawing and picking alike, standing
   in for the view toolbar's clipping plane.
 - `ui_settings` draws the workbench's page in Preferences; `has_settings`
   returning true is what gives it a place there. A bench with nothing to
-  set leaves both alone and gets no page.
+  set leaves both alone and gets no page. `settings_json` and
+  `apply_settings_json` keep its settings in the user's file.
+- `suspend_session` and `resume_session` hand the host the editing state
+  that belongs to the document on screen, so each tab keeps its own.
+- `busy` keeps frames coming while work of the workbench runs away from
+  the window.
 
 ## Checklist
 
@@ -295,16 +351,19 @@ to the new one as `ctx.attach_request`.
    `is_tool_enabled` where tools have preconditions.
 3. `feature_info`, plus `passive_geometry`, `pick_feature`,
    `delete_feature`, `property_hints`, `references` and `set_reference` as
-   needed.
+   needed, and `parameters` for the numbers formulas may set.
 4. `rebuild_jobs`, `invalidate_body` and `invalidate_all` if it builds
    solids.
 5. `on_input` for the tools.
-6. `edit_feature`, `task` and `ui_task_panel` for editing, `has_settings`
-   and `ui_settings` for preferences.
+6. `edit_feature`, `editing_feature`, `task` and `ui_task_panel` for
+   editing, `suspend_session`/`resume_session` for per-tab state,
+   `has_settings` and `ui_settings` for preferences.
 7. `menu_items` and `on_command` for menus and start cards.
 8. `register_command` and `run_command` for what scripts can do, and
    `register_import` for files it reads.
 9. Registration in `crates/workbenches/src/lib.rs`.
 
-`crates/app_shell/src/app/seam_lint.rs` fails if a workbench name appears in
-the application, and CI checks the same.
+`crates/app_shell/src/app/seam_lint.rs` fails if a workbench crate, id or
+feature type appears in the application, and CI checks the same. The
+application builds scenes from workbench features only through
+`bench_fixtures` (`crates/workbenches/fixtures`).
