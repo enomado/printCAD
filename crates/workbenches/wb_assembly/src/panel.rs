@@ -1658,6 +1658,7 @@ impl AssemblyWorkbench {
                 .map(|b| vec![body_name(ctx, b.body), mass_text(b.mass_g(density))])
                 .collect(),
             selected: None,
+            editable: Vec::new(),
         });
         if report.skipped > 0 {
             widgets.push(w::text(format!(
