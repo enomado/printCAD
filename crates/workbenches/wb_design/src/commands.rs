@@ -2066,6 +2066,49 @@ fn merge_fields(kind: &str, value: &mut Value, fields: &Map<String, Value>) -> R
     Ok(())
 }
 
+/// What to write for a field given as a bare name (`cut = "Counterbore"`)
+/// whose kind takes values: the form it is written in, its values named
+/// as the feature reads them (`cut = {Counterbore = {diameter = …,
+/// depth = …}}`). `value` is the feature as `{kind: fields}` with the
+/// given fields in.
+fn form_hint(value: &Value, kind: &str, fields: &Map<String, Value>) -> Option<String> {
+    for (name, given) in fields {
+        let Value::String(variant) = given else {
+            continue;
+        };
+        let mut trial = value.clone();
+        let mut named: Vec<String> = Vec::new();
+        // Each read names the next value the kind is missing.
+        for _ in 0..16 {
+            let mut inner = Map::new();
+            for field in &named {
+                inner.insert(field.clone(), json!(0));
+            }
+            trial[kind][name] = json!({ variant.as_str(): inner });
+            let Err(e) = serde_json::from_value::<DesignFeature>(trial.clone()) else {
+                break;
+            };
+            let e = e.to_string();
+            match e
+                .strip_prefix("missing field `")
+                .and_then(|rest| rest.split('`').next())
+            {
+                Some(field) if !named.iter().any(|n| n == field) => named.push(field.into()),
+                _ => break,
+            }
+        }
+        if named.is_empty() {
+            continue;
+        }
+        let values: Vec<String> = named.iter().map(|n| format!("{n} = …")).collect();
+        return Some(format!(
+            "; `{variant}` takes values, written {name} = {{{variant} = {{{}}}}}",
+            values.join(", ")
+        ));
+    }
+    None
+}
+
 /// `given` for a field holding `current`: an empty table set on a list is
 /// the empty list, since a script's `{}` cannot say which it means.
 fn as_field(current: &Value, given: &Value) -> Value {
@@ -2153,7 +2196,10 @@ fn apply_fields(feature: &mut DesignFeature, fields: &Map<String, Value>) -> Res
         own.insert(name.clone(), value);
     }
     let kind = kind.clone();
-    *feature = read_fields(value).map_err(|first| format!("{kind}: {first}"))?;
+    *feature = read_fields(value.clone()).map_err(|first| {
+        let hint = form_hint(&value, &kind, fields).unwrap_or_default();
+        format!("{kind}: {first}{hint}")
+    })?;
     // A Pocket's flag and its ThroughAll mode are one setting: a flag given
     // moves the mode (true to ThroughAll, false back to a plain depth), and
     // the flag then reads what the mode is.
@@ -2230,6 +2276,39 @@ mod tests {
             let sections = fields(&doc, &made)["Loft"]["sections"].clone();
             assert_eq!(sections, json!([id(a), id(b)]), "{args}");
         }
+    }
+
+    /// A kind that takes values, given by its name alone, is refused with
+    /// the form it is written in.
+    #[test]
+    fn a_bare_name_for_a_kind_with_values_says_how_to_write_it() {
+        let mut hole: DesignFeature = serde_json::from_value(json!({"Hole": {
+            "sketch": FeatureId::new(), "diameter": 5.0, "depth": 10.0, "through_all": false
+        }}))
+        .unwrap();
+        let error = apply_fields(
+            &mut hole,
+            json!({"cut": "Counterbore"}).as_object().unwrap(),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("cut = {Counterbore = {diameter = …, depth = …}}"),
+            "{error}"
+        );
+        apply_fields(
+            &mut hole,
+            json!({"cut": {"Counterbore": {"diameter": 11.0, "depth": 6.0}}})
+                .as_object()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            hole,
+            DesignFeature::Hole {
+                cut: crate::feature::HoleCut::Counterbore { .. },
+                ..
+            }
+        ));
     }
 
     /// A script names a datum either way, and writes `{}` for an empty
