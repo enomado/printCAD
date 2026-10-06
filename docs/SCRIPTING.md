@@ -215,45 +215,188 @@ work as written.
 
 - Returns {name, file, unit, modified}
 
+Notes:
+
+- `file` is nil until the document is saved, and `modified` turns true with the first edit. `unit` is the unit numbers are shown in ("mm"); commands take and give lengths in millimetres whatever it is.
+
+Example: A new document, edited.
+
+```lua
+local info = pc.doc.info()
+assert(info.unit == "mm" and info.file == nil and not info.modified)
+pc.sketch.new{plane = "XY"}
+assert(pc.doc.info().modified, "an edit marks it modified")
+```
+
 `pc.doc.agent_rules`: The rules an AI agent working on this document keeps to, beside the ones in Preferences for every document.
 
 - Returns the rules, as text
+
+Notes:
+
+- It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.set_agent_rules`.
 
 `pc.doc.set_agent_rules`: Set the rules an AI agent working on this document keeps to; they are saved with the document.
 
 - `rules` (string): The rules, as plain text
 
+Notes:
+
+- The text replaces the rules the document had; an empty text takes them away. The rules in Preferences, for every document, are kept apart and stay.
+- It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.agent_rules`.
+
 `pc.doc.bodies`: List the bodies.
 
 - Returns a list of {id, name, visible, frozen, selectable, material, features}
+
+Notes:
+
+- `features` are the body's feature ids in build order; `material` is nil until `pc.doc.set_body` gives it one.
+- A sketch made without a `body` starts a body of its own, so one sketch and its pad are one body.
+
+See also `pc.doc.features`, `pc.doc.set_body`.
+
+Example: A padded block's one body.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+pc.doc.set_body{body = body, material = {name = "PLA", density = 1.24}}
+local bodies = pc.doc.bodies()
+assert(#bodies == 1 and bodies[1].id == body and bodies[1].visible)
+assert(bodies[1].features[1] == s and bodies[1].features[2] == pad)
+assert(bodies[1].material.name == "PLA")
+assert(math.abs(bodies[1].material.density - 1.24) < 1e-6)
+```
 
 `pc.doc.features`: List the features in build order.
 
 - `body` (id, optional): Only this body's
 - Returns a list of {id, name, kind, body, visible, suppressed, error}
 
+Notes:
+
+- `error` is set only on a feature the last `pc.doc.rebuild()` could not build. Variable sets and the configurations table are listed too, with no body.
+- A `body` that is not a body of the document gives an empty list, not an error.
+
+See also `pc.doc.feature`, `pc.doc.bodies`.
+
+Example: A pad and its sketch, in order.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local list = pc.doc.features{body = body}
+assert(#list == 2)
+assert(list[1].id == s and list[1].kind == "Sketch")
+assert(list[2].id == pad and list[2].kind == "Pad" and list[2].error == nil)
+assert(not list[1].visible, "a pad hides its sketch")
+```
+
 `pc.doc.feature`: A feature with its fields.
 
 - `id` (id)
 - Returns {id, name, kind, body, visible, suppressed, error, fields, unset, values}: unset names the fields holding no value, which fields leaves out; values is the data as the feature is built now (formulas worked out, a plane following what it stands on), given when it differs from fields
 
+Notes:
+
+- `fields` keep the plain numbers a formula stands over: read `values` for what the feature is built from. A body's id is refused ("is not a feature of this document").
+
+See also `pc.doc.parameters`, `pc.doc.features`.
+
+Example: A pad's length, kept and worked out.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local f = pc.doc.feature{id = pad}
+assert(f.kind == "Pad" and f.fields.Pad.length == 5 and f.fields.Pad.sketch == s)
+assert(f.values == nil, "no formula: values is fields")
+pc.doc.set_formula{id = pad, parameter = "length", formula = "2 * 4 mm"}
+f = pc.doc.feature{id = pad}
+assert(f.fields.Pad.length == 5 and f.values.Pad.length == 8)
+```
+
 `pc.doc.selection`: What is selected.
 
 - Returns {item, body, feature}, each an id or nil
 
+Notes:
+
+- `item` is the tree row selected, `body` the body being worked on and `feature` the feature being worked on. It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.select`.
+
 `pc.doc.select`: Select a body or a feature, as a click on its row.
 
 - `id` (id)
+
+Notes:
+
+- It takes a body, a feature, an imported part or a component; any other id is refused ("is not in this document"). Selecting a feature moves its body's tip to it, as a click on its row does.
+- It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.selection`, `pc.doc.set_tip`.
 
 `pc.doc.new_body`: Make an empty body.
 
 - `name` (string, optional)
 - Returns the body's id
 
+Notes:
+
+- Without a name it is called `body`, `body_1` and so on. Features go into it only when given its id as `body`: `pc.sketch.new` without one starts a body of its own.
+- It has no solid until a feature in it builds: `pc.doc.measure` refuses it ("the body has no solid yet").
+
+See also `pc.doc.bodies`.
+
+Example: A named body with a pad in it.
+
+```lua
+local lid = pc.doc.new_body{name = "Lid"}
+local s = pc.sketch.new{plane = "XY", body = lid}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 2}
+assert(pc.doc.feature{id = pad}.body == lid)
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = lid}.volume - 400) < 1e-6)
+assert(pc.doc.bodies()[1].name == "Lid")
+```
+
 `pc.doc.rename`: Rename a body or a feature.
 
 - `id` (id)
 - `name` (string)
+
+Notes:
+
+- Every formula that reads a renamed feature is rewritten to the new name. Two features may share a name; an empty name leaves the name as it was.
+- A variable set is a feature: this renames it too.
+
+See also `pc.var.rename`.
+
+Example: A formula follows a renamed pad.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+pc.doc.set_formula{id = pad, parameter = "length2", formula = "Pad.length * 2"}
+pc.doc.rename{id = pad, name = "Base"}
+assert(pc.doc.feature{id = pad}.name == "Base")
+assert(pc.doc.parameters{id = pad}[2].formula == "Base.length * 2")
+pc.doc.rename{id = pc.doc.feature{id = pad}.body, name = "Bracket"}
+assert(pc.doc.bodies()[1].name == "Bracket")
+```
 
 `pc.doc.set_body`: Change a body: its colour, how much shows through, material, placement, whether it is frozen or clicks pick it.
 
@@ -267,10 +410,75 @@ work as written.
 - `translation` (any, optional): {x, y, z}: where its origin goes; bodies moving as one with it follow
 - `rotation` (any, optional): {x, y, z, w}: its turn as a quaternion
 
+Notes:
+
+- Only what is given changes. `translation` and `rotation` set the placement outright, not added to the one it has; the turn is about the body's own origin, and either may be a list ({100, 0, 0}) as well as named parts.
+- Colour parts are kept between 0 and 1 and `opacity` between 0.05 and 1. A `material` without a density above 0 is refused; its name defaults to "Material".
+- While `frozen`, edits to its features build nothing and `pc.doc.rebuild()` reports nothing for it; thawing builds what changed meanwhile.
+
+See also `pc.doc.set_face_color`, `pc.doc.measure`.
+
+Example: A block moved and turned.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+pc.doc.set_body{body = body, translation = {x = 100, y = 0, z = 0}, color = {r = 0.9, g = 0.4, b = 0.1}}
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.min[1] - 100) < 1e-4 and math.abs(m.max[1] - 120) < 1e-4)
+-- A quarter turn about Z, about the body's origin.
+local h = math.sqrt(0.5)
+pc.doc.set_body{body = body, rotation = {x = 0, y = 0, z = h, w = h}}
+m = pc.doc.measure{body = body}
+assert(math.abs(m.min[1] - 90) < 1e-4 and math.abs(m.max[2] - 20) < 1e-4)
+assert(math.abs(m.volume - 1000) < 1e-6)
+```
+
 `pc.doc.set_textures`: Set every surface texture pressed into a body's faces for printing: drawn in the view, baked into STL and 3MF files and what goes to the slicer.
 
 - `body` (id)
 - `textures` (list): Each {texture = {pattern, projection, tile_mm, depth_mm, rotation_deg, inward, keep_flat_deg}, faces = {...}}: pattern Knurl, Ribs, Dots, Hex, Bricks, Waves, Noise or Crosshatch; projection Triplanar, {Planar = "Z"}, {Cylindrical = "Z"} or Spherical; faces as doc.faces numbers them, none for every face; an empty list takes them all away
+
+Notes:
+
+- Each call replaces every texture the body had. A texture needs `pattern`, `projection`, `tile_mm` and `depth_mm`; `rotation_deg`, `inward` and `keep_flat_deg` default to 0 and false.
+- The solid keeps its shape: `pc.doc.measure` and `pc.doc.faces` read it untextured. The texture is pressed into the mesh STL and 3MF exports write.
+- Faces given by number need the body built ("the body has no solid yet"); a texture with no faces needs none.
+
+See also `pc.doc.faces`, `pc.file.export`.
+
+Example: Ribs on the top face, in the exported mesh.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 6, height = 6}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+local top
+for _, face in ipairs(pc.doc.faces{body = body}) do
+  if face.kind == "plane" and face.normal[3] > 0.99 then top = face.index end
+end
+local path = os.tmpname()
+local function triangles()
+  local out = pc.file.export{path = path, format = "stl"}
+  os.remove(out.path)
+  return out.triangles
+end
+local plain = triangles()
+pc.doc.set_textures{body = body, textures = {{
+  texture = {pattern = "Ribs", projection = {Planar = "Z"}, tile_mm = 3, depth_mm = 0.5},
+  faces = {top},
+}}}
+assert(triangles() > 100 * plain, "the ribs are pressed into the exported mesh")
+assert(math.abs(pc.doc.measure{body = body}.volume - 180) < 1e-6, "the solid keeps its shape")
+pc.doc.set_textures{body = body, textures = {}}
+assert(triangles() == plain)
+os.remove(path)
+```
 
 `pc.doc.set_face_color`: Colour one face of a body, over the body's colour.
 
@@ -278,24 +486,122 @@ work as written.
 - `face` (integer): The face, as doc.faces numbers it from 0
 - `color` (any, optional): {r, g, b} from 0 to 1, or nil for the body's colour
 
+Notes:
+
+- It needs the body built: before `pc.doc.rebuild()` it is refused ("the body has no solid yet"), and a face number past the last is refused too.
+- The colour can be a list ({1, 0, 0}) as well as named parts. `pc.doc.set_body{body = ..., face_colors = {}}` takes every face's colour away at once.
+
+See also `pc.doc.faces`, `pc.doc.set_body`.
+
 `pc.doc.linked_copy`: A linked copy of a body beside it: the same shape, following every change.
 
 - `body` (id)
 - Returns the copy's id
+
+Notes:
+
+- The copy stands 10 mm clear of the original along X, placed by its own placement (`pc.doc.set_body`). It follows the original's changes once they are built, and takes no features of its own.
+
+See also `pc.doc.set_body`.
+
+Example: A copy that follows its original.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+local copy = pc.doc.linked_copy{body = body}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = copy}
+assert(math.abs(m.volume - 1000) < 1e-6)
+assert(math.abs(m.min[1] - 30) < 1e-4, "10 mm clear of the original along X")
+pc.doc.set_value{id = pad, parameter = "length", value = 8}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
+```
 
 `pc.doc.move_after`: Move a feature in its body's history to just after another.
 
 - `id` (id): The feature
 - `after` (id, optional): The feature it goes after; first in its body when left out
 
+Notes:
+
+- It refuses to carry a feature past one it is built from or one built from it ("depend on each other and keep their order"), and two features of different bodies ("not in one body"). Moving a feature after itself does nothing.
+- Whether the feature still builds in its new place is told by `pc.doc.rebuild()`, not here.
+
+See also `pc.doc.move`.
+
+Example: A sketch brought forward, its pocket kept after the pad.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local top = pc.sketch.new{plane = "XY", offset = 5, body = body}
+pc.sketch.circle{sketch = top, x = 10, y = 5, radius = 2}
+local hole = pc.design.pocket{sketch = top, depth = 3}
+local ok, why = pcall(pc.doc.move_after, {id = hole, after = s})
+assert(not ok and tostring(why):find("depend on each other"), tostring(why))
+pc.doc.move_after{id = top, after = s}
+local order = pc.doc.features{body = body}
+assert(order[1].id == s and order[2].id == top and order[3].id == pad and order[4].id == hole)
+assert(#pc.doc.rebuild() == 0)
+```
+
 `pc.doc.recompute`: Build a body again from its history.
 
 - `body` (id)
+
+Notes:
+
+- It builds nothing itself: it marks every feature of the body for building from the start, and `pc.doc.rebuild()` builds them and waits. Edits mark what they change already, so a script needs it only to build a body afresh.
+- A feature's id is refused ("is not a body of this document").
+
+See also `pc.doc.rebuild`.
+
+Example: A body built again from its sketch.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+pc.doc.recompute{body = body}
+assert(#pc.doc.rebuild() == 0, "built again from the sketch")
+assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6)
+```
 
 `pc.doc.set_visible`: Show or hide a body or a feature.
 
 - `id` (id)
 - `visible` (boolean)
+
+Notes:
+
+- Hiding changes what is drawn and picked, not what is built: a hidden body still builds and measures, and a hidden feature stays in its body's solid (`pc.doc.suppress` takes it out).
+- `pc.doc.picture` leaves hidden bodies out unless they are named in its `bodies`.
+
+See also `pc.doc.suppress`.
+
+Example: A sketch shown, a body hidden.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+pc.doc.set_visible{id = s, visible = true}
+assert(pc.doc.feature{id = s}.visible)
+pc.doc.set_visible{id = body, visible = false}
+assert(not pc.doc.bodies()[1].visible)
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "hidden, still built")
+```
 
 `pc.doc.delete`: Delete a body or a feature.
 
@@ -327,15 +633,36 @@ assert(#pc.doc.features{body = body} == 2, "the sketch and the pad")
 - `bodies` (list): The bodies
 - Returns nothing; pc.doc.rebuild() waits for the repair
 
+Notes:
+
+- It asks for the repair of imported, converted and based solids; any other body, or one whose repair is already asked for, is passed over without an error. Asking clears the undo history, as an import does.
+- It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.rebuild`.
+
 `pc.doc.convert_to_solid`: Turn mesh bodies into solids.
 
 - `bodies` (list): The mesh bodies
 - Returns nothing; pc.doc.rebuild() waits for the conversion
 
+Notes:
+
+- Only mesh bodies (imported STL, OBJ, 3MF and the like) are converted; any other body is passed over without an error. Asking clears the undo history, as an import does.
+- Curved stretches stay facets: `pc.doc.refine` rebuilds them on true surfaces. It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.refine`, `pc.doc.rebuild`.
+
 `pc.doc.refine`: Rebuild converted solids' facets on the cylinders, cones, spheres and tori they approximate.
 
 - `bodies` (list): The converted bodies
 - Returns nothing; pc.doc.rebuild() waits for the refine
+
+Notes:
+
+- Only a converted body still made of facets, with no base shape, is refined; any other body is passed over without an error. Asking clears the undo history.
+- It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.convert_to_solid`.
 
 `pc.doc.replace_shape`: Read a body's shape from another file: its first solid becomes the shape the body's features build on.
 
@@ -343,10 +670,44 @@ assert(#pc.doc.features{body = body} == 2, "the sketch and the pad")
 - `path` (string): A STEP, IGES or mesh file
 - Returns nothing; pc.doc.rebuild() waits for the new shape
 
+Notes:
+
+- A body that builds its shape from its own history, a linked copy and a part linked from another file are refused; a file that cannot be read is refused before anything changes. The file is kept in the document, and the change clears the undo history, as an import does.
+- It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.rebuild`.
+
 `pc.doc.suppress`: Leave a feature out of its body's solid, or back in.
 
 - `id` (id): The feature
 - `suppressed` (boolean, optional): true (the default) or false
+
+Notes:
+
+- The feature stays in the history with its data and is built again once unsuppressed; `pc.doc.rebuild()` builds the body without it. A body's id is refused ("is not a feature of this document").
+
+See also `pc.doc.set_visible`, `pc.doc.set_tip`, `pc.doc.delete`.
+
+Example: A pocket left out and put back.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local top = pc.sketch.new{plane = "XY", offset = 5, body = body}
+pc.sketch.circle{sketch = top, x = 10, y = 5, radius = 2}
+local hole = pc.design.pocket{sketch = top, depth = 3}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - (1000 - math.pi * 4 * 3)) < 1e-3)
+pc.doc.suppress{id = hole}
+assert(pc.doc.feature{id = hole}.suppressed)
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "the plain block")
+pc.doc.suppress{id = hole, suppressed = false}
+assert(#pc.doc.rebuild() == 0)
+assert(pc.doc.measure{body = body}.volume < 1000, "cut again")
+```
 
 `pc.doc.move`: Move a feature one step in its body's history.
 
@@ -354,10 +715,58 @@ assert(#pc.doc.features{body = body} == 2, "the sketch and the pad")
 - `up` (boolean): true: earlier, false: later
 - Returns true; a move past the end of the history, or past a feature one of the two is built from, fails saying so
 
+Notes:
+
+- It changes the order the features build in; `pc.doc.set_tip` changes how far the body builds and leaves the order alone.
+- Only what one feature is built from is checked: a fillet moved above the pad it rounds is let through, and `pc.doc.rebuild()` then reports it ("needs existing material").
+
+See also `pc.doc.move_after`, `pc.doc.set_tip`.
+
+Example: A pad stays after its sketch; a fillet moved before it fails.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local round = pc.design.fillet{body = body, radius = 1}
+local ok, why = pcall(pc.doc.move, {id = pad, up = true})
+assert(not ok and tostring(why):find("built from"), tostring(why))
+assert(pc.doc.move{id = round, up = true})
+assert(pc.doc.features{body = body}[2].id == round)
+local failed = pc.doc.rebuild()
+assert(#failed == 2 and failed[1].feature == round, "a fillet before the pad has nothing to round")
+```
+
 `pc.doc.set_tip`: Build a body only up to a feature, or all of it again.
 
 - `id` (id): A feature of the body
 - `clear` (boolean, optional): true: build the whole history again
+
+Notes:
+
+- The features after the tip stay in the history, left out of the solid until the tip moves past them; `clear = true` takes the tip away, whichever of the body's features `id` names.
+- A feature made while the tip is set goes in right after it, and the tip moves to the new feature.
+
+See also `pc.doc.move`, `pc.doc.suppress`.
+
+Example: A body built only up to its pad.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local top = pc.sketch.new{plane = "XY", offset = 5, body = body}
+pc.sketch.circle{sketch = top, x = 10, y = 5, radius = 2}
+local hole = pc.design.pocket{sketch = top, depth = 3}
+pc.doc.set_tip{id = pad}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "built up to the pad")
+pc.doc.set_tip{id = pad, clear = true}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - (1000 - math.pi * 12)) < 1e-3)
+```
 
 `pc.doc.rebuild`: Rebuild every solid that changed, repair or convert what was asked, and wait.
 
@@ -418,6 +827,36 @@ assert(type(top.name) == "string")
 - `body` (id)
 - Returns a list of {index, kind, point, direction, length, faces, names?, centre?, normal?, radius?}: kind is line, circle or other; point lies halfway along the edge and direction is its way there, in world space, as an edge pick takes them ({point = e.point, direction = e.direction}); faces are the indices doc.faces gives the two faces it runs between, names theirs as strings; a circle's centre, normal and radius
 
+Notes:
+
+- It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is refused ("the body has no solid yet").
+- `length` is measured along the drawn outline, a little under a curved edge's true length (31.40 for a 5 mm circle's 31.42). The seam of a turned face is an edge with one face in `faces`.
+- Every rebuild numbers the edges afresh, as it does the faces: find an edge by its kind, point and faces in the same script.
+
+See also `pc.doc.faces`.
+
+Example: A cylinder's rims and seam.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+local pad = pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.feature{id = pad}.body
+local rims, seams = 0, 0
+for _, edge in ipairs(pc.doc.edges{body = body}) do
+  if edge.kind == "circle" then
+    rims = rims + 1
+    assert(math.abs(edge.radius - 5) < 1e-6 and #edge.faces == 2)
+    assert(math.abs(edge.length - 2 * math.pi * 5) < 0.05, "measured along the outline")
+  elseif #edge.faces == 1 then
+    seams = seams + 1
+    assert(edge.kind == "line" and math.abs(edge.length - 10) < 1e-6)
+  end
+end
+assert(rims == 2 and seams == 1, "the top and bottom rims and the side's seam")
+```
+
 `pc.doc.measure`: A body's volume, surface area, centre and bounds.
 
 - `body` (id)
@@ -457,10 +896,55 @@ assert(math.abs(m.centre[3] - 5) < 1e-6)
 - `annotate` (boolean, optional): Draw an axis triad and the drawn bodies' box with its sizes (false)
 - Returns {path, width, height}
 
+Notes:
+
+- It draws the solids as they stand: run `pc.doc.rebuild()` first. With no visible body it is refused ("Nothing is visible to draw"); hidden bodies are drawn only when named in `bodies`.
+- Give a `view`: the default, "current", follows the user's view direction. A body named in `bodies` or `highlight` that does not exist, or a face past the body's last, is refused.
+- Each side of `size` is kept between 16 and 2048 pixels. Folders missing from `path` are made.
+
+See also `pc.doc.faces`, `pc.doc.edges`.
+
+Example: A small isometric picture.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname()
+local shot = pc.doc.picture{path = path, view = "iso", size = {160, 120}}
+assert(shot.path == path and shot.width == 160 and shot.height == 120)
+local file = io.open(path, "rb")
+assert(file:read(4) == "\137PNG")
+file:close()
+os.remove(path)
+```
+
 `pc.doc.parameters`: A feature's numbers that formulas set and read.
 
 - `id` (id): The feature
 - Returns a list of {name, key, label, kind, value, text, formula, error}: name is what formulas call it (nil when they cannot), value in mm or degrees
+
+Notes:
+
+- `name` or `key` is what `pc.doc.set_formula` and `pc.doc.set_value` take; `label` is only for showing. `value` is what the number comes to now, formulas worked out, and `text` shows it in the document's unit.
+- A sketch lists only its named dimensions, so a sketch without any lists none. An id that is not a feature is refused ("no such feature").
+
+See also `pc.doc.set_formula`, `pc.doc.set_value`.
+
+Example: A pad's length as formulas see it.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local length
+for _, p in ipairs(pc.doc.parameters{id = pad}) do
+  if p.name == "length" then length = p end
+end
+assert(length.key == "/Pad/length" and length.kind == "length")
+assert(length.value == 5 and length.text == "5 mm" and length.formula == nil)
+```
 
 `pc.doc.set_formula`: Set one of a feature's numbers by a formula, or take the formula away.
 
@@ -469,11 +953,61 @@ assert(math.abs(m.centre[3] - 5) < 1e-6)
 - `formula` (string, optional): Such as "Printer.wall * 2"; nil takes it away
 - Returns {value, text, error}: what it comes to
 
+Notes:
+
+- A formula that does not parse is refused. One that parses but does not work out (a missing name, a loop, an angle where a length is wanted) is kept: the answer has `error` and no `value`, the feature builds from the plain number its fields keep, and `pc.doc.rebuild()` does not list it. Check the answer's `error`.
+- A bare number takes the parameter's unit: "12" is 12 mm for a length and 12 degrees for an angle. The fields keep their plain number; `pc.doc.feature`'s `values` show what the formula gives.
+- Taking the formula away leaves the plain number the fields keep, not what the formula came to.
+- It sets one feature's number; `pc.var.set` defines a variable that formulas read.
+
+See also `pc.doc.parameters`, `pc.doc.set_value`, `pc.var.set`.
+
+Example: A pad's length following a variable.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+pc.var.new{name = "Printer"}
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm"}
+local got = pc.doc.set_formula{id = pad, parameter = "length", formula = "Printer.nozzle * 10"}
+assert(math.abs(got.value - 4) < 1e-9 and got.error == nil)
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 800) < 1e-6)
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.6 mm"}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1200) < 1e-6, "the pad follows")
+local bad = pc.doc.set_formula{id = pad, parameter = "length", formula = "30 deg"}
+assert(bad.value == nil and bad.error:find("angle"), bad.error)
+```
+
 `pc.doc.set_value`: Set one of a feature's numbers, taking away any formula on it.
 
 - `id` (id): The feature
 - `parameter` (string): Its name or key, as doc.parameters lists them
 - `value` (number): In millimetres or degrees
+
+Notes:
+
+- The value is not checked against what the feature accepts: a negative pad length is taken, and `pc.doc.rebuild()` reports it ("length must be positive").
+
+See also `pc.doc.set_formula`, `pc.doc.parameters`.
+
+Example: A length set by hand over a formula.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+pc.doc.set_formula{id = pad, parameter = "length", formula = "2 * 4 mm"}
+pc.doc.set_value{id = pad, parameter = "length", value = 7}
+local length = pc.doc.parameters{id = pad}[1]
+assert(length.name == "length" and length.value == 7 and length.formula == nil)
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1400) < 1e-6)
+```
 
 ### var
 
@@ -481,6 +1015,25 @@ assert(math.abs(m.centre[3] - 5) < 1e-6)
 
 - `name` (string): What formulas call it: Printer.nozzle
 - Returns the set's id
+
+Notes:
+
+- A name a feature or another set already has is refused ("something is already called ..."), and so is an empty one. A name with spaces is read in backticks: `` `My set`.width ``.
+- The set is a feature with no body: `pc.doc.rename` renames it.
+
+See also `pc.var.set`, `pc.var.list`.
+
+Example: A set and one variable.
+
+```lua
+local set = pc.var.new{name = "Printer"}
+pc.var.set{set = set, name = "nozzle", formula = "0.4 mm"}
+local sets = pc.var.list()
+assert(#sets == 1 and sets[1].id == set and sets[1].name == "Printer")
+assert(pc.var.eval{formula = "Printer.nozzle"}.value == 0.4)
+local ok, why = pcall(pc.var.new, {name = "Printer"})
+assert(not ok and tostring(why):find("already called"), tostring(why))
+```
 
 `pc.var.set`: Set a variable to a formula, adding it when new.
 
@@ -490,10 +1043,49 @@ assert(math.abs(m.centre[3] - 5) < 1e-6)
 - `comment` (string, optional)
 - Returns {value, text, error}: what it comes to
 
+Notes:
+
+- A formula that does not parse is refused; one that does not work out (a missing name, a loop, a length added to an angle) is kept, and the answer has `error` and no `value`.
+- A bare number is a plain number, not a length: write the unit ("0.4 mm"). Setting a variable again keeps its comment unless a new one is given.
+- Every formula reading it follows; `pc.doc.rebuild()` builds what moved. `pc.doc.set_formula` is what puts a formula on a feature's number.
+
+See also `pc.var.eval`, `pc.doc.set_formula`, `pc.config.set`.
+
+Example: A wall that follows the nozzle.
+
+```lua
+pc.var.new{name = "Printer"}
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm"}
+local wall = pc.var.set{set = "Printer", name = "wall", formula = "3 * Printer.nozzle"}
+assert(math.abs(wall.value - 1.2) < 1e-9 and wall.kind == "length")
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.6 mm", comment = "hardened steel"}
+assert(math.abs(pc.var.eval{formula = "Printer.wall"}.value - 1.8) < 1e-9, "wall follows")
+local loop = pc.var.set{set = "Printer", name = "loop", formula = "Printer.loop + 1"}
+assert(loop.value == nil and loop.error:find("loop"), "kept, with its error")
+```
+
 `pc.var.remove`: Take a variable out of its set.
 
 - `set` (string): The set, by name or id
 - `name` (string)
+
+Notes:
+
+- It is not refused while formulas read it: they fail from then on ("Printer has no nozzle"). A configurations column naming it stays, and applies again to one added under that name.
+
+See also `pc.var.rename`, `pc.config.remove_variable`.
+
+Example: A variable taken away from under a formula.
+
+```lua
+pc.var.new{name = "Printer"}
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm"}
+pc.var.set{set = "Printer", name = "wall", formula = "3 * Printer.nozzle"}
+pc.var.remove{set = "Printer", name = "nozzle"}
+local vars = pc.var.list{set = "Printer"}[1].variables
+assert(#vars == 1 and vars[1].name == "wall")
+assert(vars[1].value == nil and vars[1].error:find("no nozzle"), "what read it fails")
+```
 
 `pc.var.rename`: Rename a variable, and every formula that reads it.
 
@@ -501,43 +1093,221 @@ assert(math.abs(m.centre[3] - 5) < 1e-6)
 - `name` (string)
 - `to` (string)
 
+Notes:
+
+- A name the set does not have, or a new name it already has, is refused. The configurations column follows the new name too.
+- `pc.doc.rename` renames the set itself.
+
+See also `pc.doc.rename`.
+
+Example: A pad's formula follows the new name.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "h", formula = "8 mm"}
+pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.h"}
+pc.var.rename{set = "Size", name = "h", to = "height"}
+assert(pc.doc.parameters{id = pad}[1].formula == "Size.height")
+assert(pc.doc.parameters{id = pad}[1].value == 8)
+```
+
 `pc.var.list`: The variable sets and what each variable comes to.
 
 - `set` (string, optional): Only this set, by name or id
 - Returns a list of {id, name, variables}, each variable {name, formula, value, text, kind, error, comment}
+
+Notes:
+
+- `formula` is the variable's own; `value` is what it comes to now, which is the configuration's value while one in effect sets it. A variable whose formula does not work out has `error` and no `value`, `text` or `kind`.
+- A `set` that does not exist is refused ("no variable set is called ...").
+
+See also `pc.var.eval`, `pc.config.list`.
+
+Example: Each variable's formula, value and comment.
+
+```lua
+pc.var.new{name = "Printer"}
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm", comment = "brass"}
+pc.var.set{set = "Printer", name = "angle", formula = "45"}
+local vars = pc.var.list{set = "Printer"}[1].variables
+assert(vars[1].name == "nozzle" and vars[1].formula == "0.4 mm" and vars[1].comment == "brass")
+assert(vars[1].value == 0.4 and vars[1].kind == "length" and vars[1].text == "0.4 mm")
+assert(vars[2].kind == "number" and vars[2].value == 45, "a bare number has no unit")
+```
 
 `pc.var.eval`: What a formula comes to in this document.
 
 - `formula` (string)
 - Returns {value, kind, text}: value in mm or degrees
 
+Notes:
+
+- It changes nothing. A formula that does not work out is refused with the reason ("nothing is called Nope"), where `pc.var.set` would keep it.
+- `kind` is such as length, angle, number or area; a bare number is a plain number, and trigonometry takes degrees. It reads the configuration in effect.
+
+See also `pc.var.set`, `pc.var.list`.
+
+Example: Units worked out.
+
+```lua
+pc.var.new{name = "Printer"}
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm"}
+local wall = pc.var.eval{formula = "3 * Printer.nozzle + 1 in"}
+assert(math.abs(wall.value - 26.6) < 1e-9 and wall.kind == "length")
+local area = pc.var.eval{formula = "2 mm * 3 mm"}
+assert(area.kind == "area" and area.value == 6)
+assert(math.abs(pc.var.eval{formula = "sin(30)"}.value - 0.5) < 1e-12, "degrees")
+```
+
 ### config
 
 `pc.config.list`: The configurations: the variables they set, each row, and which is in effect.
 
-- Returns {columns, rows: [{name, values}], active}
+- Returns {columns, rows: [{name, values, left_out}], active}
+
+Notes:
+
+- Each row's `values` line up with `columns`; an empty string leaves that variable its own formula. `left_out` lists the ids of the bodies the row leaves out, and `active` is nil while no configuration is in effect.
+
+See also `pc.config.activate`, `pc.var.list`.
+
+Example: Two sizes, the large one in effect.
+
+```lua
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "width", formula = "40 mm"}
+pc.config.add_variable{variable = "Size.width"}
+pc.config.new{name = "Small"}
+pc.config.set{name = "Small", variable = "Size.width", value = "30 mm"}
+pc.config.new{name = "Large", like = "Small"}
+pc.config.set{name = "Large", variable = "Size.width", value = "60 mm"}
+pc.config.activate{name = "Large"}
+local t = pc.config.list()
+assert(t.columns[1] == "Size.width" and t.active == "Large")
+assert(t.rows[1].name == "Small" and t.rows[1].values[1] == "30 mm")
+assert(t.rows[2].name == "Large" and t.rows[2].values[1] == "60 mm")
+assert(pc.var.eval{formula = "Size.width"}.value == 60)
+```
 
 `pc.config.new`: Add a configuration.
 
 - `name` (string): Such as "Large"
 - `like` (string, optional): Start from this configuration's values
 
+Notes:
+
+- The first one makes the document's configurations table. A new configuration is not put in effect (`pc.config.activate` does that), and without `like` it leaves every variable its own.
+- A name already used, or a `like` that does not exist, is refused.
+
+See also `pc.config.set`, `pc.config.activate`.
+
+Example: A configuration copied from another.
+
+```lua
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "width", formula = "40 mm"}
+pc.config.add_variable{variable = "Size.width"}
+pc.config.new{name = "Large"}
+pc.config.set{name = "Large", variable = "Size.width", value = "60 mm"}
+pc.config.new{name = "Large, thin", like = "Large"}
+local rows = pc.config.list().rows
+assert(#rows == 2 and rows[2].values[1] == "60 mm", "copied from Large")
+assert(pc.config.list().active == nil, "a new configuration is not put in effect")
+```
+
 `pc.config.remove`: Remove a configuration.
 
 - `name` (string)
+
+Notes:
+
+- Removing the one in effect leaves none in effect: every variable goes back to its own formula. A name that does not exist is refused.
+
+See also `pc.config.activate`.
+
+Example: The configuration in effect removed.
+
+```lua
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "width", formula = "40 mm"}
+pc.config.add_variable{variable = "Size.width"}
+pc.config.new{name = "Large"}
+pc.config.set{name = "Large", variable = "Size.width", value = "60 mm"}
+pc.config.activate{name = "Large"}
+pc.config.remove{name = "Large"}
+assert(#pc.config.list().rows == 0 and pc.config.list().active == nil)
+assert(pc.var.eval{formula = "Size.width"}.value == 40, "the variable's own formula again")
+```
 
 `pc.config.rename`: Rename a configuration.
 
 - `name` (string)
 - `to` (string)
 
+Notes:
+
+- The configuration in effect stays in effect under its new name. A name that does not exist, or a new name already used, is refused.
+
+Example: The one in effect renamed.
+
+```lua
+pc.config.new{name = "Big"}
+pc.config.activate{name = "Big"}
+pc.config.rename{name = "Big", to = "Large"}
+local t = pc.config.list()
+assert(t.rows[1].name == "Large" and t.active == "Large")
+```
+
 `pc.config.add_variable`: Let the configurations set a variable: it becomes a column.
 
 - `variable` (string): As formulas read it: Size.width
 
+Notes:
+
+- The variable must exist, written as `Set.name` ("write it as Set.name"); a column already there is refused. Every configuration starts with an empty value in it, leaving the variable its own formula.
+
+See also `pc.config.set`, `pc.var.set`.
+
+Example: A column, empty in every row.
+
+```lua
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "width", formula = "40 mm"}
+pc.config.new{name = "Large"}
+pc.config.add_variable{variable = "Size.width"}
+local t = pc.config.list()
+assert(t.columns[1] == "Size.width" and t.rows[1].values[1] == "", "empty: the variable's own")
+local ok, why = pcall(pc.config.add_variable, {variable = "width"})
+assert(not ok and tostring(why):find("Set.name"), tostring(why))
+```
+
 `pc.config.remove_variable`: Take a variable's column away.
 
 - `variable` (string): As formulas read it: Size.width
+
+Notes:
+
+- The variable stays in its set and goes back to its own formula. A variable that is not a column is refused.
+
+See also `pc.config.add_variable`, `pc.var.remove`.
+
+Example: The column gone, the variable its own again.
+
+```lua
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "width", formula = "40 mm"}
+pc.config.add_variable{variable = "Size.width"}
+pc.config.new{name = "Large"}
+pc.config.set{name = "Large", variable = "Size.width", value = "60 mm"}
+pc.config.activate{name = "Large"}
+assert(pc.var.eval{formula = "Size.width"}.value == 60)
+pc.config.remove_variable{variable = "Size.width"}
+assert(#pc.config.list().columns == 0)
+assert(pc.var.eval{formula = "Size.width"}.value == 40, "its own formula again")
+```
 
 `pc.config.set`: What a configuration gives a variable: a formula, or empty for its own.
 
@@ -545,14 +1315,69 @@ assert(math.abs(m.centre[3] - 5) < 1e-6)
 - `variable` (string): As formulas read it: Size.width
 - `value` (string): Such as "60 mm"
 
+Notes:
+
+- The variable must be a column (`pc.config.add_variable`). The value is checked only for its syntax: one that reads the same variable is a loop, which shows as the variable's `error` once the configuration is in effect.
+- It changes the variable's value only while the configuration is in effect; `pc.var.set` changes the variable's own formula.
+
+See also `pc.config.add_variable`, `pc.config.activate`, `pc.var.set`.
+
+Example: A value given, then left to the variable.
+
+```lua
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "width", formula = "40 mm"}
+pc.config.add_variable{variable = "Size.width"}
+pc.config.new{name = "Large"}
+pc.config.set{name = "Large", variable = "Size.width", value = "1.5 * 40 mm"}
+pc.config.activate{name = "Large"}
+assert(pc.var.eval{formula = "Size.width"}.value == 60)
+pc.config.set{name = "Large", variable = "Size.width", value = ""}
+assert(pc.var.eval{formula = "Size.width"}.value == 40, "empty: the variable's own")
+```
+
 `pc.config.leave_out`: The bodies a configuration leaves out: not drawn, picked, exported or checked.
 
 - `name` (string): The configuration
 - `bodies` (list): The bodies' ids; an empty list leaves none out
 
+Notes:
+
+- The list replaces the one the configuration had. An id that is not a body of the document is refused, and so is a configuration that does not exist.
+- The bodies are left out only while the configuration is in effect; they stay in the document.
+
+See also `pc.config.list`, `pc.config.activate`.
+
 `pc.config.activate`: Put a configuration in effect.
 
 - `name` (string, optional): Nil leaves every variable its own
+
+Notes:
+
+- Every variable the configuration gives a value takes it, and what reads them follows once `pc.doc.rebuild()` builds it. A name that does not exist is refused.
+
+See also `pc.config.list`, `pc.config.set`.
+
+Example: A pad's length switched by configuration.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+pc.var.new{name = "Size"}
+pc.var.set{set = "Size", name = "height", formula = "5 mm"}
+pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.height"}
+pc.config.add_variable{variable = "Size.height"}
+pc.config.new{name = "Tall"}
+pc.config.set{name = "Tall", variable = "Size.height", value = "12 mm"}
+pc.config.activate{name = "Tall"}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 2400) < 1e-6)
+pc.config.activate{}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm again")
+```
 
 ### app
 
