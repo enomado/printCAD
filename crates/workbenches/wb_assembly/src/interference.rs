@@ -31,10 +31,20 @@ pub struct Near {
     pub on_b: [f32; 3],
 }
 
+/// Two bodies the kernel could not compare, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unchecked {
+    pub a: BodyId,
+    pub b: BodyId,
+    pub why: String,
+}
+
 /// What a check found.
 #[derive(Debug, Clone, Default)]
 pub struct Interference {
     pub clashes: Vec<Clash>,
+    /// Pairs the kernel failed on; every other pair is still checked.
+    pub unchecked: Vec<Unchecked>,
     /// With a clearance asked for, the pairs nearer than it.
     pub near: Vec<Near>,
     /// The clearance checked for, mm; `None` for a check of shared
@@ -148,7 +158,8 @@ impl Check {
 
     /// Ask the kernel about each pair, counting them off in `done`, until
     /// `stop` is set. Pairs are shared among a few threads; the clashes
-    /// come back in pair order whichever thread found them.
+    /// come back in pair order whichever thread found them. A pair the
+    /// kernel fails on is reported in `unchecked` and the rest still run.
     pub fn run(
         &self,
         kernel: &dyn KernelQueries,
@@ -157,7 +168,7 @@ impl Check {
     ) -> Result<Interference, String> {
         let next = AtomicUsize::new(0);
         let found: Mutex<Vec<(usize, Found)>> = Mutex::default();
-        let failed: Mutex<Option<String>> = Mutex::default();
+        let failed: Mutex<Vec<(usize, Unchecked)>> = Mutex::default();
         let workers = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .clamp(1, 8)
@@ -166,7 +177,7 @@ impl Check {
             for _ in 0..workers {
                 scope.spawn(|| {
                     loop {
-                        if stop.load(Ordering::Relaxed) || failed.lock().unwrap().is_some() {
+                        if stop.load(Ordering::Relaxed) {
                             return;
                         }
                         let k = next.fetch_add(1, Ordering::Relaxed);
@@ -176,19 +187,22 @@ impl Check {
                         match self.pair(kernel, i, j) {
                             Ok(Some(what)) => found.lock().unwrap().push((k, what)),
                             Ok(None) => {}
-                            Err(why) => {
-                                *failed.lock().unwrap() = Some(why);
-                                return;
-                            }
+                            Err(why) => failed.lock().unwrap().push((
+                                k,
+                                Unchecked {
+                                    a: self.solids[i].body,
+                                    b: self.solids[j].body,
+                                    why,
+                                },
+                            )),
                         }
                         done.fetch_add(1, Ordering::Relaxed);
                     }
                 });
             }
         });
-        if let Some(why) = failed.into_inner().unwrap() {
-            return Err(why);
-        }
+        let mut unchecked = failed.into_inner().unwrap();
+        unchecked.sort_by_key(|(k, _)| *k);
         let mut all = found.into_inner().unwrap();
         all.sort_by_key(|(k, _)| *k);
         let (mut clashes, mut near) = (Vec::new(), Vec::new());
@@ -201,6 +215,7 @@ impl Check {
         near.sort_by(|x, y| x.distance_mm.total_cmp(&y.distance_mm));
         Ok(Interference {
             clashes,
+            unchecked: unchecked.into_iter().map(|(_, u)| u).collect(),
             near,
             clearance: self.clearance,
             checked: self.solids.len(),
@@ -410,5 +425,50 @@ mod tests {
                 .clashes
                 .is_empty()
         );
+    }
+
+    /// Fails on the pair whose second body sits 2 mm along X from the
+    /// first, and answers every other as `Fake` does.
+    struct FailsOnOne(Fake);
+
+    impl KernelQueries for FailsOnOne {
+        fn project_edge(
+            &self,
+            _: &[u8],
+            _: [f64; 3],
+            _: &ProfilePlane,
+        ) -> KernelResult<ProjectedEdge> {
+            Err(KernelError::Unsupported("projection".into()))
+        }
+
+        fn overlap(
+            &self,
+            a: &[u8],
+            b: &[u8],
+            b_in_a: &[[f64; 4]; 4],
+        ) -> KernelResult<Option<Overlap>> {
+            if (b_in_a[0][3] - 2.0).abs() < 1e-6 {
+                return Err(KernelError::InvalidInput("the common failed".into()));
+            }
+            self.0.overlap(a, b, b_in_a)
+        }
+    }
+
+    /// One pair the kernel fails on is reported on that pair; the other
+    /// pairs are still checked.
+    #[test]
+    fn a_pair_the_kernel_fails_on_does_not_stop_the_check() {
+        let mut document = Document::new("t");
+        let a = cube(&mut document, [100.0, 0.0, 0.0], true);
+        let b = cube(&mut document, [105.0, 0.0, 0.0], true);
+        let c = cube(&mut document, [102.0, 0.0, 0.0], true);
+        let found = interference(&document, &FailsOnOne(Fake::default()), None).unwrap();
+        assert_eq!(found.clashes.len(), 2);
+        assert_eq!(found.unchecked.len(), 1);
+        let unchecked = &found.unchecked[0];
+        assert_eq!((unchecked.a, unchecked.b), (a, c));
+        assert!(unchecked.why.contains("the common failed"), "{unchecked:?}");
+        assert!(!found.stopped);
+        assert!(found.clashes.iter().any(|x| (x.a, x.b) == (a, b)));
     }
 }

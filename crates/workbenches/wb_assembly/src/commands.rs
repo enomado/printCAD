@@ -1432,9 +1432,11 @@ pub fn register(context: &mut WorkbenchContext) {
             "Look instead for pairs nearer than this many mm",
         )
         .returns(
-            "{checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; \
-             skipped counts visible bodies with no solid. With a clearance, {checked, \
-             skipped, near}, each {a, b, distance (mm), on_a, on_b}, nearest first",
+            "{checked, skipped, clashes, unchecked}, each clash {a, b, volume (mm³), \
+             centre}; skipped counts visible bodies with no solid, unchecked lists the \
+             pairs the kernel failed on as {a, b, error}. With a clearance, {checked, \
+             skipped, near, unchecked}, each near pair {a, b, distance (mm), on_a, on_b}, \
+             nearest first",
         )
         .read_only()
         .note(
@@ -2657,6 +2659,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     "checked": found.checked,
                     "skipped": found.skipped,
                     "near": near,
+                    "unchecked": unchecked_json(&found.unchecked),
                 }));
             }
             let found = crate::interference(ctx.document, kernel, among.as_deref())
@@ -2677,6 +2680,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 "checked": found.checked,
                 "skipped": found.skipped,
                 "clashes": clashes,
+                "unchecked": unchecked_json(&found.unchecked),
             }))
         }
         "asm.parts" => {
@@ -3945,6 +3949,14 @@ pub(crate) fn set_grounded(
             Some(body),
         )
         .ok()
+}
+
+/// The pairs an interference check could not compare, as `{a, b, error}`.
+fn unchecked_json(unchecked: &[crate::interference::Unchecked]) -> Vec<Value> {
+    unchecked
+        .iter()
+        .map(|u| json!({"a": u.a.0.to_string(), "b": u.b.0.to_string(), "error": u.why}))
+        .collect()
 }
 
 #[cfg(test)]

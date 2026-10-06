@@ -5730,7 +5730,7 @@ assert(math.abs(q[3]) < 1e-4, "about an axis square to the hinge's")
 
 - `bodies` (list, optional): Only these bodies; every visible one when left out
 - `clearance` (number, optional): Look instead for pairs nearer than this many mm
-- Returns {checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; skipped counts visible bodies with no solid. With a clearance, {checked, skipped, near}, each {a, b, distance (mm), on_a, on_b}, nearest first
+- Returns {checked, skipped, clashes, unchecked}, each clash {a, b, volume (mm³), centre}; skipped counts visible bodies with no solid, unchecked lists the pairs the kernel failed on as {a, b, error}. With a clearance, {checked, skipped, near, unchecked}, each near pair {a, b, distance (mm), on_a, on_b}, nearest first
 
 Notes:
 

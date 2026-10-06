@@ -615,6 +615,26 @@ impl AssemblyWorkbench {
                 .collect(),
             selected: None,
         });
+        if !found.unchecked.is_empty() {
+            let n = found.unchecked.len();
+            widgets.push(w::note(
+                NoteKind::Warning,
+                Some(&format!(
+                    "{n} pair{} could not be checked",
+                    if n == 1 { "" } else { "s" }
+                )),
+                "The kernel failed on these; every other pair was checked",
+            ));
+            widgets.push(Widget::List {
+                id: "unchecked".into(),
+                items: found
+                    .unchecked
+                    .iter()
+                    .map(|u| pair(u.a, u.b, u.why.clone()))
+                    .collect(),
+                selected: None,
+            });
+        }
         if found.stopped {
             widgets.push(w::note(
                 NoteKind::Warning,

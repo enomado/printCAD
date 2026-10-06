@@ -529,6 +529,14 @@ impl AssemblyWorkbench {
                         found.checked
                     ),
                 });
+                for u in &found.unchecked {
+                    ctx.log_warn(format!(
+                        "{} and {} could not be checked: {}",
+                        body_name(ctx, u.a),
+                        body_name(ctx, u.b),
+                        u.why
+                    ));
+                }
                 if let Some(Task::Interference { found: slot, .. }) = &mut self.task {
                     *slot = Some(found);
                 }

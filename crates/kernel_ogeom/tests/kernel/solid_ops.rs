@@ -3227,3 +3227,50 @@ fn a_cylinder_bevels_every_edge_and_its_top_face_s_leaving_the_seam() {
         assert!(got < whole - 1.0, "{edges:?}: {got}");
     }
 }
+
+/// A worm (a revolved core with a helical groove and a bore) and a 608
+/// ball bearing, as the hardware package makes them.
+fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
+    let text = include_str!("../data/worm_and_608.json");
+    let parts: std::collections::HashMap<String, Vec<SolidOp>> =
+        serde_json::from_str(text).expect("the fixture reads");
+    let build = |name: &str| {
+        new_kernel()
+            .execute_solid_chain(&parts[name], &TessellationSettings::default())
+            .unwrap_or_else(|e| panic!("{name} builds: {e}"))
+            .brep_blob
+    };
+    (build("worm"), build("bearing_608"))
+}
+
+/// A worm passing through a bearing's bore shares the ring between the
+/// bore and the worm's outside with it: the kernel answers with that
+/// solid rather than failing.
+#[test]
+#[ignore = "kernel: the common of a worm and a bearing it passes through fails, the kept pieces not closing into a shell (ogeom-rs#128)"]
+fn a_worm_through_a_bearing_shares_material_with_it() {
+    use kernel_api::KernelQueries;
+    let (worm, bearing) = worm_and_bearing();
+    let at = |z: f64| {
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, z],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+    for z in [0.0, 20.0] {
+        let shared = kernel_ogeom::QUERIES
+            .overlap(&worm, &bearing, &at(z))
+            .unwrap_or_else(|e| panic!("at z = {z}: {e}"))
+            .expect("they share material");
+        // At most the ring between the bore (4 mm) and the worm's
+        // outside (8 mm), 7 mm tall.
+        let ring = std::f64::consts::PI * (64.0 - 16.0) * 7.0;
+        assert!(
+            shared.volume_mm3 > 0.0 && shared.volume_mm3 < ring,
+            "at z = {z}: {}",
+            shared.volume_mm3
+        );
+    }
+}
