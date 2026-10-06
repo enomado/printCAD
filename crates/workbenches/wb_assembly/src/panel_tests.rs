@@ -226,3 +226,178 @@ fn a_body_its_joints_place_shows_its_place_without_fields() {
     assert!(words(&panel).contains("Position X: "));
     draws(&mut wb, &mut doc);
 }
+
+fn toggle(id: &str, on: bool) -> PanelEvent {
+    PanelEvent::Toggle { id: id.into(), on }
+}
+
+fn choose(id: &str, index: usize) -> PanelEvent {
+    PanelEvent::Choice {
+        id: id.into(),
+        index,
+    }
+}
+
+/// Run a command on `doc` as a script would.
+fn run(doc: &mut Document, id: &str, args: serde_json::Value) -> serde_json::Value {
+    AssemblyWorkbench::default()
+        .run_command(id, &crate::commands::object(args), &mut context(doc))
+        .unwrap()
+}
+
+/// The bodies of `doc` not in `before`, and where each sits.
+fn new_bodies(doc: &Document, before: &Document) -> Vec<BodyPlacement> {
+    doc.bodies()
+        .iter()
+        .filter(|b| !before.bodies().iter().any(|o| o.id == b.id))
+        .map(|b| b.placement)
+        .collect()
+}
+
+#[test]
+fn copies_turned_about_an_axis_are_inserted_and_recorded_as_asm_copy() {
+    let (mut doc, _, part) = scene();
+    let before = doc.clone();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Copies {
+            body: part,
+            count: 1,
+            step: [10.0, 0.0, 0.0],
+            around: None,
+            mirror: None,
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    draws(&mut wb, &mut doc);
+    assert!(field(&widgets(&wb, &mut doc), "step_0").is_some());
+    send(&mut wb, &mut doc, number("count", 3.0));
+    send(&mut wb, &mut doc, toggle("around", true));
+    send(&mut wb, &mut doc, choose("axis", 0));
+    send(&mut wb, &mut doc, number("through_1", 5.0));
+    send(&mut wb, &mut doc, number("over", 180.0));
+    let panel = widgets(&wb, &mut doc);
+    assert!(field(&panel, "step_0").is_none());
+    assert_eq!(value_of(&panel, "over"), 180.0);
+    draws(&mut wb, &mut doc);
+
+    let recorded = accept(&mut wb, &mut doc);
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].id, "asm.copy");
+    let args = &recorded[0].args;
+    assert_eq!(args["count"], serde_json::json!(3));
+    assert_eq!(
+        args["around"]["direction"],
+        serde_json::json!([1.0, 0.0, 0.0])
+    );
+    assert_eq!(args["around"]["point"], serde_json::json!([0.0, 5.0, 0.0]));
+    assert_eq!(args["around"]["angle"], serde_json::json!(180.0));
+
+    let mut by_command = before.clone();
+    run(
+        &mut by_command,
+        "asm.copy",
+        serde_json::Value::Object(args.clone()),
+    );
+    let (made, want) = (new_bodies(&doc, &before), new_bodies(&by_command, &before));
+    assert_eq!(made.len(), 3);
+    assert_eq!(made, want);
+    assert!(wb.task.is_none());
+}
+
+#[test]
+fn a_mirror_image_across_a_plane_is_recorded_as_asm_mirror() {
+    let (mut doc, _, part) = scene();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Copies {
+            body: part,
+            count: 1,
+            step: [10.0, 0.0, 0.0],
+            around: None,
+            mirror: None,
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    send(&mut wb, &mut doc, toggle("mirror", true));
+    send(&mut wb, &mut doc, choose("plane", 2));
+    send(&mut wb, &mut doc, number("mirror_2", 5.0));
+    let panel = widgets(&wb, &mut doc);
+    assert!(field(&panel, "around").is_none());
+    assert!(field(&panel, "count").is_some());
+    draws(&mut wb, &mut doc);
+    let recorded = accept(&mut wb, &mut doc);
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].id, "asm.mirror");
+    assert_eq!(
+        recorded[0].args["normal"],
+        serde_json::json!([0.0, 0.0, 1.0])
+    );
+    assert_eq!(
+        recorded[0].args["point"],
+        serde_json::json!([0.0, 0.0, 5.0])
+    );
+    let copy = recorded[0].result.as_str().unwrap();
+    assert!(doc.bodies().iter().any(|b| b.id.0.to_string() == copy));
+}
+
+#[test]
+fn the_replace_panel_names_both_bodies() {
+    let (mut doc, base, part) = scene();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Replace {
+            old: part,
+            new: None,
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    let said = words(&widgets(&wb, &mut doc));
+    assert!(said.contains("Replace: Part"), "{said}");
+    assert!(said.contains("With: click a body"), "{said}");
+    wb.task = Some(Task::Replace {
+        old: part,
+        new: Some(base),
+    });
+    assert!(words(&widgets(&wb, &mut doc)).contains("With: Base"));
+    draws(&mut wb, &mut doc);
+}
+
+#[test]
+fn a_group_takes_bodies_out_and_is_dissolved_as_doc_delete() {
+    let (mut doc, base, part) = scene();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Group {
+            editing: None,
+            members: vec![base, part],
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    let panel = widgets(&wb, &mut doc);
+    assert!(field(&panel, "remove:1").is_some());
+    assert!(
+        field(&panel, "dissolve").is_none(),
+        "nothing to dissolve yet"
+    );
+    draws(&mut wb, &mut doc);
+    send(&mut wb, &mut doc, button("remove:0"));
+    let Some(Task::Group { members, .. }) = &wb.task else {
+        panic!("still picking");
+    };
+    assert_eq!(members, &vec![part]);
+    assert!(words(&widgets(&wb, &mut doc)).contains("two bodies or more"));
+
+    let group = run(
+        &mut doc,
+        "asm.group",
+        serde_json::json!({"bodies": [base.0.to_string(), part.0.to_string()]}),
+    );
+    let group = FeatureId(uuid::Uuid::parse_str(group.as_str().unwrap()).unwrap());
+    wb.task = Some(Task::Group {
+        editing: Some(group),
+        members: vec![base, part],
+    });
+    draws(&mut wb, &mut doc);
+    let (outcome, recorded) = send(&mut wb, &mut doc, button("dissolve"));
+    assert!(matches!(outcome, Some(TaskOutcome::Accepted { .. })));
+    assert_eq!(recorded[0].id, "doc.delete");
+    assert!(doc.get_feature_meta(group).is_none());
+    assert!(wb.task.is_none());
+}

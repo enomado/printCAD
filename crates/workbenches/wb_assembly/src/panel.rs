@@ -88,6 +88,14 @@ mod w {
         }
     }
 
+    pub(super) fn toggle(id: &str, label: &str, on: bool) -> Widget {
+        Widget::Toggle {
+            id: id.into(),
+            label: label.into(),
+            on,
+        }
+    }
+
     pub(super) fn text(text: impl Into<String>) -> Widget {
         Widget::Text {
             text: text.into(),
@@ -138,6 +146,20 @@ const MOVE_FIELDS: [&str; 6] = ["x", "y", "z", "turn_x", "turn_y", "turn_z"];
 fn move_angles(placement: &BodyPlacement) -> [f32; 3] {
     let (ax, ay, az) = placement.quat().to_euler(glam::EulerRot::XYZ);
     [ax, ay, az].map(f32::to_degrees)
+}
+
+/// The axes in the order the copies panel offers them: X, Y, Z, which
+/// are also the normals of the YZ, XZ and XY planes.
+const AXES: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+/// A dropdown of `options`.
+fn choice(id: &str, label: &str, options: &[&str], selected: usize) -> Widget {
+    Widget::Choice {
+        id: id.into(),
+        label: label.into(),
+        options: options.iter().map(|o| o.to_string()).collect(),
+        selected,
+    }
 }
 
 /// The value a declared number came back with, by its id.
@@ -299,6 +321,15 @@ impl AssemblyWorkbench {
         }
         match &self.task {
             Some(Task::Move { body, .. }) => self.move_widgets(ctx, *body),
+            Some(Task::Copies {
+                body,
+                count,
+                step,
+                around,
+                mirror,
+            }) => Self::copies_widgets(ctx, *body, (*count, *step, *around), *mirror),
+            Some(Task::Replace { old, new }) => Self::replace_widgets(ctx, *old, *new),
+            Some(Task::Group { editing, members }) => Self::group_widgets(ctx, *editing, members),
             _ => Vec::new(),
         }
     }
@@ -324,6 +355,8 @@ impl AssemblyWorkbench {
         }
         match self.task.clone() {
             Some(Task::Move { body, .. }) => self.move_event(ctx, body, event),
+            Some(Task::Copies { .. }) => self.copies_event(event),
+            Some(Task::Group { editing, .. }) => self.group_event(ctx, editing, event),
             _ => None,
         }
     }
@@ -1041,48 +1074,26 @@ impl AssemblyWorkbench {
         if request.accept
             && let Some((point, normal)) = mirror
         {
-            let plane = core_document::MirrorPlane { point, normal };
-            let made = ctx.document.create_mirrored_copy(body, plane, None);
-            match made {
-                Some(copy) => {
-                    ctx.record(
-                        "asm.mirror",
-                        crate::commands::object(serde_json::json!({
-                            "body": body.0.to_string(),
-                            "point": point,
-                            "normal": normal,
-                        })),
-                        serde_json::json!(copy.0.to_string()),
-                    );
+            let args = crate::commands::object(serde_json::json!({
+                "body": body.0.to_string(),
+                "point": point,
+                "normal": normal,
+            }));
+            return match crate::commands::run("asm.mirror", &args, ctx) {
+                Ok(copy) => {
+                    ctx.record("asm.mirror", args, copy);
                     self.task = None;
-                    return TaskOutcome::Accepted {
+                    TaskOutcome::Accepted {
                         label: "Insert mirrored copy".to_string(),
-                    };
+                    }
                 }
-                None => ctx.log_warn("A mirrored copy cannot be mirrored again"),
-            }
-            return TaskOutcome::Open;
+                Err(_) => {
+                    ctx.log_warn("A mirrored copy cannot be mirrored again");
+                    TaskOutcome::Open
+                }
+            };
         }
         if request.accept {
-            let made = match around {
-                Some((point, axis, angle)) => crate::commands::insert_copies_around(
-                    ctx,
-                    body,
-                    count as usize,
-                    (
-                        glam::Vec3::from_array(point),
-                        glam::Vec3::from_array(axis).normalize_or_zero(),
-                        angle,
-                    ),
-                ),
-                None => crate::commands::insert_copies(
-                    ctx,
-                    body,
-                    count as usize,
-                    Some(glam::Vec3::from_array(step)),
-                ),
-            }
-            .unwrap_or_default();
             let mut args = serde_json::json!({"body": body.0.to_string(), "count": count});
             match around {
                 Some((point, direction, angle)) => {
@@ -1091,15 +1102,14 @@ impl AssemblyWorkbench {
                 }
                 None => args["step"] = serde_json::json!(step),
             }
-            ctx.record(
-                "asm.copy",
-                crate::commands::object(args),
-                serde_json::json!(made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>()),
-            );
+            let args = crate::commands::object(args);
+            let made = crate::commands::run("asm.copy", &args, ctx)
+                .unwrap_or_else(|_| serde_json::json!([]));
+            let n = made.as_array().map_or(0, Vec::len);
+            ctx.record("asm.copy", args, made);
             ctx.log_info(format!(
-                "Inserted {} linked cop{} of {}: drag them where they go",
-                made.len(),
-                if made.len() == 1 { "y" } else { "ies" },
+                "Inserted {n} linked cop{} of {}: drag them where they go",
+                if n == 1 { "y" } else { "ies" },
                 body_name(ctx, body)
             ));
             self.task = None;
@@ -1107,144 +1117,144 @@ impl AssemblyWorkbench {
                 label: "Insert linked copies".to_string(),
             };
         }
-        header(ui, "clone", "Insert linked copies");
-        ui.add_space(SPACE_2);
-        row(ui, "Of", &body_name(ctx, body));
-        let mut n = count as f32;
-        let mut at = step;
-        let mut changed = false;
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [90.0, INPUT],
-                egui::Label::new(RichText::new("How many").font(sans(FONT_SM)).color(TEXT2)),
-            );
-            changed |= QtyField::new(&mut n)
-                .range(1.0..=500.0)
-                .decimals(0)
-                .speed(0.1)
-                .show(ui);
-        });
-        let mut mirrored = mirror.is_some();
-        let mut plane = mirror.unwrap_or(([0.0; 3], [1.0, 0.0, 0.0]));
-        let mut mirror_changed = check_row(ui, &mut mirrored, "A mirror image")
-            .on_hover_text("One copy mirrored across a plane, rather than copies as they are")
-            .changed();
-        if mirrored {
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new("Across").font(sans(FONT_SM)).color(TEXT2)),
-                );
-                for (name, normal) in [
-                    ("YZ", [1.0, 0.0, 0.0]),
-                    ("XZ", [0.0, 1.0, 0.0]),
-                    ("XY", [0.0, 0.0, 1.0]),
-                ] {
-                    if ui
-                        .selectable_label(
-                            plane.1 == normal,
-                            RichText::new(name).font(sans(FONT_SM)),
-                        )
-                        .clicked()
-                    {
-                        plane.1 = normal;
-                        mirror_changed = true;
-                    }
-                }
-            });
+        self.declared_panel(ui, ctx)
+    }
+
+    /// How many copies and how far apart, or turned about an axis, or one
+    /// mirrored across a plane.
+    fn copies_widgets(
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+        (count, step, around): (u32, [f32; 3], Option<crate::Around>),
+        mirror: Option<([f32; 3], [f32; 3])>,
+    ) -> Vec<Widget> {
+        let mut widgets = vec![
+            w::header("clone", "Insert linked copies"),
+            w::value("Of", body_name(ctx, body)),
+            Widget::Number {
+                id: "count".into(),
+                label: "How many".into(),
+                value: f64::from(count),
+                dim: Dim::Number,
+                bind: None,
+                min: Some(1.0),
+                max: Some(500.0),
+                decimals: 0,
+                error: None,
+            },
+            w::hinted(
+                "One copy mirrored across a plane, rather than copies as they are",
+                w::toggle("mirror", "A mirror image", mirror.is_some()),
+            ),
+        ];
+        if let Some((point, normal)) = mirror {
+            let selected = AXES.iter().position(|a| *a == normal).unwrap_or(0);
+            widgets.push(choice("plane", "Across", &["YZ", "XZ", "XY"], selected));
             for (k, label) in ["Through x", "Through y", "Through z"]
                 .into_iter()
                 .enumerate()
             {
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [90.0, INPUT],
-                        egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
-                    );
-                    mirror_changed |= QtyField::offset(&mut plane.0[k]).show(ui);
-                });
+                widgets.push(w::number(
+                    &format!("mirror_{k}"),
+                    label,
+                    point[k],
+                    Dim::Length,
+                ));
             }
-        }
-        if mirror_changed && let Some(Task::Copies { mirror, .. }) = &mut self.task {
-            *mirror = mirrored.then_some(plane);
-        }
-        if mirrored {
-            ui.add_space(SPACE_1);
-            note(
-                ui,
+            widgets.push(w::text(
                 "The mirror image takes the body's shape, mirrored, and follows every change \
                  to it.",
-            );
-            return TaskOutcome::Open;
+            ));
+            return widgets;
         }
-        let mut turned = around.is_some();
-        let mut pivot = around.unwrap_or(([0.0; 3], [0.0, 0.0, 1.0], 360.0));
-        changed |= check_row(ui, &mut turned, "Around an axis")
-            .on_hover_text("Turn the copies about an axis instead of setting them in a row")
-            .changed();
-        let label_row = |ui: &mut egui::Ui, label: &str| {
-            ui.add_sized(
-                [90.0, INPUT],
-                egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
-            );
-        };
-        if turned {
-            ui.horizontal(|ui| {
-                label_row(ui, "Axis");
-                for (name, axis) in [
-                    ("X", [1.0, 0.0, 0.0]),
-                    ("Y", [0.0, 1.0, 0.0]),
-                    ("Z", [0.0, 0.0, 1.0]),
-                ] {
-                    if ui
-                        .selectable_label(pivot.1 == axis, RichText::new(name).font(sans(FONT_SM)))
-                        .clicked()
-                    {
-                        pivot.1 = axis;
-                        changed = true;
-                    }
+        widgets.push(w::hinted(
+            "Turn the copies about an axis instead of setting them in a row",
+            w::toggle("around", "Around an axis", around.is_some()),
+        ));
+        match around {
+            Some((point, axis, angle)) => {
+                let selected = AXES.iter().position(|a| *a == axis).unwrap_or(2);
+                widgets.push(choice("axis", "Axis", &["X", "Y", "Z"], selected));
+                for (k, label) in ["Through x", "Through y", "Through z"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    widgets.push(w::number(
+                        &format!("through_{k}"),
+                        label,
+                        point[k],
+                        Dim::Length,
+                    ));
                 }
-            });
-            for (k, label) in ["Through x", "Through y", "Through z"]
-                .into_iter()
-                .enumerate()
-            {
-                ui.horizontal(|ui| {
-                    label_row(ui, label);
-                    changed |= QtyField::offset(&mut pivot.0[k]).show(ui);
-                });
+                widgets.push(w::number("over", "Over", angle, Dim::Angle));
             }
-            ui.horizontal(|ui| {
-                label_row(ui, "Over");
-                changed |= QtyField::degrees(&mut pivot.2).show(ui);
-            });
-        } else {
-            for (k, label) in ["Step x", "Step y", "Step z"].into_iter().enumerate() {
-                ui.horizontal(|ui| {
-                    label_row(ui, label);
-                    changed |= QtyField::offset(&mut at[k]).show(ui);
-                });
+            None => {
+                for (k, label) in ["Step x", "Step y", "Step z"].into_iter().enumerate() {
+                    widgets.push(w::number(&format!("step_{k}"), label, step[k], Dim::Length));
+                }
             }
         }
-        if changed
-            && let Some(Task::Copies {
-                count,
-                step,
-                around,
-                ..
-            }) = &mut self.task
-        {
-            *count = n.round().max(1.0) as u32;
-            *step = at;
-            *around = turned.then_some(pivot);
-        }
-        ui.add_space(SPACE_1);
-        note(
-            ui,
+        widgets.push(w::text(
             "Each copy takes the body's shape and follows every change to it. They go in a \
              row, each a step from the one before; drag one to put it where it goes.",
-        );
-        TaskOutcome::Open
+        ));
+        widgets
+    }
+
+    /// A change to the copies' settings, kept in the task until OK.
+    fn copies_event(&mut self, event: &PanelEvent) -> Option<TaskOutcome> {
+        let Some(Task::Copies {
+            count,
+            step,
+            around,
+            mirror,
+            ..
+        }) = &mut self.task
+        else {
+            return None;
+        };
+        let mut pivot = around.unwrap_or(([0.0; 3], [0.0, 0.0, 1.0], 360.0));
+        let mut plane = mirror.unwrap_or(([0.0; 3], [1.0, 0.0, 0.0]));
+        match event {
+            PanelEvent::Toggle { id, on } if id == "mirror" => {
+                *mirror = on.then_some(plane);
+            }
+            PanelEvent::Toggle { id, on } if id == "around" => {
+                *around = on.then_some(pivot);
+            }
+            PanelEvent::Choice { id, index } if id == "plane" => {
+                plane.1 = AXES[(*index).min(2)];
+                *mirror = Some(plane);
+            }
+            PanelEvent::Choice { id, index } if id == "axis" => {
+                pivot.1 = AXES[(*index).min(2)];
+                *around = Some(pivot);
+            }
+            PanelEvent::Number { id, value } => {
+                let value = *value as f32;
+                let k = |prefix: &str| {
+                    id.strip_prefix(prefix)
+                        .and_then(|k| k.parse::<usize>().ok())
+                        .filter(|k| *k < 3)
+                };
+                if id == "count" {
+                    *count = value.round().max(1.0) as u32;
+                } else if id == "over" {
+                    pivot.2 = value;
+                    *around = Some(pivot);
+                } else if let Some(k) = k("mirror_") {
+                    plane.0[k] = value;
+                    *mirror = Some(plane);
+                } else if let Some(k) = k("through_") {
+                    pivot.0[k] = value;
+                    *around = Some(pivot);
+                } else if let Some(k) = k("step_") {
+                    step[k] = value;
+                }
+            }
+            _ => {}
+        }
+        None
     }
 
     /// A body and the one picked to take its place and joints.
@@ -1301,21 +1311,27 @@ impl AssemblyWorkbench {
                 }
             }
         }
-        header(ui, "carbon-copy", "Replace body");
-        ui.add_space(SPACE_2);
-        row(ui, "Replace", &body_name(ctx, old));
-        row(
-            ui,
-            "With",
-            &new.map_or("click a body".to_string(), |b| body_name(ctx, b)),
-        );
-        ui.add_space(SPACE_1);
-        note(
-            ui,
-            "The new body goes where the old one sits and takes its joints, each end on \
-             the new body's nearest face of the same kind; the old body is hidden.",
-        );
-        TaskOutcome::Open
+        self.declared_panel(ui, ctx)
+    }
+
+    /// The body replaced and the one taking its place.
+    fn replace_widgets(
+        ctx: &WorkbenchRuntimeContext,
+        old: BodyId,
+        new: Option<BodyId>,
+    ) -> Vec<Widget> {
+        vec![
+            w::header("carbon-copy", "Replace body"),
+            w::value("Replace", body_name(ctx, old)),
+            w::value(
+                "With",
+                new.map_or("click a body".to_string(), |b| body_name(ctx, b)),
+            ),
+            w::text(
+                "The new body goes where the old one sits and takes its joints, each end on \
+                 the new body's nearest face of the same kind; the old body is hidden.",
+            ),
+        ]
     }
 
     /// The bodies of a rigid group, picked one click each; OK locks them
@@ -1357,57 +1373,78 @@ impl AssemblyWorkbench {
                 .to_string(),
             };
         }
-        header(ui, "tree-group", "Rigid group");
-        ui.add_space(SPACE_2);
-        ui.label(
-            RichText::new(
+        self.declared_panel(ui, ctx)
+    }
+
+    /// The bodies picked for a group, each with its Remove; the group's
+    /// Dissolve when it is one already.
+    fn group_widgets(
+        ctx: &WorkbenchRuntimeContext,
+        editing: Option<FeatureId>,
+        members: &[BodyId],
+    ) -> Vec<Widget> {
+        let mut widgets = vec![
+            w::header("tree-group", "Rigid group"),
+            w::text(
                 "Click the bodies to lock together; a second click takes one out. They \
                  move as one, held as they sit now, the first the one the rest hold to.",
-            )
-            .font(sans(FONT_SM))
-            .color(TEXT2),
-        );
-        ui.add_space(SPACE_2);
-        let mut remove = None;
+            ),
+        ];
         for (i, body) in members.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(body_name(ctx, *body))
-                        .font(sans(FONT_SM))
-                        .color(TEXT1),
-                );
-                if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
-                    remove = Some(i);
-                }
-            });
-        }
-        if let (Some(i), Some(Task::Group { members, .. })) = (remove, &mut self.task) {
-            members.remove(i);
+            widgets.push(w::row(vec![
+                w::text(body_name(ctx, *body)),
+                w::button(&format!("remove:{i}"), "Remove", ButtonStyle::Small),
+            ]));
         }
         if members.len() < 2 {
-            ui.add_space(SPACE_1);
-            note_card(ui, Note::Info, None, "A group takes two bodies or more");
+            widgets.push(w::note(
+                NoteKind::Info,
+                None,
+                "A group takes two bodies or more",
+            ));
         }
-        if let Some(id) = editing {
-            ui.add_space(SPACE_2);
-            if destructive_button(ui, "Dissolve group")
-                .on_hover_text("Remove the group; the bodies stay where they are")
-                .clicked()
-                && ctx.document.remove_feature(id).is_ok()
+        if editing.is_some() {
+            widgets.push(w::hinted(
+                "Remove the group; the bodies stay where they are",
+                w::button("dissolve", "Dissolve group", ButtonStyle::Destructive),
+            ));
+        }
+        widgets
+    }
+
+    /// A body taken out of the group, or the group dissolved.
+    fn group_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        editing: Option<FeatureId>,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let PanelEvent::Button { id: button } = event else {
+            return None;
+        };
+        if let Some(i) = button
+            .strip_prefix("remove:")
+            .and_then(|i| i.parse::<usize>().ok())
+        {
+            if let Some(Task::Group { members, .. }) = &mut self.task
+                && i < members.len()
             {
-                ctx.record(
-                    "doc.delete",
-                    crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
-                    serde_json::Value::Null,
-                );
-                self.task = None;
-                ctx.active_document_object = None;
-                return TaskOutcome::Accepted {
-                    label: "Dissolve rigid group".to_string(),
-                };
+                members.remove(i);
             }
+            return None;
         }
-        TaskOutcome::Open
+        let id = editing.filter(|_| button == "dissolve")?;
+        ctx.document.remove_feature(id).ok()?;
+        ctx.record(
+            "doc.delete",
+            crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
+            serde_json::Value::Null,
+        );
+        self.task = None;
+        ctx.active_document_object = None;
+        Some(TaskOutcome::Accepted {
+            label: "Dissolve rigid group".to_string(),
+        })
     }
 
     /// The mass of the visible bodies at one density, their centre of mass,
