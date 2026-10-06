@@ -232,15 +232,18 @@ impl AssemblyWorkbench {
                 self.move_panel(ui, ctx, request, body, &placements)
             }
             Some(Task::Interference { .. }) => self.interference_panel(ui, ctx, request),
-            Some(Task::Explode {
-                placements,
-                spread,
-                steps,
-            }) => {
-                if steps.view.is_some() || !steps.picked.is_empty() {
-                    return self.steps_panel(ui, ctx, request, placements, *steps);
+            Some(Task::Explode { steps, .. }) => {
+                if request.accept || request.cancel {
+                    self.put_back_explosion(ctx);
+                    return TaskOutcome::Cancelled;
                 }
-                self.explode_panel(ui, ctx, request, placements, spread)
+                let view = steps
+                    .view
+                    .and_then(|id| crate::exploded::view_of(ctx.document, id));
+                if view.is_none_or(|v| v.steps.is_empty()) {
+                    self.show_steps(ctx);
+                }
+                self.declared_panel(ui, ctx)
             }
             Some(Task::Parts) => self.parts_panel(ui, ctx, request),
             Some(Task::Motion(studying)) => self.motion_panel(ui, ctx, request, *studying),
@@ -328,6 +331,7 @@ impl AssemblyWorkbench {
                 clearance,
             }) => self.interference_widgets(ctx, found.as_ref(), (*seq, *around, *clearance)),
             Some(Task::Mass { found, density }) => self.mass_widgets(ctx, found.as_ref(), *density),
+            Some(Task::Explode { spread, steps, .. }) => Self::explode_widgets(ctx, *spread, steps),
             _ => Vec::new(),
         }
     }
@@ -362,6 +366,7 @@ impl AssemblyWorkbench {
                 ..
             }) => self.interference_event(ctx, found.as_ref(), (around, clearance), event),
             Some(Task::Mass { found, .. }) => self.mass_event(ctx, found.as_ref(), event),
+            Some(Task::Explode { .. }) => self.explode_event(ctx, event),
             _ => None,
         }
     }
@@ -618,201 +623,197 @@ impl AssemblyWorkbench {
         None
     }
 
-    /// The exploded view's spread; closing puts every body back.
-    fn explode_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: TaskRequest,
-        placements: Vec<(BodyId, BodyPlacement)>,
-        mut spread: f32,
-    ) -> TaskOutcome {
-        if request.accept || request.cancel {
-            self.put_back_explosion(ctx);
-            return TaskOutcome::Cancelled;
-        }
-        header(ui, "scale-geometry", "Exploded view");
-        ui.add_space(SPACE_2);
-        let changed = ui
-            .horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new("Spread").font(sans(FONT_SM)).color(TEXT2)),
-                );
-                ui.add(egui::Slider::new(&mut spread, 0.0..=3.0).fixed_decimals(2))
-                    .on_hover_text(
-                        "How far each body moves out, as a share of its distance from the middle",
-                    )
-                    .changed()
-            })
-            .inner;
-        if changed && let Some(Task::Explode { spread: kept, .. }) = &mut self.task {
-            *kept = spread;
-            crate::explode(ctx, &placements, spread);
-        }
-        ui.add_space(SPACE_2);
-        ui.label(
-            RichText::new(
+    /// The exploded view's spread, or, once bodies are picked for a step,
+    /// its steps; closing puts every body back.
+    fn explode_widgets(
+        ctx: &WorkbenchRuntimeContext,
+        spread: f32,
+        steps: &crate::Stepping,
+    ) -> Vec<Widget> {
+        let mut widgets = vec![w::header("scale-geometry", "Exploded view")];
+        if steps.view.is_none() && steps.picked.is_empty() {
+            widgets.push(w::hinted(
+                "How far each body moves out, as a share of its distance from the middle",
+                Widget::Slider {
+                    id: "spread".into(),
+                    label: "Spread".into(),
+                    value: f64::from(spread),
+                    min: 0.0,
+                    max: 3.0,
+                    step: None,
+                    decimals: 2,
+                    show_value: true,
+                },
+            ));
+            widgets.push(w::text(
                 "Each body moves straight out from the middle of the assembly. \
                  Nothing is kept: the bodies go back when this closes. Click bodies to \
                  make a step of a view kept in the document.",
-            )
-            .font(sans(FONT_XS))
-            .color(TEXT3),
-        );
-        TaskOutcome::Open
-    }
-
-    /// An exploded view made of steps: each a set of bodies and a shift,
-    /// played in order; the view is kept in the document, the bodies go
-    /// back when it closes.
-    fn steps_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: TaskRequest,
-        placements: Vec<(BodyId, BodyPlacement)>,
-        steps: crate::Stepping,
-    ) -> TaskOutcome {
-        if request.accept || request.cancel {
-            self.put_back_explosion(ctx);
-            return TaskOutcome::Cancelled;
+            ));
+            return widgets;
         }
-        header(ui, "scale-geometry", "Exploded view");
-        ui.add_space(SPACE_2);
         let view = steps
             .view
             .and_then(|id| crate::exploded::view_of(ctx.document, id))
             .unwrap_or_default();
-        let count = view.steps.len();
-        let mut next = steps.clone();
-        let mut edited: Option<crate::ExplodedView> = None;
-        let mut remove = None;
         for (i, step) in view.steps.iter().enumerate() {
-            ui.horizontal(|ui| {
-                let names: Vec<String> = step.bodies.iter().map(|b| body_name(ctx, *b)).collect();
-                ui.label(
-                    RichText::new(format!(
-                        "{}. {} by ({:.1}, {:.1}, {:.1})",
-                        i + 1,
-                        names.join(", "),
-                        step.shift[0],
-                        step.shift[1],
-                        step.shift[2]
-                    ))
-                    .font(sans(FONT_SM))
-                    .color(TEXT1),
-                );
-                if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
-                    remove = Some(i);
-                }
+            let names: Vec<String> = step.bodies.iter().map(|b| body_name(ctx, *b)).collect();
+            widgets.push(w::row(vec![
+                w::text(format!(
+                    "{}. {} by ({:.1}, {:.1}, {:.1})",
+                    i + 1,
+                    names.join(", "),
+                    step.shift[0],
+                    step.shift[1],
+                    step.shift[2]
+                )),
+                w::button(&format!("remove_step:{i}"), "Remove", ButtonStyle::Small),
+            ]));
+        }
+        if !view.steps.is_empty() {
+            widgets.push(Widget::Slider {
+                id: "at".into(),
+                label: "Progress".into(),
+                value: f64::from(steps.at),
+                min: 0.0,
+                max: view.steps.len() as f64,
+                step: None,
+                decimals: 2,
+                show_value: true,
             });
+            widgets.push(w::hinted(
+                "Play the steps in order, a step a second, round again",
+                w::button(
+                    "play",
+                    if steps.playing { "Stop" } else { "Play" },
+                    ButtonStyle::Secondary,
+                ),
+            ));
         }
-        if let Some(i) = remove {
-            let mut changed = view.clone();
-            changed.steps.remove(i);
-            next.at = next.at.min(changed.steps.len() as f32);
-            edited = Some(changed);
-        }
-        if count > 0 {
-            ui.add_space(SPACE_1);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new("Progress").font(sans(FONT_SM)).color(TEXT2)),
-                );
-                ui.add(egui::Slider::new(&mut next.at, 0.0..=count as f32).fixed_decimals(2));
-            });
-            let label = if next.playing { "Stop" } else { "Play" };
-            if ui_kit::widgets::secondary_button(ui, label)
-                .on_hover_text("Play the steps in order, a step a second, round again")
-                .clicked()
-            {
-                next.playing = !next.playing;
-            }
-        }
-        ui.add_space(SPACE_2);
-        overline(ui, "Next step");
-        let picked: Vec<String> = next.picked.iter().map(|b| body_name(ctx, *b)).collect();
-        ui.label(
-            RichText::new(if picked.is_empty() {
-                "Click the bodies it moves".to_string()
-            } else {
-                picked.join(", ")
-            })
-            .font(sans(FONT_SM))
-            .color(TEXT1),
-        );
+        let picked: Vec<String> = steps.picked.iter().map(|b| body_name(ctx, *b)).collect();
+        let mut next = vec![w::text(if picked.is_empty() {
+            "Click the bodies it moves".to_string()
+        } else {
+            picked.join(", ")
+        })];
         for (k, label) in ["Shift x", "Shift y", "Shift z"].into_iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
-                );
-                QtyField::offset(&mut next.shift[k]).show(ui);
-            });
+            next.push(w::number(
+                &format!("shift_{k}"),
+                label,
+                steps.shift[k],
+                Dim::Length,
+            ));
         }
-        if !next.picked.is_empty() && ui_kit::widgets::secondary_button(ui, "Add step").clicked() {
-            let mut changed = edited.clone().unwrap_or(view.clone());
-            changed.steps.push(crate::ExplodeStep {
-                bodies: std::mem::take(&mut next.picked),
-                shift: next.shift,
-            });
-            next.at = changed.steps.len() as f32;
-            edited = Some(changed);
+        if !steps.picked.is_empty() {
+            next.push(w::button("add_step", "Add step", ButtonStyle::Secondary));
+        }
+        widgets.push(Widget::Group {
+            title: "Next step".into(),
+            open: true,
+            children: next,
+        });
+        widgets.push(w::text(
+            "The view is kept in the document: double-click it in the tree to show it \
+             again. The bodies go back when this closes.",
+        ));
+        widgets
+    }
+
+    /// The spread changed, or a step added or taken away (kept as
+    /// `asm.exploded_view` keeps it), or the view scrubbed or played.
+    fn explode_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let Some(Task::Explode {
+            placements,
+            spread,
+            steps,
+        }) = &mut self.task
+        else {
+            return None;
+        };
+        let placements = placements.clone();
+        let view = steps
+            .view
+            .and_then(|id| crate::exploded::view_of(ctx.document, id))
+            .unwrap_or_default();
+        let mut edited = None;
+        match event {
+            PanelEvent::Number { id, value } if id == "spread" => {
+                *spread = *value as f32;
+                crate::explode(ctx, &placements, *spread);
+                return None;
+            }
+            PanelEvent::Number { id, value } if id == "at" => {
+                steps.at = *value as f32;
+            }
+            PanelEvent::Number { id, value } => {
+                let k = id
+                    .strip_prefix("shift_")
+                    .and_then(|k| k.parse::<usize>().ok())
+                    .filter(|k| *k < 3)?;
+                steps.shift[k] = *value as f32;
+                return None;
+            }
+            PanelEvent::Button { id } if id == "play" => {
+                steps.playing = !steps.playing;
+                return None;
+            }
+            PanelEvent::Button { id } if id == "add_step" && !steps.picked.is_empty() => {
+                let mut changed = view.clone();
+                changed.steps.push(crate::ExplodeStep {
+                    bodies: std::mem::take(&mut steps.picked),
+                    shift: steps.shift,
+                });
+                steps.at = changed.steps.len() as f32;
+                edited = Some(changed);
+            }
+            PanelEvent::Button { id } => {
+                let i = id
+                    .strip_prefix("remove_step:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .filter(|i| *i < view.steps.len())?;
+                let mut changed = view.clone();
+                changed.steps.remove(i);
+                steps.at = steps.at.min(changed.steps.len() as f32);
+                edited = Some(changed);
+            }
+            _ => return None,
         }
         if let Some(changed) = edited {
             // Back where they sat, so the view plays from there.
             crate::restore_placements(ctx, &placements);
-            match next.view {
+            let mut args = serde_json::json!({
+                "steps": serde_json::to_value(&changed.steps).unwrap_or_default(),
+            });
+            if let Some(id) = steps.view {
+                args["view"] = serde_json::json!(id.0.to_string());
+            }
+            let made = crate::commands::run(
+                "asm.exploded_view",
+                &crate::commands::object(args.clone()),
+                ctx,
+            );
+            match made
+                .ok()
+                .and_then(|id| uuid::Uuid::parse_str(id.as_str()?).ok())
+            {
                 Some(id) => {
-                    if ctx
-                        .document
-                        .update_feature_data(id, changed.to_json())
-                        .is_ok()
-                    {
-                        ctx.document.clear_feature_dirty(id);
-                    }
+                    steps.view = Some(FeatureId(id));
+                    args["view"] = serde_json::json!(id.to_string());
+                    ctx.record(
+                        "asm.exploded_view",
+                        crate::commands::object(args),
+                        serde_json::json!(id.to_string()),
+                    );
                 }
-                None => {
-                    let name = crate::commands::next_name(ctx.document, "Exploded view");
-                    if let Ok(id) = ctx
-                        .document
-                        .add_feature_in_body(changed.clone(), name, None)
-                    {
-                        ctx.document.clear_feature_dirty(id);
-                        next.view = Some(id);
-                    }
-                }
-            }
-            if let Some(id) = next.view {
-                ctx.record(
-                    "asm.exploded_view",
-                    crate::commands::object(serde_json::json!({
-                        "view": id.0.to_string(),
-                        "steps": serde_json::to_value(&changed.steps).unwrap_or_default(),
-                    })),
-                    serde_json::json!(id.0.to_string()),
-                );
+                None => ctx.log_warn("Could not keep the exploded view"),
             }
         }
-        let moved = next.at != steps.at || next.view != steps.view;
-        if let Some(Task::Explode { steps: kept, .. }) = &mut self.task {
-            **kept = next;
-        }
-        if moved || count == 0 {
-            self.show_steps(ctx);
-        }
-        ui.add_space(SPACE_2);
-        ui.label(
-            RichText::new(
-                "The view is kept in the document: double-click it in the tree to show it \
-                 again. The bodies go back when this closes.",
-            )
-            .font(sans(FONT_XS))
-            .color(TEXT3),
-        );
-        TaskOutcome::Open
+        self.show_steps(ctx);
+        None
     }
 
     /// A motion over time: when it starts and ends, its step, and each

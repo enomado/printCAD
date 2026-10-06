@@ -521,3 +521,71 @@ fn the_mass_panel_weighs_at_the_density_typed_and_selects_a_body_clicked() {
     assert_eq!(rows[1], vec!["Part".to_string(), "2.50 g".to_string()]);
     assert_eq!(selects(&mut wb, &mut doc, select("bodies", 1)), Some(part));
 }
+
+#[test]
+fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
+    let (mut doc, base, part) = scene();
+    let placements = crate::all_placements(&context(&mut doc));
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Explode {
+            placements: placements.clone(),
+            spread: 0.0,
+            steps: Box::default(),
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    draws(&mut wb, &mut doc);
+    let mut by_hand = doc.clone();
+    crate::explode(&mut context(&mut by_hand), &placements, 1.5);
+    send(&mut wb, &mut doc, number("spread", 1.5));
+    assert_eq!(doc.body_placement(part), by_hand.body_placement(part));
+    assert_eq!(doc.body_placement(base), by_hand.body_placement(base));
+    assert_eq!(value_of(&widgets(&wb, &mut doc), "spread"), 1.5);
+
+    // Bodies clicked: the panel turns to the steps.
+    if let Some(Task::Explode { steps, .. }) = &mut wb.task {
+        steps.picked = vec![part];
+    }
+    let panel = widgets(&wb, &mut doc);
+    assert!(field(&panel, "spread").is_none());
+    assert!(field(&panel, "add_step").is_some());
+    draws(&mut wb, &mut doc);
+    send(&mut wb, &mut doc, number("shift_2", 10.0));
+    let (_, recorded) = send(&mut wb, &mut doc, button("add_step"));
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].id, "asm.exploded_view");
+    let Some(Task::Explode { steps, .. }) = &wb.task else {
+        panic!("still open");
+    };
+    let view = steps.view.expect("the view is kept");
+    assert_eq!(recorded[0].result, serde_json::json!(view.0.to_string()));
+    let kept = crate::exploded::view_of(&doc, view).unwrap();
+    assert_eq!(kept.steps.len(), 1);
+    assert_eq!(kept.steps[0].bodies, vec![part]);
+    assert_eq!(kept.steps[0].shift, [0.0, 0.0, 10.0]);
+    // Played to its end: the part shifted, the base where it sat.
+    assert!(close_to(
+        doc.body_placement(part).translation,
+        [30.0, 0.0, 50.0]
+    ));
+    assert_eq!(doc.body_placement(base), placements[0].1);
+    assert_eq!(value_of(&widgets(&wb, &mut doc), "at"), 1.0);
+
+    send(&mut wb, &mut doc, number("at", 0.0));
+    assert!(close_to(
+        doc.body_placement(part).translation,
+        [30.0, 0.0, 40.0]
+    ));
+    send(&mut wb, &mut doc, button("play"));
+    assert!(matches!(&wb.task, Some(Task::Explode { steps, .. }) if steps.playing));
+
+    let (_, recorded) = send(&mut wb, &mut doc, button("remove_step:0"));
+    assert_eq!(recorded[0].args["steps"], serde_json::json!([]));
+    assert!(
+        crate::exploded::view_of(&doc, view)
+            .unwrap()
+            .steps
+            .is_empty()
+    );
+    draws(&mut wb, &mut doc);
+}
