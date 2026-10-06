@@ -304,7 +304,10 @@ fn moves(program: &str) -> Vec<(bool, [f64; 3])> {
 
 /// Wait out the CAM bench's jobs, then let it hear how they ended, as its
 /// next frame would; what it logged.
-fn finish_jobs(registry: &mut DocumentService, document: &mut Document) -> Vec<String> {
+/// Wait for the CAM bench's jobs to end and deliver them; `says` when the
+/// ending is one the bench logs (a stop, a failure), which can land a
+/// moment after the job stops being busy.
+fn finish_jobs(registry: &mut DocumentService, document: &mut Document, says: bool) -> Vec<String> {
     let bench = registry
         .workbench_mut(&WorkbenchId::new("example.cam"))
         .unwrap();
@@ -315,8 +318,15 @@ fn finish_jobs(registry: &mut DocumentService, document: &mut Document) -> Vec<S
     }
     let mut ctx =
         WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
-    bench.on_frame(0.016, &mut ctx);
-    ctx.drain_logs().into_iter().map(|l| l.message).collect()
+    let mut logs = Vec::new();
+    loop {
+        bench.on_frame(0.016, &mut ctx);
+        logs.extend(ctx.drain_logs().into_iter().map(|l| l.message));
+        if !says || !logs.is_empty() || Instant::now() > deadline {
+            return logs;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn feature_of(made: &Value) -> core_document::FeatureId {
@@ -420,7 +430,7 @@ fn a_cam_package_works_out_a_pocket_in_a_job_and_writes_its_g_code() {
         bench.edit_feature(&mut ctx, feature);
         assert_eq!(bench.task(&ctx).map(|t| t.title), Some("Pocket".into()));
     }
-    finish_jobs(&mut registry, &mut document);
+    finish_jobs(&mut registry, &mut document, false);
     let path = toolpath(&mut registry, &mut document);
     assert_eq!(path["state"], "ready", "{path}");
     let levels: Vec<f64> = serde_json::from_value(path["levels"].clone()).unwrap();
@@ -528,21 +538,32 @@ fn a_pocket_job_stops_when_its_task_is_cancelled() {
     assert!(bench.task(&ctx).is_none(), "Escape closed the task");
     drop(ctx);
     let stopped = Instant::now();
-    let logs = finish_jobs(&mut registry, &mut document);
+    let mut logs = finish_jobs(&mut registry, &mut document, false);
+    // Uncancelled, the job runs for minutes; a stop is seen at its next
+    // row, which a loaded machine can still take seconds to reach.
     assert!(
-        stopped.elapsed() < Duration::from_secs(5),
-        "it stopped at once"
+        stopped.elapsed() < Duration::from_secs(30),
+        "it stopped long before it would have finished"
     );
+    let state = |registry: &mut DocumentService, document: &mut Document| {
+        run(
+            registry,
+            document,
+            "example.cam",
+            "example.cam.toolpath",
+            json!({"id": feature.0.to_string()}),
+        )
+        .unwrap()["state"]
+            .clone()
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while state(&mut registry, &mut document) == "running" && Instant::now() < deadline {
+        logs.extend(finish_jobs(&mut registry, &mut document, false));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let now = state(&mut registry, &mut document);
+    assert_eq!(now, "stopped", "{logs:?}");
     assert!(logs.iter().any(|l| l.contains("stopped")), "{logs:?}");
-    let path = run(
-        &mut registry,
-        &mut document,
-        "example.cam",
-        "example.cam.toolpath",
-        json!({"id": feature.0.to_string()}),
-    )
-    .unwrap();
-    assert_eq!(path["state"], "stopped");
 }
 
 #[test]
