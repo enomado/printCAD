@@ -301,10 +301,20 @@ impl WasmWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         input: bench_api::Input,
     ) -> bool {
+        self.deliver_within(inner, ctx, input, Budget::Frame)
+    }
+
+    fn deliver_within(
+        &self,
+        inner: &mut Inner,
+        ctx: &mut WorkbenchRuntimeContext,
+        input: bench_api::Input,
+        budget: Budget,
+    ) -> bool {
         let Ok(json) = serde_json::to_string(&input) else {
             return false;
         };
-        self.write_call(inner, ctx, Budget::Frame, |b, s| b.call_input(s, &json))
+        self.write_call(inner, ctx, budget, |b, s| b.call_input(s, &json))
             .unwrap_or(false)
     }
 
@@ -834,7 +844,9 @@ impl Workbench for WasmWorkbench {
             pointer: convert::pointer(ctx, None),
         };
         let mut inner = self.inner();
-        self.deliver(&mut inner, ctx, input);
+        // A double click is one deliberate action, not the stream of
+        // pointer events a frame waits on: it has a command's time.
+        self.deliver_within(&mut inner, ctx, input, Budget::Long);
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
