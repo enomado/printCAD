@@ -10,6 +10,7 @@ default = ["egui"]
 egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
+bench_api = { path = "../../bench_api" }
 core_document = { path = "../../core_document" }
 kernel_api = { path = "../../kernel_api" }
 serde = { workspace = true }

@@ -12,10 +12,100 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, QtyField, check_row, destructive_button, note_card, overline};
 use ui_kit::{sans, sans_semibold};
 
+use bench_api::{ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
+
 use crate::{
     AssemblyWorkbench, Coupling, Gearing, JointFeature, JointKind, JointTool, Task, body_name,
     restore_placements,
 };
+
+/// The declared panels' widgets, as the Assembly writes them.
+mod w {
+    use super::*;
+
+    pub(super) fn header(icon: &str, title: &str) -> Widget {
+        Widget::Header {
+            icon: icon.into(),
+            title: title.into(),
+        }
+    }
+
+    pub(super) fn value(label: &str, value: impl Into<String>) -> Widget {
+        Widget::Value {
+            label: label.into(),
+            value: value.into(),
+            mono: false,
+        }
+    }
+
+    pub(super) fn note(kind: NoteKind, title: Option<&str>, text: impl Into<String>) -> Widget {
+        Widget::Note {
+            kind,
+            title: title.map(Into::into),
+            text: text.into(),
+        }
+    }
+
+    pub(super) fn button(id: &str, label: &str, style: ButtonStyle) -> Widget {
+        Widget::Button {
+            id: id.into(),
+            label: label.into(),
+            style,
+            enabled: true,
+        }
+    }
+
+    pub(super) fn hinted(hint: impl Into<String>, widget: Widget) -> Widget {
+        Widget::Hinted {
+            hint: hint.into(),
+            widget: Box::new(widget),
+        }
+    }
+
+    /// A number the bench keeps, not bound to a parameter.
+    pub(super) fn number(id: &str, label: &str, value: f32, dim: Dim) -> Widget {
+        ranged(id, label, value, dim, None)
+    }
+
+    /// A number within `min..=max`, when given.
+    pub(super) fn ranged(
+        id: &str,
+        label: &str,
+        value: f32,
+        dim: Dim,
+        range: Option<(f64, f64)>,
+    ) -> Widget {
+        Widget::Number {
+            id: id.into(),
+            label: label.into(),
+            value: f64::from(value),
+            dim,
+            bind: None,
+            min: range.map(|r| r.0),
+            max: range.map(|r| r.1),
+            decimals: 2,
+            error: None,
+        }
+    }
+}
+
+/// The move panel's fields: the position along each axis, then the turn
+/// about each.
+const MOVE_FIELDS: [&str; 6] = ["x", "y", "z", "turn_x", "turn_y", "turn_z"];
+
+/// A placement's turn as angles about X, Y and Z, degrees.
+fn move_angles(placement: &BodyPlacement) -> [f32; 3] {
+    let (ax, ay, az) = placement.quat().to_euler(glam::EulerRot::XYZ);
+    [ax, ay, az].map(f32::to_degrees)
+}
+
+/// The value a declared number came back with, by its id.
+fn number_event(event: &PanelEvent) -> Option<(&str, f32)> {
+    match event {
+        PanelEvent::Number { id, value } => Some((id.as_str(), *value as f32)),
+        _ => None,
+    }
+}
 
 /// Frames in a recorded sweep: there and back in four seconds.
 const SWEEP_FRAMES: usize = 60;
@@ -147,6 +237,111 @@ impl AssemblyWorkbench {
                 self.mass_panel(ui, ctx, request, found.as_ref(), density)
             }
             None => TaskOutcome::Open,
+        }
+    }
+
+    /// Draw a declared panel and hand back what the user did. Formulas set
+    /// on bound numbers go into the document here, before the events that
+    /// carry their values.
+    fn show_declared(
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        widgets: &[Widget],
+    ) -> Vec<PanelEvent> {
+        let out = core_document::panel::show(
+            ui,
+            egui::Id::new("assembly_task"),
+            widgets,
+            Some(&*ctx.document),
+        );
+        for (bind, formula) in out.formulas {
+            let Ok(uuid) = uuid::Uuid::parse_str(&bind.feature) else {
+                continue;
+            };
+            if let Err(why) = ctx
+                .document
+                .set_feature_formula(FeatureId(uuid), &bind.key, formula)
+            {
+                ctx.log_warn(why.to_string());
+            }
+        }
+        out.events
+    }
+
+    /// The open task's panel drawn as declared widgets, and what the user
+    /// did to it handled: a package's panel takes the same way.
+    fn declared_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> TaskOutcome {
+        let widgets = self.task_widgets(ctx);
+        for event in Self::show_declared(ui, ctx, &widgets) {
+            if let Some(outcome) = self.task_event(ctx, &event) {
+                return outcome;
+            }
+        }
+        TaskOutcome::Open
+    }
+
+    /// The open task's panel, as widgets.
+    pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
+        match &self.task {
+            Some(Task::Move { body, .. }) => self.move_widgets(ctx, *body),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A change to the open task's panel; an outcome when it closes the
+    /// task.
+    pub(crate) fn task_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        match self.task.clone() {
+            Some(Task::Move { body, .. }) => self.move_event(ctx, body, event),
+            _ => None,
+        }
+    }
+
+    /// What the last solve said, as a note.
+    fn verdict_note(&self) -> Option<Widget> {
+        match &self.verdict {
+            Some(Ok(message)) => Some(w::note(NoteKind::Success, None, message)),
+            Some(Err(message)) => {
+                Some(w::note(NoteKind::Error, Some("Joints left apart"), message))
+            }
+            None => None,
+        }
+    }
+
+    /// Run one of the bench's own commands from a panel, as a package's
+    /// `call` runs it, and keep what the solve that ends it said: the
+    /// bodies it moved, or the joints it left apart.
+    fn call(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        command: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let before = crate::all_placements(ctx);
+        let args = crate::commands::object(args);
+        match crate::commands::run(command, &args, ctx) {
+            Ok(value) => {
+                let moved = before
+                    .iter()
+                    .filter(|(b, p)| ctx.document.body_placement(*b) != *p)
+                    .count();
+                self.verdict = Some(Ok(crate::moved_words(moved)));
+                Ok(value)
+            }
+            Err(why) => {
+                let message = why.to_string();
+                self.verdict = Some(Err(message.clone()));
+                ctx.log_warn(message.clone());
+                Err(message)
+            }
         }
     }
 
@@ -2451,75 +2646,93 @@ impl AssemblyWorkbench {
                 label: "Move body".to_string(),
             };
         }
-        header(ui, "move-geometry", &body_name(ctx, body));
-        ui.add_space(SPACE_2);
+        self.declared_panel(ui, ctx)
+    }
+
+    /// A body's place by numbers: its position and its turn about each
+    /// axis, shown and not edited while its joints place it.
+    fn move_widgets(&self, ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<Widget> {
+        let mut widgets = vec![w::header("move-geometry", &body_name(ctx, body))];
         let held = Self::held_by_joints(ctx, body);
         if held {
-            note_card(
-                ui,
-                Note::Info,
+            widgets.push(w::note(
+                NoteKind::Info,
                 Some("Placed by its joints"),
                 "Its joints decide where it sits. Move the body it is joined to, \
                  or delete a joint to free it.",
-            );
+            ));
         }
         let placement = ctx.document.body_placement(body);
-        let mut offset = placement.translation;
-        let (ax, ay, az) = placement.quat().to_euler(glam::EulerRot::XYZ);
-        let mut angles = [ax, ay, az].map(f32::to_degrees);
-        let mut changed = false;
-        Card::new().padding(SPACE_3).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.add_enabled_ui(!held, |ui| {
-                for (axis, value) in ["X", "Y", "Z"].iter().zip(offset.iter_mut()) {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [90.0, INPUT],
-                            egui::Label::new(
-                                RichText::new(format!("Position {axis}"))
-                                    .font(sans(FONT_SM))
-                                    .color(TEXT2),
-                            ),
-                        );
-                        changed |= QtyField::offset(value).show(ui);
-                    });
-                }
-                for (axis, value) in ["X", "Y", "Z"].iter().zip(angles.iter_mut()) {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [90.0, INPUT],
-                            egui::Label::new(
-                                RichText::new(format!("Turn about {axis}"))
-                                    .font(sans(FONT_SM))
-                                    .color(TEXT2),
-                            ),
-                        );
-                        changed |= QtyField::degrees(value).range(-180.0..=180.0).show(ui);
-                    });
-                }
+        let angles = move_angles(&placement);
+        for (k, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
+            let label = format!("Position {axis}");
+            let value = placement.translation[k];
+            widgets.push(if held {
+                w::value(&label, format!("{value:.2} mm"))
+            } else {
+                w::number(MOVE_FIELDS[k], &label, value, Dim::Length)
             });
+        }
+        for (k, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
+            let label = format!("Turn about {axis}");
+            widgets.push(if held {
+                w::value(&label, format!("{:.2} °", angles[k]))
+            } else {
+                w::ranged(
+                    MOVE_FIELDS[3 + k],
+                    &label,
+                    angles[k],
+                    Dim::Angle,
+                    Some((-180.0, 180.0)),
+                )
+            });
+        }
+        if !held {
+            widgets.push(w::hinted(
+                "No move, no turn",
+                w::button("home", "Back to where it was made", ButtonStyle::Secondary),
+            ));
+        }
+        widgets.extend(self.verdict_note());
+        widgets
+    }
+
+    /// A field of the move panel changed: the body goes there as
+    /// `asm.place` puts it, and whatever is joined to it follows.
+    fn move_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        body: BodyId,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let moved = match (event, number_event(event)) {
+            (PanelEvent::Button { id }, _) if id == "home" => BodyPlacement::IDENTITY,
+            (_, Some((field, value))) => {
+                let k = MOVE_FIELDS.iter().position(|f| *f == field)?;
+                let placement = ctx.document.body_placement(body);
+                let mut offset = placement.translation;
+                let mut angles = move_angles(&placement);
+                match k {
+                    0..3 => offset[k] = value,
+                    _ => angles[k - 3] = value,
+                }
+                let [ax, ay, az] = angles.map(f32::to_radians);
+                BodyPlacement::new(
+                    glam::Quat::from_euler(glam::EulerRot::XYZ, ax, ay, az),
+                    glam::Vec3::from_array(offset),
+                )
+            }
+            _ => return None,
+        };
+        let args = serde_json::json!({
+            "body": body.0.to_string(),
+            "translation": moved.translation,
+            "rotation": moved.rotation,
         });
-        if changed {
-            let [ax, ay, az] = angles.map(f32::to_radians);
-            let moved = BodyPlacement::new(
-                glam::Quat::from_euler(glam::EulerRot::XYZ, ax, ay, az),
-                glam::Vec3::from_array(offset),
-            );
-            crate::components::move_with_unit(ctx.document, body, moved);
-            // Whatever is joined to it follows.
+        if self.call(ctx, "asm.place", args).is_ok() {
             self.solve_and_apply(ctx);
         }
-        ui.add_space(SPACE_2);
-        if !held
-            && ui_kit::widgets::secondary_button(ui, "Back to where it was made")
-                .on_hover_text("No move, no turn")
-                .clicked()
-        {
-            crate::components::move_with_unit(ctx.document, body, BodyPlacement::IDENTITY);
-            self.solve_and_apply(ctx);
-        }
-        self.verdict_card(ui);
-        TaskOutcome::Open
+        None
     }
 }
 
@@ -2786,6 +2999,10 @@ fn freedom_line(ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext, body: BodyId) 
     ui.add_space(SPACE_1);
     ui.add(egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).wrap());
 }
+
+#[cfg(test)]
+#[path = "panel_tests.rs"]
+mod tests;
 
 /// A mass in grams, or kilograms from a thousand.
 fn mass_text(grams: f64) -> String {

@@ -5356,6 +5356,7 @@ dependencies = [
 name = "wb_assembly"
 version = "0.1.0"
 dependencies = [
+ "bench_api",
  "core_document",
  "egui",
  "glam 0.33.7",

@@ -1364,7 +1364,7 @@ pub(crate) fn place_bodies(
 }
 
 /// Every body's placement, to put back when a task is cancelled.
-fn all_placements(ctx: &WorkbenchRuntimeContext) -> Vec<(BodyId, BodyPlacement)> {
+pub(crate) fn all_placements(ctx: &WorkbenchRuntimeContext) -> Vec<(BodyId, BodyPlacement)> {
     ctx.document
         .bodies()
         .iter()
@@ -1395,16 +1395,21 @@ fn body_name(ctx: &WorkbenchRuntimeContext, body: BodyId) -> String {
 
 /// Place every jointed body, as edits: how many moved, or why they could
 /// not all be placed.
+/// What a solve that moved `count` bodies says.
+pub(crate) fn moved_words(count: usize) -> String {
+    match count {
+        0 => "Every joint holds".to_string(),
+        1 => "Moved 1 body; every joint holds".to_string(),
+        n => format!("Moved {n} bodies; every joint holds"),
+    }
+}
+
 pub(crate) fn apply_solve(ctx: &mut WorkbenchRuntimeContext) -> Result<String, String> {
     match solve(ctx.document) {
         Ok(moves) => {
             let count = moves.len();
             place_bodies(ctx.document, &moves);
-            Ok(match count {
-                0 => "Every joint holds".to_string(),
-                1 => "Moved 1 body; every joint holds".to_string(),
-                n => format!("Moved {n} bodies; every joint holds"),
-            })
+            Ok(moved_words(count))
         }
         Err(SolveError::Conflict {
             body,
@@ -3173,7 +3178,7 @@ mod tests {
     use std::sync::Arc;
 
     /// Two bodies, each a flat square facing up at its own height.
-    fn scene() -> (Document, BodyId, BodyId) {
+    pub(crate) fn scene() -> (Document, BodyId, BodyId) {
         let mut doc = Document::new("t");
         let base = doc.create_body(Some("Base".into()));
         let part = doc.create_body(Some("Part".into()));
@@ -3203,7 +3208,7 @@ mod tests {
         (doc, base, part)
     }
 
-    fn face_up(z: f32) -> FaceRef {
+    pub(crate) fn face_up(z: f32) -> FaceRef {
         FaceRef {
             name: 0,
             point: [2.0, 2.0, z],
@@ -3215,7 +3220,11 @@ mod tests {
         }
     }
 
-    fn frame(wb: &mut AssemblyWorkbench, doc: &mut Document, pick: Option<(BodyId, FaceRef)>) {
+    pub(crate) fn frame(
+        wb: &mut AssemblyWorkbench,
+        doc: &mut Document,
+        pick: Option<(BodyId, FaceRef)>,
+    ) {
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         ctx.selected_body_id = pick.map(|(b, _)| b.0);
         ctx.selected_face = pick.map(|(_, f)| f);
@@ -3498,7 +3507,7 @@ mod tests {
     }
 
     /// One frame of the task panel, as the host runs it; what it recorded.
-    fn task_frame(
+    pub(crate) fn task_frame(
         wb: &mut AssemblyWorkbench,
         doc: &mut Document,
         request: core_document::TaskRequest,
