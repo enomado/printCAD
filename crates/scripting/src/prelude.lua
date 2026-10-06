@@ -42,8 +42,15 @@ function show(value, indent)
   return "{\n" .. table.concat(lines, ",\n") .. "\n" .. indent .. "}"
 end
 
+-- help() lists every command, help("sketch") those whose id starts so,
+-- and any other word the commands that match it best.
 function help(prefix)
-  for _, c in ipairs(call("app.commands", { prefix = prefix })) do
+  local listed = call("app.commands", { prefix = prefix })
+  if #listed == 0 and prefix then
+    listed = call("app.search", { query = prefix })
+    if #listed == 0 then print(string.format("Nothing matches %q.", prefix)) end
+  end
+  for _, c in ipairs(listed) do
     local names = {}
     for _, p in ipairs(c.params) do
       names[#names + 1] = p.required and p.name or (p.name .. "?")

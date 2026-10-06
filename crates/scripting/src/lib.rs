@@ -202,6 +202,8 @@ impl ScriptEngine {
                     let args = to_args(lua, args)?;
                     let answer = if id == "app.commands" {
                         Ok(list_commands(host.commands(), &args))
+                    } else if id == "app.search" {
+                        Ok(search_commands(host.commands(), &args))
                     } else {
                         host.call(&id, args)
                     };
@@ -387,6 +389,75 @@ fn list_commands(commands: Vec<CommandSpec>, args: &CommandArgs) -> serde_json::
             .map(CommandSpec::to_json)
             .collect(),
     )
+}
+
+/// How many commands `help` lists for a word.
+const HELP_HITS: usize = 10;
+
+/// The commands that match `args.query` best, best first, as `help`
+/// lists them.
+fn search_commands(commands: Vec<CommandSpec>, args: &CommandArgs) -> serde_json::Value {
+    let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let catalog = agents::discovery::Catalog::new(commands.iter().map(command_entry).collect());
+    let found = catalog.search(&[query], HELP_HITS);
+    serde_json::Value::Array(
+        found[0]
+            .hits
+            .iter()
+            .filter_map(|h| commands.iter().find(|c| c.id == h.entry.id))
+            .map(CommandSpec::to_json)
+            .collect(),
+    )
+}
+
+/// A command as the discovery catalog reads it: what `search` ranks and
+/// `describe` shows, for the MCP server and `help` alike.
+pub fn command_entry(spec: &CommandSpec) -> agents::discovery::Entry {
+    use agents::discovery::{Entry, Param};
+    use core_document::AgentAccess;
+    let mut entry = Entry::command(&spec.id, &spec.summary);
+    entry.params = spec
+        .params
+        .iter()
+        .map(|p| {
+            let optional = if p.required { "" } else { ", optional" };
+            let doc = if p.doc.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", p.doc)
+            };
+            Param {
+                name: p.name.clone(),
+                about: format!("({}{optional}){doc}", p.kind.name()),
+            }
+        })
+        .collect();
+    if spec.returns != "nothing" {
+        entry.returns = spec.returns.clone();
+    }
+    if let Some(extra) = &spec.extra_args {
+        entry.other_args = extra.clone();
+    }
+    if spec.read_only {
+        entry
+            .details
+            .push("Only reads: an agent runs it without asking.".into());
+    }
+    match &spec.agent {
+        AgentAccess::AsAllowed => {}
+        AgentAccess::AlwaysAsk => entry.details.push(
+            "Waits for the user's OK every time: run it with `call` on its own, \
+             not from a script."
+                .into(),
+        ),
+        AgentAccess::Never(why) => entry
+            .details
+            .push(format!("An agent never runs it: {why}.")),
+    }
+    // RFC 0002 milestone 1 fills `entry.notes`, `entry.examples` and
+    // `entry.see_also` here from `CommandSpec`'s notes, examples and
+    // see-also, which `search` ranks and `describe` shows.
+    entry
 }
 
 /// A command that a host does not have.
@@ -586,6 +657,19 @@ mod tests {
         let out = engine.eval_line("local x = 20; return x + 1", &mut host);
         assert_eq!(out.value.as_deref(), Some("21"));
         assert_eq!(out.returned, Some(json!(21)));
+    }
+
+    #[test]
+    fn help_with_a_word_searches_the_commands() {
+        let mut engine = ScriptEngine::new();
+        let mut host = Recorder::default();
+        let out = engine.eval_line("help('extrude a profile')", &mut host);
+        assert_eq!(
+            out.printed,
+            ["pc.design.pad{sketch, length?, items?}  Pad a sketch"]
+        );
+        let out = engine.eval_line("help('xyzzy')", &mut host);
+        assert_eq!(out.printed, ["Nothing matches \"xyzzy\"."]);
     }
 
     #[test]
