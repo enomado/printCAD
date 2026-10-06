@@ -61,7 +61,9 @@ cargo fmt --all                   # CI enforces --check
   its store when there are several), and the Stores tab beside it adds and
   removes stores;
   installed packages a store lists show Listed, and one taken off is
-  warned of once a run; `PRINTCAD_STORE_INDEX` (`;`-separated) stands in
+  warned of once a run; a package may declare kinds bought
+  (`Registration::bought_kinds`: the parts list marks their bodies bought,
+  and exports leave them out, until the user clears it); `PRINTCAD_STORE_INDEX` (`;`-separated) stands in
   for the list). Network work and compiling
   (installs, update checks at start, updates, turning one on) runs on
   threads reporting through `app/packages.rs::PackageNews`, drained each
@@ -327,7 +329,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`interference.rs`: `plan` reads the visible solids and the pairs whose
   placed bounds meet, `Check::run` asks `KernelQueries::overlap`, the
   kernel's common of each pair, measured and meshed, on worker threads
-  away from the window with progress and a stop flag; the shared solid
+  away from the window with progress and a stop flag, a pair the kernel
+  fails on listed as unchecked (`Interference::unchecked`) while the rest
+  run; the shared solid
   draws as an `OverlayMesh::on_top`, the renderer's `on_top` pass, blended
   with no depth test),
   dragging (a left press on a body the solver moves takes hold of it
@@ -637,7 +641,9 @@ UI thread in `drive_scripts` (8 ms a frame, in the tab the run started in,
 `in_script_tab`); `doc.rebuild` answers once the kernel is idle
 (`script_rebuild`) rather than blocking a frame. The journal is held
 (`OpJournal::hold`) from `Started` to `Finished`, so a run is one undo
-step. The thread wakes the loop through `AppEvent::Script` and a busy
+step. The thread wakes the loop through `AppEvent::Script` and a busy A run that stops with an error or is stopped is taken back
+(`OpJournal::roll_back`), leaving no undo step; an import inside it is a
+barrier, so only what followed it is taken back.
 thread counts as async work. Stop sets the engine's stop flag.
 A run's chunk value comes back as `RunOutput::returned` (JSON: a table
 with keys 1 to n a list, any other an object); the console shows it and
@@ -767,7 +773,10 @@ kinds reported on the slot); `DocumentService::evaluate` runs it when
 sketch solves; reused while the unsettled input is the same) and applies
 it as derived state: `Document::feature_values` is the data a bench
 builds, draws and edits from, and a feature whose values moved is marked
-dirty without marking the document edited. Results a bench records rather
+dirty without marking the document edited. A slot whose formula fails
+stops its feature's build with the formula's error
+(`Document::build_formula_error`, `BuildPlan::stop_at_failing_formulas`),
+rather than build from the number its data held before. Results a bench records rather
 than derives follow through `Workbench::values_moved` (the assembly
 re-solves placements): the host calls it from `settle_formulas`, every
 frame and in `close_gesture`, which every undo boundary goes through, so
