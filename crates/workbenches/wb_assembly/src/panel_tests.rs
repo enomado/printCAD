@@ -758,3 +758,209 @@ fn a_coupling_s_fields_change_it_as_asm_set_does_and_record_the_change() {
         doc.get_feature_data(coupling)
     );
 }
+
+fn joint_of(doc: &Document, id: FeatureId) -> JointFeature {
+    JointFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap()
+}
+
+/// A joint's settings task open on an existing joint.
+fn editing(doc: &mut Document, id: FeatureId) -> AssemblyWorkbench {
+    AssemblyWorkbench {
+        task: Some(Task::Joint {
+            id,
+            before: doc.get_feature_data(id).cloned(),
+            placements: crate::all_placements(&context(doc)),
+        }),
+        ..AssemblyWorkbench::default()
+    }
+}
+
+#[test]
+fn a_new_mate_s_gap_moves_its_body_as_asm_set_does_and_records_as_the_mate() {
+    let (mut wb, mut doc, _, part, id) = mated();
+    let before = doc.clone();
+    let panel = widgets(&wb, &mut doc);
+    let Some(Widget::Number {
+        bind: Some(bind), ..
+    }) = field(&panel, "offset")
+    else {
+        panic!("the gap takes formulas: {panel:?}");
+    };
+    assert_eq!(bind.key, "/kind/Mate/offset");
+    assert!(field(&panel, "flip").is_some());
+    assert!(
+        field(&panel, "drive.drive").is_none(),
+        "a mate has no drive"
+    );
+    draws(&mut wb, &mut doc);
+
+    send(&mut wb, &mut doc, number("offset", 5.0));
+    let mut by_command = before.clone();
+    run(
+        &mut by_command,
+        "asm.set",
+        serde_json::json!({"joint": id.0.to_string(), "offset": 5.0}),
+    );
+    assert_eq!(doc.get_feature_data(id), by_command.get_feature_data(id));
+    assert_eq!(doc.body_placement(part), by_command.body_placement(part));
+    assert!(matches!(&wb.verdict, Some(Ok(_))), "{:?}", wb.verdict);
+    assert!(words(&widgets(&wb, &mut doc)).contains("every joint holds"));
+
+    let recorded = accept(&mut wb, &mut doc);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0].id, "asm.mate");
+    assert_eq!(recorded[0].args["offset"], serde_json::json!(5.0));
+}
+
+#[test]
+fn an_edited_joint_records_what_its_panel_changed_as_asm_set() {
+    let (_, mut doc, _, part, id) = mated();
+    let before = doc.clone();
+    let mut wb = editing(&mut doc, id);
+    send(&mut wb, &mut doc, toggle("flip", true));
+    send(&mut wb, &mut doc, number("moving_end", 2.0));
+    let recorded = accept(&mut wb, &mut doc);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0].id, "asm.set");
+    assert_eq!(recorded[0].args["flip"], serde_json::json!(true));
+    assert_eq!(recorded[0].args["moving_end"], serde_json::json!(2.0));
+    let mut replay = before;
+    run(
+        &mut replay,
+        "asm.set",
+        serde_json::Value::Object(recorded[0].args.clone()),
+    );
+    assert_eq!(replay.get_feature_data(id), doc.get_feature_data(id));
+    let (a, b) = (replay.body_placement(part), doc.body_placement(part));
+    assert!(close_to(a.translation, b.translation), "{a:?} {b:?}");
+    assert!(a.quat().angle_between(b.quat()) < 1e-4, "{a:?} {b:?}");
+}
+
+#[test]
+fn a_joint_s_kind_changes_as_asm_set_with_a_kind_does() {
+    let (mut wb, mut doc, _, _, id) = mated();
+    let distance = JointTool::ALL
+        .iter()
+        .position(|t| *t == JointTool::Distance)
+        .unwrap();
+    let (outcome, recorded) = send(&mut wb, &mut doc, choose("kind", distance));
+    assert!(matches!(outcome, Some(TaskOutcome::Open)));
+    assert!(matches!(
+        joint_of(&doc, id).kind,
+        JointKind::Distance { .. }
+    ));
+    let ids: Vec<&str> = recorded.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["asm.mate", "asm.set"]);
+    assert_eq!(recorded[1].args["kind"], serde_json::json!("distance"));
+    assert!(field(&widgets(&wb, &mut doc), "offset").is_some());
+    draws(&mut wb, &mut doc);
+
+    let (outcome, _) = send(&mut wb, &mut doc, button("repick"));
+    assert!(matches!(outcome, Some(TaskOutcome::Open)));
+    assert!(wb.picking.is_some(), "the faces are picked afresh");
+}
+
+#[test]
+fn a_hinge_s_drive_holds_limits_sweeps_and_records_as_asm_set_does() {
+    let (mut doc, _, hinge) = geared();
+    let before = doc.clone();
+    let mut wb = editing(&mut doc, hinge);
+    let panel = widgets(&wb, &mut doc);
+    assert!(words(&panel).contains("Angle now: "));
+    assert!(field(&panel, "drive.to").is_none());
+    assert!(field(&panel, "check_sweep").is_some());
+    draws(&mut wb, &mut doc);
+
+    send(&mut wb, &mut doc, toggle("drive.drive", true));
+    let panel = widgets(&wb, &mut doc);
+    let Some(Widget::Number {
+        bind: Some(bind), ..
+    }) = field(&panel, "drive.to")
+    else {
+        panic!("a held drive takes formulas: {panel:?}");
+    };
+    assert_eq!(bind.key, "/kind/Hinge/drive/to");
+    assert!(field(&panel, "drive.play").is_some());
+    assert!(field(&panel, "drive.record").is_some());
+    send(&mut wb, &mut doc, number("drive.to", 30.0));
+    send(&mut wb, &mut doc, toggle("drive.limits", true));
+    send(&mut wb, &mut doc, number("drive.high", -40.0));
+    // The limits start 45° either side of where the hinge stands, and an
+    // end typed past the other swaps them.
+    let JointKind::Hinge { drive, .. } = joint_of(&doc, hinge).kind else {
+        panic!("a hinge");
+    };
+    let [low, high] = drive.limits.expect("limited");
+    assert_eq!(low, -40.0);
+    assert!((high + 15.0).abs() < 1e-3, "{high}");
+    let mut by_command = before.clone();
+    run(
+        &mut by_command,
+        "asm.set",
+        serde_json::json!({"joint": hinge.0.to_string(), "drive": 30.0,
+                           "limits": [low, high]}),
+    );
+    assert_eq!(
+        doc.get_feature_data(hinge),
+        by_command.get_feature_data(hinge)
+    );
+    draws(&mut wb, &mut doc);
+
+    // Played, the drive sweeps away from where it was held, and stopping
+    // puts it back.
+    send(&mut wb, &mut doc, toggle("drive.limits", false));
+    send(&mut wb, &mut doc, button("drive.play"));
+    assert!(
+        wb.playing
+            .is_some_and(|p| p.joint == hinge && p.start == 30.0)
+    );
+    assert!(wb.advance_play(&mut context(&mut doc), hinge, 0.5));
+    let JointKind::Hinge { drive, .. } = joint_of(&doc, hinge).kind else {
+        panic!("a hinge");
+    };
+    assert!(
+        drive.to.is_some_and(|to| (to - 30.0).abs() > 1.0),
+        "{drive:?}"
+    );
+    send(&mut wb, &mut doc, button("drive.play"));
+    assert!(wb.playing.is_none());
+    let JointKind::Hinge { drive, .. } = joint_of(&doc, hinge).kind else {
+        panic!("a hinge");
+    };
+    assert_eq!(drive.to, Some(30.0));
+
+    let mut ctx = context(&mut doc);
+    wb.task_event(&mut ctx, &button("drive.record"));
+    let requests = core_document::HookOutcome::take(&mut ctx).requests;
+    assert!(
+        requests
+            .iter()
+            .any(|r| matches!(r, core_document::HostRequest::RecordAnimation { .. }))
+    );
+
+    send(&mut wb, &mut doc, toggle("drive.drive", false));
+    let JointKind::Hinge { drive, .. } = joint_of(&doc, hinge).kind else {
+        panic!("a hinge");
+    };
+    assert_eq!(drive.to, None);
+    let recorded = accept(&mut wb, &mut doc);
+    assert!(recorded.is_empty(), "back as it was: {recorded:?}");
+}
+
+#[test]
+fn a_joint_s_turn_and_delete_record_their_commands() {
+    let (_, mut doc, _, _, id) = mated();
+    let mut wb = editing(&mut doc, id);
+    send(&mut wb, &mut doc, number("turn_by", 45.0));
+    assert_eq!(wb.turn_by, Some(45.0));
+    let (_, recorded) = send(&mut wb, &mut doc, button("turn"));
+    assert_eq!(recorded[0].id, "asm.turn");
+    assert_eq!(recorded[0].args["degrees"], serde_json::json!(45.0));
+    let (_, recorded) = send(&mut wb, &mut doc, button("turn_over"));
+    assert_eq!(recorded[0].id, "asm.flip");
+
+    let (outcome, recorded) = send(&mut wb, &mut doc, button("delete"));
+    assert!(matches!(outcome, Some(TaskOutcome::Accepted { .. })));
+    assert_eq!(recorded[0].id, "doc.delete");
+    assert!(doc.get_feature_meta(id).is_none());
+}

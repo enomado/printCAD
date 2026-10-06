@@ -9,7 +9,7 @@ use core_document::{
 };
 use egui::RichText;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{Card, Note, QtyField, check_row, destructive_button, note_card, overline};
+use ui_kit::widgets::{QtyField, overline};
 use ui_kit::{sans, sans_semibold};
 
 use bench_api::{Bind, ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
@@ -225,6 +225,44 @@ fn freedom_text(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<Widget> {
     }))
 }
 
+/// Where a joint's motion stands: a hinge's angle or a slider's position,
+/// and an alignment's turn and slide.
+fn joint_now(
+    ctx: &WorkbenchRuntimeContext,
+    body: Option<BodyId>,
+    joint: &JointFeature,
+) -> (Option<f64>, Option<(f64, f64)>) {
+    let placed = |b: BodyId| -> crate::Rigid { ctx.document.body_placement(b).into() };
+    let other = placed(joint.other_body);
+    (
+        body.and_then(|b| joint.travel(&placed(b), &other)),
+        body.and_then(|b| joint.align_travel(&placed(b), &other)),
+    )
+}
+
+/// The range a drive sweeps through: its limits, or a whole turn, or
+/// 25 mm either side of `centre`.
+fn sweep_range(limits: Option<[f32; 2]>, angular: bool, centre: f64) -> (f64, f64) {
+    match limits {
+        Some([low, high]) => (f64::from(low), f64::from(high)),
+        None if angular => (-179.0, 179.0),
+        None => (centre - 25.0, centre + 25.0),
+    }
+}
+
+/// The range a joint's motion is checked for collisions through: its
+/// limits, or a whole turn, or 25 mm either side of where it stands.
+fn motion_range(limits: Option<[f32; 2]>, hinge: bool, now: Option<f64>) -> (f32, f32) {
+    match limits {
+        Some([low, high]) => (low, high),
+        None if hinge => (-180.0, 180.0),
+        None => {
+            let at = now.unwrap_or(0.0) as f32;
+            (at - 25.0, at + 25.0)
+        }
+    }
+}
+
 /// The value a declared number came back with, by its id.
 fn number_event(event: &PanelEvent) -> Option<(&str, f32)> {
     match event {
@@ -254,16 +292,6 @@ fn header(ui: &mut egui::Ui, icon: &str, title: &str) {
                 );
             });
         });
-}
-
-fn row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [90.0, INPUT],
-            egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
-        );
-        ui.label(RichText::new(value).font(sans(FONT_SM)).color(TEXT1));
-    });
 }
 
 impl AssemblyWorkbench {
@@ -397,6 +425,7 @@ impl AssemblyWorkbench {
             Some(Task::Explode { spread, steps, .. }) => Self::explode_widgets(ctx, *spread, steps),
             Some(Task::Parts) => self.parts_widgets(ctx),
             Some(Task::Coupling { id, .. }) => self.coupling_widgets(ctx, *id),
+            Some(Task::Joint { id, .. }) => self.joint_widgets(ctx, *id),
             _ => Vec::new(),
         }
     }
@@ -436,6 +465,11 @@ impl AssemblyWorkbench {
             Some(Task::Coupling { id, before, .. }) => {
                 self.coupling_event(ctx, (id, before.is_none()), event)
             }
+            Some(Task::Joint {
+                id,
+                before,
+                placements,
+            }) => self.joint_event(ctx, (id, before.is_none(), &placements), event),
             _ => None,
         }
     }
@@ -477,18 +511,6 @@ impl AssemblyWorkbench {
                 ctx.log_warn(message.clone());
                 Err(message)
             }
-        }
-    }
-
-    fn verdict_card(&self, ui: &mut egui::Ui) {
-        match &self.verdict {
-            Some(Ok(message)) => {
-                note_card(ui, Note::Success, None, message);
-            }
-            Some(Err(message)) => {
-                note_card(ui, Note::Error, Some("Joints left apart"), message);
-            }
-            None => {}
         }
     }
 
@@ -1980,531 +2002,747 @@ impl AssemblyWorkbench {
             self.task = None;
             return TaskOutcome::Cancelled;
         };
-        let Ok(mut joint) = JointFeature::from_json(&node.data) else {
-            note_card(
-                ui,
-                Note::Error,
+        if JointFeature::from_json(&node.data).is_ok() {
+            let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
+            if self.advance_play(ctx, id, dt) {
+                ui.ctx().request_repaint();
+            }
+        }
+        self.collect_sweep(ctx);
+        if self.sweep_progress().is_some_and(|(joint, ..)| joint == id) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        self.declared_panel(ui, ctx)
+    }
+
+    /// Move a swept drive on by `dt` seconds, back and forth through its
+    /// range every four seconds; whether it moved. A formula holding the
+    /// drive's value stops the sweep, which would fight it every frame.
+    fn advance_play(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId, dt: f64) -> bool {
+        let Some(joint) = ctx
+            .document
+            .get_feature_data(id)
+            .and_then(|d| JointFeature::from_json(d).ok())
+        else {
+            return false;
+        };
+        let (drive, base) = match &joint.kind {
+            JointKind::Hinge { drive, .. } => (drive, "/kind/Hinge/drive"),
+            JointKind::Slider { drive, .. } => (drive, "/kind/Slider/drive"),
+            _ => return false,
+        };
+        if drive.to.is_none() {
+            return false;
+        }
+        if ctx
+            .document
+            .feature_formula(id, &format!("{base}/to"))
+            .is_some()
+        {
+            self.playing = self.playing.filter(|p| p.joint != id);
+            return false;
+        }
+        let Some(play) = self.playing.as_mut().filter(|p| p.joint == id) else {
+            return false;
+        };
+        let angular = matches!(joint.kind, JointKind::Hinge { .. });
+        let (low, high) = sweep_range(drive.limits, angular, f64::from(play.start));
+        play.phase += dt * std::f64::consts::TAU / 4.0;
+        let to = (low + (high - low) * (0.5 - 0.5 * play.phase.cos())) as f32;
+        let _ = self.call(
+            ctx,
+            "asm.set",
+            serde_json::json!({"joint": id.0.to_string(), "drive": to}),
+        );
+        true
+    }
+
+    /// A joint's settings: its bodies, its kind and faces, what it holds
+    /// and how its motion is driven or limited, the check of that motion
+    /// for collisions, a turn of its body, then what the last solve said
+    /// and the joint's Delete.
+    fn joint_widgets(&self, ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Vec<Widget> {
+        let Some(node) = ctx.document.get_feature_meta(id) else {
+            return Vec::new();
+        };
+        let Ok(joint) = JointFeature::from_json(&node.data) else {
+            return vec![w::note(
+                NoteKind::Error,
                 Some("Unreadable joint"),
                 "The stored joint does not parse.",
-            );
-            return TaskOutcome::Open;
+            )];
         };
-        header(ui, joint.kind.icon(), &node.name);
-        ui.add_space(SPACE_2);
-        let moving = node.body.map(|b| body_name(ctx, b)).unwrap_or_default();
-        row(ui, "Moves", &moving);
-        row(ui, "Against", &body_name(ctx, joint.other_body));
+        let (now, align_now) = joint_now(ctx, node.body, &joint);
+        let bound = |key: &str, label: &str, value: f32, dim: Dim, path: &str, hint: &str| {
+            w::hinted(hint, w::bound(key, label, value, dim, (id, path)))
+        };
+        let mut widgets = vec![
+            w::header(joint.kind.icon(), &node.name),
+            w::value(
+                "Moves",
+                node.body.map(|b| body_name(ctx, b)).unwrap_or_default(),
+            ),
+            w::value("Against", body_name(ctx, joint.other_body)),
+        ];
         if let Some(current) = JointTool::of_kind(&joint.kind) {
-            let mut chosen = None;
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new("Kind").font(sans(FONT_SM)).color(TEXT2)),
-                );
-                egui::ComboBox::from_id_salt(("joint_kind", id))
-                    .selected_text(RichText::new(current.label()).font(sans(FONT_SM)))
-                    .width(ui.available_width() - 2.0 * ui.spacing().button_padding.x)
-                    .show_ui(ui, |ui| {
-                        for tool in JointTool::ALL {
-                            let fits = tool.fits(&joint.moving, &joint.fixed);
-                            let on = tool == current;
-                            let hint = if fits {
-                                tool.summary().to_string()
-                            } else {
-                                format!("{}; pick its faces", tool.summary())
-                            };
-                            if ui
-                                .add(egui::Button::selectable(
-                                    on,
-                                    RichText::new(tool.label()).font(sans(FONT_SM)),
-                                ))
-                                .on_hover_text(hint)
-                                .clicked()
-                                && !on
-                            {
-                                chosen = Some((tool, fits));
-                            }
-                        }
-                    });
+            widgets.push(Widget::Choice {
+                id: "kind".into(),
+                label: "Kind".into(),
+                options: JointTool::ALL
+                    .iter()
+                    .map(|t| t.label().to_string())
+                    .collect(),
+                selected: JointTool::ALL
+                    .iter()
+                    .position(|t| *t == current)
+                    .unwrap_or(0),
             });
-            match chosen {
-                Some((tool, true)) => {
-                    self.change_kind(ctx, id, created, placements, tool);
-                    return TaskOutcome::Open;
-                }
-                // Faces of the wrong sort for it: pick them afresh.
-                Some((tool, false)) => {
-                    if created {
-                        crate::commands::record_joint(ctx, id, None, placements);
-                    }
-                    self.start_repick(id, tool);
-                    return TaskOutcome::Open;
-                }
-                None => {}
-            }
-            if ui_kit::widgets::secondary_button(ui, "Pick faces again")
-                .on_hover_text("Pick the two faces afresh; the joint keeps its name and kind")
-                .clicked()
-            {
-                if created {
-                    crate::commands::record_joint(ctx, id, None, placements);
-                }
-                self.start_repick(id, current);
-                return TaskOutcome::Open;
-            }
+            widgets.push(w::hinted(
+                "Pick the two faces afresh; the joint keeps its name and kind",
+                w::button("repick", "Pick faces again", ButtonStyle::Secondary),
+            ));
         }
-        ui.add_space(SPACE_2);
-        let mut changed = false;
-        let mut formula_edits: Vec<(String, Option<String>)> = Vec::new();
-        let document: &core_document::Document = ctx.document;
-        let placed = |b: BodyId| -> crate::Rigid { document.body_placement(b).into() };
-        let now = node
-            .body
-            .and_then(|b| joint.travel(&placed(b), &placed(joint.other_body)));
-        let align_now = node
-            .body
-            .and_then(|b| joint.align_travel(&placed(b), &placed(joint.other_body)));
-        let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
-        let playing = &mut self.playing;
-        let mut record = None;
-        Card::new().padding(SPACE_3).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            match &mut joint.kind {
-                JointKind::Mate { flip, offset } => {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [90.0, INPUT],
-                            egui::Label::new(RichText::new("Gap").font(sans(FONT_SM)).color(TEXT2)),
-                        );
-                        changed |= formula_field(
-                            ui,
-                            document,
-                            id,
-                            "/kind/Mate/offset",
-                            core_document::expr::Dim::LENGTH,
-                            offset,
-                            &mut formula_edits,
-                        );
-                    })
-                    .response
-                    .on_hover_text("How far apart the two faces sit");
-                    changed |= check_row(ui, flip, "Same way")
-                        .on_hover_text("The faces point the same way instead of at each other")
-                        .changed();
-                }
-                JointKind::Angle { degrees } => {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [90.0, INPUT],
-                            egui::Label::new(
-                                RichText::new("Angle").font(sans(FONT_SM)).color(TEXT2),
-                            ),
-                        );
-                        changed |= formula_field(
-                            ui,
-                            document,
-                            id,
-                            "/kind/Angle/degrees",
-                            core_document::expr::Dim::ANGLE,
-                            degrees,
-                            &mut formula_edits,
-                        );
-                    })
-                    .response
-                    .on_hover_text(
-                        "Between the faces' outward normals: 180 faces them at each other",
-                    );
-                    ui.label(
-                        RichText::new(
-                            "Only the turn is held: pair it with a mate or an alignment to \
-                             say where the body sits.",
-                        )
-                        .font(sans(FONT_SM))
-                        .color(TEXT2),
-                    );
-                }
-                JointKind::Ground => {
-                    ui.label(
-                        RichText::new(
-                            "The body stays where it is; the bodies joined to it are \
-                             placed against it.",
-                        )
-                        .font(sans(FONT_SM))
-                        .color(TEXT2),
-                    );
-                }
-                JointKind::Align { turn, slide, .. } => {
-                    let (turn_now, slide_now) = align_now.unzip();
-                    overline(ui, "Turn");
-                    changed |= drive_rows(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        ("/kind/Align/turn", true, false),
-                        turn,
-                        (turn_now, dt),
-                        playing,
-                        &mut record,
-                    );
-                    ui.add_space(SPACE_1);
-                    overline(ui, "Slide");
-                    changed |= drive_rows(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        ("/kind/Align/slide", false, false),
-                        slide,
-                        (slide_now, dt),
-                        playing,
-                        &mut record,
-                    );
-                    note(
-                        ui,
-                        "The body can turn about the axis and slide along it, each \
-                         free, held or kept within limits.",
-                    );
-                }
-                JointKind::Hinge { offset, drive, .. } => {
-                    changed |= number_row(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        (
-                            "Height",
-                            "How far along the axis the body sits from the other",
-                        ),
-                        "/kind/Hinge/offset",
-                        core_document::expr::Dim::LENGTH,
-                        offset,
-                    );
-                    changed |= drive_rows(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        ("/kind/Hinge/drive", true, true),
-                        drive,
-                        (now, dt),
-                        playing,
-                        &mut record,
-                    );
-                    note(
-                        ui,
-                        "The body can only turn about the axis. Its angle counts from \
-                         where it sat when the joint was made.",
-                    );
-                }
-                JointKind::Distance { offset } => {
-                    changed |= number_row(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        ("Distance", "Along the other face's normal"),
-                        "/kind/Distance/offset",
-                        core_document::expr::Dim::LENGTH,
-                        offset,
-                    );
-                    note(
-                        ui,
-                        "Only the distance is held: the faces may turn and slide past \
-                         each other.",
-                    );
-                }
-                JointKind::Tangent { radius } => {
-                    changed |= number_row(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        ("Radius", "The round face's radius"),
-                        "/kind/Tangent/radius",
-                        core_document::expr::Dim::LENGTH,
-                        radius,
-                    );
-                    note(
-                        ui,
-                        "The round face rests on the flat one; it can still roll and \
-                         slide along it.",
-                    );
-                }
-                JointKind::Slider { drive, .. } => {
-                    changed |= drive_rows(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        ("/kind/Slider/drive", false, true),
-                        drive,
-                        (now, dt),
-                        playing,
-                        &mut record,
-                    );
-                    note(
-                        ui,
-                        "The body can only slide along the axis, turned as it was when \
-                         the joint was made.",
-                    );
-                }
-                JointKind::Fixed { shift, .. } => {
-                    for (k, label) in ["Shift x", "Shift y", "Shift z"].into_iter().enumerate() {
-                        let mut value = shift[k] as f32;
-                        if number_row(
-                            ui,
-                            (document, id, &mut formula_edits),
-                            (
-                                label,
-                                "Where the body sits from the other, along the other's own axes",
-                            ),
-                            &format!("/kind/Fixed/shift/{k}"),
-                            core_document::expr::Dim::LENGTH,
-                            &mut value,
-                        ) {
-                            shift[k] = f64::from(value);
-                            changed = true;
-                        }
-                    }
-                    note(
-                        ui,
-                        "The body is held to the other as it sat when the joint was made; \
-                         it moves only with it.",
-                    );
-                }
-                JointKind::Parallel => note(
-                    ui,
-                    "Only the turn is held, the faces parallel: pair it with other joints \
-                     to say where the body sits.",
-                ),
-                JointKind::Perpendicular => note(
-                    ui,
-                    "Only the turn is held, the faces square: pair it with other joints \
-                     to say where the body sits.",
-                ),
-                JointKind::Ball => note(
-                    ui,
-                    "The two points are held as one; the body can still turn every way \
-                     about them.",
-                ),
-                JointKind::Universal => note(
-                    ui,
-                    "The pins cross at one point, square to each other: the body turns \
-                     about either pin.",
-                ),
-                JointKind::Slot => note(
-                    ui,
-                    "The pin stays on the slot's line: it slides along it and turns every way.",
-                ),
-                JointKind::Width => note(
-                    ui,
-                    "The tab's two faces stay centred between the slot's two walls: it \
-                     slides along the slot and turns in it.",
-                ),
-                JointKind::Path => note(
-                    ui,
-                    "The point stays on the edge, whatever its shape: it runs along it and \
-                     turns every way.",
-                ),
-                JointKind::Cam { radius } => {
-                    changed |= number_row(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        ("Radius", "The follower's roller radius; 0 for a point"),
-                        "/kind/Cam/radius",
-                        core_document::expr::Dim::LENGTH,
-                        radius,
-                    );
-                    note(ui, "The follower stays on the cam's face, a radius off it.");
-                }
+        let drives = |prefix: &str, base: &str, drive: &crate::Drive, angular, sweep, now| {
+            self.drive_widgets(ctx, id, (prefix, base), drive, (angular, sweep), now)
+        };
+        match &joint.kind {
+            JointKind::Mate { flip, offset } => {
+                widgets.push(bound(
+                    "offset",
+                    "Gap",
+                    *offset,
+                    Dim::Length,
+                    "/kind/Mate/offset",
+                    "How far apart the two faces sit",
+                ));
+                widgets.push(w::hinted(
+                    "The faces point the same way instead of at each other",
+                    w::toggle("flip", "Same way", *flip),
+                ));
             }
-            if joint.kind != JointKind::Ground {
-                ui.add_space(SPACE_1);
-                for (end, label) in [(0, "Moving end"), (1, "Fixed end")] {
-                    changed |= number_row(
-                        ui,
-                        (document, id, &mut formula_edits),
-                        (
-                            label,
-                            "How far this end moves along its own normal or axis before the \
-                             joint holds it",
-                        ),
-                        &format!("/ends/{end}"),
-                        core_document::expr::Dim::LENGTH,
-                        &mut joint.ends[end],
-                    );
-                }
+            JointKind::Angle { degrees } => {
+                widgets.push(bound(
+                    "degrees",
+                    "Angle",
+                    *degrees,
+                    Dim::Angle,
+                    "/kind/Angle/degrees",
+                    "Between the faces' outward normals: 180 faces them at each other",
+                ));
+                widgets.push(w::text(
+                    "Only the turn is held: pair it with a mate or an alignment to \
+                     say where the body sits.",
+                ));
             }
-        });
-        for (key, formula) in formula_edits {
-            if let Err(why) = ctx.document.set_feature_formula(id, &key, formula) {
-                ctx.log_warn(why.to_string());
-            }
-        }
-        if changed {
-            if let Err(why) = ctx.document.update_feature_data(id, joint.to_json()) {
-                ctx.log_warn(why.to_string());
-            }
-            ctx.document.clear_feature_dirty(id);
-            self.solve_and_apply(ctx);
-        }
-        if let Some((low, high)) = record {
-            let frames = crate::sweep_frames(ctx.document, id, low, high, SWEEP_FRAMES);
-            if frames.is_empty() {
-                ctx.log_warn("Nothing moves through this joint's range");
-            } else {
-                ctx.request(core_document::HostRequest::RecordAnimation {
-                    name: node.name.clone(),
-                    frames,
-                    frame_ms: 4000 / SWEEP_FRAMES as u32,
+            JointKind::Ground => widgets.push(w::text(
+                "The body stays where it is; the bodies joined to it are \
+                 placed against it.",
+            )),
+            JointKind::Align { turn, slide, .. } => {
+                let (turn_now, slide_now) = align_now.unzip();
+                widgets.push(Widget::Group {
+                    title: "Turn".into(),
+                    open: true,
+                    children: drives("turn", "/kind/Align/turn", turn, true, false, turn_now),
                 });
+                widgets.push(Widget::Group {
+                    title: "Slide".into(),
+                    open: true,
+                    children: drives("slide", "/kind/Align/slide", slide, false, false, slide_now),
+                });
+                widgets.push(w::text(
+                    "The body can turn about the axis and slide along it, each \
+                     free, held or kept within limits.",
+                ));
+            }
+            JointKind::Hinge { offset, drive, .. } => {
+                widgets.push(bound(
+                    "offset",
+                    "Height",
+                    *offset,
+                    Dim::Length,
+                    "/kind/Hinge/offset",
+                    "How far along the axis the body sits from the other",
+                ));
+                widgets.extend(drives("drive", "/kind/Hinge/drive", drive, true, true, now));
+                widgets.push(w::text(
+                    "The body can only turn about the axis. Its angle counts from \
+                     where it sat when the joint was made.",
+                ));
+            }
+            JointKind::Distance { offset } => {
+                widgets.push(bound(
+                    "offset",
+                    "Distance",
+                    *offset,
+                    Dim::Length,
+                    "/kind/Distance/offset",
+                    "Along the other face's normal",
+                ));
+                widgets.push(w::text(
+                    "Only the distance is held: the faces may turn and slide past \
+                     each other.",
+                ));
+            }
+            JointKind::Tangent { radius } => {
+                widgets.push(bound(
+                    "radius",
+                    "Radius",
+                    *radius,
+                    Dim::Length,
+                    "/kind/Tangent/radius",
+                    "The round face's radius",
+                ));
+                widgets.push(w::text(
+                    "The round face rests on the flat one; it can still roll and \
+                     slide along it.",
+                ));
+            }
+            JointKind::Slider { drive, .. } => {
+                widgets.extend(drives(
+                    "drive",
+                    "/kind/Slider/drive",
+                    drive,
+                    false,
+                    true,
+                    now,
+                ));
+                widgets.push(w::text(
+                    "The body can only slide along the axis, turned as it was when \
+                     the joint was made.",
+                ));
+            }
+            JointKind::Fixed { shift, .. } => {
+                for (k, label) in ["Shift x", "Shift y", "Shift z"].into_iter().enumerate() {
+                    widgets.push(bound(
+                        &format!("shift_{k}"),
+                        label,
+                        shift[k] as f32,
+                        Dim::Length,
+                        &format!("/kind/Fixed/shift/{k}"),
+                        "Where the body sits from the other, along the other's own axes",
+                    ));
+                }
+                widgets.push(w::text(
+                    "The body is held to the other as it sat when the joint was made; \
+                     it moves only with it.",
+                ));
+            }
+            JointKind::Parallel => widgets.push(w::text(
+                "Only the turn is held, the faces parallel: pair it with other joints \
+                 to say where the body sits.",
+            )),
+            JointKind::Perpendicular => widgets.push(w::text(
+                "Only the turn is held, the faces square: pair it with other joints \
+                 to say where the body sits.",
+            )),
+            JointKind::Ball => widgets.push(w::text(
+                "The two points are held as one; the body can still turn every way \
+                 about them.",
+            )),
+            JointKind::Universal => widgets.push(w::text(
+                "The pins cross at one point, square to each other: the body turns \
+                 about either pin.",
+            )),
+            JointKind::Slot => widgets.push(w::text(
+                "The pin stays on the slot's line: it slides along it and turns every way.",
+            )),
+            JointKind::Width => widgets.push(w::text(
+                "The tab's two faces stay centred between the slot's two walls: it \
+                 slides along the slot and turns in it.",
+            )),
+            JointKind::Path => widgets.push(w::text(
+                "The point stays on the edge, whatever its shape: it runs along it and \
+                 turns every way.",
+            )),
+            JointKind::Cam { radius } => {
+                widgets.push(bound(
+                    "radius",
+                    "Radius",
+                    *radius,
+                    Dim::Length,
+                    "/kind/Cam/radius",
+                    "The follower's roller radius; 0 for a point",
+                ));
+                widgets.push(w::text(
+                    "The follower stays on the cam's face, a radius off it.",
+                ));
+            }
+        }
+        if joint.kind != JointKind::Ground {
+            for (end, (key, label)) in [("moving_end", "Moving end"), ("fixed_end", "Fixed end")]
+                .into_iter()
+                .enumerate()
+            {
+                widgets.push(bound(
+                    key,
+                    label,
+                    joint.ends[end],
+                    Dim::Length,
+                    &format!("/ends/{end}"),
+                    "How far this end moves along its own normal or axis before the \
+                     joint holds it",
+                ));
             }
         }
         if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = joint.kind {
             let hinge = matches!(joint.kind, JointKind::Hinge { .. });
-            let (low, high) = match drive.limits {
-                Some([low, high]) => (low, high),
-                None if hinge => (-180.0, 180.0),
-                None => {
-                    let at = now.unwrap_or(0.0) as f32;
-                    (at - 25.0, at + 25.0)
-                }
-            };
-            self.motion_section(ui, ctx, id, (low, high), if hinge { "°" } else { " mm" });
+            let range = motion_range(drive.limits, hinge, now);
+            widgets.extend(self.motion_widgets(ctx, id, range, if hinge { "°" } else { " mm" }));
         }
         if joint.kind != JointKind::Ground {
-            ui.add_space(SPACE_2);
-            let mut by = self.turn_by.unwrap_or(90.0);
-            let mut turn = None;
-            ui.horizontal(|ui| {
-                if QtyField::degrees(&mut by).width(70.0).show(ui) {
-                    self.turn_by = Some(by);
-                }
-                if ui_kit::widgets::secondary_button(ui, "Turn")
-                    .on_hover_text("Turn the body about the joint's axis or normal by this much")
-                    .clicked()
-                {
-                    turn = Some((f64::from(by), false));
-                }
-                if ui_kit::widgets::secondary_button(ui, "Turn over")
-                    .on_hover_text("Half a turn across the joint: the body the other way round")
-                    .clicked()
-                {
-                    turn = Some((0.0, true));
-                }
-            });
-            if let Some((degrees, over)) = turn {
-                self.turn_in_task(ctx, id, created, placements, degrees, over);
-            }
+            widgets.push(w::row(vec![
+                w::number("turn_by", "", self.turn_by.unwrap_or(90.0), Dim::Angle),
+                w::hinted(
+                    "Turn the body about the joint's axis or normal by this much",
+                    w::button("turn", "Turn", ButtonStyle::Secondary),
+                ),
+                w::hinted(
+                    "Half a turn across the joint: the body the other way round",
+                    w::button("turn_over", "Turn over", ButtonStyle::Secondary),
+                ),
+            ]));
         }
-        ui.add_space(SPACE_2);
-        self.verdict_card(ui);
+        widgets.extend(self.verdict_note());
         if self.redundant_now(ctx).iter().any(|(j, _)| *j == id) {
-            note_card(
-                ui,
-                Note::Warning,
+            widgets.push(w::note(
+                NoteKind::Warning,
                 Some("Redundant"),
                 "The body's other joints already hold everything this one does; it could go.",
-            );
+            ));
         }
-        if let Some(body) = node.body {
-            freedom_line(ui, ctx, body);
+        widgets.extend(node.body.and_then(|body| freedom_text(ctx, body)));
+        widgets.push(w::hinted(
+            "Remove the joint; the bodies stay where they are",
+            w::button("delete", "Delete joint", ButtonStyle::Destructive),
+        ));
+        widgets
+    }
+
+    /// A hinge's or a slider's drive, or an alignment's turn or slide:
+    /// where it stands, held at a value, kept within limits and, while
+    /// held, swept through its range to show the motion or record it.
+    /// The fields' ids begin with `prefix`; `base` is the drive's place in
+    /// the joint's data.
+    fn drive_widgets(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        joint: FeatureId,
+        (prefix, base): (&str, &str),
+        drive: &crate::Drive,
+        (angular, sweep): (bool, bool),
+        now: Option<f64>,
+    ) -> Vec<Widget> {
+        let (dim, unit) = if angular {
+            (Dim::Angle, "°")
+        } else {
+            (Dim::Length, " mm")
+        };
+        let mut widgets = Vec::new();
+        if let Some(now) = now {
+            widgets.push(w::value(
+                if angular { "Angle now" } else { "Position now" },
+                format!("{now:.2}{unit}"),
+            ));
         }
-        ui.add_space(SPACE_2);
-        if destructive_button(ui, "Delete joint")
-            .on_hover_text("Remove the joint; the bodies stay where they are")
-            .clicked()
-            && ctx.document.remove_feature(id).is_ok()
-        {
-            self.playing = None;
-            // A joint the task made has nothing to undo in a recording.
-            if !created {
-                ctx.record(
-                    "doc.delete",
-                    crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
-                    serde_json::Value::Null,
-                );
+        widgets.push(w::hinted(
+            if angular {
+                "Hold the hinge at an angle"
+            } else {
+                "Hold the slider at a position"
+            },
+            w::toggle(&format!("{prefix}.drive"), "Drive", drive.to.is_some()),
+        ));
+        if let Some(to) = drive.to {
+            widgets.push(w::hinted(
+                "Where the drive holds it",
+                w::bound(
+                    &format!("{prefix}.to"),
+                    if angular { "Angle" } else { "Position" },
+                    to,
+                    dim,
+                    (joint, &format!("{base}/to")),
+                ),
+            ));
+        }
+        widgets.push(w::hinted(
+            "Keep the motion within a range while it is not driven",
+            w::toggle(
+                &format!("{prefix}.limits"),
+                "Limits",
+                drive.limits.is_some(),
+            ),
+        ));
+        if let Some([low, high]) = drive.limits {
+            for (end, value, label) in [(0, low, "Lowest"), (1, high, "Highest")] {
+                widgets.push(w::hinted(
+                    "An end of the range the motion stays in",
+                    w::bound(
+                        &format!("{prefix}.{}", ["low", "high"][end]),
+                        label,
+                        value,
+                        dim,
+                        (joint, &format!("{base}/limits/{end}")),
+                    ),
+                ));
             }
-            self.task = None;
-            ctx.active_document_object = None;
-            return TaskOutcome::Accepted {
-                label: "Delete joint".to_string(),
-            };
         }
-        TaskOutcome::Open
+        if drive.to.is_none() || !sweep {
+            return widgets;
+        }
+        widgets.push(w::hinted(
+            "Save the sweep through its range as an animation",
+            w::button(
+                &format!("{prefix}.record"),
+                "Record",
+                ButtonStyle::Secondary,
+            ),
+        ));
+        if ctx
+            .document
+            .feature_formula(joint, &format!("{base}/to"))
+            .is_none()
+        {
+            let mine = self.playing.is_some_and(|p| p.joint == joint);
+            widgets.push(w::hinted(
+                "Sweep the drive through its range; stopping puts it back",
+                w::button(
+                    &format!("{prefix}.play"),
+                    if mine { "Stop" } else { "Play" },
+                    ButtonStyle::Secondary,
+                ),
+            ));
+        }
+        widgets
     }
 
     /// The check of a joint's motion for collisions: its button, its
     /// progress, what it found.
-    fn motion_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
+    fn motion_widgets(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
         id: FeatureId,
         (low, high): (f32, f32),
         unit: &str,
-    ) {
-        ui.add_space(SPACE_2);
-        self.collect_sweep(ctx);
-        match self.sweep_progress() {
-            Some((joint, done, total)) if joint == id => {
-                ui.label(
-                    RichText::new(format!("Checking the motion: {done} of {total} pairs"))
-                        .font(sans(FONT_SM))
-                        .color(TEXT1),
-                );
-                ui.add(egui::ProgressBar::new(if total == 0 {
-                    0.0
-                } else {
-                    done as f32 / total as f32
-                }));
-                if ui_kit::widgets::secondary_button(ui, "Stop").clicked() {
-                    self.sweeping = None;
-                }
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(100));
-                return;
-            }
-            _ => {
-                if ui_kit::widgets::secondary_button(ui, "Check collisions through the motion")
-                    .on_hover_text(format!(
-                        "Step the drive from {low:.1}{unit} to {high:.1}{unit} and look for \
-                         bodies that share material on the way"
-                    ))
-                    .clicked()
-                {
-                    self.check_sweep(ctx, id, (low, high));
-                }
-            }
+    ) -> Vec<Widget> {
+        if let Some((joint, done, total)) = self.sweep_progress()
+            && joint == id
+        {
+            return vec![
+                Widget::Progress {
+                    label: format!("Checking the motion: {done} of {total} pairs"),
+                    fraction: Some(if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32
+                    }),
+                    job: None,
+                },
+                w::button("stop_sweep", "Stop", ButtonStyle::Secondary),
+            ];
         }
-        let Some((joint, found)) = &self.motion_clashes else {
-            return;
-        };
-        if *joint != id {
-            return;
-        }
-        match found {
-            Ok(found) if found.is_empty() => {
-                note_card(ui, Note::Success, None, "No collisions through the motion");
-            }
-            Ok(found) => {
-                note_card(
-                    ui,
-                    Note::Error,
+        let mut widgets = vec![w::hinted(
+            format!(
+                "Step the drive from {low:.1}{unit} to {high:.1}{unit} and look for \
+                 bodies that share material on the way"
+            ),
+            w::button(
+                "check_sweep",
+                "Check collisions through the motion",
+                ButtonStyle::Secondary,
+            ),
+        )];
+        match &self.motion_clashes {
+            Some((joint, Ok(found))) if *joint == id && found.is_empty() => widgets.push(w::note(
+                NoteKind::Success,
+                None,
+                "No collisions through the motion",
+            )),
+            Some((joint, Ok(found))) if *joint == id => {
+                widgets.push(w::note(
+                    NoteKind::Error,
                     Some(&format!(
                         "{} collision{}",
                         found.len(),
                         if found.len() == 1 { "" } else { "s" }
                     )),
                     "Click one to select its first body",
-                );
-                for clash in found.clone() {
-                    let text = format!(
-                        "At {:.1}{unit}: {} and {}, {:.2} mm³",
-                        clash.at,
-                        body_name(ctx, clash.a),
-                        body_name(ctx, clash.b),
-                        clash.volume_mm3
-                    );
-                    let row = ui.add(
-                        egui::Button::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
-                            .frame(false),
-                    );
-                    if row.clicked() {
-                        ctx.request(core_document::HostRequest::SelectBody(clash.a));
+                ));
+                widgets.push(Widget::List {
+                    id: "motion_clashes".into(),
+                    items: found
+                        .iter()
+                        .map(|clash| bench_api::ListItem {
+                            label: format!(
+                                "At {:.1}{unit}: {} and {}, {:.2} mm³",
+                                clash.at,
+                                body_name(ctx, clash.a),
+                                body_name(ctx, clash.b),
+                                clash.volume_mm3
+                            ),
+                            detail: None,
+                            icon: None,
+                        })
+                        .collect(),
+                    selected: None,
+                });
+            }
+            Some((joint, Err(why))) if *joint == id => {
+                widgets.push(w::note(NoteKind::Error, Some("Not checked"), why.clone()))
+            }
+            _ => {}
+        }
+        widgets
+    }
+
+    /// A change to a joint's settings, made as `asm.set` makes it; its
+    /// kind or faces changed, its motion swept, recorded or checked, its
+    /// body turned, or the joint deleted.
+    fn joint_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        (id, created, placements): (FeatureId, bool, &[(BodyId, BodyPlacement)]),
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let node = ctx.document.get_feature_meta(id)?.clone();
+        let mut joint = JointFeature::from_json(&node.data).ok()?;
+        let (now, align_now) = joint_now(ctx, node.body, &joint);
+        let set = |this: &mut Self, ctx: &mut WorkbenchRuntimeContext, args: serde_json::Value| {
+            let mut args = args;
+            args["joint"] = serde_json::json!(id.0.to_string());
+            let _ = this.call(ctx, "asm.set", args);
+        };
+        let (key, rest) = match event {
+            PanelEvent::Number { id: key, .. }
+            | PanelEvent::Toggle { id: key, .. }
+            | PanelEvent::Button { id: key }
+            | PanelEvent::Choice { id: key, .. }
+            | PanelEvent::Select { id: key, .. } => key
+                .split_once('.')
+                .map_or((key.as_str(), ""), |(a, b)| (a, b)),
+            _ => return None,
+        };
+        // A drive's or a limit's field: which drive, and the joint's word
+        // for its value and its range.
+        let drive_of = |joint: &JointFeature, prefix: &str| match (&joint.kind, prefix) {
+            (JointKind::Hinge { drive, .. }, "drive") => {
+                Some((*drive, "/kind/Hinge/drive", "drive", "limits", true, now))
+            }
+            (JointKind::Slider { drive, .. }, "drive") => {
+                Some((*drive, "/kind/Slider/drive", "drive", "limits", false, now))
+            }
+            (JointKind::Align { turn, .. }, "turn") => Some((
+                *turn,
+                "/kind/Align/turn",
+                "turn_drive",
+                "turn_limits",
+                true,
+                align_now.map(|a| a.0),
+            )),
+            (JointKind::Align { slide, .. }, "slide") => Some((
+                *slide,
+                "/kind/Align/slide",
+                "slide_drive",
+                "slide_limits",
+                false,
+                align_now.map(|a| a.1),
+            )),
+            _ => None,
+        };
+        if !rest.is_empty() {
+            let (drive, base, to_arg, range_arg, angular, now) = drive_of(&joint, key)?;
+            match (rest, event) {
+                ("drive", PanelEvent::Toggle { on, .. }) => {
+                    if *on {
+                        set(
+                            self,
+                            ctx,
+                            serde_json::json!({to_arg: now.unwrap_or(0.0) as f32}),
+                        );
+                    } else {
+                        self.clear_formula(ctx, id, &format!("{base}/to"));
+                        self.playing = None;
+                        set(self, ctx, serde_json::json!({to_arg: false}));
                     }
                 }
+                ("to", PanelEvent::Number { value, .. }) => {
+                    set(self, ctx, serde_json::json!({to_arg: *value as f32}));
+                }
+                ("limits", PanelEvent::Toggle { on, .. }) => {
+                    if *on {
+                        let at = now.unwrap_or(0.0) as f32;
+                        let range = if angular {
+                            [(at - 45.0).max(-180.0), (at + 45.0).min(180.0)]
+                        } else {
+                            [at - 10.0, at + 10.0]
+                        };
+                        set(self, ctx, serde_json::json!({range_arg: range}));
+                    } else {
+                        for end in 0..2 {
+                            self.clear_formula(ctx, id, &format!("{base}/limits/{end}"));
+                        }
+                        set(self, ctx, serde_json::json!({range_arg: false}));
+                    }
+                }
+                ("low" | "high", PanelEvent::Number { value, .. }) => {
+                    let [mut low, mut high] = drive.limits?;
+                    if rest == "low" {
+                        low = *value as f32;
+                    } else {
+                        high = *value as f32;
+                    }
+                    if low > high {
+                        std::mem::swap(&mut low, &mut high);
+                    }
+                    set(self, ctx, serde_json::json!({range_arg: [low, high]}));
+                }
+                ("record", _) => {
+                    let to = drive.to?;
+                    let mine = self.playing.filter(|p| p.joint == id);
+                    let centre = f64::from(mine.map_or(to, |p| p.start));
+                    let (low, high) = sweep_range(drive.limits, angular, centre);
+                    let frames = crate::sweep_frames(
+                        ctx.document,
+                        id,
+                        low as f32,
+                        high as f32,
+                        SWEEP_FRAMES,
+                    );
+                    if frames.is_empty() {
+                        ctx.log_warn("Nothing moves through this joint's range");
+                    } else {
+                        ctx.request(core_document::HostRequest::RecordAnimation {
+                            name: node.name.clone(),
+                            frames,
+                            frame_ms: 4000 / SWEEP_FRAMES as u32,
+                        });
+                    }
+                }
+                ("play", _) => {
+                    let to = drive.to?;
+                    let back = match self.playing.filter(|p| p.joint == id) {
+                        Some(p) => {
+                            self.playing = None;
+                            p.start
+                        }
+                        None => {
+                            let (low, high) = sweep_range(drive.limits, angular, f64::from(to));
+                            let span = (high - low).max(1e-6);
+                            let from = ((f64::from(to) - low) / span).clamp(0.0, 1.0);
+                            self.playing = Some(crate::Play {
+                                joint: id,
+                                start: to,
+                                phase: (1.0 - 2.0 * from).acos(),
+                            });
+                            to
+                        }
+                    };
+                    set(self, ctx, serde_json::json!({to_arg: back}));
+                }
+                _ => {}
             }
-            Err(why) => {
-                note_card(ui, Note::Error, Some("Not checked"), why);
+            return None;
+        }
+        match (key, event) {
+            ("kind", PanelEvent::Choice { index, .. }) => {
+                let current = JointTool::of_kind(&joint.kind)?;
+                let tool = *JointTool::ALL.get(*index).filter(|t| **t != current)?;
+                if tool.fits(&joint.moving, &joint.fixed) {
+                    self.change_kind(ctx, id, created, placements, tool);
+                } else {
+                    // Faces of the wrong sort for it: pick them afresh.
+                    if created {
+                        crate::commands::record_joint(ctx, id, None, placements);
+                    }
+                    self.start_repick(id, tool);
+                }
+                return Some(TaskOutcome::Open);
             }
+            ("repick", _) => {
+                let current = JointTool::of_kind(&joint.kind)?;
+                if created {
+                    crate::commands::record_joint(ctx, id, None, placements);
+                }
+                self.start_repick(id, current);
+                return Some(TaskOutcome::Open);
+            }
+            (
+                "offset" | "degrees" | "radius" | "moving_end" | "fixed_end",
+                PanelEvent::Number { value, .. },
+            ) => {
+                set(self, ctx, serde_json::json!({key: *value as f32}));
+            }
+            ("flip", PanelEvent::Toggle { on, .. }) => {
+                set(self, ctx, serde_json::json!({"flip": *on}));
+            }
+            (shift, PanelEvent::Number { value, .. }) if shift.starts_with("shift_") => {
+                // A fixed joint's shift, which `asm.set` does not take.
+                let k = shift["shift_".len()..]
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|k| *k < 3)?;
+                let JointKind::Fixed { shift, .. } = &mut joint.kind else {
+                    return None;
+                };
+                shift[k] = f64::from(*value as f32);
+                if let Err(why) = ctx.document.update_feature_data(id, joint.to_json()) {
+                    ctx.log_warn(why.to_string());
+                }
+                ctx.document.clear_feature_dirty(id);
+                self.solve_and_apply(ctx);
+            }
+            ("check_sweep", _) => {
+                if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = joint.kind
+                {
+                    let hinge = matches!(joint.kind, JointKind::Hinge { .. });
+                    let range = motion_range(drive.limits, hinge, now);
+                    self.check_sweep(ctx, id, range);
+                }
+            }
+            ("stop_sweep", _) => self.sweeping = None,
+            ("motion_clashes", PanelEvent::Select { index, .. }) => {
+                let Some((joint, Ok(found))) = &self.motion_clashes else {
+                    return None;
+                };
+                let clash = found.get(*index).filter(|_| *joint == id)?;
+                ctx.request(core_document::HostRequest::SelectBody(clash.a));
+            }
+            ("turn_by", PanelEvent::Number { value, .. }) => self.turn_by = Some(*value as f32),
+            ("turn", _) => {
+                let by = f64::from(self.turn_by.unwrap_or(90.0));
+                self.turn_in_task(ctx, id, created, placements, by, false);
+            }
+            ("turn_over", _) => self.turn_in_task(ctx, id, created, placements, 0.0, true),
+            ("delete", _) => {
+                ctx.document.remove_feature(id).ok()?;
+                self.playing = None;
+                // A joint the task made has nothing to undo in a recording.
+                if !created {
+                    ctx.record(
+                        "doc.delete",
+                        crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
+                        serde_json::Value::Null,
+                    );
+                }
+                self.task = None;
+                ctx.active_document_object = None;
+                return Some(TaskOutcome::Accepted {
+                    label: "Delete joint".to_string(),
+                });
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Take the formula off a joint's number, which then keeps the value it
+    /// came to.
+    fn clear_formula(&self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId, key: &str) {
+        if ctx.document.feature_formula(id, key).is_some()
+            && let Err(why) = ctx.document.set_feature_formula(id, key, None)
+        {
+            ctx.log_warn(why.to_string());
         }
     }
 
@@ -2884,270 +3122,6 @@ impl AssemblyWorkbench {
         }
         None
     }
-}
-
-/// A hinge's or a slider's drive: held at a value, kept within limits,
-/// and, while held, swept through its range to show the motion.
-fn drive_rows(
-    ui: &mut egui::Ui,
-    (document, joint, edits): (
-        &core_document::Document,
-        core_document::FeatureId,
-        &mut Vec<(String, Option<String>)>,
-    ),
-    (base, angular, sweep): (&str, bool, bool),
-    drive: &mut crate::Drive,
-    (now, dt): (Option<f64>, f64),
-    playing: &mut Option<crate::Play>,
-    record: &mut Option<(f32, f32)>,
-) -> bool {
-    use core_document::expr::Dim;
-    let (dim, unit) = if angular {
-        (Dim::ANGLE, "°")
-    } else {
-        (Dim::LENGTH, " mm")
-    };
-    let mut changed = false;
-    if let Some(now) = now {
-        row(
-            ui,
-            if angular { "Angle now" } else { "Position now" },
-            &format!("{now:.2}{unit}"),
-        );
-    }
-    let to_key = format!("{base}/to");
-    let mut driven = drive.to.is_some();
-    if check_row(ui, &mut driven, "Drive")
-        .on_hover_text(if angular {
-            "Hold the hinge at an angle"
-        } else {
-            "Hold the slider at a position"
-        })
-        .changed()
-    {
-        drive.to = driven.then(|| now.unwrap_or(0.0) as f32);
-        if !driven {
-            edits.push((to_key.clone(), None));
-            *playing = None;
-        }
-        changed = true;
-    }
-    if let Some(to) = &mut drive.to {
-        changed |= number_row(
-            ui,
-            (document, joint, edits),
-            (
-                if angular { "Angle" } else { "Position" },
-                "Where the drive holds it",
-            ),
-            &to_key,
-            dim,
-            to,
-        );
-    }
-    let mut limited = drive.limits.is_some();
-    if check_row(ui, &mut limited, "Limits")
-        .on_hover_text("Keep the motion within a range while it is not driven")
-        .changed()
-    {
-        let at = now.unwrap_or(0.0) as f32;
-        drive.limits = limited.then(|| {
-            if angular {
-                [(at - 45.0).max(-180.0), (at + 45.0).min(180.0)]
-            } else {
-                [at - 10.0, at + 10.0]
-            }
-        });
-        if !limited {
-            for end in 0..2 {
-                edits.push((format!("{base}/limits/{end}"), None));
-            }
-        }
-        changed = true;
-    }
-    if let Some([low, high]) = &mut drive.limits {
-        for (end, value, label) in [(0, &mut *low, "Lowest"), (1, &mut *high, "Highest")] {
-            changed |= number_row(
-                ui,
-                (document, joint, edits),
-                (label, "An end of the range the motion stays in"),
-                &format!("{base}/limits/{end}"),
-                dim,
-                value,
-            );
-        }
-        if *low > *high {
-            std::mem::swap(low, high);
-        }
-    }
-    let limits = drive.limits;
-    let Some(to) = &mut drive.to else {
-        return changed;
-    };
-    if !sweep {
-        return changed;
-    }
-    // The sweep: through the limits, or a whole turn, or 25 mm either side
-    // of where it started.
-    let mine = playing.filter(|p| p.joint == joint);
-    let centre = f64::from(mine.map_or(*to, |p| p.start));
-    let (low, high) = match limits {
-        Some([low, high]) => (f64::from(low), f64::from(high)),
-        None if angular => (-179.0, 179.0),
-        None => (centre - 25.0, centre + 25.0),
-    };
-    let label = if mine.is_some() { "Stop" } else { "Play" };
-    if ui_kit::widgets::secondary_button(ui, "Record")
-        .on_hover_text("Save the sweep through its range as an animation")
-        .clicked()
-    {
-        *record = Some((low as f32, high as f32));
-    }
-    if document.feature_formula(joint, &to_key).is_some() {
-        // A formula holds the value; a sweep would fight it every frame.
-        *playing = playing.filter(|p| p.joint != joint);
-    } else if ui_kit::widgets::secondary_button(ui, label)
-        .on_hover_text("Sweep the drive through its range; stopping puts it back")
-        .clicked()
-    {
-        match mine {
-            Some(p) => {
-                *to = p.start;
-                *playing = None;
-            }
-            None => {
-                let span = (high - low).max(1e-6);
-                let from = ((f64::from(*to) - low) / span).clamp(0.0, 1.0);
-                *playing = Some(crate::Play {
-                    joint,
-                    start: *to,
-                    phase: (1.0 - 2.0 * from).acos(),
-                });
-            }
-        }
-        changed = true;
-    } else if let Some(play) = playing.as_mut().filter(|p| p.joint == joint) {
-        // Back and forth every four seconds.
-        play.phase += dt * std::f64::consts::TAU / 4.0;
-        *to = (low + (high - low) * (0.5 - 0.5 * play.phase.cos())) as f32;
-        changed = true;
-        ui.ctx().request_repaint();
-    }
-    changed
-}
-
-/// A labelled number a formula can set, in a joint's settings.
-fn number_row(
-    ui: &mut egui::Ui,
-    (document, joint, edits): (
-        &core_document::Document,
-        core_document::FeatureId,
-        &mut Vec<(String, Option<String>)>,
-    ),
-    (label, hover): (&str, &str),
-    key: &str,
-    dim: core_document::expr::Dim,
-    value: &mut f32,
-) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [90.0, INPUT],
-            egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
-        );
-        changed = formula_field(ui, document, joint, key, dim, value, edits);
-    })
-    .response
-    .on_hover_text(hover);
-    changed
-}
-
-fn note(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT2));
-}
-
-/// A joint's number as a formula field: a value typed or dragged goes into
-/// `value`; a formula goes into `edits` and what it comes to into `value`,
-/// so the body moves while the panel is open.
-fn formula_field(
-    ui: &mut egui::Ui,
-    document: &core_document::Document,
-    joint: core_document::FeatureId,
-    key: &str,
-    dim: core_document::expr::Dim,
-    value: &mut f32,
-    edits: &mut Vec<(String, Option<String>)>,
-) -> bool {
-    let formula = document.feature_formula(joint, key);
-    let slot = document
-        .evaluated_slots(joint)
-        .iter()
-        .find(|s| s.key == key);
-    let shown = match (formula, slot.map(|s| &s.result)) {
-        (Some(_), Some(Ok(q))) => q.value,
-        _ => f64::from(*value),
-    };
-    let host = core_document::DocumentFormulas { document, dim };
-    let angle = dim == core_document::expr::Dim::ANGLE;
-    let edit = ui_kit::widgets::FormulaField::new(
-        egui::Id::new(("joint_field", joint, key)),
-        shown,
-        &host,
-    )
-    .formula(formula)
-    .error(
-        slot.and_then(|s| s.result.as_ref().err())
-            .map(String::as_str),
-    )
-    .unit(if angle {
-        "°"
-    } else if dim == core_document::expr::Dim::LENGTH {
-        "mm"
-    } else {
-        ""
-    })
-    .speed(if angle { 1.0 } else { 0.1 })
-    .show(ui);
-    match edit {
-        Some(ui_kit::widgets::FormulaEdit::Value(v)) => {
-            if formula.is_some() {
-                edits.push((key.to_string(), None));
-            }
-            *value = v as f32;
-            true
-        }
-        Some(ui_kit::widgets::FormulaEdit::Formula(text)) => {
-            let now = document.evaluate_formula(&text, Some(dim));
-            edits.push((key.to_string(), Some(text)));
-            match now {
-                Ok(q) => {
-                    *value = q.value as f32;
-                    true
-                }
-                Err(_) => false,
-            }
-        }
-        None => false,
-    }
-}
-
-/// What `body` may still do, its joints holding: "fully placed", or its
-/// free motions.
-fn freedom_line(ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext, body: BodyId) {
-    let Some((_, motions)) = crate::freedom(ctx.document)
-        .into_iter()
-        .find(|(b, _)| *b == body)
-    else {
-        return;
-    };
-    let text = if motions.is_empty() {
-        "Its joints place this body fully.".to_string()
-    } else {
-        let words: Vec<String> = motions.iter().map(crate::Motion::describe).collect();
-        format!("It may still {}.", words.join(", "))
-    };
-    ui.add_space(SPACE_1);
-    ui.add(egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).wrap());
 }
 
 #[cfg(test)]
