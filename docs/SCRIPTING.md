@@ -4213,138 +4213,576 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 
 `pc.surface.extrude`: Extrude curves into a surface.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): The sketches it is built from: every chain of each, open or closed
+- `length` (number, optional): mm (10)
+- `direction` (any, optional): SketchNormal (the default), X, Y, Z or {Custom = {x, y, z}}
+- `symmetric` (boolean, optional): Half each way
+- `reversed` (boolean, optional): The other way
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
 - Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- `length` is 10 mm when left out. `direction` is SketchNormal (square to the first sketch), X, Y, Z or {Custom = {x, y, z}}; "Custom" without its numbers is refused with the form it takes. `symmetric = true` runs half each way, `reversed = true` the other way.
+- Built from edges (`curves`) it needs a direction of its own: SketchNormal fails at rebuild ("the direction follows a sketch's plane").
+
+See also `pc.sketch.new`, `pc.surface.check`.
+
+Example: Two walls from an open outline.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.polyline{sketch = s, points = {{10, 0}, {0, 0}, {0, 10}}}
+local walls = pc.surface.extrude{sketches = {s}, length = 5}
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.feature{id = walls}.body
+assert(#pc.doc.faces{body = body} == 2, "a face per line")
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.area - 100) < 1e-6 and m.volume == nil, "a sheet, open")
+assert(math.abs(m.max[3] - 5) < 1e-6)
+```
 
 `pc.surface.revolve`: Revolve curves about an axis into a surface.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): The sketches it is built from: every chain of each, open or closed
+- `angle_deg` (number, optional): Degrees (360)
+- `axis` (any, optional): SketchVertical (the default), SketchHorizontal, X, Y, Z or {Custom = {origin = {x, y, z}, direction = {x, y, z}}}
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
 - Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- `angle_deg` is 360 when left out. `axis` is SketchVertical (the first sketch's vertical axis through its origin), SketchHorizontal, X, Y, Z or {Custom = {origin = {x, y, z}, direction = {x, y, z}}}.
+- A curve lying along the axis fails at rebuild ("the whole wire lies along the axis, so it revolves out nothing").
+
+See also `pc.sketch.new`, `pc.surface.check`.
+
+Example: A cylinder's side from a line.
+
+```lua
+local s = pc.sketch.new{plane = "XZ"}
+pc.sketch.line{sketch = s, x1 = 5, y1 = 0, x2 = 5, y2 = 10}
+local tube = pc.surface.revolve{sketches = {s}}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = tube}.body}
+assert(math.abs(m.area - 2 * math.pi * 5 * 10) < 1e-3, m.area)
+assert(math.abs(m.min[1] + 5) < 1e-6 and math.abs(m.max[3] - 10) < 1e-6)
+```
 
 `pc.surface.planar`: Fill closed flat loops with a planar surface.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): The sketches whose closed loops it fills
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
 - Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- It fills closed flat loops, a loop inside another a hole. An open chain fails at rebuild ("profile wire is not closed").
+
+See also `pc.sketch.new`, `pc.surface.sew`.
+
+Example: A plate with a hole.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+pc.sketch.circle{sketch = s, x = 10, y = 5, radius = 2}
+local plate = pc.surface.planar{sketches = {s}}
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.feature{id = plate}.body
+assert(#pc.doc.faces{body = body} == 1)
+local area = pc.doc.measure{body = body}.area
+assert(math.abs(area - (200 - math.pi * 4)) < 1e-3, area)
+```
 
 `pc.surface.fill`: Fill the hole curves close with a surface.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): The sketches whose curves close the hole, end to end
+- `continuity` (string, optional): G0 (the default), G1 or G2: how it meets the faces of edges in `boundary`
+- `boundary` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
 - Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- The curves must meet end to end and close; ones that do not fail at rebuild ("the boundary does not close"). The loop may rise out of a plane, which `surface.planar` cannot fill.
+- `continuity` (G0, G1 or G2) is how it meets the face of each edge given in `boundary`; a sketch's curve is only touched.
+
+See also `pc.sketch.new`, `pc.surface.planar`.
+
+Example: A disc filling a circle.
+
+```lua
+local s = pc.sketch.new{plane = "XY", offset = 20}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+local cap = pc.surface.fill{sketches = {s}}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = cap}.body}
+assert(math.abs(m.area - math.pi * 25) < 1e-3, m.area)
+assert(math.abs(m.min[3] - 20) < 1e-6 and math.abs(m.max[3] - 20) < 1e-6)
+```
 
 `pc.surface.ruled`: Span two curves with straight lines.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): Two sketches: the first curve, then the second
+- `first` (any, optional): {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
+- `second` (any, optional): {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
 - Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- Exactly two curves, the first sketch's and the second's; a third is refused. Their ends pair start to start, as each was drawn: draw both the same way round, or the sheet twists.
+
+See also `pc.sketch.new`, `pc.surface.loft`.
+
+Example: A slanted strip between two lines.
+
+```lua
+local a = pc.sketch.new{plane = "XY"}
+pc.sketch.line{sketch = a, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+local b = pc.sketch.new{plane = "XY", offset = 5}
+pc.sketch.line{sketch = b, x1 = 0, y1 = 3, x2 = 10, y2 = 3}
+local strip = pc.surface.ruled{sketches = {a, b}}
+assert(#pc.doc.rebuild() == 0)
+local area = pc.doc.measure{body = pc.doc.feature{id = strip}.body}.area
+assert(math.abs(area - 10 * math.sqrt(34)) < 1e-3, area)
+```
 
 `pc.surface.loft`: Loft a surface through sections in order.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): The sections, a sketch each, in order: two or more
+- `closed` (boolean, optional): Run on from the last section back to the first
+- `sections` (list, optional): In place of `sketches`: each {Sketch = id}
 - Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- Two sections or more, a sketch each, passed through in order; `closed = true` runs on from the last back to the first. Sections may differ: a square to a circle gives a face per side.
+
+See also `pc.sketch.new`, `pc.surface.ruled`.
+
+Example: A bulge through three circles.
+
+```lua
+local function ring(z, r)
+  local s = pc.sketch.new{plane = "XY", offset = z}
+  pc.sketch.circle{sketch = s, x = 0, y = 0, radius = r}
+  return s
+end
+local loft = pc.surface.loft{sketches = {ring(0, 5), ring(10, 8), ring(20, 5)}}
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.feature{id = loft}.body
+assert(#pc.doc.faces{body = body} == 1)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.max[1] - 8) < 1e-3 and math.abs(m.max[3] - 20) < 1e-6)
+```
 
 `pc.surface.sweep`: Sweep a profile along a path into a surface.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): The profile's sketch, then the path's
+- `profile` (list, optional): In place of `sketches`: the profile, each {Sketch = id}
+- `path` (list, optional): In place of `sketches`: the path, each {Sketch = id}
 - Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- `sketches` is the profile's sketch, then the path's. A closed path fails at rebuild ("a sweep surface along a closed spine is not built"), which is what a circle profile and its path given the other way round meet.
+
+See also `pc.sketch.new`, `pc.surface.loft`.
+
+Example: A tube along a line.
+
+```lua
+local profile = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = profile, x = 0, y = 0, radius = 2}
+local path = pc.sketch.new{plane = "XZ"}
+pc.sketch.line{sketch = path, x1 = 0, y1 = 0, x2 = 0, y2 = 20}
+local tube = pc.surface.sweep{sketches = {profile, path}}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = tube}.body}
+assert(math.abs(m.area - 2 * math.pi * 2 * 20) < 1e-3, m.area)
+assert(math.abs(m.max[3] - 20) < 1e-6)
+```
 
 `pc.surface.offset`: Copy faces at a distance along their normals.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `faces` (list, optional): The faces to copy, each {point, normal} as pc.doc.faces lists a face
+- `distance` (number, optional): mm along the faces' normals (1); negative the other way
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- `faces` are faces of the body as `pc.doc.faces` lists them (the entry itself will do; a curved face has no `normal` and needs none). The copy is added beside them, the faces kept. `distance` is 1 mm when left out.
+
+See also `pc.doc.faces`, `pc.surface.thicken`.
+
+Example: A sheet copied 3 mm up.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local body = pc.doc.feature{id = pc.surface.planar{sketches = {s}}}.body
+assert(#pc.doc.rebuild() == 0)
+local face = pc.doc.faces{body = body}[1]
+pc.surface.offset{body = body, faces = {face}, distance = 3}
+assert(#pc.doc.rebuild() == 0)
+assert(#pc.doc.faces{body = body} == 2, "the sheet and its copy")
+assert(math.abs(pc.doc.measure{body = body}.max[3] - 3) < 1e-6)
+```
 
 `pc.surface.extend`: Extend faces past picked edges.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `edges` (list, optional): The free edges to grow past, each {point, direction}, as pc.doc.edges lists an edge
+- `length` (number, optional): mm (5)
+- `continuity` (string, optional): G1 (the default), G0 or G2
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- `edges` are free edges of the body's sheets, each {point = e.point, direction = e.direction} from `pc.doc.edges`; each face grows past them by `length` (5 mm) and stays one face.
+- `continuity` G1 (the default) and G0 run straight on, G2 along the face's own surface. Past a cylinder's straight side, a curved direction, only G2 builds; G1 and G0 fail at rebuild ("a linear extension of an analytic surface across a curved parameter line would leave the surface").
+
+See also `pc.doc.edges`.
+
+Example: A sheet grown 5 mm past one side.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local body = pc.doc.feature{id = pc.surface.planar{sketches = {s}}}.body
+assert(#pc.doc.rebuild() == 0)
+local side
+for _, e in ipairs(pc.doc.edges{body = body}) do
+  if math.abs(e.point[1] - 10) < 1e-6 then side = e end
+end
+pc.surface.extend{body = body, length = 5,
+  edges = {{point = side.point, direction = side.direction}}}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.area - 150) < 1e-6 and math.abs(m.max[1] - 15) < 1e-6)
+assert(#pc.doc.faces{body = body} == 1, "still one face")
+```
 
 `pc.surface.blend`: Bridge two edges with a surface.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `first` (any, optional): {point, direction}, as pc.doc.edges lists an edge
+- `second` (any, optional): {point, direction}, as pc.doc.edges lists an edge
+- `continuity` (string, optional): G1 (the default), G0 or G2
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- `first` and `second` are edges of the body's sheets, each {point, direction} from `pc.doc.edges`; the blend is a new face between them, meeting each edge's face with `continuity` (G1 by default, G0 or G2).
+
+See also `pc.doc.edges`, `pc.surface.fill`.
+
+Example: A bridge between two strips.
+
+```lua
+local a = pc.sketch.new{plane = "XY", offset = 0}
+pc.sketch.line{sketch = a, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+local low = pc.surface.extrude{sketches = {a}, length = 5, direction = "Y"}
+local body = pc.doc.feature{id = low}.body
+local b = pc.sketch.new{body = body, plane = "XY", offset = 10}
+pc.sketch.line{sketch = b, x1 = 0, y1 = 10, x2 = 10, y2 = 10}
+pc.surface.extrude{body = body, sketches = {b}, length = 5, direction = "Y"}
+assert(#pc.doc.rebuild() == 0)
+local first, second
+for _, e in ipairs(pc.doc.edges{body = body}) do
+  if math.abs(e.point[2] - 5) < 1e-6 and math.abs(e.point[3]) < 1e-6 then first = e end
+  if math.abs(e.point[2] - 10) < 1e-6 and math.abs(e.point[3] - 10) < 1e-6 then second = e end
+end
+pc.surface.blend{body = body,
+  first = {point = first.point, direction = first.direction},
+  second = {point = second.point, direction = second.direction}}
+assert(#pc.doc.rebuild() == 0)
+assert(#pc.doc.faces{body = body} == 3, "two strips and the bridge")
+assert(pc.doc.measure{body = body}.area > 200)
+```
 
 `pc.surface.split`: Split faces along curves.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `sketches` (list, optional): The sketches whose curves cut the faces
+- `faces` (list, optional): The faces to cut, each {point, normal} as pc.doc.faces lists a face
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- `faces` are faces of the body as `pc.doc.faces` lists them. A sketch's curve lands on the face as seen square to the sketch's plane, so a sketch above the face cuts it too.
+- Each curve must cross the face from edge to edge; one ending inside fails at rebuild ("it must run from boundary to boundary").
+
+See also `pc.doc.faces`, `pc.surface.trim`.
+
+Example: A sheet cut in two along a line.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local body = pc.doc.feature{id = pc.surface.planar{sketches = {s}}}.body
+assert(#pc.doc.rebuild() == 0)
+local face = pc.doc.faces{body = body}[1]
+local cut = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.line{sketch = cut, x1 = 4, y1 = -1, x2 = 4, y2 = 11}
+pc.surface.split{body = body, faces = {face}, sketches = {cut}}
+assert(#pc.doc.rebuild() == 0)
+local areas = {}
+for _, f in ipairs(pc.doc.faces{body = body}) do areas[#areas + 1] = f.area end
+table.sort(areas)
+assert(#areas == 2 and math.abs(areas[1] - 40) < 1e-3 and math.abs(areas[2] - 60) < 1e-3)
+```
 
 `pc.surface.sew`: Sew the body's surfaces together.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
+- `gap` (number, optional): mm: edges this far apart are joined too (0, only edges that meet)
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- It joins every face of the body where their edges meet; `gap` (mm) joins edges up to that far apart too.
+- A shell that closes becomes a solid, with a volume. One that does not stays a sheet, its faces now sharing edges: `surface.check` lists those joins and `surface.fillet` can round them.
+
+See also `pc.surface.check`, `pc.surface.fillet`, `pc.surface.planar`.
+
+Example: Two walls joined at their corner.
+
+```lua
+local a = pc.sketch.new{plane = "XY"}
+pc.sketch.line{sketch = a, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+local wall = pc.surface.extrude{sketches = {a}, length = 5}
+local body = pc.doc.feature{id = wall}.body
+local b = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.line{sketch = b, x1 = 0, y1 = 10, x2 = 0, y2 = 0}
+pc.surface.extrude{body = body, sketches = {b}, length = 5}
+assert(#pc.doc.rebuild() == 0)
+assert(#pc.surface.check{body = body} == 0, "touching, not joined")
+pc.surface.sew{body = body}
+assert(#pc.doc.rebuild() == 0)
+assert(#pc.surface.check{body = body} == 1, "one shared edge")
+```
 
 `pc.surface.fillet`: Round edges where two faces of a surface meet.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `edges` (list, optional): The edges to round, each {point, direction}, as pc.doc.edges lists an edge
+- `radius` (number, optional): mm (2)
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- `edges` are edges two faces of the body share, each {point, direction} from `pc.doc.edges`; `radius` is 2 mm when left out.
+- Separate sheets that only touch share no edge: the round fails at rebuild ("Sew them first so they share it"). Sew them, or draw the faces from one sketch.
+
+See also `pc.surface.sew`, `pc.doc.edges`.
+
+Example: Two walls rounded at their corner.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.polyline{sketch = s, points = {{10, 0}, {0, 0}, {0, 10}}}
+local walls = pc.surface.extrude{sketches = {s}, length = 5}
+local body = pc.doc.feature{id = walls}.body
+assert(#pc.doc.rebuild() == 0)
+local corner
+for _, e in ipairs(pc.doc.edges{body = body}) do
+  if #e.faces == 2 then corner = e end
+end
+pc.surface.fillet{body = body, radius = 2,
+  edges = {{point = corner.point, direction = corner.direction}}}
+assert(#pc.doc.rebuild() == 0)
+assert(#pc.doc.faces{body = body} == 3, "two walls and the round")
+local area = pc.doc.measure{body = body}.area
+assert(math.abs(area - (100 - 4 * 5 + math.pi * 5)) < 1e-3, area)
+```
 
 `pc.surface.thicken`: Thicken the body's surfaces into solids.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `thickness` (number, optional): mm along the faces' normals (2); negative the other way
+- `both_sides` (boolean, optional): Half each side
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- Each sheet becomes a solid: `thickness` (2 mm) along the faces' normals, negative the other way, or half each way with `both_sides = true`.
+- A body already sewn into a solid is refused at rebuild ("the body has no sheet to thicken"): Design's Thickness hollows a solid.
+
+See also `pc.surface.sew`, `pc.surface.offset`.
+
+Example: A sheet given 2 mm.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local body = pc.doc.feature{id = pc.surface.planar{sketches = {s}}}.body
+pc.surface.thicken{body = body, thickness = 2}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - 200) < 1e-6, m.volume)
+assert(#pc.doc.faces{body = body} == 6, "a box")
+```
 
 `pc.surface.trim`: Keep what of the body lies on one side of a plane.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
-- Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
+- `plane` (any, optional): YZ (the default), XZ, XY or {Custom = {origin = {x, y, z}, normal = {x, y, z}}}, in the body's frame
+- `offset` (number, optional): mm along the plane's normal
+- `flip` (boolean, optional): Keep the side the normal points away from
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- It keeps what lies on the side the plane's normal points to: YZ keeps +X. `flip = true` keeps the other side; `offset` moves the plane along its normal, YZ with 4 being x = 4.
+- A plane that leaves nothing fails at rebuild ("the plane leaves nothing of the body on the side kept; flip it or move it"). It cuts a sewn solid too, which stays solid.
+
+See also `pc.surface.split`, `pc.surface.mirror`.
+
+Example: A sheet cut at x = 4, either side kept.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local body = pc.doc.feature{id = pc.surface.planar{sketches = {s}}}.body
+local trim = pc.surface.trim{body = body, plane = "YZ", offset = 4}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.area - 60) < 1e-6 and math.abs(m.min[1] - 4) < 1e-6)
+pc.surface.set{feature = trim, flip = true}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.area - 40) < 1e-6)
+```
 
 `pc.surface.mirror`: Add the body's reflection in a plane.
 
-- `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `body` (id): The surface body it works on, or a feature in it
 - `name` (string, optional): Its name in the tree
-- Other arguments: `plane` ("YZ", "XZ", "XY" or {"Custom": {"origin", "normal"}}) and `offset`
+- `plane` (any, optional): YZ (the default), XZ, XY or {Custom = {origin = {x, y, z}, normal = {x, y, z}}}, in the body's frame
+- `offset` (number, optional): mm along the plane's normal
 - Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- It adds the body's reflection beside what the body holds, the original kept; the two are separate pieces of the one body.
+- `plane` YZ (the default), XZ, XY or {Custom = {origin, normal}}, in the body's frame; `offset` moves it along its normal: YZ with 10 reflects in x = 10.
+
+See also `pc.surface.trim`.
+
+Example: A sheet and its reflection.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local body = pc.doc.feature{id = pc.surface.planar{sketches = {s}}}.body
+pc.surface.mirror{body = body, plane = "YZ"}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.area - 200) < 1e-6 and math.abs(m.min[1] + 10) < 1e-6)
+assert(#pc.doc.faces{body = body} == 2)
+```
 
 `pc.surface.check`: Measure how a body's faces meet at each shared edge.
 
 - `body` (id): The body, or a feature in it
 - Returns a list of {point, gap, angle_deg}, one per shared edge; the view labels them
 
+Notes:
+
+- One entry per edge two faces of the body share: `gap` in mm between them, `angle_deg` the crease (0 where they meet tangent), `point` halfway along the edge. Any body with a shape is checked, a Design solid too.
+- Sheets that only touch share no edge until sewn, so the seam between them is not listed: two separate sheets give an empty list. A body not built yet is refused ("The body has no shape to check yet").
+
+See also `pc.surface.sew`, `pc.surface.fillet`.
+
+Example: A sharp corner, then rounded.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.polyline{sketch = s, points = {{10, 0}, {0, 0}, {0, 10}}}
+local walls = pc.surface.extrude{sketches = {s}, length = 5}
+local body = pc.doc.feature{id = walls}.body
+assert(#pc.doc.rebuild() == 0)
+local joins = pc.surface.check{body = body}
+assert(#joins == 1 and math.abs(joins[1].angle_deg - 90) < 1e-6, "one square crease")
+assert(joins[1].gap < 1e-9)
+pc.surface.fillet{body = body, radius = 2,
+  edges = {{point = joins[1].point, direction = {0, 0, 1}}}}
+assert(#pc.doc.rebuild() == 0)
+joins = pc.surface.check{body = body}
+assert(#joins == 2, "the round meets each wall")
+for _, j in ipairs(joins) do assert(j.angle_deg < 0.01, "tangent") end
+```
+
 `pc.surface.set`: Change fields of a surface step.
 
 - `feature` (id): The surface step to change
-- Other arguments: The fields to change, by name (`length`, `continuity`, `plane`, `sketches`…)
+- Other arguments: The fields to change, by name (`length`, `continuity`, `plane`, `sketches`…), as the step's own command takes them
+
+Notes:
+
+- It takes the fields the step's command takes, by the same names; `sketches` replaces the curves it is built from. A name the step does not have is refused ("is not a field of this surface"); the kind of step stays.
+- The step keeps its place in the body's history: everything after it builds again on the change at `pc.doc.rebuild()`.
+
+Example: A wall made taller.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+local wall = pc.surface.extrude{sketches = {s}, length = 5}
+local body = pc.doc.feature{id = wall}.body
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.area - 50) < 1e-6)
+pc.surface.set{feature = wall, length = 8}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.area - 80) < 1e-6)
+```
 
 ### asm
 

@@ -106,9 +106,11 @@ Every tool that builds has a command: `pc.surface.extrude`,
 `pc.surface.fillet`, `pc.surface.extend`, `pc.surface.split`,
 `pc.surface.trim`, `pc.surface.thicken` and `pc.surface.mirror`. They
 take `sketches` (a list, in order), `body` (a body, or any feature in it)
-and any field of the step by name; Sew takes only `body` (its `gap` is
-set with `pc.surface.set`), Mirror `body`, `plane` and `offset`. A step
-missing what it builds from is refused, naming the field.
+and any field of the step by name; the steps that work on a body's
+surfaces, and Offset and Blend, which read its faces and edges, need
+`body`. Sew takes `body` and `gap`, Mirror `body`, `plane` and `offset`.
+A step missing what it builds from is refused, naming the field. Each
+command's notes and a working example are in the scripting reference.
 
 `pc.surface.set{feature = id, length = 8}` changes a step after it is
 made, its curves too (`sketches`); `pc.surface.check{body = id}` returns

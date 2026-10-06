@@ -19,15 +19,16 @@
 //! each edge in the view and lists them in a task of its own.
 
 pub mod build;
+mod commands;
 pub mod feature;
 #[cfg(feature = "egui")]
 mod panel;
 
 use core_document::{
-    BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId,
-    FeatureInfo, HostRequest, InputResult, ParamKind, Parameter, RebuildJob, TaskInfo,
-    ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BodyId, CommandArgs, CommandError, CommandResult, Document, FeatureId, FeatureInfo,
+    HostRequest, InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -403,30 +404,10 @@ impl SurfaceWorkbench {
             }
             None => None,
         };
-        let mut curves = Vec::new();
-        if let Some(list) = args.get("sketches").and_then(Value::as_array) {
-            for item in list {
-                let raw = item
-                    .as_str()
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                    .ok_or_else(|| CommandError::bad("sketches", "must list sketch ids"))?;
-                let sketch = FeatureId(raw);
-                let is_sketch = ctx
-                    .document
-                    .get_feature_meta(sketch)
-                    .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
-                if !is_sketch {
-                    return Err(CommandError::bad(
-                        "sketches",
-                        format!("{raw} is not a sketch"),
-                    ));
-                }
-                curves.push(CurveRef::Sketch(sketch));
-            }
-        }
+        let curves = sketch_curves(&feature, args, ctx.document)?;
         let body = match named {
             Some(body) => body,
-            None if !feature.constructs() => {
+            None if feature.needs_body() => {
                 return Err(CommandError::bad(
                     "body",
                     "is required: this step works on the surfaces a body holds",
@@ -445,16 +426,7 @@ impl SurfaceWorkbench {
         panel_free::take_selection(&mut feature, &curves, &[]);
         let mut data = feature.to_json();
         merge_fields(&mut data, args)?;
-        let feature = SurfaceFeature::from_json(&data).map_err(|e| {
-            let e = e.to_string();
-            let hint = if e.contains("unit variant") {
-                "; a `Custom` direction, axis or plane takes its numbers, as \
-                 direction = {Custom = {0, 0, 1}}"
-            } else {
-                ""
-            };
-            CommandError::failed(format!("the fields do not make a surface: {e}{hint}"))
-        })?;
+        let feature = SurfaceFeature::from_json(&data).map_err(unreadable)?;
         if let Some(missing) = feature.missing() {
             return Err(CommandError::failed(format!("it needs {missing}")));
         }
@@ -518,15 +490,8 @@ fn set_by_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comm
         .get_feature_data(id)
         .and_then(|data| SurfaceFeature::from_json(data).ok())
         .ok_or_else(|| CommandError::failed("the step's data does not read"))?;
-    if let Some(list) = args.get("sketches").and_then(Value::as_array) {
-        let mut curves = Vec::new();
-        for item in list {
-            let raw = item
-                .as_str()
-                .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                .ok_or_else(|| CommandError::bad("sketches", "must list sketch ids"))?;
-            curves.push(CurveRef::Sketch(FeatureId(raw)));
-        }
+    if args.contains_key("sketches") {
+        let curves = sketch_curves(&feature, args, ctx.document)?;
         feature.clear_curves();
         panel_free::take_selection(&mut feature, &curves, &[]);
     }
@@ -535,8 +500,7 @@ fn set_by_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comm
     fields.remove("sketches");
     let mut data = feature.to_json();
     merge_fields(&mut data, &fields)?;
-    let feature = SurfaceFeature::from_json(&data)
-        .map_err(|e| CommandError::failed(format!("the fields do not make a surface: {e}")))?;
+    let feature = SurfaceFeature::from_json(&data).map_err(unreadable)?;
     if let Some(missing) = feature.missing() {
         return Err(CommandError::failed(format!("it needs {missing}")));
     }
@@ -545,6 +509,66 @@ fn set_by_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comm
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.mark_feature_dirty(id);
     Ok(Value::Null)
+}
+
+/// The sketches a command names in `sketches`, each checked to be one, and
+/// no more than the step takes.
+fn sketch_curves(
+    feature: &SurfaceFeature,
+    args: &CommandArgs,
+    document: &Document,
+) -> Result<Vec<CurveRef>, CommandError> {
+    let mut curves = Vec::new();
+    let Some(list) = args.get("sketches") else {
+        return Ok(curves);
+    };
+    let list = list
+        .as_array()
+        .ok_or_else(|| CommandError::bad("sketches", "must list sketch ids"))?;
+    for item in list {
+        let raw = item
+            .as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .ok_or_else(|| CommandError::bad("sketches", "must list sketch ids"))?;
+        let sketch = FeatureId(raw);
+        let is_sketch = document
+            .get_feature_meta(sketch)
+            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
+        if !is_sketch {
+            return Err(CommandError::bad(
+                "sketches",
+                format!("{raw} is not a sketch"),
+            ));
+        }
+        curves.push(CurveRef::Sketch(sketch));
+    }
+    if matches!(feature, SurfaceFeature::Ruled { .. }) && curves.len() > 2 {
+        return Err(CommandError::bad(
+            "sketches",
+            format!("gives {} curves; a ruled surface spans two", curves.len()),
+        ));
+    }
+    Ok(curves)
+}
+
+/// A step's fields that do not read as one, with the form a `Custom`
+/// direction, axis or plane takes when that is what went wrong.
+fn unreadable(error: core_document::DocumentError) -> CommandError {
+    let e = error.to_string();
+    let custom = [
+        "unit variant",
+        "expected struct variant",
+        "expected newtype variant",
+    ];
+    let hint = if custom.iter().any(|c| e.contains(c)) {
+        "; a `Custom` direction, axis or plane takes its numbers: \
+         direction = {Custom = {0, 0, 1}}, \
+         axis = {Custom = {origin = {0, 0, 0}, direction = {0, 0, 1}}}, \
+         plane = {Custom = {origin = {0, 0, 0}, normal = {1, 0, 0}}}"
+    } else {
+        ""
+    };
+    CommandError::failed(format!("the fields do not make a surface: {e}{hint}"))
 }
 
 /// What a selection gives a step, shared by the tools and the commands.
@@ -699,31 +723,15 @@ impl Workbench for SurfaceWorkbench {
             }
             context.register_tool(tool);
             if kind.waits.is_none() {
-                context.register_command(command_spec(kind));
+                context.register_command(commands::step(kind));
             }
         }
         context.register_tool(
             ToolDescriptor::new_action(CHECK_TOOL, "Check continuity", Some("analysis"))
                 .icon("surface-continuity"),
         );
-        context.register_command(
-            CommandSpec::new(
-                CHECK_TOOL,
-                "Measure how a body's faces meet at each shared edge",
-            )
-            .param("body", ParamKind::Id, "The body, or a feature in it")
-            .returns("a list of {point, gap, angle_deg}, one per shared edge; the view labels them")
-            .read_only(),
-        );
-        context.register_command(
-            CommandSpec::new(SET_COMMAND, "Change fields of a surface step")
-                .param("feature", ParamKind::Id, "The surface step to change")
-                .extra_args(
-                    "The fields to change, by name (`length`, `continuity`, `plane`, \
-                     `sketches`…)",
-                )
-                .returns("nothing"),
-        );
+        context.register_command(commands::check());
+        context.register_command(commands::set());
     }
 
     fn on_input(
@@ -990,29 +998,6 @@ impl Workbench for SurfaceWorkbench {
 
     fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
         self.task = state.and_then(|s| s.downcast::<Task>().ok()).map(|t| *t);
-    }
-}
-
-fn command_spec(kind: &feature::Kind) -> CommandSpec {
-    let spec = CommandSpec::new(kind.tool, kind.summary)
-        .optional(
-            "body",
-            ParamKind::Id,
-            "The surface body it goes in, or a feature in it; else its sketch's body when \
-             that holds only drawings and surfaces, else a new one",
-        )
-        .optional("name", ParamKind::String, "Its name in the tree")
-        .returns("The new feature's id");
-    match kind.tool {
-        "surface.sew" => spec,
-        "surface.mirror" => spec.extra_args("`plane` (\"YZ\", \"XZ\", \"XY\" or {\"Custom\": {\"origin\", \"normal\"}}) and `offset`"),
-        _ => spec
-            .optional(
-                "sketches",
-                ParamKind::List,
-                "The sketches it is built from, in order: every chain of each, open or closed",
-            )
-            .extra_args("Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)"),
     }
 }
 

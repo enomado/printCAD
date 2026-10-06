@@ -38,6 +38,9 @@ pub struct EdgePick {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FacePick {
     pub point: [f32; 3],
+    /// Its normal where picked; a face is found by its name and point, so
+    /// a curved face, which has no one normal, may leave it out.
+    #[serde(default)]
     pub normal: [f32; 3],
     #[serde(
         default,
@@ -536,6 +539,13 @@ impl SurfaceFeature {
                 | SurfaceFeature::Split { .. }
                 | SurfaceFeature::Extend { .. }
         )
+    }
+
+    /// Whether the step reads what its body holds, so it needs a body to
+    /// go in: every step that works on the body's surfaces, and an offset
+    /// or a blend, built from the body's faces and edges.
+    pub fn needs_body(&self) -> bool {
+        !self.constructs() || matches!(self, Self::Offset { .. } | Self::Blend { .. })
     }
 }
 
