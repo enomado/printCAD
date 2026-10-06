@@ -178,6 +178,41 @@ fn the_move_panel_moves_the_body_as_asm_place_does_and_records_it() {
 }
 
 #[test]
+fn the_picking_prompt_offers_the_origin_and_takes_its_plane_as_the_second_face() {
+    let (mut doc, _, part) = scene();
+    let mut wb = AssemblyWorkbench::default();
+    wb.on_input(
+        &WorkbenchInputEvent::ToolActivated,
+        Some("asm.mate"),
+        &mut context(&mut doc),
+    );
+    let panel = widgets(&wb, &mut doc);
+    assert!(words(&panel).contains("The first body moves"));
+    assert!(field(&panel, "origin:0").is_none(), "nothing to pair yet");
+    draws(&mut wb, &mut doc);
+
+    frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
+    let panel = widgets(&wb, &mut doc);
+    let Some(Widget::Button { label, .. }) = field(&panel, "origin:0") else {
+        panic!("{panel:?}");
+    };
+    assert_eq!(label, crate::ORIGIN[0].0);
+    draws(&mut wb, &mut doc);
+
+    send(&mut wb, &mut doc, button("origin:0"));
+    assert!(wb.picking.is_none());
+    let Some(Task::Joint { id, .. }) = wb.task.clone() else {
+        panic!("the mate's task is open");
+    };
+    let joint = crate::joints(&doc)
+        .into_iter()
+        .find(|j| j.id == id)
+        .unwrap();
+    assert_eq!(joint.feature.other_body, crate::WORLD);
+    assert_eq!(joint.body, part);
+}
+
+#[test]
 fn a_body_its_joints_place_shows_its_place_without_fields() {
     let (mut wb, mut doc, _, part, _) = mated();
     wb.task = Some(Task::Move {

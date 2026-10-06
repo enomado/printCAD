@@ -87,6 +87,47 @@ mod w {
             error: None,
         }
     }
+
+    pub(super) fn text(text: impl Into<String>) -> Widget {
+        Widget::Text {
+            text: text.into(),
+            mono: false,
+        }
+    }
+
+    pub(super) fn row(children: Vec<Widget>) -> Widget {
+        Widget::Row { children }
+    }
+}
+
+/// What to click while a joint's faces are picked, and the origin's planes
+/// or axes the second pick may be instead.
+fn picking_widgets(picking: &crate::Picking) -> Vec<Widget> {
+    let mut widgets = vec![
+        w::header(picking.kind.icon(), picking.kind.label()),
+        w::text(picking.prompt()),
+        w::text(
+            "The first body moves; the second stays where it is. A body \
+             with no joints of its own never moves. A datum plane or line \
+             selected in the tree is taken as a face.",
+        ),
+    ];
+    if let Some((_, first, ..)) = picking.first {
+        let offered: Vec<Widget> = crate::ORIGIN
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, anchor))| picking.kind.takes_anchor(anchor, Some(first)))
+            .map(|(i, (name, _))| w::button(&format!("origin:{i}"), name, ButtonStyle::Small))
+            .collect();
+        if !offered.is_empty() {
+            widgets.push(Widget::Group {
+                title: "Or the origin's".into(),
+                open: true,
+                children: vec![w::row(offered)],
+            });
+        }
+    }
+    widgets
 }
 
 /// The move panel's fields: the position along each axis, then the turn
@@ -147,46 +188,12 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
-        if let Some(picking) = &self.picking {
+        if self.picking.is_some() {
             if request.accept || request.cancel {
                 self.picking = None;
                 return TaskOutcome::Cancelled;
             }
-            header(ui, picking.kind.icon(), picking.kind.label());
-            ui.add_space(SPACE_2);
-            ui.label(
-                RichText::new(picking.prompt())
-                    .font(sans(FONT_SM))
-                    .color(TEXT1),
-            );
-            ui.add_space(SPACE_1);
-            ui.label(
-                RichText::new(
-                    "The first body moves; the second stays where it is. A body \
-                     with no joints of its own never moves. A datum plane or line \
-                     selected in the tree is taken as a face.",
-                )
-                .font(sans(FONT_XS))
-                .color(TEXT3),
-            );
-            if let Some((_, first, ..)) = picking.first {
-                let offered: Vec<_> = crate::ORIGIN
-                    .iter()
-                    .filter(|(_, anchor)| picking.kind.takes_anchor(anchor, Some(first)))
-                    .collect();
-                if !offered.is_empty() {
-                    ui.add_space(SPACE_2);
-                    overline(ui, "Or the origin's");
-                    ui.horizontal_wrapped(|ui| {
-                        for (name, anchor) in offered {
-                            if ui_kit::widgets::small_secondary_button(ui, name).clicked() {
-                                self.picked(ctx, crate::WORLD, *anchor, None, 0);
-                            }
-                        }
-                    });
-                }
-            }
-            return TaskOutcome::Open;
+            return self.declared_panel(ui, ctx);
         }
         match self.task.clone() {
             Some(Task::Joint {
@@ -284,8 +291,12 @@ impl AssemblyWorkbench {
         TaskOutcome::Open
     }
 
-    /// The open task's panel, as widgets.
+    /// The open task's panel, as widgets: the prompt while a joint's faces
+    /// are picked, else the task's own.
     pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
+        if let Some(picking) = &self.picking {
+            return picking_widgets(picking);
+        }
         match &self.task {
             Some(Task::Move { body, .. }) => self.move_widgets(ctx, *body),
             _ => Vec::new(),
@@ -299,6 +310,18 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
+        if self.picking.is_some() {
+            // One of the origin's planes or axes, as the second pick.
+            if let PanelEvent::Button { id } = event
+                && let Some((_, anchor)) = id
+                    .strip_prefix("origin:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| crate::ORIGIN.get(i))
+            {
+                self.picked(ctx, crate::WORLD, *anchor, None, 0);
+            }
+            return None;
+        }
         match self.task.clone() {
             Some(Task::Move { body, .. }) => self.move_event(ctx, body, event),
             _ => None,
