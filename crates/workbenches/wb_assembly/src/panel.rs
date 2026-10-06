@@ -231,14 +231,7 @@ impl AssemblyWorkbench {
             Some(Task::Move { body, placements }) => {
                 self.move_panel(ui, ctx, request, body, &placements)
             }
-            Some(Task::Interference {
-                found,
-                seq,
-                around,
-                clearance,
-            }) => {
-                self.interference_panel(ui, ctx, request, found.as_ref(), (seq, around, clearance))
-            }
+            Some(Task::Interference { .. }) => self.interference_panel(ui, ctx, request),
             Some(Task::Explode {
                 placements,
                 spread,
@@ -262,9 +255,7 @@ impl AssemblyWorkbench {
             Some(Task::Group { editing, members }) => {
                 self.group_panel(ui, ctx, request, editing, &members)
             }
-            Some(Task::Mass { found, density }) => {
-                self.mass_panel(ui, ctx, request, found.as_ref(), density)
-            }
+            Some(Task::Mass { .. }) => self.mass_panel(ui, ctx, request),
             None => TaskOutcome::Open,
         }
     }
@@ -330,6 +321,13 @@ impl AssemblyWorkbench {
             }) => Self::copies_widgets(ctx, *body, (*count, *step, *around), *mirror),
             Some(Task::Replace { old, new }) => Self::replace_widgets(ctx, *old, *new),
             Some(Task::Group { editing, members }) => Self::group_widgets(ctx, *editing, members),
+            Some(Task::Interference {
+                found,
+                seq,
+                around,
+                clearance,
+            }) => self.interference_widgets(ctx, found.as_ref(), (*seq, *around, *clearance)),
+            Some(Task::Mass { found, density }) => self.mass_widgets(ctx, found.as_ref(), *density),
             _ => Vec::new(),
         }
     }
@@ -357,6 +355,13 @@ impl AssemblyWorkbench {
             Some(Task::Move { body, .. }) => self.move_event(ctx, body, event),
             Some(Task::Copies { .. }) => self.copies_event(event),
             Some(Task::Group { editing, .. }) => self.group_event(ctx, editing, event),
+            Some(Task::Interference {
+                found,
+                around,
+                clearance,
+                ..
+            }) => self.interference_event(ctx, found.as_ref(), (around, clearance), event),
+            Some(Task::Mass { found, .. }) => self.mass_event(ctx, found.as_ref(), event),
             _ => None,
         }
     }
@@ -420,183 +425,197 @@ impl AssemblyWorkbench {
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
-        found: Option<&crate::Interference>,
-        (seq, around, clearance): (u64, Option<core_document::BodyId>, Option<f32>),
     ) -> TaskOutcome {
         if request.accept || request.cancel {
             self.checking = None;
             self.task = None;
             return TaskOutcome::Cancelled;
         }
-        header(ui, "check-geometry", "Interference");
-        ui.add_space(SPACE_2);
         self.collect_interference(ctx);
-        let Some(found) = found else {
-            let (done, total) = self.interference_progress().unwrap_or((0, 0));
-            ui.label(
-                RichText::new(format!("Checking {done} of {total} pairs that may touch"))
-                    .font(sans(FONT_SM))
-                    .color(TEXT1),
-            );
-            ui.add(egui::ProgressBar::new(if total == 0 {
-                0.0
-            } else {
-                done as f32 / total as f32
-            }));
-            ui.add_space(SPACE_2);
-            if ui_kit::widgets::secondary_button(ui, "Stop")
-                .on_hover_text("Stop checking; the clashes found so far stay")
-                .clicked()
-            {
-                self.stop_interference();
-            }
+        if matches!(&self.task, Some(Task::Interference { found: None, .. })) {
             // The answer arrives on another thread, with no event to wake
             // the window.
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
-            return TaskOutcome::Open;
+        }
+        self.declared_panel(ui, ctx)
+    }
+
+    /// The check's progress while it runs; then what it found, each pair a
+    /// row, and the checks to run again.
+    fn interference_widgets(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        found: Option<&crate::Interference>,
+        (seq, around, clearance): (u64, Option<BodyId>, Option<f32>),
+    ) -> Vec<Widget> {
+        let mut widgets = vec![w::header("check-geometry", "Interference")];
+        let Some(found) = found else {
+            let (done, total) = self.interference_progress().unwrap_or((0, 0));
+            widgets.push(Widget::Progress {
+                label: format!("Checking {done} of {total} pairs that may touch"),
+                fraction: Some(if total == 0 {
+                    0.0
+                } else {
+                    done as f32 / total as f32
+                }),
+                job: None,
+            });
+            widgets.push(w::hinted(
+                "Stop checking; the clashes found so far stay",
+                w::button("stop", "Stop", ButtonStyle::Secondary),
+            ));
+            return widgets;
         };
         let bodies = format!(
             "{} bod{}",
             found.checked,
             if found.checked == 1 { "y" } else { "ies" }
         );
+        let pair = |a: BodyId, b: BodyId, what: String| bench_api::ListItem {
+            label: format!("{} and {}: {what}", body_name(ctx, a), body_name(ctx, b)),
+            detail: None,
+            icon: None,
+        };
         if let Some(gap) = clearance {
-            match found.near.len() {
-                0 => note_card(
-                    ui,
-                    Note::Success,
+            widgets.push(match found.near.len() {
+                0 => w::note(
+                    NoteKind::Success,
                     None,
-                    &format!("No pair nearer than {gap} mm among {bodies}"),
+                    format!("No pair nearer than {gap} mm among {bodies}"),
                 ),
-                n => note_card(
-                    ui,
-                    Note::Warning,
+                n => w::note(
+                    NoteKind::Warning,
                     Some(&format!(
                         "{n} pair{} nearer than {gap} mm",
                         if n == 1 { "" } else { "s" }
                     )),
-                    &format!("Among {bodies}; click one to select its first body"),
+                    format!("Among {bodies}; click one to select its first body"),
                 ),
-            };
-            ui.add_space(SPACE_2);
-            for near in &found.near {
-                let text = format!(
-                    "{} and {}: {:.2} mm",
-                    body_name(ctx, near.a),
-                    body_name(ctx, near.b),
-                    near.distance_mm
-                );
-                let row = ui.add(
-                    egui::Button::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
-                        .frame(false),
-                );
-                if row.clicked() {
-                    ctx.request(core_document::HostRequest::SelectBody(near.a));
-                }
-            }
-        }
-        if clearance.is_none() {
-            match found.clashes.len() {
-                0 => note_card(
-                    ui,
-                    Note::Success,
+            });
+            widgets.push(Widget::List {
+                id: "near".into(),
+                items: found
+                    .near
+                    .iter()
+                    .map(|n| pair(n.a, n.b, format!("{:.2} mm", n.distance_mm)))
+                    .collect(),
+                selected: None,
+            });
+        } else {
+            widgets.push(match found.clashes.len() {
+                0 => w::note(
+                    NoteKind::Success,
                     None,
-                    &format!("No interference among {bodies}"),
+                    format!("No interference among {bodies}"),
                 ),
-                n => note_card(
-                    ui,
-                    Note::Error,
+                n => w::note(
+                    NoteKind::Error,
                     Some(&format!("{n} clash{}", if n == 1 { "" } else { "es" })),
-                    &format!("Among {bodies}; click one to select its first body"),
+                    format!("Among {bodies}; click one to select its first body"),
                 ),
-            };
+            });
         }
-        ui.add_space(SPACE_2);
-        for clash in &found.clashes {
-            let text = format!(
-                "{} and {}: {:.2} mm³",
-                body_name(ctx, clash.a),
-                body_name(ctx, clash.b),
-                clash.volume_mm3
-            );
-            let row = ui.add(
-                egui::Button::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
-                    .frame(false),
-            );
-            if row.clicked() {
-                ctx.request(core_document::HostRequest::SelectBody(clash.a));
-            }
-        }
+        widgets.push(Widget::List {
+            id: "clashes".into(),
+            items: found
+                .clashes
+                .iter()
+                .map(|c| pair(c.a, c.b, format!("{:.2} mm³", c.volume_mm3)))
+                .collect(),
+            selected: None,
+        });
         if found.stopped {
-            ui.add_space(SPACE_1);
-            note_card(
-                ui,
-                Note::Warning,
+            widgets.push(w::note(
+                NoteKind::Warning,
                 None,
                 "Stopped early: some pairs were not checked",
-            );
+            ));
         }
         if found.skipped > 0 {
-            ui.add_space(SPACE_1);
-            ui.label(
-                RichText::new(format!(
-                    "{} visible bod{} without a solid (a mesh, or not built yet) left out",
-                    found.skipped,
-                    if found.skipped == 1 { "y" } else { "ies" }
-                ))
-                .font(sans(FONT_XS))
-                .color(TEXT3),
-            );
+            widgets.push(w::text(format!(
+                "{} visible bod{} without a solid (a mesh, or not built yet) left out",
+                found.skipped,
+                if found.skipped == 1 { "y" } else { "ies" }
+            )));
         }
         if ctx.document.mutation_seq() != seq {
-            ui.add_space(SPACE_1);
-            note_card(
-                ui,
-                Note::Warning,
+            widgets.push(w::note(
+                NoteKind::Warning,
                 None,
                 "The assembly has changed since this check",
-            );
+            ));
         }
         if let Some(body) = around {
-            ui.add_space(SPACE_1);
-            note_card(
-                ui,
-                Note::Info,
+            widgets.push(w::note(
+                NoteKind::Info,
                 None,
-                &format!("{} against every other body", crate::body_name(ctx, body)),
-            );
+                format!("{} against every other body", body_name(ctx, body)),
+            ));
         }
-        ui.add_space(SPACE_2);
-        let mut gap = self.clearance_mm.or(clearance).unwrap_or(0.5);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Clearance").font(sans(FONT_SM)).color(TEXT2));
-            if QtyField::mm(&mut gap).range(0.0..=1000.0).show(ui) {
-                self.clearance_mm = Some(gap);
-            }
-        });
-        ui.add_space(SPACE_1);
-        ui.horizontal(|ui| {
-            if ui_kit::widgets::secondary_button(ui, "Check clashes")
-                .on_hover_text("Pairs that share material")
-                .clicked()
-            {
-                self.check_interference(ctx, around);
-            }
-            if ui_kit::widgets::secondary_button(ui, "Check clearance")
-                .on_hover_text("Pairs nearer to each other than the clearance")
-                .clicked()
-            {
-                self.check_clearance(ctx, around, gap);
-            }
-        });
-        if around.is_some() && ui_kit::widgets::secondary_button(ui, "Check every pair").clicked() {
-            match clearance {
-                Some(gap) => self.check_clearance(ctx, None, gap),
-                None => self.check_interference(ctx, None),
-            }
+        widgets.push(w::ranged(
+            "clearance",
+            "Clearance",
+            self.clearance_mm.or(clearance).unwrap_or(0.5),
+            Dim::Length,
+            Some((0.0, 1000.0)),
+        ));
+        widgets.push(w::row(vec![
+            w::hinted(
+                "Pairs that share material",
+                w::button("check_clashes", "Check clashes", ButtonStyle::Secondary),
+            ),
+            w::hinted(
+                "Pairs nearer to each other than the clearance",
+                w::button("check_clearance", "Check clearance", ButtonStyle::Secondary),
+            ),
+        ]));
+        if around.is_some() {
+            widgets.push(w::button(
+                "every_pair",
+                "Check every pair",
+                ButtonStyle::Secondary,
+            ));
         }
-        TaskOutcome::Open
+        widgets
+    }
+
+    /// A pair clicked selects its first body; the buttons stop the check
+    /// or run another.
+    fn interference_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        found: Option<&crate::Interference>,
+        (around, clearance): (Option<BodyId>, Option<f32>),
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let gap = self.clearance_mm.or(clearance).unwrap_or(0.5);
+        match event {
+            PanelEvent::Select { id, index } => {
+                let found = found?;
+                let body = match id.as_str() {
+                    "near" => found.near.get(*index)?.a,
+                    "clashes" => found.clashes.get(*index)?.a,
+                    _ => return None,
+                };
+                ctx.request(core_document::HostRequest::SelectBody(body));
+            }
+            PanelEvent::Number { id, value } if id == "clearance" => {
+                self.clearance_mm = Some(*value as f32);
+            }
+            PanelEvent::Button { id } => match id.as_str() {
+                "stop" => self.stop_interference(),
+                "check_clashes" => self.check_interference(ctx, around),
+                "check_clearance" => self.check_clearance(ctx, around, gap),
+                "every_pair" => match clearance {
+                    Some(gap) => self.check_clearance(ctx, None, gap),
+                    None => self.check_interference(ctx, None),
+                },
+                _ => {}
+            },
+            _ => {}
+        }
+        None
     }
 
     /// The exploded view's spread; closing puts every body back.
@@ -1454,117 +1473,114 @@ impl AssemblyWorkbench {
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
-        found: Option<&crate::MassReport>,
-        density: f32,
     ) -> TaskOutcome {
         if request.accept || request.cancel {
             self.measuring = None;
             self.task = None;
             return TaskOutcome::Cancelled;
         }
-        header(ui, "measure", "Mass");
-        ui.add_space(SPACE_2);
         self.collect_mass(ctx);
-        let Some(report) = found else {
-            let (done, total) = self.mass_progress().unwrap_or((0, 0));
-            ui.label(
-                RichText::new(format!("Measuring {done} of {total} bodies"))
-                    .font(sans(FONT_SM))
-                    .color(TEXT1),
-            );
-            ui.add(egui::ProgressBar::new(if total == 0 {
-                0.0
-            } else {
-                done as f32 / total as f32
-            }));
+        if matches!(&self.task, Some(Task::Mass { found: None, .. })) {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
-            return TaskOutcome::Open;
-        };
-        let mut edited = density;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Density").font(sans(FONT_SM)).color(TEXT2));
-            QtyField::new(&mut edited)
-                .unit("g/cm³")
-                .speed(0.01)
-                .range(0.0..=100.0)
-                .show(ui);
-        });
-        if edited != density
-            && let Some(crate::Task::Mass { density, .. }) = &mut self.task
-        {
-            *density = edited;
         }
-        let density = f64::from(edited);
-        let unit = ctx.document.display_unit();
-        let line = |ui: &mut egui::Ui, label: &str, text: String| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
-                ui.label(RichText::new(text).font(ui_kit::mono(FONT_SM)).color(TEXT1));
+        self.declared_panel(ui, ctx)
+    }
+
+    /// The measuring's progress; then the density, the totals and each
+    /// body's mass, a click on one selecting it.
+    fn mass_widgets(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        found: Option<&crate::MassReport>,
+        density: f32,
+    ) -> Vec<Widget> {
+        let mut widgets = vec![w::header("measure", "Mass")];
+        let Some(report) = found else {
+            let (done, total) = self.mass_progress().unwrap_or((0, 0));
+            widgets.push(Widget::Progress {
+                label: format!("Measuring {done} of {total} bodies"),
+                fraction: Some(if total == 0 {
+                    0.0
+                } else {
+                    done as f32 / total as f32
+                }),
+                job: None,
             });
+            return widgets;
         };
-        ui.add_space(SPACE_1);
-        line(ui, "Mass", mass_text(report.mass_g(density)));
-        line(
-            ui,
+        widgets.push(w::ranged(
+            "density",
+            "Density, g/cm³",
+            density,
+            Dim::Number,
+            Some((0.0, 100.0)),
+        ));
+        let density = f64::from(density);
+        let unit = ctx.document.display_unit();
+        let line = |label: &str, value: String| Widget::Value {
+            label: label.into(),
+            value,
+            mono: true,
+        };
+        widgets.push(line("Mass", mass_text(report.mass_g(density))));
+        widgets.push(line(
             "Volume",
             core_document::format_volume_mm3(report.volume_mm3(), unit, 2),
-        );
+        ));
         if let Some(c) = report.centre(density) {
             let f = |v: f64| core_document::format_length_mm(v as f32, unit, 2);
-            line(
-                ui,
+            widgets.push(line(
                 "Centre of mass",
                 format!("{}, {}, {}", f(c[0]), f(c[1]), f(c[2])),
-            );
+            ));
         }
-        ui.add_space(SPACE_2);
-        egui::Grid::new("assembly_mass")
-            .num_columns(2)
-            .striped(true)
-            .spacing([SPACE_3, SPACE_1])
-            .show(ui, |ui| {
-                for heading in ["Body", "Mass"] {
-                    ui.label(RichText::new(heading).font(sans(FONT_XS)).color(TEXT3));
-                }
-                ui.end_row();
-                for b in &report.bodies {
-                    let name = ui.add(
-                        egui::Button::new(
-                            RichText::new(body_name(ctx, b.body))
-                                .font(sans(FONT_SM))
-                                .color(TEXT1),
-                        )
-                        .frame(false),
-                    );
-                    if name.clicked() {
-                        ctx.request(core_document::HostRequest::SelectBody(b.body));
-                    }
-                    ui.label(
-                        RichText::new(mass_text(b.mass_g(density)))
-                            .font(ui_kit::mono(FONT_SM))
-                            .color(TEXT1),
-                    );
-                    ui.end_row();
-                }
-            });
+        widgets.push(Widget::Table {
+            id: "bodies".into(),
+            columns: vec!["Body".into(), "Mass".into()],
+            rows: report
+                .bodies
+                .iter()
+                .map(|b| vec![body_name(ctx, b.body), mass_text(b.mass_g(density))])
+                .collect(),
+            selected: None,
+        });
         if report.skipped > 0 {
-            ui.add_space(SPACE_1);
-            ui.label(
-                RichText::new(format!(
-                    "{} visible bod{} without a closed solid left out",
-                    report.skipped,
-                    if report.skipped == 1 { "y" } else { "ies" }
-                ))
-                .font(sans(FONT_XS))
-                .color(TEXT3),
-            );
+            widgets.push(w::text(format!(
+                "{} visible bod{} without a closed solid left out",
+                report.skipped,
+                if report.skipped == 1 { "y" } else { "ies" }
+            )));
         }
-        ui.add_space(SPACE_2);
-        if ui_kit::widgets::secondary_button(ui, "Measure again").clicked() {
-            self.measure_mass(ctx, edited);
+        widgets.push(w::button("again", "Measure again", ButtonStyle::Secondary));
+        widgets
+    }
+
+    /// The density changed, a body clicked, or the bodies measured again.
+    fn mass_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        found: Option<&crate::MassReport>,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        match event {
+            PanelEvent::Number { id, value } if id == "density" => {
+                if let Some(Task::Mass { density, .. }) = &mut self.task {
+                    *density = *value as f32;
+                }
+            }
+            PanelEvent::Select { index, .. } => {
+                let body = found?.bodies.get(*index)?.body;
+                ctx.request(core_document::HostRequest::SelectBody(body));
+            }
+            PanelEvent::Button { id } if id == "again" => {
+                if let Some(Task::Mass { density, .. }) = self.task {
+                    self.measure_mass(ctx, density);
+                }
+            }
+            _ => {}
         }
-        TaskOutcome::Open
+        None
     }
 
     /// Every part, how many of it and its size, with a copy for a

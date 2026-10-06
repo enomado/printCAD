@@ -21,6 +21,26 @@ fn send(
     (outcome, core_document::HookOutcome::take(&mut ctx).recorded)
 }
 
+/// The body `event` asks the host to select, if any.
+fn selects(wb: &mut AssemblyWorkbench, doc: &mut Document, event: PanelEvent) -> Option<BodyId> {
+    let mut ctx = context(doc);
+    wb.task_event(&mut ctx, &event);
+    core_document::HookOutcome::take(&mut ctx)
+        .requests
+        .into_iter()
+        .find_map(|r| match r {
+            core_document::HostRequest::SelectBody(body) => Some(body),
+            _ => None,
+        })
+}
+
+fn select(id: &str, index: usize) -> PanelEvent {
+    PanelEvent::Select {
+        id: id.into(),
+        index,
+    }
+}
+
 fn number(id: &str, value: f64) -> PanelEvent {
     PanelEvent::Number {
         id: id.into(),
@@ -60,6 +80,7 @@ fn field<'a>(widgets: &'a [Widget], id: &str) -> Option<&'a Widget> {
         | Widget::Button { id: i, .. }
         | Widget::Slider { id: i, .. }
         | Widget::List { id: i, .. }
+        | Widget::Table { id: i, .. }
         | Widget::Sheet { id: i, .. } => i == id,
         _ => false,
     })
@@ -400,4 +421,103 @@ fn a_group_takes_bodies_out_and_is_dissolved_as_doc_delete() {
     assert_eq!(recorded[0].id, "doc.delete");
     assert!(doc.get_feature_meta(group).is_none());
     assert!(wb.task.is_none());
+}
+
+#[test]
+fn an_interference_check_lists_its_clashes_and_a_click_selects_the_first_body() {
+    let (mut doc, base, part) = scene();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Interference {
+            found: None,
+            seq: doc.mutation_seq(),
+            around: Some(part),
+            clearance: None,
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    let panel = widgets(&wb, &mut doc);
+    assert!(matches!(
+        flat(&panel)[1],
+        Widget::Progress {
+            fraction: Some(_),
+            ..
+        }
+    ));
+    assert!(field(&panel, "stop").is_some());
+    draws(&mut wb, &mut doc);
+
+    wb.task = Some(Task::Interference {
+        found: Some(crate::Interference {
+            clashes: vec![crate::Clash {
+                a: part,
+                b: base,
+                volume_mm3: 2.5,
+                centre: [0.0; 3],
+                mesh: std::sync::Arc::new(core_document::TriMesh::default()),
+            }],
+            checked: 2,
+            skipped: 1,
+            ..crate::Interference::default()
+        }),
+        seq: doc.mutation_seq(),
+        around: Some(part),
+        clearance: None,
+    });
+    let panel = widgets(&wb, &mut doc);
+    let said = words(&panel);
+    assert!(said.contains("1 clash"), "{said}");
+    assert!(said.contains("1 visible body without a solid"), "{said}");
+    assert!(said.contains("Part against every other body"), "{said}");
+    let Some(Widget::List { items, .. }) = field(&panel, "clashes") else {
+        panic!("{panel:?}");
+    };
+    assert_eq!(items[0].label, "Part and Base: 2.50 mm³");
+    assert_eq!(value_of(&panel, "clearance"), 0.5);
+    assert!(field(&panel, "every_pair").is_some());
+    draws(&mut wb, &mut doc);
+
+    assert_eq!(selects(&mut wb, &mut doc, select("clashes", 0)), Some(part));
+    send(&mut wb, &mut doc, number("clearance", 2.0));
+    assert_eq!(wb.clearance_mm, Some(2.0));
+    assert_eq!(value_of(&widgets(&wb, &mut doc), "clearance"), 2.0);
+}
+
+#[test]
+fn the_mass_panel_weighs_at_the_density_typed_and_selects_a_body_clicked() {
+    let (mut doc, base, part) = scene();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Mass {
+            found: Some(crate::MassReport {
+                bodies: vec![
+                    crate::BodyMass {
+                        body: base,
+                        volume_mm3: 1000.0,
+                        centre: [0.0; 3],
+                        density: None,
+                    },
+                    crate::BodyMass {
+                        body: part,
+                        volume_mm3: 1000.0,
+                        centre: [10.0, 0.0, 0.0],
+                        density: None,
+                    },
+                ],
+                skipped: 0,
+                stopped: false,
+            }),
+            density: 1.0,
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    let said = words(&widgets(&wb, &mut doc));
+    assert!(said.contains("Mass: 2.00 g"), "{said}");
+    draws(&mut wb, &mut doc);
+    send(&mut wb, &mut doc, number("density", 2.5));
+    let panel = widgets(&wb, &mut doc);
+    assert!(words(&panel).contains("Mass: 5.00 g"));
+    let Some(Widget::Table { rows, .. }) = field(&panel, "bodies") else {
+        panic!("{panel:?}");
+    };
+    assert_eq!(rows[1], vec!["Part".to_string(), "2.50 g".to_string()]);
+    assert_eq!(selects(&mut wb, &mut doc, select("bodies", 1)), Some(part));
 }
