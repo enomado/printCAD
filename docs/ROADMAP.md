@@ -13,8 +13,6 @@ kernel has it.
 
 ## Design
 
-- [ ] **Tangent-chain chamfers by two distances** (S). The reference face
-  may change sides along the chain.
 - [ ] **Thickness pipe mode** (S). How it should differ from the kernel's
   hollowing, which already ends walls flush with the openings, is still
   to be settled.

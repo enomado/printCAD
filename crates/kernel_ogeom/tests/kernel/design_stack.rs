@@ -2862,6 +2862,71 @@ fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
     );
 }
 
+/// The area of the block's top face (z = 10) once built.
+fn top_area(dress_up: DesignFeature) -> f64 {
+    let (mut doc, body) = block();
+    doc.add_feature_in_body(
+        DesignFeature::Fillet {
+            radius: 3.0,
+            edges: wb_design::EdgeSel::Edges(vec![wb_design::EdgePick {
+                faces: [0, 0],
+                point: [20.0, 20.0, 5.0],
+                direction: [0.0, 0.0, 1.0],
+            }]),
+            follow_tangent: false,
+        },
+        "Corner".into(),
+        Some(body),
+    )
+    .unwrap();
+    doc.add_feature_in_body(dress_up, "Top".into(), Some(body))
+        .unwrap();
+    let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
+    let built = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let mesh = &built.mesh;
+    mesh.indices
+        .chunks(3)
+        .map(|t| [0, 1, 2].map(|k| mesh.positions[t[k] as usize].map(f64::from)))
+        .filter(|tri| tri.iter().all(|p| (p[2] - 10.0).abs() < 1e-4))
+        .map(|[a, b, c]| {
+            let (u, v) = ([0, 1].map(|k| b[k] - a[k]), [0, 1].map(|k| c[k] - a[k]));
+            (u[0] * v[1] - u[1] * v[0]).abs() / 2.0
+        })
+        .sum()
+}
+
+/// A chamfer by two distances along a tangent chain keeps each distance
+/// on its own side all the way: the side faces change from plane to
+/// round to plane, and the top face shrinks by the same distance along
+/// the whole chain, whichever side `flip` puts it on.
+#[test]
+fn a_two_distance_chamfer_keeps_its_sides_along_a_tangent_chain() {
+    let chamfer = |flip| DesignFeature::Chamfer {
+        size: 1.0,
+        mode: wb_design::ChamferMode::TwoDistances,
+        size2: 2.0,
+        angle_deg: 45.0,
+        flip,
+        edges: wb_design::EdgeSel::Edges(vec![top_chain()[0]]),
+        follow_tangent: true,
+    };
+    // The top inset by h along the chain: a (20 - h) square whose rounded
+    // corner, about (17, 17), has radius 3 - h.
+    let inset =
+        |h: f64| (20.0 - h).powi(2) - (1.0 - std::f64::consts::FRAC_PI_4) * (3.0 - h).powi(2);
+    let areas = [false, true].map(|flip| top_area(chamfer(flip)));
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-3 * b;
+    assert!(
+        (near(areas[0], inset(1.0)) && near(areas[1], inset(2.0)))
+            || (near(areas[0], inset(2.0)) && near(areas[1], inset(1.0))),
+        "top areas {areas:?}, want {} and {}",
+        inset(1.0),
+        inset(2.0)
+    );
+}
+
 /// The volume and bounds of a body built from its features.
 fn built_body(doc: &Document, body: BodyId) -> Result<(f64, [f32; 3], [f32; 3]), String> {
     let ops = wb_design::body_build_ops(doc, body)

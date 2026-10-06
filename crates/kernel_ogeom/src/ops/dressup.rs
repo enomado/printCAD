@@ -419,15 +419,19 @@ pub fn chamfer(
     if follow_tangent {
         chain = tangent_chain(model, solid, chain)?;
     }
+    let faces = match spec {
+        ChamferSpec::EqualDistance { .. } => Vec::new(),
+        _ => reference_faces(model, solid, &chain, flip)?,
+    };
     let mut specs = Vec::with_capacity(chain.len());
-    for edge in chain {
+    for (i, edge) in chain.into_iter().enumerate() {
         let spec = match spec {
             ChamferSpec::EqualDistance { distance } => Chamfer::Symmetric(*distance),
             ChamferSpec::TwoDistances {
                 distance1,
                 distance2,
             } => Chamfer::Distances {
-                face: adjacent_face(model, solid, &edge, flip)?,
+                face: faces[i].clone(),
                 on_face: *distance1,
                 on_other: *distance2,
             },
@@ -435,7 +439,7 @@ pub fn chamfer(
                 distance,
                 angle_deg,
             } => Chamfer::Angle {
-                face: adjacent_face(model, solid, &edge, flip)?,
+                face: faces[i].clone(),
                 distance: *distance,
                 angle: angle_deg.to_radians(),
             },
@@ -452,20 +456,107 @@ pub fn chamfer(
 
 /// One of the two faces sharing the edge; `flip` selects the other.
 fn adjacent_face(model: &Model, solid: &Shape, edge: &Shape, flip: bool) -> Result<Shape, String> {
-    let mut faces = ancestors_of(model, solid, edge, ShapeType::Face)
-        .map_err(|e| format!("finding the edge's faces failed: {e}"))?;
-    // ancestors_of yields per route; dedupe.
-    let mut unique: Vec<Shape> = Vec::new();
-    for f in faces.drain(..) {
-        if !unique.iter().any(|u| u.is_same(&f)) {
-            unique.push(f);
-        }
-    }
+    let unique = faces_of_edge(model, solid, edge)?;
     let idx = usize::from(flip && unique.len() > 1);
     unique
         .into_iter()
         .nth(idx)
         .ok_or_else(|| "the edge borders no face of the solid".to_string())
+}
+
+/// The face each edge of `chain` measures its first distance on: the
+/// picked edges' as `flip` says, and along a tangent run the face on the
+/// same side as the edge it continues, so the distances keep to their
+/// faces where the faces change from edge to edge.
+fn reference_faces(
+    model: &Model,
+    solid: &Shape,
+    chain: &[Shape],
+    flip: bool,
+) -> Result<Vec<Shape>, String> {
+    let faces: Vec<Vec<Shape>> = chain
+        .iter()
+        .map(|edge| faces_of_edge(model, solid, edge))
+        .collect::<Result<_, _>>()?;
+    let ends: Vec<Option<[(Point, Vector); 2]>> =
+        chain.iter().map(|edge| edge_ends(model, edge)).collect();
+    let meets = |i: usize, j: usize| match (ends[i], ends[j]) {
+        (Some(a), Some(b)) => a.iter().any(|(p, t)| {
+            b.iter()
+                .any(|(q, s)| p.distance(*q) <= END_REACH && parallel(*t, *s))
+        }),
+        _ => false,
+    };
+    let mut chosen: Vec<Option<Shape>> = vec![None; chain.len()];
+    for seed in 0..chain.len() {
+        if chosen[seed].is_some() {
+            continue;
+        }
+        chosen[seed] = Some(adjacent_face(model, solid, &chain[seed], flip)?);
+        let mut queue = vec![seed];
+        while let Some(i) = queue.pop() {
+            let mine = chosen[i].clone().expect("chosen before queued");
+            let other = faces[i].iter().find(|f| !f.is_same(&mine)).cloned();
+            for j in 0..chain.len() {
+                if chosen[j].is_some() || !meets(i, j) {
+                    continue;
+                }
+                let theirs = &faces[j];
+                // The same face, or across from the same other face, or
+                // the face that runs on from this one across an edge.
+                let pick = theirs
+                    .iter()
+                    .find(|f| f.is_same(&mine))
+                    .or_else(|| {
+                        other.as_ref().and_then(|other| {
+                            theirs
+                                .iter()
+                                .any(|f| f.is_same(other))
+                                .then(|| theirs.iter().find(|f| !f.is_same(other)))
+                                .flatten()
+                        })
+                    })
+                    .or_else(|| theirs.iter().find(|f| share_an_edge(model, f, &mine)))
+                    .cloned();
+                let Some(pick) = pick else { continue };
+                chosen[j] = Some(pick);
+                queue.push(j);
+            }
+        }
+    }
+    chosen
+        .into_iter()
+        .zip(chain)
+        .map(|(face, edge)| match face {
+            Some(face) => Ok(face),
+            None => adjacent_face(model, solid, edge, flip),
+        })
+        .collect()
+}
+
+/// The faces of `solid` the edge runs between, each once.
+fn faces_of_edge(model: &Model, solid: &Shape, edge: &Shape) -> Result<Vec<Shape>, String> {
+    let faces = ancestors_of(model, solid, edge, ShapeType::Face)
+        .map_err(|e| format!("finding the edge's faces failed: {e}"))?;
+    // ancestors_of yields per route; dedupe.
+    let mut unique: Vec<Shape> = Vec::new();
+    for f in faces {
+        if !unique.iter().any(|u| u.is_same(&f)) {
+            unique.push(f);
+        }
+    }
+    Ok(unique)
+}
+
+/// Whether two faces meet along an edge.
+fn share_an_edge(model: &Model, a: &Shape, b: &Shape) -> bool {
+    let (Ok(ea), Ok(eb)) = (
+        explore_unique(model, a, ShapeType::Edge),
+        explore_unique(model, b, ShapeType::Edge),
+    ) else {
+        return false;
+    };
+    ea.iter().any(|x| eb.iter().any(|y| x.is_same(y)))
 }
 
 pub fn draft(
