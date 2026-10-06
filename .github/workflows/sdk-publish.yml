@@ -6,6 +6,11 @@ name: SDK publish
 # already on crates.io at that version is left alone, so running the
 # workflow again finishes a publish that stopped part-way. `cargo publish`
 # waits until each crate is in the index before the next needs it.
+#
+# No API key is kept: crates.io trusts this workflow (Trusted Publishing,
+# set in each crate's settings on crates.io) and hands it a short-lived
+# token. A crate's first version is published by hand, since only a crate
+# that exists can name the workflows it trusts.
 
 on:
   push:
@@ -18,6 +23,8 @@ on:
 
 permissions:
   contents: read
+  # The identity crates.io checks before it hands out a publishing token.
+  id-token: write
 
 concurrency:
   group: sdk-publish
@@ -65,9 +72,13 @@ jobs:
             --config 'patch.crates-io.printcad-bench-api.path="../crates/bench_api"' \
             --config 'patch.crates-io.printcad-kernel-api.path="../crates/kernel_api"'
 
+      - name: A publishing token from crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
       - name: Publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           # Whether crate $1 is on crates.io at $VERSION, from the sparse index.
           published() {
