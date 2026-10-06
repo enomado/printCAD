@@ -134,6 +134,8 @@ While the application runs it listens on a local socket,
 | --- | --- |
 | `context` | What is open, selected and being edited, and the rules |
 | `commands` | Lists the commands, with their arguments, optionally by prefix |
+| `search` | Finds commands and guide sections by the words of a task, several queries at once |
+| `describe` | A command's or guide section's whole entry, by id, bare name or a near spelling |
 | `call` | Runs one command with named arguments and answers its result |
 | `lua` | Runs a Lua script and answers `{returned, printed}` as JSON: what the script returns and what it printed |
 | `view` | A picture of the scene from the current view |
@@ -142,8 +144,15 @@ While the application runs it listens on a local socket,
 Every tool is marked to load from the start, so an agent that defers
 tools until it searches for them (Claude Code does, once many are
 installed) has printCAD's at hand in its first turn. `context`, `commands`,
-`log` and `view` are marked read-only, `call` and `lua` as able to change
+`search`, `describe`, `log` and `view` are marked read-only, `call` and `lua` as able to change
 things, and every tool as reaching nothing outside printCAD.
+
+An agent is told every command by its id and summary, one line each, when
+it connects. `search` ranks commands and guide sections by their words and
+knows the words users say for them (round for fillet, shell for
+thickness, bore for hole), and `describe` gives what one takes and
+answers. The Lua console's `help` searches the same way when given a word
+that is not a command prefix: `help("round the edges")`.
 
 The server also offers documents a client can read or attach
 (`printcad://rules`, `printcad://context`, and the scripting and AI guides
