@@ -1722,6 +1722,9 @@ impl PrintCadApp {
             return Err(CommandError::Unknown(id.to_string()));
         };
         spec.check(&args)?;
+        // A bench reads features as their formulas leave them: worked out
+        // for the calls before this one, as a headless run has them.
+        self.registry.evaluate(&mut self.session.document);
         let params = self.interaction_ctx_params();
         let (result, outcome) = self
             .with_workbench_ctx(&bench, params, |wb, ctx| wb.run_command(id, &args, ctx))
