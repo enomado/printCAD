@@ -500,6 +500,29 @@ pub fn execute_cached(
 
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
+            SolidOp::RevolveToFaceOf {
+                profile,
+                kind,
+                shape,
+                transform,
+                point,
+                op,
+            } => {
+                let tool = ops::sweep::build_revolve_to_face_of_tool(
+                    &mut model,
+                    profile,
+                    kind,
+                    shape,
+                    transform.as_deref(),
+                    *point,
+                )
+                .map_err(&err)?;
+                tool_names = Some(sweep_names(&model, &tool, tag, profile));
+                tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
+                keep(&tool, *op);
+
+                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+            }
             SolidOp::Primitive {
                 kind,
                 placement,

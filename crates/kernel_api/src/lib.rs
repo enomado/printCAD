@@ -833,6 +833,25 @@ pub enum ExtrudeTermination {
         point: [f64; 3],
         offset: f64,
     },
+    /// Stop on a set of faces as `UpToShape` does, some of them the base
+    /// solid's (`faces`) and some of other shapes (`others`, faces other
+    /// bodies lend this one). Needs no base solid when every face is
+    /// another shape's.
+    UpToShapeOf {
+        faces: Vec<FaceProbe>,
+        others: Vec<FacesOf>,
+        offset: f64,
+    },
+}
+
+/// Faces of another shape: the faces of `shape` (a native-format snapshot,
+/// moved by `transform`, a rigid row-major 4×4 matrix, into the body's
+/// frame) nearest each of `points`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FacesOf {
+    pub shape: Vec<u8>,
+    pub transform: Option<Box<[[f64; 4]; 4]>>,
+    pub points: Vec<[f64; 3]>,
 }
 
 /// Where a revolution stops turning.
@@ -1189,6 +1208,18 @@ pub enum SolidOp {
         kind: SweepKind,
         op: BooleanOp,
     },
+    /// Revolve a profile until it meets a face of another shape
+    /// (native-format `shape`, moved by `transform` into this body's frame):
+    /// the face of it nearest `point`, a face another body lends this one.
+    /// `kind` is a `Revolve`, whose own termination is not read.
+    RevolveToFaceOf {
+        profile: Profile,
+        kind: SweepKind,
+        shape: Vec<u8>,
+        transform: Option<Box<[[f64; 4]; 4]>>,
+        point: [f64; 3],
+        op: BooleanOp,
+    },
     /// Skin through two or more sections (in order), each a profile, a
     /// flat face of the running solid (its boundary) or a point, which
     /// only the first or last may be.
@@ -1496,6 +1527,7 @@ impl SolidOp {
             SolidOp::Sweep { op, .. }
             | SolidOp::SweepFace { op, .. }
             | SolidOp::SweepFaceOf { op, .. }
+            | SolidOp::RevolveToFaceOf { op, .. }
             | SolidOp::Loft { op, .. }
             | SolidOp::LoftThrough { op, .. }
             | SolidOp::PipeThrough { op, .. }

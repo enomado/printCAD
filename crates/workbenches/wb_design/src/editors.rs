@@ -383,7 +383,7 @@ fn extrude_mode_combo(
             .show_ui(ui, |ui| {
                 for (candidate, name) in mode_choices(&ExtrudeMode::ALL, borrowed) {
                     // Material-relative modes need an earlier solid.
-                    if first_feature && candidate.needs_material() {
+                    if first_feature && needs_own_material(candidate, borrowed) {
                         continue;
                     }
                     if ui.selectable_label(*mode == candidate, name).clicked() && *mode != candidate
@@ -395,6 +395,15 @@ fn extrude_mode_combo(
             });
     });
     changed
+}
+
+/// Whether `mode` ends only on the body's own material: up to shape stops
+/// on borrowed faces too, when the body borrows any.
+fn needs_own_material(mode: ExtrudeMode, targets: &[(ExtrudeMode, String)]) -> bool {
+    let lends_faces = targets
+        .iter()
+        .any(|(t, _)| matches!(t, ExtrudeMode::UpToBorrowed(_)));
+    mode.needs_material() && !(mode == ExtrudeMode::UpToShape && lends_faces)
 }
 
 /// The end conditions offered: `modes`, then the ones that name what they
@@ -907,6 +916,7 @@ fn extrude_side_rows(
     face: &mut Option<FacePick>,
     offset: (&mut f32, &str),
     shape: &mut Vec<FacePick>,
+    (body, borrowed): (BodyId, &mut Vec<crate::feature::BorrowedRef>),
 ) -> bool {
     let mut changed = false;
     match mode {
@@ -922,9 +932,38 @@ fn extrude_side_rows(
         }
         ExtrudeMode::UpToShape => {
             changed |= face_list_editor(ui, ctx, shape, "Stop faces:");
+            changed |= borrowed_face_checks(ui, ctx, body, borrowed);
             changed |= offset_drag(ui, fx, offset.0, offset.1);
         }
         _ => {}
+    }
+    changed
+}
+
+/// A check row for each face `body` borrows: the ones ticked are stop
+/// faces too.
+fn borrowed_face_checks(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    borrowed: &mut Vec<crate::feature::BorrowedRef>,
+) -> bool {
+    let faces = crate::borrow::faces_of_body(ctx.document, body);
+    if faces.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    label_cell(ui, "Borrowed stop faces:");
+    for (r, name) in faces {
+        let mut on = borrowed.contains(&r);
+        if check_row(ui, &mut on, &name).changed() {
+            if on {
+                borrowed.push(r);
+            } else {
+                borrowed.retain(|b| *b != r);
+            }
+            changed = true;
+        }
     }
     changed
 }
@@ -955,7 +994,7 @@ fn second_side_combo(
                     changed |= mode2.take().is_some();
                 }
                 for (candidate, name) in mode_choices(&ExtrudeMode::SECOND_SIDE, borrowed) {
-                    if first_feature && candidate.needs_material() {
+                    if first_feature && needs_own_material(candidate, borrowed) {
                         continue;
                     }
                     let current = *mode2 == Some(candidate)
@@ -2186,6 +2225,7 @@ pub fn feature_editor(
                 up_to_face,
                 (up_to_offset, "Offset:"),
                 up_to_shape,
+                (body, &mut extras.up_to_shape_borrowed),
             );
             if *mode == ExtrudeMode::Dimension && mode2.is_none() {
                 changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
@@ -2209,6 +2249,7 @@ pub fn feature_editor(
                         up_to_face2,
                         (up_to_offset2, "Second offset:"),
                         up_to_shape2,
+                        (body, &mut extras.up_to_shape_borrowed2),
                     );
                 }
             }
@@ -2268,6 +2309,7 @@ pub fn feature_editor(
                 up_to_face,
                 (up_to_offset, "Offset:"),
                 up_to_shape,
+                (body, &mut extras.up_to_shape_borrowed),
             );
             if *mode == ExtrudeMode::Dimension && mode2.is_none() {
                 changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
@@ -2291,6 +2333,7 @@ pub fn feature_editor(
                         up_to_face2,
                         (up_to_offset2, "Second offset:"),
                         up_to_shape2,
+                        (body, &mut extras.up_to_shape_borrowed2),
                     );
                 }
             }
@@ -2326,19 +2369,38 @@ pub fn feature_editor(
             mode,
             up_to_face,
         } => {
+            // Each face the body borrows is a target of its own.
+            let targets: Vec<(RevolveMode, String)> =
+                crate::borrow::faces_of_body(ctx.document, body)
+                    .into_iter()
+                    .map(|(r, name)| (RevolveMode::UpToBorrowed(r), format!("Up to {name}")))
+                    .collect();
+            let shown = targets
+                .iter()
+                .find(|(t, _)| t == mode)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| mode.label().to_string());
             ui.horizontal(|ui| {
                 label_cell(ui, "Type");
                 egui::ComboBox::from_id_salt(("rev_mode", feature_id))
-                    .selected_text(mode.label())
+                    .selected_text(shown)
                     .show_ui(ui, |ui| {
-                        for candidate in RevolveMode::ALL {
-                            // Every mode but an angle stops on material.
-                            if first_feature && candidate != RevolveMode::Angle {
+                        let choices = RevolveMode::ALL
+                            .iter()
+                            .map(|m| (*m, m.label().to_string()))
+                            .chain(targets.iter().cloned());
+                        for (candidate, name) in choices {
+                            // Every mode but an angle or a borrowed face
+                            // stops on the body's own material.
+                            if first_feature
+                                && !matches!(
+                                    candidate,
+                                    RevolveMode::Angle | RevolveMode::UpToBorrowed(_)
+                                )
+                            {
                                 continue;
                             }
-                            if ui
-                                .selectable_label(*mode == candidate, candidate.label())
-                                .clicked()
+                            if ui.selectable_label(*mode == candidate, name).clicked()
                                 && *mode != candidate
                             {
                                 *mode = candidate;
@@ -2354,7 +2416,7 @@ pub fn feature_editor(
                 RevolveMode::UpToFace => {
                     changed |= face_pick_row(ui, ctx, up_to_face, "Target face:");
                 }
-                RevolveMode::ToFirst | RevolveMode::ToLast => {}
+                RevolveMode::ToFirst | RevolveMode::ToLast | RevolveMode::UpToBorrowed(_) => {}
             }
             changed |= revolve_axis_editor(
                 ui,

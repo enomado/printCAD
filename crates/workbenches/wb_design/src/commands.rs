@@ -1071,10 +1071,17 @@ pub fn register(context: &mut WorkbenchContext) {
              asking for a sketch.",
         )
         .note(
+            "Lent faces serve elsewhere too: an up-to-shape pad or pocket stops on them with \
+             `extras = {up_to_shape_borrowed = {{borrow = id, index = 0}}}`, a revolution or \
+             groove turns until one with `mode = {UpToBorrowed = {borrow = id, index = 0}}`, \
+             and `design.map_sketch` puts a sketch on one.",
+        )
+        .note(
             "Borrowing a sketch of the same body is refused (a feature takes it directly), \
              as is giving both `sketch` and `from`.",
         )
         .see_also("design.freeze")
+        .see_also("design.map_sketch")
         .see_also("doc.faces")
         .example(
             "A sketch and a face of one body padded in another",
@@ -1174,6 +1181,58 @@ pub fn register(context: &mut WorkbenchContext) {
             pc.design.freeze{feature = lent, frozen = false}
             assert(#pc.doc.rebuild() == 0)
             assert(math.abs(pc.doc.measure{body = body}.volume - 900) < 1e-3, "following it again")
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "design.map_sketch",
+            "Put an existing sketch on a flat face its body borrows from another body; the \
+             sketch then follows the face",
+        )
+        .param("sketch", ParamKind::Id, "The sketch")
+        .param(
+            "borrow",
+            ParamKind::Id,
+            "A borrow of faces in the sketch's body",
+        )
+        .optional(
+            "index",
+            ParamKind::Integer,
+            "Which of the borrow's faces, from 0; its first flat one when left out",
+        )
+        .returns("nothing")
+        .note(
+            "The sketch keeps its geometry in its own coordinates and moves with the plane; \
+             a datum, mode or face it stood on before is left.",
+        )
+        .note(
+            "A borrow of another body, a curved face, or a face the lender has not built yet \
+             (`pc.doc.rebuild()` first) is refused.",
+        )
+        .see_also("design.borrow")
+        .see_also("sketch.set_plane")
+        .example(
+            "A post's sketch moved onto a face another body lends",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+            local block = pc.design.pad{sketch = s, length = 10}
+            local lender = pc.doc.feature{id = block}.body
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.new_body{}
+            local top = pc.design.borrow{body = body, from = lender,
+              faces = {{point = {10, 10, 10}, normal = {0, 0, 1}}}}
+            local post = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.circle{sketch = post, x = 10, y = 10, radius = 3}
+            pc.design.pad{sketch = post, length = 5}
+            pc.design.map_sketch{sketch = post, borrow = top}
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = body}.min[3] - 10) < 1e-6, "on the lent top")
+            -- The lender grows: the post rises with its top.
+            pc.design.set{feature = block, length = 15}
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = body}.min[3] - 15) < 1e-6, "follows the top")
             "#,
         ),
     );
@@ -1350,6 +1409,32 @@ pub fn run(
     }
     if id == "design.move_to_body" {
         return move_to_body(&a, ctx);
+    }
+    if id == "design.map_sketch" {
+        let sketch = FeatureId(a.id("sketch")?);
+        let borrow = FeatureId(a.id("borrow")?);
+        let index = match a.opt_number("index")? {
+            Some(i) if i < 0.0 => return Err(CommandError::bad("index", "must be 0 or more")),
+            Some(i) => i as usize,
+            None => crate::borrow::flat_faces_of_body(
+                ctx.document,
+                ctx.document
+                    .get_feature_meta(borrow)
+                    .and_then(|n| n.body)
+                    .ok_or_else(|| CommandError::bad("borrow", "is not a borrow"))?,
+            )
+            .into_iter()
+            .find(|(r, _)| r.borrow == borrow)
+            .map(|(r, _)| r.index)
+            .ok_or_else(|| CommandError::bad("borrow", "lends no flat face"))?,
+        };
+        crate::borrow::map_sketch(
+            ctx.document,
+            sketch,
+            crate::feature::BorrowedRef { borrow, index },
+        )
+        .map_err(CommandError::failed)?;
+        return Ok(Value::Null);
     }
     if id == "design.duplicate" {
         let feature = FeatureId(a.id("feature")?);
@@ -1644,9 +1729,12 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             let faces = list("faces")?
                 .iter()
                 .map(|f| {
+                    let point = vector3(f.get("point"), "faces")?;
                     Ok(FacePick {
-                        name: 0,
-                        point: vector3(f.get("point"), "faces")?,
+                        // Named as a pick names it, so the borrow keeps the
+                        // face as the lender changes.
+                        name: crate::borrow::face_name_at(ctx.document, BodyId(from), point),
+                        point,
                         normal: vector3(f.get("normal"), "faces")?,
                     })
                 })

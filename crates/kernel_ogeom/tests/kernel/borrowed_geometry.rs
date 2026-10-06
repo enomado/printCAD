@@ -764,3 +764,132 @@ fn a_borrowed_face_is_a_pad_s_profile() {
         );
     }
 }
+
+/// Up to shape takes borrowed faces as stop faces: a first pad of body B
+/// under two slabs of body A at different heights ends on each where it
+/// runs under it, with no material of its own to stop on.
+#[test]
+fn an_up_to_shape_pad_stops_on_borrowed_faces() {
+    let mut doc = Document::new("t");
+    // Two slabs: one over x 0..10 at z 20, one over x 10..20 at z 30.
+    let a = doc.create_body(Some("A".into()));
+    for (x0, z) in [(0.0f32, 20.0f32), (10.0, 30.0)] {
+        let mut slab = rect(x0, 0.0, x0 + 10.0, 10.0);
+        slab.plane = SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+        slab.sketch.plane = slab.plane;
+        let sketch = doc
+            .add_feature_in_body(slab, "Slab sketch".into(), Some(a))
+            .unwrap();
+        doc.add_feature_in_body(
+            extrude("Pad", sketch, serde_json::json!({ "length": 5.0 })),
+            "Slab".into(),
+            Some(a),
+        )
+        .unwrap();
+    }
+    let b = doc.create_body(Some("B".into()));
+    let unders = borrow(
+        &mut doc,
+        b,
+        BorrowSource::Solid {
+            body: a,
+            faces: vec![
+                FacePick {
+                    name: 0,
+                    point: [5.0, 5.0, 20.0],
+                    normal: [0.0, 0.0, -1.0],
+                },
+                FacePick {
+                    name: 0,
+                    point: [15.0, 5.0, 30.0],
+                    normal: [0.0, 0.0, -1.0],
+                },
+            ],
+            edges: Vec::new(),
+        },
+    );
+    let square = doc
+        .add_feature_in_body(rect(0.0, 0.0, 20.0, 10.0), "Base".into(), Some(b))
+        .unwrap();
+    let both = [0, 1].map(|index| BorrowedRef {
+        borrow: unders,
+        index,
+    });
+    doc.add_feature_in_body(
+        extrude(
+            "Pad",
+            square,
+            serde_json::json!({
+                "mode": "UpToShape",
+                "extras": { "up_to_shape_borrowed": both },
+            }),
+        ),
+        "Posts".into(),
+        Some(b),
+    )
+    .unwrap();
+    wb_design::mark_all_design_features_dirty(&mut doc);
+    let mut kernel = OgeomKernel::new();
+    settle(&mut doc, &mut kernel);
+    assert_close(
+        volume(&doc, &mut kernel, b),
+        100.0 * 20.0 + 100.0 * 30.0,
+        "each half up to the slab over it",
+    );
+}
+
+/// A revolution turns until it meets a face another body lends: a
+/// profile beside the Z axis, turned about it, stops on body A's side
+/// that holds the axis a quarter turn on.
+#[test]
+fn a_revolution_stops_on_a_borrowed_face() {
+    let mut doc = Document::new("t");
+    // A block over x -20..0, y 0..20, its side at x = 0 facing +x.
+    let a = doc.create_body(Some("A".into()));
+    let side = doc
+        .add_feature_in_body(rect(-20.0, 0.0, 0.0, 20.0), "Block sketch".into(), Some(a))
+        .unwrap();
+    doc.add_feature_in_body(
+        extrude("Pad", side, serde_json::json!({ "length": 10.0 })),
+        "Block".into(),
+        Some(a),
+    )
+    .unwrap();
+    let b = doc.create_body(Some("B".into()));
+    let wall = borrow(
+        &mut doc,
+        b,
+        BorrowSource::Solid {
+            body: a,
+            faces: vec![FacePick {
+                name: 0,
+                point: [0.0, 10.0, 5.0],
+                normal: [1.0, 0.0, 0.0],
+            }],
+            edges: Vec::new(),
+        },
+    );
+    // On XZ: x 5..10, z 0..4, turned about the sketch's y, world Z.
+    let mut profile = rect(5.0, 0.0, 10.0, 4.0);
+    profile.plane = SketchPlane::xz();
+    profile.sketch.plane = profile.plane;
+    let profile = doc
+        .add_feature_in_body(profile, "Profile".into(), Some(b))
+        .unwrap();
+    let revolution = serde_json::json!({ "Revolution": {
+        "sketch": profile.0.to_string(),
+        "angle_deg": 360.0,
+        "mode": { "UpToBorrowed": BorrowedRef { borrow: wall, index: 0 } },
+    }});
+    doc.add_feature_in_body(
+        DesignFeature::from_json(&revolution).unwrap(),
+        "Turned".into(),
+        Some(b),
+    )
+    .unwrap();
+    wb_design::mark_all_design_features_dirty(&mut doc);
+    let mut kernel = OgeomKernel::new();
+    settle(&mut doc, &mut kernel);
+    let quarter = PI / 4.0 * (100.0 - 25.0) * 4.0;
+    assert_close(volume(&doc, &mut kernel, b), quarter, "a quarter turn");
+}

@@ -64,6 +64,8 @@ pub enum RevolveMode {
     ToLast,
     /// On a picked flat face whose plane holds the axis.
     UpToFace,
+    /// On a face another body lends.
+    UpToBorrowed(BorrowedRef),
 }
 
 impl RevolveMode {
@@ -80,6 +82,7 @@ impl RevolveMode {
             RevolveMode::ToFirst => "To first",
             RevolveMode::ToLast => "To last",
             RevolveMode::UpToFace => "Up to face",
+            RevolveMode::UpToBorrowed(_) => "Up to borrowed face",
         }
     }
 }
@@ -399,9 +402,16 @@ impl Attached {
 }
 
 /// A pad's or pocket's less used settings.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExtrudeExtras {
+    /// Faces other bodies lend that an up-to-shape side stops on, beside
+    /// the faces of its own solid it picks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub up_to_shape_borrowed: Vec<BorrowedRef>,
+    /// The same for the second side.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub up_to_shape_borrowed2: Vec<BorrowedRef>,
     /// Millimetres the extrusion starts away from the profile's plane,
     /// along the way it runs.
     pub start_offset: f32,
@@ -1628,12 +1638,14 @@ impl DesignFeature {
                 mode,
                 mode2,
                 direction,
+                extras,
                 ..
             }
             | DesignFeature::Pocket {
                 mode,
                 mode2,
                 direction,
+                extras,
                 ..
             } => {
                 for mode in std::iter::once(mode).chain(mode2) {
@@ -1641,20 +1653,34 @@ impl DesignFeature {
                         borrows.push(r.borrow);
                     }
                 }
+                let (first, second) = mode.sides(*mode2);
+                if first == ExtrudeMode::UpToShape {
+                    borrows.extend(extras.up_to_shape_borrowed.iter().map(|r| r.borrow));
+                }
+                if second == Some(ExtrudeMode::UpToShape) {
+                    borrows.extend(extras.up_to_shape_borrowed2.iter().map(|r| r.borrow));
+                }
                 if let ExtrudeDirection::Borrowed(r) = direction {
                     borrows.push(r.borrow);
                 }
             }
-            DesignFeature::Revolution { axis, .. }
-            | DesignFeature::Groove { axis, .. }
-            | DesignFeature::Helix { axis, .. } => {
+            DesignFeature::Revolution { axis, mode, .. }
+            | DesignFeature::Groove { axis, mode, .. } => {
                 if let RevolveAxis::Borrowed(r) = axis {
                     borrows.push(r.borrow);
                 }
+                if let RevolveMode::UpToBorrowed(r) = mode {
+                    borrows.push(r.borrow);
+                }
             }
+            DesignFeature::Helix {
+                axis: RevolveAxis::Borrowed(r),
+                ..
+            } => borrows.push(r.borrow),
             _ => {}
         }
-        borrows.dedup();
+        let mut seen = std::collections::HashSet::new();
+        borrows.retain(|b| seen.insert(*b));
         borrows
     }
 

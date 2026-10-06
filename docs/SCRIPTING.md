@@ -3932,9 +3932,10 @@ assert(math.abs(pc.doc.measure{body = body}.max[3] - 11) < 1e-6)
 Notes:
 
 - A feature takes a borrowed sketch by the borrow's id as its `sketch`. A pad or a pocket takes a lent face with `profile_borrowed = {borrow = id, index = 0}`, once the lending body is built (`pc.doc.rebuild()`); before, it is refused asking for a sketch.
+- Lent faces serve elsewhere too: an up-to-shape pad or pocket stops on them with `extras = {up_to_shape_borrowed = {{borrow = id, index = 0}}}`, a revolution or groove turns until one with `mode = {UpToBorrowed = {borrow = id, index = 0}}`, and `design.map_sketch` puts a sketch on one.
 - Borrowing a sketch of the same body is refused (a feature takes it directly), as is giving both `sketch` and `from`.
 
-See also `pc.design.freeze`, `pc.doc.faces`.
+See also `pc.design.freeze`, `pc.design.map_sketch`, `pc.doc.faces`.
 
 Example: A sketch and a face of one body padded in another.
 
@@ -4020,6 +4021,42 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 600) < 1e-3)
 pc.design.freeze{feature = lent, frozen = false}
 assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = body}.volume - 900) < 1e-3, "following it again")
+```
+
+`pc.design.map_sketch`: Put an existing sketch on a flat face its body borrows from another body; the sketch then follows the face.
+
+- `sketch` (id): The sketch
+- `borrow` (id): A borrow of faces in the sketch's body
+- `index` (integer, optional): Which of the borrow's faces, from 0; its first flat one when left out
+
+Notes:
+
+- The sketch keeps its geometry in its own coordinates and moves with the plane; a datum, mode or face it stood on before is left.
+- A borrow of another body, a curved face, or a face the lender has not built yet (`pc.doc.rebuild()` first) is refused.
+
+See also `pc.design.borrow`, `pc.sketch.set_plane`.
+
+Example: A post's sketch moved onto a face another body lends.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+local block = pc.design.pad{sketch = s, length = 10}
+local lender = pc.doc.feature{id = block}.body
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.new_body{}
+local top = pc.design.borrow{body = body, from = lender,
+  faces = {{point = {10, 10, 10}, normal = {0, 0, 1}}}}
+local post = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.circle{sketch = post, x = 10, y = 10, radius = 3}
+pc.design.pad{sketch = post, length = 5}
+pc.design.map_sketch{sketch = post, borrow = top}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.min[3] - 10) < 1e-6, "on the lent top")
+-- The lender grows: the post rises with its top.
+pc.design.set{feature = block, length = 15}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.min[3] - 15) < 1e-6, "follows the top")
 ```
 
 `pc.design.move_to_body`: Move a feature into another body's history, with the sketch and datums only it uses.

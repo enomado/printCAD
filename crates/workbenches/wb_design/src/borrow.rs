@@ -424,6 +424,31 @@ pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<Kernel
     })
 }
 
+/// The borrowed faces `refs` name, for the kernel to stop on: faces of
+/// one shape, moved alike, go together.
+pub(crate) fn kernel_faces(
+    document: &Document,
+    refs: &[BorrowedRef],
+) -> Result<Vec<kernel_api::FacesOf>, String> {
+    let mut out: Vec<kernel_api::FacesOf> = Vec::new();
+    for r in refs {
+        let face = kernel_face(document, r)?;
+        let transform = face.transform.map(Box::new);
+        match out
+            .iter_mut()
+            .find(|f| f.shape == face.shape && f.transform == transform)
+        {
+            Some(group) => group.points.push(face.point),
+            None => out.push(kernel_api::FacesOf {
+                shape: face.shape,
+                transform,
+                points: vec![face.point],
+            }),
+        }
+    }
+    Ok(out)
+}
+
 /// Borrowed edges as a pipe's path: the solid they are on, moved into the
 /// borrowing body's frame, and where each is in that frame. They must all
 /// come from one live borrow of a solid.
@@ -795,12 +820,81 @@ pub(crate) fn edges_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedR
     out
 }
 
-#[cfg(feature = "egui")]
 fn feature_name(document: &Document, id: FeatureId) -> String {
     document
         .get_feature_meta(id)
         .map(|n| n.name.clone())
         .unwrap_or_else(|| "Borrowed".into())
+}
+
+/// The flat faces `body` borrows, each named for a menu: what a sketch of
+/// the body can be mapped onto.
+pub(crate) fn flat_faces_of_body(document: &Document, body: BodyId) -> Vec<(BorrowedRef, String)> {
+    let mut out = Vec::new();
+    for (id, borrow) in borrows_of_body(document, body) {
+        let name = feature_name(document, id);
+        for (index, face) in seen(document, &borrow).0.iter().enumerate() {
+            if flat(face).is_some() {
+                out.push((
+                    BorrowedRef { borrow: id, index },
+                    format!("{name}: face {}", index + 1),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Put the sketch `sketch` on the flat face `face` a borrow of its body
+/// lends, keeping its geometry in its own coordinates: the sketch then
+/// follows the face as the borrow finds it, and leaves any datum, mode or
+/// face it stood on before.
+pub(crate) fn map_sketch(
+    document: &mut Document,
+    sketch: FeatureId,
+    face: BorrowedRef,
+) -> Result<(), String> {
+    use core_document::WorkbenchFeature;
+    let node = document
+        .get_feature_meta(sketch)
+        .ok_or("the sketch is not in this document")?;
+    if node.workbench_id.as_str() != "wb.sketch" {
+        return Err("only a sketch is mapped onto a face".into());
+    }
+    let body = node.body.ok_or("the sketch belongs to no body")?;
+    let borrow = borrow_of(document, face.borrow).ok_or("that feature is not a borrow")?;
+    if borrow.body != body {
+        return Err(
+            "the borrow is another body's; a sketch takes faces its own body borrows".into(),
+        );
+    }
+    let (point, normal) = lent_face(document, face.borrow, face.index)
+        .ok_or("the borrow lends no flat face there")?;
+    let data = document
+        .get_feature_data(sketch)
+        .ok_or("the sketch is not in this document")?;
+    let mut feature = SketchFeature::from_json(data).map_err(|e| format!("invalid sketch: {e}"))?;
+    let plane = wb_sketch::sketch::SketchPlane::from_face(point, normal);
+    feature.plane = plane;
+    feature.sketch.plane = plane;
+    feature.support = None;
+    feature.attached = None;
+    feature.face = Some(wb_sketch::FaceSupport {
+        point,
+        normal,
+        name: 0,
+        placed: plane,
+        lent_by: Some(wb_sketch::LentFace {
+            borrow: face.borrow,
+            index: face.index,
+        }),
+    });
+    document
+        .update_feature_data(sketch, feature.to_json())
+        .map_err(|e| e.to_string())?;
+    document.set_feature_dependencies(sketch, feature.dependencies());
+    document.mark_feature_dirty(sketch);
+    Ok(())
 }
 
 /// The first flat face the borrow `id` lends, in world space, for a sketch
@@ -954,6 +1048,29 @@ const PICK_REACH_MM: f32 = 0.5;
 
 /// The face of `mesh` a pick names: its outline, its surface when the mesh
 /// records it, and the pick's normal.
+/// The name of the face of `body`'s solid at `point` (its own frame), so
+/// a borrow of it finds it again wherever it goes; 0 when the body has no
+/// solid yet or no face there.
+pub(crate) fn face_name_at(
+    document: &Document,
+    body: BodyId,
+    point: [f32; 3],
+) -> kernel_api::TopoName {
+    let Some((mesh, _)) = document.local_geometry(body) else {
+        return 0;
+    };
+    let count = mesh.indices.len() / 3;
+    let at = |t: usize, k: usize| mesh.positions[mesh.indices[t * 3 + k] as usize];
+    (0..count)
+        .map(|t| (t, triangle_distance(point, at(t, 0), at(t, 1), at(t, 2))))
+        .filter(|(_, d)| *d <= PICK_REACH_MM)
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+        .and_then(|(t, _)| mesh.faces.get(t))
+        .and_then(|face| mesh.face_names.get(*face as usize))
+        .copied()
+        .unwrap_or(0)
+}
+
 fn mesh_face(mesh: &TriMesh, pick: &FacePick) -> Option<SeenFace> {
     let triangle = |t: usize| {
         let at = |k: usize| mesh.positions[mesh.indices[t * 3 + k] as usize];

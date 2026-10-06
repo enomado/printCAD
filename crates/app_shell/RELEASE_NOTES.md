@@ -9,6 +9,7 @@ version first.
 ### Design
 - The gear, sprocket and shaft tools ask for their plane as a new sketch does, the clicked face offered first; on a face of the body's own solid the sketch follows it, centred where it was clicked, and the view turns square to it. sketch.new takes a generator.
 - The refine after a feature merges only what that feature made with its neighbours: rebuilds take a third to a half less time, and a split kept on purpose stays.
+- Borrowed faces are stop faces of an up-to-shape pad or pocket and targets a revolution or groove turns until, and an existing sketch maps onto one from its tree menu (design.map_sketch), following it.
 
 ### View
 - A mouse release a panel, a dialog or a bench took no longer leaves a drag held, which turned the next right-button pan into a roll.

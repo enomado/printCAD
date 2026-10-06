@@ -651,7 +651,9 @@ fn plan_feature(
             up_to_face,
             ..
         } => {
-            if *mode != RevolveMode::Angle && plan.ops.is_empty() {
+            if !matches!(mode, RevolveMode::Angle | RevolveMode::UpToBorrowed(_))
+                && plan.ops.is_empty()
+            {
                 return Err(fail(
                     "stopping on a face needs existing material; add a feature first".into(),
                 ));
@@ -669,6 +671,9 @@ fn plan_feature(
                 (RevolveMode::UpToFace, None) => {
                     return Err(fail("pick a target face for the up-to-face mode".into()));
                 }
+                // Not an angle: the turn ends where it meets the borrowed
+                // face the op carries, whatever the angle field holds.
+                (RevolveMode::UpToBorrowed(_), _) => RevolveTermination::ToFirst,
             };
             let kind = revolve_kind(
                 axis_2d,
@@ -684,7 +689,19 @@ fn plan_feature(
             } else {
                 additive_boolean
             };
-            plan.ops.push(SolidOp::Sweep { profile, kind, op });
+            if let RevolveMode::UpToBorrowed(borrowed) = mode {
+                let face = crate::borrow::kernel_face(document, borrowed).map_err(&fail)?;
+                plan.ops.push(SolidOp::RevolveToFaceOf {
+                    profile,
+                    kind,
+                    shape: face.shape,
+                    transform: face.transform.map(Box::new),
+                    point: face.point,
+                    op,
+                });
+            } else {
+                plan.ops.push(SolidOp::Sweep { profile, kind, op });
+            }
         }
         DesignFeature::Loft {
             refine: _,
@@ -1223,6 +1240,8 @@ struct Side<'a> {
     face: Option<&'a FacePick>,
     offset: f32,
     shape: &'a [FacePick],
+    /// Faces other bodies lend that an up-to-shape side stops on too.
+    borrowed: &'a [crate::feature::BorrowedRef],
 }
 
 /// Where one side of an extrusion ends, in `mode`.
@@ -1265,11 +1284,19 @@ fn side_termination(
             })
         }
         ExtrudeMode::UpToShape => {
-            if side.shape.is_empty() {
+            if side.shape.is_empty() && side.borrowed.is_empty() {
                 return Err("pick the faces the up-to-shape mode stops on".into());
             }
-            Ok(ExtrudeTermination::UpToShape {
-                faces: side.shape.iter().map(face_probe).collect(),
+            let faces = side.shape.iter().map(face_probe).collect();
+            if side.borrowed.is_empty() {
+                return Ok(ExtrudeTermination::UpToShape {
+                    faces,
+                    offset: side.offset as f64,
+                });
+            }
+            Ok(ExtrudeTermination::UpToShapeOf {
+                faces,
+                others: crate::borrow::kernel_faces(document, side.borrowed)?,
                 offset: side.offset as f64,
             })
         }
@@ -1455,6 +1482,7 @@ fn extrude_op(
             up_to_face2,
             up_to_offset2,
             up_to_shape2,
+            extras,
             ..
         }
         | DesignFeature::Pocket {
@@ -1466,6 +1494,7 @@ fn extrude_op(
             up_to_face2,
             up_to_offset2,
             up_to_shape2,
+            extras,
             ..
         } => (
             Side {
@@ -1473,18 +1502,20 @@ fn extrude_op(
                 face: up_to_face.as_ref(),
                 offset: *up_to_offset,
                 shape: up_to_shape,
+                borrowed: &extras.up_to_shape_borrowed,
             },
             Side {
                 length: *length2,
                 face: up_to_face2.as_ref(),
                 offset: *up_to_offset2,
                 shape: up_to_shape2,
+                borrowed: &extras.up_to_shape_borrowed2,
             },
         ),
         _ => return Err("not a pad or a pocket".into()),
     };
     let extras = match feature {
-        DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => *extras,
+        DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => extras.clone(),
         _ => Default::default(),
     };
     let (first_mode, second_mode) = mode.sides(mode2);

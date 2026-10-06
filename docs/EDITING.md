@@ -110,6 +110,26 @@ numbers to change like any hole's. Bores it cannot describe (a
 counterbore, a countersink, a slot) are left as they are and counted in
 the log. On an imported solid it gives the body its base shape first.
 
+**Borrowed geometry** brings another body's sketch, or faces and edges of
+its solid, into this body, where the two bodies sit (Borrow geometry in Design;
+`design.borrow`). It follows its source, or keeps a frozen copy. A
+borrowed face is:
+
+- a pad's or pocket's profile, when flat
+- the face a pad or pocket stops on (Up to its name in the Type list)
+- one of the faces an Up to shape side stops on (its Borrowed stop faces
+  ticks), beside picked faces of the body's own solid; with only
+  borrowed faces it needs no earlier material
+- the face a revolution or groove turns until (Up to its name in the
+  Type list), on the first feature too
+- the plane of a new sketch (select the borrow, then New sketch), or of
+  an existing one: a sketch's tree menu offers Map onto each flat face
+  its body borrows (`design.map_sketch`). Either way the sketch follows
+  the face as its body changes or moves.
+
+A borrowed edge is an axis to turn about, a direction to pad along, or a
+pipe's path.
+
 ## The tree
 
 - Double clicking a feature opens it for editing in the workbench that owns

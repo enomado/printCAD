@@ -52,6 +52,7 @@ use wb_sketch::SketchFeature;
 
 const MOVE_TO_BODY: &str = "design.move_to_body";
 const DUPLICATE: &str = "design.duplicate";
+const MAP_SKETCH: &str = "design.map_sketch";
 
 /// Duplicate `feature` into `body` (its own when `None`), record it as the
 /// command and select the copy.
@@ -1629,7 +1630,8 @@ impl Workbench for DesignWorkbench {
     }
 
     /// A feature row offers Duplicate, and a move into each other body
-    /// built here (not one read from a file).
+    /// built here (not one read from a file); a sketch's row offers each
+    /// flat face its body borrows to map it onto.
     fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
         let MenuScope::TreeFeature(id) = scope else {
             return Vec::new();
@@ -1640,6 +1642,24 @@ impl Workbench for DesignWorkbench {
         let Some(from) = node.body else {
             return Vec::new();
         };
+        if node.workbench_id.as_str() == "wb.sketch" {
+            return borrow::flat_faces_of_body(document, from)
+                .into_iter()
+                .enumerate()
+                .map(|(i, (r, name))| {
+                    let item = MenuItem::new(
+                        format!("{MAP_SKETCH}:{}:{}", r.borrow.0, r.index),
+                        format!("Map onto {name}"),
+                    )
+                    .hint("The sketch follows the borrowed face");
+                    if i == 0 {
+                        item.separator_before()
+                    } else {
+                        item
+                    }
+                })
+                .collect();
+        }
         if !matches!(node.workbench_id.as_str(), "wb.design" | "core.datum") {
             return Vec::new();
         }
@@ -1681,6 +1701,37 @@ impl Workbench for DesignWorkbench {
             (MenuScope::EditMenu, "edit.paste") => return self.paste(ctx),
             (MenuScope::TreeFeature(feature), DUPLICATE) => {
                 duplicate_recorded(ctx, *feature, None);
+                return true;
+            }
+            (MenuScope::TreeFeature(sketch), id) if id.starts_with(MAP_SKETCH) => {
+                let face = id
+                    .strip_prefix(MAP_SKETCH)
+                    .and_then(|rest| rest.strip_prefix(':'))
+                    .and_then(|rest| rest.split_once(':'))
+                    .and_then(|(borrow, index)| {
+                        Some(crate::feature::BorrowedRef {
+                            borrow: FeatureId(uuid::Uuid::parse_str(borrow).ok()?),
+                            index: index.parse().ok()?,
+                        })
+                    });
+                let Some(face) = face else {
+                    return false;
+                };
+                match borrow::map_sketch(ctx.document, *sketch, face) {
+                    Ok(()) => {
+                        ctx.record(
+                            MAP_SKETCH,
+                            commands::object(serde_json::json!({
+                                "sketch": sketch.0.to_string(),
+                                "borrow": face.borrow.0.to_string(),
+                                "index": face.index,
+                            })),
+                            serde_json::Value::Null,
+                        );
+                        ctx.request(HostRequest::JournalLabel("Map sketch".into()));
+                    }
+                    Err(message) => ctx.log_warn(format!("Cannot map the sketch: {message}")),
+                }
                 return true;
             }
             _ => {}

@@ -61,7 +61,7 @@ pub fn build_tool(
             *second_angle_deg,
             *midplane,
             *reversed,
-            termination,
+            Stop::Termination(termination),
         ),
         SweepKind::Helix {
             axis_origin,
@@ -111,6 +111,58 @@ pub fn build_tool(
             )
         }
     }
+}
+
+/// The tool a profile revolving until it meets the face at `point` of
+/// `shape` (native format, moved by `transform`) makes: a face another
+/// body lends, as a revolution's or groove's target.
+pub fn build_revolve_to_face_of_tool(
+    model: &mut Model,
+    prof: &Profile,
+    kind: &SweepKind,
+    shape: &[u8],
+    transform: Option<&[[f64; 4]; 4]>,
+    point: [f64; 3],
+) -> Result<Shape, String> {
+    let SweepKind::Revolve {
+        axis_origin,
+        axis_dir,
+        angle_deg,
+        second_angle_deg,
+        midplane,
+        reversed,
+        ..
+    } = kind
+    else {
+        return Err("only a revolution turns until it meets a borrowed face".into());
+    };
+    let built = profile::build_profile(model, prof)?;
+    let mut other = crate::chain::absorb_shape(model, shape)?;
+    if let Some(matrix) = transform {
+        other = super::pattern::moved(model, &other, matrix)?;
+    }
+    let at = point3(point);
+    let face = face_at(model, &other, at)?.ok_or_else(|| {
+        format!(
+            "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), where the target face \
+             was picked",
+            at.x, at.y, at.z
+        )
+    })?;
+    let met = nearest_point_on(model, &face, at).unwrap_or(at);
+    revolve(
+        model,
+        None,
+        prof,
+        &built,
+        *axis_origin,
+        *axis_dir,
+        *angle_deg,
+        *second_angle_deg,
+        *midplane,
+        *reversed,
+        Stop::Face(face, met),
+    )
 }
 
 /// The tool a flat face of `base` sweeps: the face, copied out of the
@@ -352,7 +404,41 @@ fn extrude_one_side(
             let base = base.ok_or_else(|| {
                 "an up-to-shape extrusion needs existing material to stop at".to_string()
             })?;
-            up_to_shape(model, built, base, dir, faces, *offset, taper_deg)
+            let stops = base_stop_faces(model, base, faces)?;
+            up_to_shape(model, built, Some(base), dir, stops, *offset, taper_deg)
+        }
+        ExtrudeTermination::UpToShapeOf {
+            faces,
+            others,
+            offset,
+        } => {
+            let mut stops = match base {
+                Some(base) => base_stop_faces(model, base, faces)?,
+                None if faces.is_empty() => Vec::new(),
+                None => {
+                    return Err(
+                        "stopping on the solid's own faces needs existing material".to_string()
+                    );
+                }
+            };
+            for other in others {
+                let mut shape = crate::chain::absorb_shape(model, &other.shape)?;
+                if let Some(matrix) = &other.transform {
+                    shape = super::pattern::moved(model, &shape, matrix)?;
+                }
+                for point in &other.points {
+                    let at = point3(*point);
+                    let face = face_at(model, &shape, at)?.ok_or_else(|| {
+                        format!(
+                            "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), \
+                             where a stop face was picked",
+                            at.x, at.y, at.z
+                        )
+                    })?;
+                    stops.push((face, at));
+                }
+            }
+            up_to_shape(model, built, base, dir, stops, *offset, taper_deg)
         }
         ExtrudeTermination::UpToFaceOf {
             shape,
@@ -377,38 +463,57 @@ fn extrude_one_side(
     }
 }
 
+/// The faces of `base` the probes name, each with where it was picked.
+fn base_stop_faces(
+    model: &mut Model,
+    base: &Shape,
+    faces: &[FaceProbe],
+) -> Result<Vec<(Shape, Point)>, String> {
+    faces
+        .iter()
+        .map(|probe| {
+            let at = point3(probe.point);
+            let face = face_by_name(model, base, probe.name, at)?.ok_or_else(|| {
+                format!(
+                    "no face of the solid lies at ({:.1}, {:.1}, {:.1}), where a stop face was \
+                     picked",
+                    at.x, at.y, at.z
+                )
+            })?;
+            Ok((face, at))
+        })
+        .collect()
+}
+
 /// A prism from the profile in which every line of the sweep ends on the
-/// first of `faces` it meets: a prism long enough to pass them all, less
-/// each face's shadow (the face swept on along the sweep), kept where it
-/// starts at the profile.
+/// first of `stops` it meets: a prism long enough to pass them all (and
+/// the base solid, when there is one), less each face's shadow (the face
+/// swept on along the sweep), kept where it starts at the profile.
 fn up_to_shape(
     model: &mut Model,
     built: &BuiltProfile,
-    base: &Shape,
+    base: Option<&Shape>,
     dir: Direction,
-    faces: &[FaceProbe],
+    stops: Vec<(Shape, Point)>,
     offset: f64,
     taper_deg: f64,
 ) -> Result<Shape, String> {
-    if faces.is_empty() {
+    if stops.is_empty() {
         return Err("pick the faces the extrusion stops at".into());
     }
     let centroid = profile::profile_centroid(model, built)?;
-    let reach = through_all_length(model, base, centroid, dir)? + offset.abs();
+    let mut reach = 0.0f64;
+    for shape in base.into_iter().chain(stops.iter().map(|(face, _)| face)) {
+        reach = reach.max(through_all_length(model, shape, centroid, dir)?);
+    }
+    let reach = reach + offset.abs();
     let mut tool = prism_solid(model, built, dir, reach, taper_deg)?;
-    for probe in faces {
-        let at = point3(probe.point);
-        let face = face_by_name(model, base, probe.name, at)?.ok_or_else(|| {
-            format!(
-                "no face of the solid lies at ({:.1}, {:.1}, {:.1}), where a stop face was picked",
-                at.x, at.y, at.z
-            )
-        })?;
+    for (face, at) in &stops {
         // A flat face the sweep runs along stops none of it.
-        if face_plane(model, &face).is_some_and(|(_, n)| n.dot(dir).abs() <= 1e-9) {
+        if face_plane(model, face).is_some_and(|(_, n)| n.dot(dir).abs() <= 1e-9) {
             continue;
         }
-        let ahead = tess::robust_bounds(model, &face).is_some_and(|(lo, hi)| {
+        let ahead = tess::robust_bounds(model, face).is_some_and(|(lo, hi)| {
             [lo.x, hi.x].iter().any(|&x| {
                 [lo.y, hi.y].iter().any(|&y| {
                     [lo.z, hi.z]
@@ -423,7 +528,7 @@ fn up_to_shape(
                 at.x, at.y, at.z
             ));
         }
-        let mut stop = ogeom::algo::copied(model, &face)
+        let mut stop = ogeom::algo::copied(model, face)
             .map_err(|e| format!("copying a stop face failed: {e}"))?
             .shape;
         if offset != 0.0 {
@@ -813,19 +918,29 @@ fn revolve(
     second_angle_deg: Option<f64>,
     midplane: bool,
     reversed: bool,
-    termination: &RevolveTermination,
+    stop: Stop,
 ) -> Result<Shape, String> {
     let axis = sketch_plane_axis(&prof.plane, axis_origin, axis_dir)?;
     let axis = if reversed { axis_reversed(&axis) } else { axis };
 
-    let (forward, backward) = match termination {
-        RevolveTermination::Angle if midplane => (angle_deg * 0.5, angle_deg * 0.5),
-        RevolveTermination::Angle => (angle_deg, second_angle_deg.unwrap_or(0.0)),
+    let (forward, backward) = match stop {
+        Stop::Termination(RevolveTermination::Angle) if midplane => {
+            (angle_deg * 0.5, angle_deg * 0.5)
+        }
+        Stop::Termination(RevolveTermination::Angle) => {
+            (angle_deg, second_angle_deg.unwrap_or(0.0))
+        }
         stop => {
-            let base = base.ok_or_else(|| {
-                "a revolution that stops on a face needs existing material".to_string()
-            })?;
-            match revolve_stop(model, base, built, &axis, stop)? {
+            let (face, met_at) = match stop {
+                Stop::Face(face, met_at) => (face, met_at),
+                Stop::Termination(termination) => {
+                    let base = base.ok_or_else(|| {
+                        "a revolution that stops on a face needs existing material".to_string()
+                    })?;
+                    revolve_target(model, base, built, &axis, termination)?
+                }
+            };
+            match revolve_stop(model, built, &axis, face, met_at)? {
                 RevolveStop::Angle(angle) => (angle.to_degrees(), 0.0),
                 RevolveStop::Face(limit) => {
                     // Each point turns until its own circle meets the face.
@@ -885,25 +1000,24 @@ enum RevolveStop {
     Face(Shape),
 }
 
-/// Where the profile turning about `axis` stops on the target of `stop`.
-fn revolve_stop(
+/// What a revolution turns until: its termination, or a face of another
+/// shape and where the turn meets it.
+enum Stop<'a> {
+    Termination(&'a RevolveTermination),
+    Face(Shape, Point),
+}
+
+/// The face of `base` the termination `stop` names, and where the turn
+/// meets it.
+fn revolve_target(
     model: &mut Model,
     base: &Shape,
     built: &BuiltProfile,
     axis: &Axis,
     stop: &RevolveTermination,
-) -> Result<RevolveStop, String> {
-    let a = axis.direction.vector();
-    let from_axis = |p: Point| {
-        let v = p - axis.location;
-        v - a * v.dot(a)
-    };
+) -> Result<(Shape, Point), String> {
     let centroid = profile::profile_centroid(model, built)?;
-    let start = from_axis(centroid);
-    if start.magnitude() <= 1e-9 {
-        return Err("the profile's centre lies on the revolution axis".into());
-    }
-    let (face, met_at) = match stop {
+    Ok(match stop {
         RevolveTermination::UpToFace(probe) => {
             let at = point3(probe.point);
             let face = face_by_name(model, base, probe.name, at)?
@@ -920,7 +1034,28 @@ fn revolve_stop(
             (hit.face, hit.point)
         }
         RevolveTermination::Angle => return Err("a revolution by its angle has no stop".into()),
+    })
+}
+
+/// Where the profile turning about `axis` stops on `face`, met at
+/// `met_at`.
+fn revolve_stop(
+    model: &mut Model,
+    built: &BuiltProfile,
+    axis: &Axis,
+    face: Shape,
+    met_at: Point,
+) -> Result<RevolveStop, String> {
+    let a = axis.direction.vector();
+    let from_axis = |p: Point| {
+        let v = p - axis.location;
+        v - a * v.dot(a)
     };
+    let centroid = profile::profile_centroid(model, built)?;
+    let start = from_axis(centroid);
+    if start.magnitude() <= 1e-9 {
+        return Err("the profile's centre lies on the revolution axis".into());
+    }
     let holds_axis = face_plane(model, &face).is_some_and(|(p, n)| {
         n.dot(axis.direction).abs() <= 1e-6 && (axis.location - p).dot(n.vector()).abs() <= 1e-4
     });
