@@ -2065,11 +2065,26 @@ impl PrintCadApp {
                     });
                 let _ = reply.send(answer);
             }
-            Event::Finished { label, output } => {
-                self.in_script_tab(|app| {
+            Event::Finished { label, mut output } => {
+                let failed = output.error.is_some();
+                let rolled = self.in_script_tab(|app| {
                     app.session.journal.hold(false);
+                    // A run that stops with an error leaves nothing behind.
+                    let rolled = failed.then(|| {
+                        let rolled = app.session.journal.roll_back(&mut app.session.document);
+                        if rolled.0 > 0 {
+                            app.after_history_jump();
+                        }
+                        rolled
+                    });
                     app.close_gesture();
+                    rolled
                 });
+                if let (Some(error), Some(Some((undone, barrier)))) = (&mut output.error, rolled)
+                    && undone > 0
+                {
+                    error.push_str(&rolled_back_note(barrier));
+                }
                 self.script_runs.pop_front();
                 if let Some(RunKind::Agent { reply, single }) = kind {
                     let answer = if single {
@@ -2560,6 +2575,16 @@ pub(crate) enum RunKind {
         reply: std::sync::mpsc::Sender<agents::mcp::ToolAnswer>,
         single: bool,
     },
+}
+
+/// What a failed run's error adds once its changes are taken back;
+/// `barrier` when an import in it could not be.
+fn rolled_back_note(barrier: bool) -> String {
+    if barrier {
+        " (its changes after its last import were undone; the import stays)".into()
+    } else {
+        " (its changes were undone)".into()
+    }
 }
 
 /// What an agent's run answers: what it printed and came to, or why it

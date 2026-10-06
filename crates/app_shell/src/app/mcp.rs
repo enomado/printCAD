@@ -11,7 +11,8 @@
 //! - `search` and `describe` find commands and guides by the words of a
 //!   task, and give their whole entries (`app/discovery.rs`);
 //! - `call` runs one, `lua` runs a script: both on the script thread, as
-//!   the console's lines do, each one undo step;
+//!   the console's lines do, each one undo step, or none when it fails
+//!   and its changes are taken back;
 //! - `log` gives the application's recent messages, `view` a picture of
 //!   the scene.
 //!
@@ -336,7 +337,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                           and returns its result. Answers {returned, printed} as JSON: what \
                           the script returns (tables as objects or lists) and its print() \
                           output; {error, printed} when an error stops it. The whole script \
-                          is one undo step."
+                          is one undo step; a script an error stops changes nothing."
                 .into(),
             input_schema: json!({
                 "type": "object",

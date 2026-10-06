@@ -123,7 +123,9 @@ Commands that only read (listing bodies, measuring, looking at the view)
 never wait when called on their own; a Lua script is held whatever it
 does.
 
-Each call an agent makes is one undo step, labelled with the agent.
+Each call an agent makes is one undo step, labelled with the agent. A
+call or script that fails takes back what it changed and leaves no step,
+and its error says so.
 
 ## The MCP server
 

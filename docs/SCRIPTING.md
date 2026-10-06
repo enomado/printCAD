@@ -67,6 +67,12 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 - Every change is an ordinary edit, so Undo takes it back. A console line
   or a script run is one undo step, and so is anything you edit by hand
   while it runs.
+- A run that stops with an error, or is stopped, takes back everything
+  changed while it ran and leaves no undo step: the document is as it was
+  before the run. An import is the exception; it cannot be taken back, so
+  a failed run keeps it and takes back only what came after it.
+  `printcad --script` reports the error and leaves the `--save` file
+  unwritten.
 - Solids rebuild after a script, as they do after a click. To read a solid
   in the same script, call `pc.doc.rebuild()` first: it waits and answers
   the features that failed.

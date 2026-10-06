@@ -105,6 +105,27 @@ impl OpJournal {
         self.redo.clear();
     }
 
+    /// Take back everything done since the last boundary and leave no
+    /// step for it: a script that stopped with an error puts the document
+    /// back as it found it. Answers how many edits were taken back, and
+    /// whether a non-invertible op (an import) crossed, in which case only
+    /// what followed it is taken back and the history clears as it would
+    /// have on closing.
+    pub fn roll_back(&mut self, document: &mut Document) -> (usize, bool) {
+        let (pairs, barrier) = document.take_journal_pairs();
+        document.without_journal(|doc| {
+            for (_, inverse) in pairs.iter().rev() {
+                doc.apply_history_op(inverse);
+            }
+        });
+        self.pending_label = None;
+        if barrier {
+            self.undo.clear();
+            self.redo.clear();
+        }
+        (pairs.len(), barrier)
+    }
+
     /// Undo the newest gesture. Returns its label.
     pub fn undo(&mut self, document: &mut Document) -> Option<String> {
         // Fold any uncommitted edits first so they are what gets undone,
@@ -242,6 +263,35 @@ mod tests {
         assert_eq!(journal.undo(&mut doc).as_deref(), Some("Run script"));
         assert!(doc.bodies().is_empty(), "the whole run went back at once");
         assert!(!journal.can_undo());
+    }
+
+    /// A run that fails is taken back whole and leaves no step; what was
+    /// undoable before it still is.
+    #[test]
+    fn a_held_run_rolled_back_leaves_the_document_and_history_as_before() {
+        let mut doc = Document::new("Script");
+        let mut journal = OpJournal::new(16);
+        let kept = doc.create_body(Some("Kept".into()));
+        journal.label_next("Create body");
+        journal.note(&mut doc);
+
+        journal.label_next("Run script");
+        journal.hold(true);
+        doc.rename_body(kept, "Renamed");
+        let body = doc.create_body(Some("A".into()));
+        doc.add_feature_in_body(datum(), "D".into(), Some(body))
+            .unwrap();
+        journal.note(&mut doc);
+        journal.hold(false);
+        let (undone, barrier) = journal.roll_back(&mut doc);
+        assert!(undone >= 3 && !barrier, "{undone} {barrier}");
+        journal.note(&mut doc);
+
+        assert_eq!(doc.bodies().len(), 1);
+        assert_eq!(doc.bodies()[0].name, "Kept");
+        assert_eq!(doc.feature_tree().all_nodes().count(), 0);
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create body"));
+        assert!(!journal.can_undo(), "the run left no step");
     }
 
     #[test]
