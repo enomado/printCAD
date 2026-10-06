@@ -4,6 +4,51 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.6.0
+
+### AI assistant
+- Agents find commands by the words of a task: a search that knows CAD synonyms ("hole", "round the edges", "shell a box"), and a describe that copes with bare names and typos.
+- Every command an agent can run carries notes on what it refuses or does silently, related commands and a working example; the test suite runs every example.
+- Seven recipes for common parts: a plate with a hole, a bracket, a bushing, a flange, a configured plate, a hinged arm and surface shells.
+- The view tool draws fixed views framed to the bodies asked about, with outlines, highlighted faces or edges, markers, a section and x-ray; doc.picture writes the same picture to a file.
+- A Lua script answers what it returns, and doc.edges lists a body's edges as fillets and chamfers take them.
+- A script that stops with an error takes back what it changed.
+- A chat comes back with its document, even one started before the file was saved or after it moved.
+
+### Surfaces
+- Sweeps along a line into a tangent arc, fills of loops that leave their plane, a tangent cap on a tube, thickening across creases and between arcs, and exact measures of sewn boxes now build.
+- Extend works on extruded and revolved surfaces, and Split lands a sketch on a curved face as seen square to it.
+- A step that fails leaves the body its history before it, and the steps after it say they were not built.
+- Deleting a step rebuilds its body.
+- surface.set changes a step, surface.check reports how faces meet, and every step's command takes its fields by name.
+- Open surfaces report no volume.
+
+### Design
+- Delete faces on a pocketed bore, moving a bore sideways and the centre line of a pipe with sharp corners work.
+- A refined bracket and part-turn helices measure exactly.
+- A formula that fails stops its feature's build with the formula's error.
+- Clearing a formula keeps the number it gave.
+
+### Sketcher
+- Geometry taken from another sketch follows it.
+- A sketch whose constraints conflict fails the features built on it instead of padding a distorted shape.
+
+### Assembly
+- Its panels use the same declared widgets packages use.
+- Motion over time and Save assembly state have their tools and keys.
+- A grounded body's joint moves the body at its other end, and joints that cannot hold are named.
+- An interference check goes on past a pair it cannot check, and lists it.
+- The mass panel uses each body's material.
+
+### Workbench packages
+- A CAM example package: a pocket toolpath worked out as a job, drawn over the model and saved as G-code.
+- New panel widgets: header, value, row, hint, slider, an editable table and a sheet.
+- A package can read a sketch's closed loops, and can declare the parts it makes as bought, which the parts list and exports respect.
+
+### Documents
+- Pictures and previews show face colours.
+- A frozen body keeps its solid through a recompute, and a refused reorder changes nothing.
+
 ## 0.5.0
 
 ### Surfaces
