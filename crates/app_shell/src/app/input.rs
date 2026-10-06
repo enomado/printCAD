@@ -61,15 +61,42 @@ impl PrintCadApp {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
             }
-            WindowEvent::MouseInput { state, .. } => match state {
-                ElementState::Pressed => {
-                    self.mouse_buttons_down = self.mouse_buttons_down.saturating_add(1);
+            WindowEvent::MouseInput { state, button, .. } => {
+                match state {
+                    ElementState::Pressed => {
+                        self.mouse_buttons_down = self.mouse_buttons_down.saturating_add(1);
+                    }
+                    ElementState::Released => {
+                        self.mouse_buttons_down = self.mouse_buttons_down.saturating_sub(1);
+                    }
                 }
-                ElementState::Released => {
-                    self.mouse_buttons_down = self.mouse_buttons_down.saturating_sub(1);
+                let at = match button {
+                    MouseButton::Left => Some(0),
+                    MouseButton::Right => Some(1),
+                    MouseButton::Middle => Some(2),
+                    _ => None,
+                };
+                if let Some(at) = at {
+                    self.held_buttons[at] = state.is_pressed();
                 }
-            },
+            }
+            // A release outside the window never arrives.
+            WindowEvent::Focused(false) => {
+                self.mouse_buttons_down = 0;
+                self.held_buttons = [false; 3];
+            }
             _ => {}
+        }
+        if matches!(
+            event,
+            WindowEvent::CursorMoved { .. }
+                | WindowEvent::Focused(false)
+                | WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                }
+        ) {
+            self.session.camera.forget_released(self.held_buttons);
         }
 
         // Picking and the viewport-local cursor update before egui sees the

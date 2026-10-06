@@ -295,6 +295,9 @@ struct PrintCadApp {
     last_step_import_detail: TessellationSettings,
     /// Pressed-mouse-button count; nonzero suppresses undo boundaries.
     mouse_buttons_down: u32,
+    /// Which of the left, right and middle buttons are down, whoever took
+    /// their presses: the camera lets go of a drag whose button is not.
+    held_buttons: [bool; 3],
     /// Index-stable UUIDs for workbench overlay meshes (slot i -> pool[i]),
     /// so the renderer's per-body cache works for overlays too.
     overlay_id_pool: Vec<Uuid>,
@@ -513,6 +516,7 @@ impl PrintCadApp {
             pending_ui_repaint: std::time::Duration::MAX,
             last_step_import_detail: step_import_defaults,
             mouse_buttons_down: 0,
+            held_buttons: [false; 3],
             overlay_id_pool: Vec::new(),
             region_meshes: Default::default(),
             modifiers: winit::keyboard::ModifiersState::default(),

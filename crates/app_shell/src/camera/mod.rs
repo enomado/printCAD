@@ -134,6 +134,31 @@ impl CameraController {
         self.orbit_locked = locked;
     }
 
+    /// Let go of every drag whose button is no longer down (`[left, right,
+    /// middle]`). A release something else took (a panel, a dialog, the
+    /// bench) never reaches [`Self::on_viewport_pointer`], and the button
+    /// would otherwise stay held here: a stale left turns the next right
+    /// drag into a roll, a stale middle orbits on any move. Called before a
+    /// move or a press, never a release, which needs its button still held.
+    pub fn forget_released(&mut self, [left, right, middle]: [bool; 3]) {
+        if !left {
+            self.lmb_was_down_scene = false;
+            self.lmb_dragging_scene = false;
+            self.lmb_dragging_roll = false;
+        }
+        if !right {
+            self.rmb_dragging_scene = false;
+        }
+        if !middle {
+            self.mmb_was_down_scene = false;
+            self.mmb_dragging_scene = false;
+        }
+        if !(left || right || middle) {
+            self.last_cursor_vp_for_drag = None;
+            self.orbit_anchor_world = None;
+        }
+    }
+
     /// Begin / update pointer drag modes: MMB orbit (a clean MMB click picks the pivot), LMB select, RMB pan, LMB+RMB tilt (roll).
     ///
     /// A middle-button orbit starts once the pointer moves

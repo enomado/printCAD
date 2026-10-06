@@ -741,3 +741,48 @@ fn orient_to_plane_looks_at_the_face_not_the_origin() {
         "the same spot, carried across: {before:?} to {after:?}"
     );
 }
+
+/// A left press whose release something else took leaves no roll behind:
+/// once the camera hears the left button is up, a right drag pans and the
+/// view keeps its turn.
+#[test]
+fn a_swallowed_release_does_not_turn_a_pan_into_a_roll() {
+    use super::{CameraController, CameraPointerResult};
+    use glam::Vec2;
+    use winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    let press = |button, state| WindowEvent::MouseInput {
+        device_id: DeviceId::dummy(),
+        state,
+        button,
+    };
+    let moved = WindowEvent::CursorMoved {
+        device_id: DeviceId::dummy(),
+        position: winit::dpi::PhysicalPosition::new(0.0, 0.0),
+    };
+    cam.set_cursor_viewport(Some(Vec2::new(400.0, 300.0)));
+    cam.on_viewport_pointer(
+        &press(MouseButton::Left, ElementState::Pressed),
+        &settings,
+        None,
+    );
+    // The left release went to a panel; the right button goes down.
+    cam.forget_released([false, true, false]);
+    cam.on_viewport_pointer(
+        &press(MouseButton::Right, ElementState::Pressed),
+        &settings,
+        None,
+    );
+    let turn = cam.orientation();
+    cam.forget_released([false, true, false]);
+    cam.set_cursor_viewport(Some(Vec2::new(460.0, 300.0)));
+    let result = cam.on_viewport_pointer(&moved, &settings, None);
+    assert!(
+        matches!(result, CameraPointerResult::Redraw),
+        "the drag moved the view"
+    );
+    assert_eq!(cam.orientation(), turn, "a pan, not a roll");
+}
