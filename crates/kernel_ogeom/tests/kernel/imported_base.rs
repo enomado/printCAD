@@ -12,9 +12,9 @@ use kernel_ogeom::OgeomKernel;
 use scripting::ScriptEngine;
 use wb_design::DesignFeature;
 
-struct Benches {
+pub(crate) struct Benches {
     registry: DocumentService,
-    document: Document,
+    pub(crate) document: Document,
 }
 
 impl scripting::Host for Benches {
@@ -69,7 +69,7 @@ fn imported_box() -> (Document, BodyId, [f32; 3], [f32; 3]) {
     (document, body, lo, hi)
 }
 
-fn benches(document: Document) -> Benches {
+pub(crate) fn benches(document: Document) -> Benches {
     let mut registry = DocumentService::default();
     registry
         .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))

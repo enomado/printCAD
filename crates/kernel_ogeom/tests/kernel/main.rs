@@ -23,6 +23,7 @@ mod print_checks;
 mod probes;
 mod progress;
 mod queries;
+mod scripted_design;
 mod scripted_part;
 mod shape_health;
 mod solid_ops;

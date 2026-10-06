@@ -3565,6 +3565,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `face_point` and `face_normal` name a face and are required; `faces = {{point = .., normal = ..}, ...}` deletes several, replacing that one. A bore's wall faces its axis: its normal points inward.
 - Faces whose removal leaves a neighbour with nothing around it (a blind hole's wall without its bottom) fail at `pc.doc.rebuild()`; delete them together.
+- A through bore pocketed into a pad, rather than into a primitive, fails at `pc.doc.rebuild()` ("erases a neighbour's whole outer boundary"), and so does `design.recognize_holes` on it.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.recognize_holes`.
 
@@ -3635,6 +3636,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `face_point` and `face_normal` name a face and are required; `faces` lists several, replacing that one.
 - `translation` is 1 mm out along the face's normal when left out; give `translation = {0, 0, 0}` for a turn alone. `angle_deg` turns the faces about the line through `axis_point` (the face's point) along `axis_dir` (Z), in the body's own frame.
+- Moving a bore's wall sideways fails at `pc.doc.rebuild()`; `design.offset_faces` widens or narrows one in place.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.offset_faces`, `pc.doc.faces`.
 
@@ -4093,6 +4095,7 @@ assert(math.abs(m.volume - 1000) < 1e-3 and math.abs(m.min[3] + 5) < 1e-6, m.vol
 Notes:
 
 - The body must be built first (`pc.doc.rebuild()`). The two faces are its ends, each given by a point on it and its outward normal.
+- A tube with a sharp corner (a pipe along a polyline) is refused ("the middle path turned back on itself"); smooth bends are followed.
 
 See also `pc.doc.faces`, `pc.doc.measure`.
 
