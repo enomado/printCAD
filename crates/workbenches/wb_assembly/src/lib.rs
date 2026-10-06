@@ -239,6 +239,13 @@ pub struct AssemblyWorkbench {
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
+    /// The name of a column to add to the parts list, as typed.
+    #[cfg(feature = "egui")]
+    parts_column: String,
+    /// The parts list as CSV, to put on the clipboard once the panel is
+    /// drawn.
+    #[cfg(feature = "egui")]
+    copied: Option<String>,
 }
 
 /// A body taken by the mouse: the point taken, in the body's own frame,

@@ -589,3 +589,80 @@ fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
     );
     draws(&mut wb, &mut doc);
 }
+
+#[test]
+fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
+    let (mut doc, _, _) = scene();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Parts),
+        ..AssemblyWorkbench::default()
+    };
+    draws(&mut wb, &mut doc);
+    let parts = crate::parts_list(&doc);
+    let Some(Widget::Sheet { rows, columns, .. }) =
+        field(&widgets(&wb, &mut doc), "parts").cloned()
+    else {
+        panic!("the list is a sheet");
+    };
+    assert_eq!(rows.len(), parts.len());
+    assert_eq!(columns.len(), 5);
+
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::Text {
+            id: "new_column".into(),
+            value: "Maker".into(),
+        },
+    );
+    let (_, recorded) = send(&mut wb, &mut doc, button("add_column"));
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].id, "asm.parts_table");
+    assert!(wb.parts_column.is_empty());
+    let Some(Widget::Sheet { columns, .. }) = field(&widgets(&wb, &mut doc), "parts").cloned()
+    else {
+        panic!("the list is a sheet");
+    };
+    assert_eq!(columns.last().map(String::as_str), Some("Maker"));
+
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::CellText {
+            id: "parts".into(),
+            row: 0,
+            column: 5,
+            value: "ACME".into(),
+        },
+    );
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::CellCheck {
+            id: "parts".into(),
+            row: 0,
+            column: 4,
+            on: true,
+        },
+    );
+    send(&mut wb, &mut doc, button("number"));
+    let first = &crate::parts_list(&doc)[0];
+    assert_eq!(first.values.get("Maker").map(String::as_str), Some("ACME"));
+    assert!(first.bought);
+    assert_eq!(first.number, Some(1));
+    // Numbered already: nothing changes, nothing is recorded.
+    let (_, recorded) = send(&mut wb, &mut doc, button("number"));
+    assert!(recorded.is_empty(), "nothing changed, nothing recorded");
+    assert_eq!(
+        selects(&mut wb, &mut doc, select("parts", 0)),
+        Some(first.bodies[0])
+    );
+
+    send(&mut wb, &mut doc, button("copy"));
+    assert!(wb.copied.as_deref().is_some_and(|csv| csv.contains("ACME")));
+    draws(&mut wb, &mut doc);
+    assert!(wb.copied.is_none(), "drawn onto the clipboard");
+
+    send(&mut wb, &mut doc, button("remove_column:0"));
+    assert!(crate::parts_list(&doc)[0].values.is_empty());
+}

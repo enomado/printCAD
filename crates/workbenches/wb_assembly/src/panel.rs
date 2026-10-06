@@ -332,6 +332,7 @@ impl AssemblyWorkbench {
             }) => self.interference_widgets(ctx, found.as_ref(), (*seq, *around, *clearance)),
             Some(Task::Mass { found, density }) => self.mass_widgets(ctx, found.as_ref(), *density),
             Some(Task::Explode { spread, steps, .. }) => Self::explode_widgets(ctx, *spread, steps),
+            Some(Task::Parts) => self.parts_widgets(ctx),
             _ => Vec::new(),
         }
     }
@@ -367,6 +368,7 @@ impl AssemblyWorkbench {
             }) => self.interference_event(ctx, found.as_ref(), (around, clearance), event),
             Some(Task::Mass { found, .. }) => self.mass_event(ctx, found.as_ref(), event),
             Some(Task::Explode { .. }) => self.explode_event(ctx, event),
+            Some(Task::Parts) => self.parts_event(ctx, event),
             _ => None,
         }
     }
@@ -1597,185 +1599,243 @@ impl AssemblyWorkbench {
             self.task = None;
             return TaskOutcome::Cancelled;
         }
-        header(ui, "file-document", "Parts list");
-        ui.add_space(SPACE_2);
+        let outcome = self.declared_panel(ui, ctx);
+        if let Some(csv) = self.copied.take() {
+            ui.ctx().copy_text(csv);
+            ctx.log_info("Parts list copied");
+        }
+        outcome
+    }
+
+    /// The rows of the parts list as it shows: by component when asked
+    /// for and there are components.
+    fn parts_rows(
+        document: &core_document::Document,
+        parts: &[crate::Part],
+        by_component: bool,
+    ) -> Vec<crate::parts::LevelRow> {
+        if by_component {
+            return crate::parts::parts_by_component(document, parts);
+        }
+        parts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| crate::parts::LevelRow::Part {
+                depth: 0,
+                part: i,
+                bodies: p.bodies.clone(),
+            })
+            .collect()
+    }
+
+    fn parts_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
+        use bench_api::Cell;
+        let parts = crate::parts_list(ctx.document);
+        let table = crate::parts::table_of(ctx.document)
+            .map(|(_, t)| t)
+            .unwrap_or_default();
+        let total: usize = parts.iter().map(|p| p.bodies.len()).sum();
+        let mut widgets = vec![
+            w::header("file-document", "Parts list"),
+            w::text(format!(
+                "{} part{}, {total} bod{}",
+                parts.len(),
+                if parts.len() == 1 { "" } else { "s" },
+                if total == 1 { "y" } else { "ies" }
+            )),
+        ];
+        let components = !ctx.document.components().is_empty();
+        if components {
+            widgets.push(w::hinted(
+                "Each component's parts under it, nested as the components are",
+                w::toggle("by_component", "By component", table.by_component),
+            ));
+        }
+        let text = |text: String, mono: bool, strong: bool| Cell::Text { text, mono, strong };
+        let rows =
+            Self::parts_rows(ctx.document, &parts, table.by_component && components)
+                .iter()
+                .map(|row| match row {
+                    crate::parts::LevelRow::Component { depth, name, .. } => vec![
+                        text(String::new(), false, false),
+                        text(format!("{}{name}", "    ".repeat(*depth)), false, true),
+                        text("1".into(), true, false),
+                    ],
+                    crate::parts::LevelRow::Part {
+                        depth,
+                        part,
+                        bodies,
+                    } => {
+                        let part = &parts[*part];
+                        let mut cells =
+                            vec![
+                        text(part.number.map_or("-".to_string(), |n| n.to_string()), true, false),
+                        Cell::Link {
+                            text: format!("{}{}", "    ".repeat(*depth), part.name),
+                        },
+                        text(bodies.len().to_string(), true, false),
+                        text(
+                            part.size_mm.map_or_else(
+                                || "-".to_string(),
+                                |s| format!("{:.1} × {:.1} × {:.1}", s[0], s[1], s[2]),
+                            ),
+                            true,
+                            false,
+                        ),
+                        Cell::Check {
+                            on: part.bought,
+                            hint: Some(
+                                "Bought rather than made: left out of exports and the slicer"
+                                    .into(),
+                            ),
+                        },
+                    ];
+                        cells.extend(table.columns.iter().map(|column| Cell::Edit {
+                            text: part.values.get(column).cloned().unwrap_or_default(),
+                        }));
+                        cells
+                    }
+                })
+                .collect();
+        let mut columns: Vec<String> = ["No.", "Part", "Qty", "Size (mm)", "Bought"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        columns.extend(table.columns.iter().cloned());
+        widgets.push(Widget::Sheet {
+            id: "parts".into(),
+            columns,
+            rows,
+        });
+        widgets.push(w::hinted(
+            "Give every part without an item number the next one, in list order",
+            w::button("number", "Number the parts", ButtonStyle::Secondary),
+        ));
+        widgets.push(w::row(vec![
+            Widget::TextField {
+                id: "new_column".into(),
+                label: "New column".into(),
+                value: self.parts_column.clone(),
+            },
+            w::button("add_column", "Add column", ButtonStyle::Small),
+        ]));
+        if !table.columns.is_empty() {
+            widgets.push(w::row(
+                table
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, column)| {
+                        w::button(
+                            &format!("remove_column:{i}"),
+                            &format!("Remove {column}"),
+                            ButtonStyle::Small,
+                        )
+                    })
+                    .collect(),
+            ));
+        }
+        widgets.push(w::row(vec![
+            w::hinted(
+                "For a spreadsheet: every column of the list",
+                w::button("copy", "Copy as CSV", ButtonStyle::Secondary),
+            ),
+            w::hinted(
+                "Write the list to a file a spreadsheet opens",
+                w::button("save", "Save as CSV", ButtonStyle::Secondary),
+            ),
+        ]));
+        widgets
+    }
+
+    /// A change to the parts list, kept as `asm.parts_table` keeps it; a
+    /// part clicked, selected; the list copied or saved as CSV.
+    fn parts_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
         let parts = crate::parts_list(ctx.document);
         let mut table = crate::parts::table_of(ctx.document)
             .map(|(_, t)| t)
             .unwrap_or_default();
         let before = table.clone();
-        let total: usize = parts.iter().map(|p| p.bodies.len()).sum();
-        ui.label(
-            RichText::new(format!(
-                "{} part{}, {total} bod{}",
-                parts.len(),
-                if parts.len() == 1 { "" } else { "s" },
-                if total == 1 { "y" } else { "ies" }
-            ))
-            .font(sans(FONT_SM))
-            .color(TEXT2),
-        );
-        ui.add_space(SPACE_1);
-        let columns = table.columns.clone();
-        if !ctx.document.components().is_empty() {
-            ui.checkbox(&mut table.by_component, "By component")
-                .on_hover_text("Each component's parts under it, nested as the components are");
-        }
-        let by_component = table.by_component && !ctx.document.components().is_empty();
-        egui::ScrollArea::horizontal().show(ui, |ui| {
-            egui::Grid::new("assembly_parts")
-                .num_columns(5 + columns.len())
-                .striped(true)
-                .spacing([SPACE_3, SPACE_1])
-                .show(ui, |ui| {
-                    for heading in ["No.", "Part", "Qty", "Size (mm)", "Bought"] {
-                        ui.label(RichText::new(heading).font(sans(FONT_XS)).color(TEXT3));
-                    }
-                    for column in &columns {
-                        ui.label(RichText::new(column).font(sans(FONT_XS)).color(TEXT3));
-                    }
-                    ui.end_row();
-                    let rows = if by_component {
-                        crate::parts::parts_by_component(ctx.document, &parts)
-                    } else {
-                        parts
-                            .iter()
-                            .enumerate()
-                            .map(|(i, p)| crate::parts::LevelRow::Part {
-                                depth: 0,
-                                part: i,
-                                bodies: p.bodies.clone(),
-                            })
-                            .collect()
-                    };
-                    for row in &rows {
-                        let (depth, part, here) = match row {
-                            crate::parts::LevelRow::Component { depth, name, .. } => {
-                                ui.label("");
-                                ui.label(
-                                    RichText::new(format!("{}{name}", "    ".repeat(*depth)))
-                                        .font(ui_kit::sans_semibold(FONT_SM))
-                                        .color(TEXT1),
-                                );
-                                ui.label(
-                                    RichText::new("1").font(ui_kit::mono(FONT_SM)).color(TEXT1),
-                                );
-                                ui.end_row();
-                                continue;
-                            }
-                            crate::parts::LevelRow::Part {
-                                depth,
-                                part,
-                                bodies,
-                            } => (*depth, &parts[*part], bodies),
-                        };
-                        let number = part.number.map_or("-".to_string(), |n| n.to_string());
-                        ui.label(
-                            RichText::new(number)
-                                .font(ui_kit::mono(FONT_SM))
-                                .color(TEXT2),
-                        );
-                        let name = ui.add(
-                            egui::Button::new(
-                                RichText::new(format!("{}{}", "    ".repeat(depth), part.name))
-                                    .font(sans(FONT_SM))
-                                    .color(TEXT1),
-                            )
-                            .frame(false),
-                        );
-                        if name.clicked() {
-                            ctx.request(core_document::HostRequest::SelectBody(here[0]));
-                        }
-                        ui.label(
-                            RichText::new(here.len().to_string())
-                                .font(ui_kit::mono(FONT_SM))
-                                .color(TEXT1),
-                        );
-                        let size = part.size_mm.map_or_else(
-                            || "-".to_string(),
-                            |s| format!("{:.1} × {:.1} × {:.1}", s[0], s[1], s[2]),
-                        );
-                        ui.label(RichText::new(size).font(ui_kit::mono(FONT_SM)).color(TEXT1));
-                        let mut bought = part.bought;
-                        if ui
-                            .checkbox(&mut bought, "")
-                            .on_hover_text(
-                                "Bought rather than made: left out of exports and the slicer",
-                            )
-                            .changed()
-                        {
-                            table.entry_mut(&part.bodies).bought = bought;
-                        }
-                        for column in &columns {
-                            let mut text = part.values.get(column).cloned().unwrap_or_default();
-                            let edit = ui.add(
-                                egui::TextEdit::singleline(&mut text)
-                                    .desired_width(90.0)
-                                    .font(ui_kit::sans(FONT_SM)),
-                            );
-                            if edit.lost_focus()
-                                && part.values.get(column).cloned().unwrap_or_default() != text
-                            {
-                                table
-                                    .entry_mut(&part.bodies)
-                                    .values
-                                    .insert(column.clone(), text);
-                            }
-                        }
-                        ui.end_row();
-                    }
-                });
-        });
-        ui.add_space(SPACE_2);
-        ui.horizontal(|ui| {
-            if ui_kit::widgets::secondary_button(ui, "Number the parts")
-                .on_hover_text("Give every part without an item number the next one, in list order")
-                .clicked()
-            {
-                table.number(&parts);
+        let components = !ctx.document.components().is_empty();
+        let rows = Self::parts_rows(ctx.document, &parts, table.by_component && components);
+        let part_at = |row: usize| match rows.get(row)? {
+            crate::parts::LevelRow::Part { part, bodies, .. } => Some((&parts[*part], bodies)),
+            crate::parts::LevelRow::Component { .. } => None,
+        };
+        const FIXED: usize = 5;
+        match event {
+            PanelEvent::Toggle { id, on } if id == "by_component" => table.by_component = *on,
+            PanelEvent::Select { index, .. } => {
+                let (_, bodies) = part_at(*index)?;
+                ctx.request(core_document::HostRequest::SelectBody(*bodies.first()?));
             }
-            let draft_id = ui.id().with("new_parts_column");
-            let mut draft: String = ui.data(|d| d.get_temp(draft_id)).unwrap_or_default();
-            ui.add(
-                egui::TextEdit::singleline(&mut draft)
-                    .hint_text("New column")
-                    .desired_width(100.0)
-                    .font(ui_kit::sans(FONT_SM)),
-            );
-            let name = draft.trim().to_string();
-            if ui_kit::widgets::small_secondary_button(ui, "Add column").clicked()
-                && !name.is_empty()
-                && !table.columns.contains(&name)
-            {
-                table.columns.push(name);
-                draft.clear();
+            PanelEvent::CellCheck { row, on, .. } => {
+                let (part, _) = part_at(*row)?;
+                table.entry_mut(&part.bodies).bought = *on;
             }
-            ui.data_mut(|d| d.insert_temp(draft_id, draft));
-        });
-        if !columns.is_empty() {
-            ui.horizontal_wrapped(|ui| {
-                for column in &columns {
-                    if ui_kit::widgets::small_secondary_button(ui, &format!("Remove {column}"))
-                        .clicked()
-                    {
-                        table.columns.retain(|c| c != column);
-                        for entry in table.entries.values_mut() {
-                            entry.values.remove(column);
-                        }
+            PanelEvent::CellText {
+                row, column, value, ..
+            } => {
+                let (part, _) = part_at(*row)?;
+                let column = table.columns.get(column.checked_sub(FIXED)?)?.clone();
+                table
+                    .entry_mut(&part.bodies)
+                    .values
+                    .insert(column, value.clone());
+            }
+            PanelEvent::Text { id, value } if id == "new_column" => {
+                self.parts_column = value.clone();
+            }
+            PanelEvent::Button { id } => match id.as_str() {
+                "number" => table.number(&parts),
+                "add_column" => {
+                    let name = self.parts_column.trim().to_string();
+                    if !name.is_empty() && !table.columns.contains(&name) {
+                        table.columns.push(name);
+                        self.parts_column.clear();
                     }
                 }
-            });
+                "copy" | "save" => {
+                    let csv = if table.by_component && components {
+                        crate::parts::levels_csv(&parts, &rows, &table.columns)
+                    } else {
+                        crate::parts_csv(&parts, &table.columns)
+                    };
+                    if id == "copy" {
+                        self.copied = Some(csv);
+                    } else {
+                        ctx.request(core_document::HostRequest::SaveFile {
+                            name: "parts.csv".into(),
+                            kind: "Comma-separated values".into(),
+                            extension: "csv".into(),
+                            contents: csv.into_bytes(),
+                        });
+                    }
+                }
+                other => {
+                    let i = other
+                        .strip_prefix("remove_column:")
+                        .and_then(|i| i.parse::<usize>().ok())?;
+                    let column = table.columns.get(i)?.clone();
+                    table.columns.retain(|c| *c != column);
+                    for entry in table.entries.values_mut() {
+                        entry.values.remove(&column);
+                    }
+                }
+            },
+            _ => {}
         }
         if table != before {
-            match crate::parts::store_table(ctx.document, &table) {
+            let args = crate::commands::object(serde_json::json!({
+                "table": serde_json::to_value(&table).unwrap_or_default(),
+            }));
+            match crate::commands::run("asm.parts_table", &args, ctx) {
                 Ok(_) => {
-                    ctx.record(
-                        "asm.parts_table",
-                        crate::commands::object(serde_json::json!({
-                            "table": serde_json::to_value(&table).unwrap_or_default(),
-                        })),
-                        serde_json::Value::Null,
-                    );
+                    ctx.record("asm.parts_table", args, serde_json::Value::Null);
                     ctx.request(core_document::HostRequest::JournalLabel(
                         "Edit parts list".into(),
                     ));
@@ -1783,35 +1843,7 @@ impl AssemblyWorkbench {
                 Err(why) => ctx.log_warn(format!("Could not keep the parts list: {why}")),
             }
         }
-        ui.add_space(SPACE_2);
-        let parts = crate::parts_list(ctx.document);
-        let csv = if by_component {
-            let rows = crate::parts::parts_by_component(ctx.document, &parts);
-            crate::parts::levels_csv(&parts, &rows, &table.columns)
-        } else {
-            crate::parts_csv(&parts, &table.columns)
-        };
-        ui.horizontal(|ui| {
-            if ui_kit::widgets::secondary_button(ui, "Copy as CSV")
-                .on_hover_text("For a spreadsheet: every column of the list")
-                .clicked()
-            {
-                ui.ctx().copy_text(csv.clone());
-                ctx.log_info("Parts list copied");
-            }
-            if ui_kit::widgets::secondary_button(ui, "Save as CSV")
-                .on_hover_text("Write the list to a file a spreadsheet opens")
-                .clicked()
-            {
-                ctx.request(core_document::HostRequest::SaveFile {
-                    name: "parts.csv".into(),
-                    kind: "Comma-separated values".into(),
-                    extension: "csv".into(),
-                    contents: csv.clone().into_bytes(),
-                });
-            }
-        });
-        TaskOutcome::Open
+        None
     }
 
     /// End a sweep, the drive back at the value it started from.
