@@ -449,6 +449,8 @@ impl PrintCadApp {
                         crate::app::recovery::forget(self.session.tab);
                     }
                     self.session.current_file = Some(path.clone());
+                    // Its chats are kept with the file it is saved as.
+                    self.persist_chats();
                     self.touch_recent(&path);
                     app_log::info(format!("Saved document to {}", path.display()));
                 }
