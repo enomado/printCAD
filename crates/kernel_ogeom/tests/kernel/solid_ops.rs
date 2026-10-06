@@ -3247,7 +3247,6 @@ fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
 /// bore and the worm's outside with it: the kernel answers with that
 /// solid rather than failing.
 #[test]
-#[ignore = "kernel: the common of a worm and a bearing it passes through fails, the kept pieces not closing into a shell (ogeom-rs#128)"]
 fn a_worm_through_a_bearing_shares_material_with_it() {
     use kernel_api::KernelQueries;
     let (worm, bearing) = worm_and_bearing();

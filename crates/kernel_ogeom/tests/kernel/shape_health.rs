@@ -273,21 +273,19 @@ fn repair_names_a_swept_drum_as_a_cylinder() {
 }
 
 /// A 10 mm cube with a 2 mm void at (4, 4, 4) whose faces are placed by a
-/// location, as an assembly part's are, and face into the material (the
-/// void written reversed twice, as some exporters do): it reads broken,
-/// and the repair turns the void the right way out where it stands.
+/// location, as an assembly part's are, its faces and its shell both
+/// written reversed (as some exporters do): the two reversals cancel, so
+/// the void reads the right way out where it stands, measures as a void,
+/// and a repair leaves it there.
 #[test]
-fn a_located_void_inside_out_is_turned_where_it_stands() {
+fn a_located_void_written_reversed_twice_reads_where_it_stands() {
     let blob = cube_with_inside_out_void();
     let mut kernel = OgeomKernel::new();
     let repaired = kernel
         .repair_brep(&blob, &[], &TessellationSettings::default())
         .unwrap();
-    assert!(
-        repaired.mended.iter().any(|m| m.contains("turned")),
-        "{:?}",
-        repaired.mended
-    );
+    let read = kernel.physical_properties(&blob).unwrap();
+    assert!((read.volume_mm3.unwrap() - 992.0).abs() < 1e-6, "{read:?}");
     assert_eq!(repaired.health.broken, 0, "{}", repaired.health.describe());
     let props = kernel.physical_properties(&repaired.brep_blob).unwrap();
     let volume = props.volume_mm3.unwrap();

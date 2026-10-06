@@ -82,21 +82,6 @@ The body shows its history up to the step that fails, the error is on
 that step, and the steps after it say they were not built. Fix or
 suppress the failing step and the rest build again.
 
-## Waiting on the geometry kernel
-
-These fail with the kernel's reason for now:
-
-- A sweep along a line that runs into a tangent arc (ogeom-rs#120).
-- Filling some loops that rise out of their plane: two semicircles in
-  crossing planes (ogeom-rs#121), a saddle of four lines (ogeom-rs#122).
-- A tangent filling that caps a tube, whose wall stands square to the
-  hole (ogeom-rs#123).
-- Thicken across faces meeting at a crease, such as two walls at a
-  corner (ogeom-rs#124); thicken them before joining, or sew and use
-  Design's Thickness.
-
-A sewn box's measurements are close rather than exact (ogeom-rs#125).
-
 ## Scripting
 
 Every tool that builds has a command: `pc.surface.extrude`,

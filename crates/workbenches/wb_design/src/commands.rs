@@ -600,11 +600,6 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                  hole's wall without its bottom) fail at `pc.doc.rebuild()`; delete them \
                  together.",
             )
-            .note(
-                "A through bore pocketed into a pad, rather than into a primitive, fails at \
-                 `pc.doc.rebuild()` (\"erases a neighbour's whole outer boundary\"), and so \
-                 does `design.recognize_holes` on it.",
-            )
             .see_also("doc.faces")
             .see_also("design.recognize_holes")
             .example(
@@ -663,10 +658,6 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                  `translation = {0, 0, 0}` for a turn alone. `angle_deg` turns the faces \
                  about the line through `axis_point` (the face's point) along `axis_dir` \
                  (Z), in the body's own frame.",
-            )
-            .note(
-                "Moving a bore's wall sideways fails at `pc.doc.rebuild()`; \
-                 `design.offset_faces` widens or narrows one in place.",
             )
             .see_also("design.offset_faces")
             .see_also("doc.faces")
@@ -1300,10 +1291,6 @@ pub fn register(context: &mut WorkbenchContext) {
         .note(
             "The body must be built first (`pc.doc.rebuild()`). The two faces are its \
              ends, each given by a point on it and its outward normal.",
-        )
-        .note(
-            "A tube with a sharp corner (a pipe along a polyline) is refused (\"the middle \
-             path turned back on itself\"); smooth bends are followed.",
         )
         .see_also("doc.faces")
         .see_also("doc.measure")

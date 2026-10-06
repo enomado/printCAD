@@ -935,7 +935,6 @@ fn line_3d(a: [f64; 3], b: [f64; 3]) -> CurveSource {
 
 /// A path of a line and an arc tangent to it sweeps a profile along both.
 #[test]
-#[ignore = "kernel: a sweep along a line into a tangent arc misses its 1e-6 skin target (ogeom-rs#120)"]
 fn a_sweep_follows_a_line_into_a_tangent_arc() {
     let half = std::f64::consts::FRAC_1_SQRT_2 * 5.0;
     let path = sketch(
@@ -959,7 +958,6 @@ fn a_sweep_follows_a_line_into_a_tangent_arc() {
 
 /// Two semicircles in crossing planes, sharing their ends, close a hole.
 #[test]
-#[ignore = "kernel: the fill misses its tolerance by 0.054 on two semicircles in crossing planes (ogeom-rs#121)"]
 fn two_semicircles_in_crossing_planes_fill() {
     let up = sketch(
         plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
@@ -976,7 +974,6 @@ fn two_semicircles_in_crossing_planes_fill() {
 /// Four lines rising and falling around a diamond fill: seen along
 /// (0, 1, -1) the loop is simple.
 #[test]
-#[ignore = "kernel: the fill projects the loop on a plane it crosses itself in (ogeom-rs#122)"]
 fn a_four_line_saddle_fills() {
     let p = [
         [-10.0, 0.0, 0.0],
@@ -993,7 +990,6 @@ fn a_four_line_saddle_fills() {
 
 /// A tube's rim filled tangent to its wall: a dome rising off the rim.
 #[test]
-#[ignore = "kernel: a tangent fill refuses supports square to the boundary's plane (ogeom-rs#123)"]
 fn a_tangent_cap_closes_a_tube() {
     let circle = sketch(
         xy(0.0),
@@ -1058,7 +1054,6 @@ fn a_curved_face_splits_along_a_sketch_seen_square_to_it() {
 
 /// Two walls meeting at a right angle thicken into one solid.
 #[test]
-#[ignore = "kernel: thickening a sheet refuses faces meeting at a crease (ogeom-rs#124)"]
 fn a_folded_sheet_thickens() {
     let result = build(vec![
         SurfaceOp::Extrude {
@@ -1085,7 +1080,6 @@ fn a_folded_sheet_thickens() {
 /// A box sewn from planar sheets measures exactly, as every face is a
 /// rectangle on a plane.
 #[test]
-#[ignore = "kernel: a sewn box measures through a tessellation (ogeom-rs#125)"]
 fn a_sewn_box_measures_exactly() {
     let base = square_loop(0.0, 10.0);
     let result = build(vec![
@@ -1111,7 +1105,6 @@ fn a_sewn_box_measures_exactly() {
 /// A loft between two arcs of different radii thickens into a solid, one
 /// side or both, at any thickness.
 #[test]
-#[ignore = "kernel: the free-form offset fit stalls at 5.5e-3 on a rational loft between arcs, whatever the distance (ogeom-rs#127)"]
 fn a_loft_between_two_arcs_thickens() {
     let section =
         |z: f64, bulge: f64| sketch(xy(z), vec![arc([0.0, 0.0], [10.0, bulge], [20.0, 0.0])]);

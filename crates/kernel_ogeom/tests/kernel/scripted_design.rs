@@ -43,7 +43,6 @@ const BORED_PAD: &str = r#"
 "#;
 
 #[test]
-#[ignore = "kernel: the cut lists a padded plate's bore ring as its bottom face's first wire, and remove_faces refuses it (ogeom-rs#129)"]
 fn a_bore_pocketed_through_a_pad_is_deleted() {
     let blob = built(&format!(
         "{BORED_PAD}
@@ -55,7 +54,6 @@ fn a_bore_pocketed_through_a_pad_is_deleted() {
 }
 
 #[test]
-#[ignore = "kernel: moving a bore's wall sideways fails on a parameter past its circle's domain (ogeom-rs#130)"]
 fn a_bore_moves_sideways() {
     let blob = built(
         r#"
@@ -83,7 +81,6 @@ fn a_bore_moves_sideways() {
 }
 
 #[test]
-#[ignore = "kernel: middle_path refuses a tube with a sharp corner as turning back on itself (ogeom-rs#131)"]
 fn a_rod_with_a_sharp_corner_has_a_centre_line() {
     let blob = built(
         r#"
@@ -124,7 +121,6 @@ fn a_rod_with_a_sharp_corner_has_a_centre_line() {
 }
 
 #[test]
-#[ignore = "kernel: refining a filleted bracket leaves its side face off the exact volume path (ogeom-rs#132)"]
 fn a_refined_bracket_with_a_hole_measures_exactly() {
     let blob = built(
         r#"
@@ -149,7 +145,6 @@ fn a_refined_bracket_with_a_hole_measures_exactly() {
 }
 
 #[test]
-#[ignore = "kernel: exact from ogeom 0.9.5, which the lock does not take yet (ogeom-rs#69)"]
 fn a_helix_of_part_turns_measures_exactly() {
     for turns in [0.5, 0.75, 1.5] {
         let blob = built(&format!(

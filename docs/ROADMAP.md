@@ -49,22 +49,6 @@ Not yet filed:
 
 ## Surfaces
 
-What the Surface workbench needs of the kernel; each open case fails with
-the kernel's reason, and a test marked `#[ignore]` in
-`kernel_ogeom/tests/kernel/surface_ops.rs` passes once it lands.
-
-Fixed in ogeom 0.9.5; open until `ogeom` is bumped and the tests' `#[ignore]`
-comes off:
-
-- [ ] Sweeps along a line into a tangent arc (ogeom-rs#120).
-- [ ] Fills of loops rising out of their plane: two semicircles
-  (ogeom-rs#121), a four-line saddle (ogeom-rs#122).
-- [ ] A tangent cap on a tube (ogeom-rs#123).
-- [ ] Thickening a sheet across a crease (ogeom-rs#124).
-- [ ] Exact measurement of a sewn box (ogeom-rs#125).
-
-And in printCAD:
-
 - [ ] Curvature analysis (in ogeom 0.7.0, ogeom-rs#115): curvature and
   zebra displays, and G2 in Check continuity.
 - [ ] Fillets between two separate surfaces (`fillet_faces`, in ogeom
