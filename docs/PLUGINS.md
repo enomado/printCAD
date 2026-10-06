@@ -187,7 +187,9 @@ kernel runs them natively; a failing op marks its feature.
 **Panels.** A bench declares its task panel and Preferences page as
 widgets (`Widget`): headings, a header with an icon, text, read-only
 values, notes, numbers, sliders, choices, toggles, text fields, buttons (a small
-one for an action on its row), pick rows, lists, tables, groups, rows of
+one for an action on its row), pick rows, lists, tables, sheets (a table whose cells
+may be links, text fields or check boxes, each change told by row and
+column), groups, rows of
 widgets side by side, a hint on any widget, progress, separators and
 diagrams. A table's columns marked `editable` take typing, each cell
 left coming back as `PanelEvent::Cell` (the CAM example's tool table is

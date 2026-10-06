@@ -4,8 +4,8 @@
 //! built-in ones, formulas included.
 
 use bench_api::{
-    Bind, ButtonStyle, Callout, DiagramShape, DiagramStroke, Dim, Dimension, NoteKind, PanelEvent,
-    Widget,
+    Bind, ButtonStyle, Callout, Cell, DiagramShape, DiagramStroke, Dim, Dimension, NoteKind,
+    PanelEvent, Widget,
 };
 use egui::{RichText, Ui};
 use ui_kit::tokens::*;
@@ -420,10 +420,127 @@ fn show_one(
                 });
             }
         }),
+        Widget::Sheet {
+            id: wid,
+            columns,
+            rows,
+        } => sheet(ui, id.with(("sheet", wid)), wid, columns, rows, out),
         Widget::Hinted { hint, widget } => {
             ui.scope(|ui| show_one(ui, id, widget, document, out))
                 .response
                 .on_hover_text(hint);
+        }
+    }
+}
+
+/// Draw a [`Widget::Sheet`]: a striped grid under its column titles,
+/// scrolled sideways when wider than the panel. An edited cell keeps its
+/// draft until typing ends.
+fn sheet(
+    ui: &mut Ui,
+    key: egui::Id,
+    wid: &str,
+    columns: &[String],
+    rows: &[Vec<Cell>],
+    out: &mut PanelOutput,
+) {
+    egui::ScrollArea::horizontal()
+        .id_salt(key.with("scroll"))
+        .show(ui, |ui| {
+            egui::Grid::new(key)
+                .num_columns(columns.len())
+                .striped(true)
+                .spacing(egui::vec2(SPACE_3, SPACE_1))
+                .show(ui, |ui| {
+                    for column in columns {
+                        ui.label(
+                            RichText::new(column)
+                                .font(ui_kit::theme::sans(FONT_XS))
+                                .color(TEXT3),
+                        );
+                    }
+                    ui.end_row();
+                    for (r, cells) in rows.iter().enumerate() {
+                        for (c, cell) in cells.iter().enumerate() {
+                            sheet_cell(ui, key.with((r, c)), wid, (r, c), cell, out);
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
+fn sheet_cell(
+    ui: &mut Ui,
+    key: egui::Id,
+    wid: &str,
+    (row, column): (usize, usize),
+    cell: &Cell,
+    out: &mut PanelOutput,
+) {
+    match cell {
+        Cell::Text { text, mono, strong } => {
+            let font = match (mono, strong) {
+                (true, _) => ui_kit::theme::mono(FONT_SM),
+                (false, true) => ui_kit::theme::sans_semibold(FONT_SM),
+                (false, false) => ui_kit::theme::sans(FONT_SM),
+            };
+            ui.label(RichText::new(text).font(font).color(TEXT1));
+        }
+        Cell::Link { text } => {
+            let clicked = ui
+                .add(
+                    egui::Button::new(
+                        RichText::new(text)
+                            .font(ui_kit::theme::sans(FONT_SM))
+                            .color(TEXT1),
+                    )
+                    .frame(false),
+                )
+                .clicked();
+            if clicked {
+                out.events.push(PanelEvent::Select {
+                    id: wid.to_string(),
+                    index: row,
+                });
+            }
+        }
+        Cell::Edit { text } => {
+            let mut draft: String = ui.data(|d| d.get_temp(key)).unwrap_or_else(|| text.clone());
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut draft)
+                    .desired_width(90.0)
+                    .font(ui_kit::theme::sans(FONT_SM)),
+            );
+            if response.has_focus() {
+                ui.data_mut(|d| d.insert_temp(key, draft.clone()));
+            }
+            if response.lost_focus() {
+                ui.data_mut(|d| d.remove::<String>(key));
+                if draft != *text {
+                    out.events.push(PanelEvent::CellText {
+                        id: wid.to_string(),
+                        row,
+                        column,
+                        value: draft,
+                    });
+                }
+            }
+        }
+        Cell::Check { on, hint } => {
+            let mut on = *on;
+            let mut response = ui.checkbox(&mut on, "");
+            if let Some(hint) = hint {
+                response = response.on_hover_text(hint);
+            }
+            if response.changed() {
+                out.events.push(PanelEvent::CellCheck {
+                    id: wid.to_string(),
+                    row,
+                    column,
+                    on,
+                });
+            }
         }
     }
 }
@@ -862,6 +979,41 @@ mod tests {
                 step: Some(0.5),
                 decimals: 2,
                 show_value: false,
+            },
+            Widget::Sheet {
+                id: "sheet".into(),
+                columns: vec!["No.".into(), "Part".into(), "Bought".into(), "Maker".into()],
+                rows: vec![
+                    vec![
+                        Cell::Text {
+                            text: String::new(),
+                            mono: false,
+                            strong: false,
+                        },
+                        Cell::Text {
+                            text: "Frame".into(),
+                            mono: false,
+                            strong: true,
+                        },
+                    ],
+                    vec![
+                        Cell::Text {
+                            text: "1".into(),
+                            mono: true,
+                            strong: false,
+                        },
+                        Cell::Link {
+                            text: "Bolt".into(),
+                        },
+                        Cell::Check {
+                            on: true,
+                            hint: Some("Bought".into()),
+                        },
+                        Cell::Edit {
+                            text: "ACME".into(),
+                        },
+                    ],
+                ],
             },
             Widget::Hinted {
                 hint: "Why".into(),

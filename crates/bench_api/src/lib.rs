@@ -789,6 +789,37 @@ pub enum Widget {
         #[serde(default = "yes")]
         show_value: bool,
     },
+    /// Rows of cells under column titles, some cells editable; it scrolls
+    /// sideways when wider than the panel.
+    Sheet {
+        id: String,
+        columns: Vec<String>,
+        rows: Vec<Vec<Cell>>,
+    },
+}
+
+/// A cell of a [`Widget::Sheet`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Cell {
+    /// Text; `strong` for a row heading the rows under it.
+    Text {
+        text: String,
+        #[serde(default)]
+        mono: bool,
+        #[serde(default)]
+        strong: bool,
+    },
+    /// Text a click on selects its row (`PanelEvent::Select`).
+    Link { text: String },
+    /// Text the user edits, told once typing ends (`PanelEvent::CellText`).
+    Edit { text: String },
+    /// A box ticked or not (`PanelEvent::CellCheck`).
+    Check {
+        on: bool,
+        #[serde(default)]
+        hint: Option<String>,
+    },
 }
 
 /// A line of a [`Widget::Diagram`]: what it stands for, not its colour,
@@ -958,6 +989,20 @@ pub enum PanelEvent {
         column: usize,
         value: String,
     },
+    /// A sheet's editable cell, once typing ended.
+    CellText {
+        id: String,
+        row: usize,
+        column: usize,
+        value: String,
+    },
+    /// A sheet's box ticked or cleared.
+    CellCheck {
+        id: String,
+        row: usize,
+        column: usize,
+        on: bool,
+    },
 }
 
 impl PanelEvent {
@@ -970,7 +1015,9 @@ impl PanelEvent {
             | PanelEvent::Button { id }
             | PanelEvent::Pick { id }
             | PanelEvent::Select { id, .. }
-            | PanelEvent::Cell { id, .. } => id,
+            | PanelEvent::Cell { id, .. }
+            | PanelEvent::CellText { id, .. }
+            | PanelEvent::CellCheck { id, .. } => id,
         }
     }
 }
@@ -1155,6 +1202,38 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn a_sheet_and_its_cell_events_read_as_written() {
+        let widget: Widget = serde_json::from_str(
+            r#"{"type":"sheet","id":"parts","columns":["Part","Bought"],"rows":[[
+                {"type":"link","text":"Bolt"},{"type":"check","on":true}
+            ]]}"#,
+        )
+        .unwrap();
+        let Widget::Sheet { rows, .. } = widget else {
+            panic!("{widget:?}");
+        };
+        assert_eq!(
+            rows[0][1],
+            Cell::Check {
+                on: true,
+                hint: None
+            }
+        );
+        let event = PanelEvent::CellText {
+            id: "parts".into(),
+            row: 2,
+            column: 5,
+            value: "ACME".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"cell_text","id":"parts","row":2,"column":5,"value":"ACME"}"#
+        );
+        assert_eq!(event.id(), "parts");
     }
 
     #[test]
