@@ -1385,6 +1385,25 @@ Notes:
 
 See also `pc.config.list`, `pc.config.activate`.
 
+Example: A lid left out of one configuration.
+
+```lua
+local function box(z)
+  local s = pc.sketch.new{plane = "XY", offset = z}
+  pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+  return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
+end
+local base, lid = box(0), box(5)
+assert(#pc.doc.rebuild() == 0)
+pc.config.new{name = "Open"}
+pc.config.leave_out{name = "Open", bodies = {lid}}
+assert(pc.config.list().rows[1].left_out[1] == lid)
+pc.config.leave_out{name = "Open", bodies = {}}
+assert(#pc.config.list().rows[1].left_out == 0, "an empty list leaves none out")
+local ok, why = pcall(pc.config.leave_out, {name = "Closed", bodies = {lid}})
+assert(not ok, "no configuration is called Closed")
+```
+
 `pc.config.activate`: Put a configuration in effect.
 
 - `name` (string, optional): Nil leaves every variable its own

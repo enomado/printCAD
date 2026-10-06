@@ -165,6 +165,7 @@ const DOC_COMMANDS: &[&str] = &[
     "config.add_variable",
     "config.remove_variable",
     "config.set",
+    "config.leave_out",
     "config.activate",
     "doc.info",
     "doc.bodies",
