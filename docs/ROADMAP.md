@@ -13,9 +13,6 @@ kernel has it.
 
 ## Design
 
-- [ ] **Thickness pipe mode** (S). How it should differ from the kernel's
-  hollowing, which already ends walls flush with the openings, is still
-  to be settled.
 - [ ] **Generators** (M). Undercut on small pinions, and keyways.
 
 ## Sketcher
