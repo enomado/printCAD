@@ -12,7 +12,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, QtyField, check_row, destructive_button, note_card, overline};
 use ui_kit::{sans, sans_semibold};
 
-use bench_api::{ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
+use bench_api::{Bind, ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
 
 use crate::{
     AssemblyWorkbench, Coupling, Gearing, JointFeature, JointKind, JointTool, Task, body_name,
@@ -96,6 +96,30 @@ mod w {
         }
     }
 
+    /// A feature's number a formula can set: `key` is its parameter.
+    pub(super) fn bound(
+        id: &str,
+        label: &str,
+        value: f32,
+        dim: Dim,
+        (feature, key): (FeatureId, &str),
+    ) -> Widget {
+        Widget::Number {
+            id: id.into(),
+            label: label.into(),
+            value: f64::from(value),
+            dim,
+            bind: Some(Bind {
+                feature: feature.0.to_string(),
+                key: key.into(),
+            }),
+            min: None,
+            max: None,
+            decimals: 2,
+            error: None,
+        }
+    }
+
     pub(super) fn text(text: impl Into<String>) -> Widget {
         Widget::Text {
             text: text.into(),
@@ -160,6 +184,45 @@ fn choice(id: &str, label: &str, options: &[&str], selected: usize) -> Widget {
         options: options.iter().map(|o| o.to_string()).collect(),
         selected,
     }
+}
+
+/// The hinges and sliders: the joints a coupling ties and a motion drives.
+fn movable_joints(ctx: &WorkbenchRuntimeContext) -> Vec<crate::Joint> {
+    crate::joints(ctx.document)
+        .into_iter()
+        .filter(|j| {
+            matches!(
+                j.feature.kind,
+                JointKind::Hinge { .. } | JointKind::Slider { .. }
+            )
+        })
+        .collect()
+}
+
+/// What may tie a coupling's two joints, its own kind among them.
+fn coupling_gearings(movable: &[crate::Joint], coupling: &Coupling) -> Vec<Gearing> {
+    let kind_of = |id: FeatureId| movable.iter().find(|j| j.id == id).map(|j| j.feature.kind);
+    let (driver, driven) = (kind_of(coupling.driver), kind_of(coupling.driven));
+    Gearing::ALL
+        .into_iter()
+        .filter(|g| {
+            *g == coupling.gearing || driver.zip(driven).is_some_and(|(a, b)| g.fits(&a, &b))
+        })
+        .collect()
+}
+
+/// What `body` may still do, its joints holding: "fully placed", or its
+/// free motions.
+fn freedom_text(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<Widget> {
+    let (_, motions) = crate::freedom(ctx.document)
+        .into_iter()
+        .find(|(b, _)| *b == body)?;
+    Some(w::text(if motions.is_empty() {
+        "Its joints place this body fully.".to_string()
+    } else {
+        let words: Vec<String> = motions.iter().map(crate::Motion::describe).collect();
+        format!("It may still {}.", words.join(", "))
+    }))
 }
 
 /// The value a declared number came back with, by its id.
@@ -333,6 +396,7 @@ impl AssemblyWorkbench {
             Some(Task::Mass { found, density }) => self.mass_widgets(ctx, found.as_ref(), *density),
             Some(Task::Explode { spread, steps, .. }) => Self::explode_widgets(ctx, *spread, steps),
             Some(Task::Parts) => self.parts_widgets(ctx),
+            Some(Task::Coupling { id, .. }) => self.coupling_widgets(ctx, *id),
             _ => Vec::new(),
         }
     }
@@ -369,6 +433,9 @@ impl AssemblyWorkbench {
             Some(Task::Mass { found, .. }) => self.mass_event(ctx, found.as_ref(), event),
             Some(Task::Explode { .. }) => self.explode_event(ctx, event),
             Some(Task::Parts) => self.parts_event(ctx, event),
+            Some(Task::Coupling { id, before, .. }) => {
+                self.coupling_event(ctx, (id, before.is_none()), event)
+            }
             _ => None,
         }
     }
@@ -2557,173 +2624,147 @@ impl AssemblyWorkbench {
                 .to_string(),
             };
         }
-        let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
+        if ctx.document.get_feature_meta(id).is_none() {
             self.task = None;
             return TaskOutcome::Cancelled;
+        }
+        self.declared_panel(ui, ctx)
+    }
+
+    /// A coupling's settings: its two joints, what ties them, the ratio,
+    /// then what the last change's solve said and the coupling's Delete.
+    fn coupling_widgets(&self, ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Vec<Widget> {
+        let Some(node) = ctx.document.get_feature_meta(id) else {
+            return Vec::new();
         };
         let Ok(coupling) = Coupling::from_json(&node.data) else {
-            note_card(
-                ui,
-                Note::Error,
+            return vec![w::note(
+                NoteKind::Error,
                 Some("Unreadable coupling"),
                 "The stored coupling does not parse.",
-            );
-            return TaskOutcome::Open;
+            )];
         };
-        header(ui, "involute-gear", &node.name);
-        ui.add_space(SPACE_2);
-        // Only hinges and sliders move in a way a coupling can tie.
-        let movable: Vec<crate::Joint> = crate::joints(ctx.document)
-            .into_iter()
-            .filter(|j| {
-                matches!(
-                    j.feature.kind,
-                    JointKind::Hinge { .. } | JointKind::Slider { .. }
-                )
-            })
-            .collect();
-        let named = |id: FeatureId| {
-            movable
+        let movable = movable_joints(ctx);
+        let named = |j: &crate::Joint| format!("{} ({})", j.name, j.feature.kind.label());
+        let pick = |key: &str, label: &str, current: FeatureId| {
+            let mut options: Vec<String> = movable.iter().map(named).collect();
+            let selected = movable
                 .iter()
-                .find(|j| j.id == id)
-                .map_or("a removed joint".to_string(), |j| {
-                    format!("{} ({})", j.name, j.feature.kind.label())
-                })
+                .position(|j| j.id == current)
+                .unwrap_or_else(|| {
+                    options.push("a removed joint".into());
+                    options.len() - 1
+                });
+            Widget::Choice {
+                id: key.into(),
+                label: label.into(),
+                options,
+                selected,
+            }
         };
-        let kind_of = |id: FeatureId| movable.iter().find(|j| j.id == id).map(|j| j.feature.kind);
+        let mut widgets = vec![
+            w::header("involute-gear", &node.name),
+            pick("driver", "Driving", coupling.driver),
+            pick("driven", "Driven", coupling.driven),
+        ];
+        let gearings = coupling_gearings(&movable, &coupling);
+        widgets.push(Widget::Choice {
+            id: "gearing".into(),
+            label: "Kind".into(),
+            options: gearings.iter().map(|g| g.label().to_string()).collect(),
+            selected: gearings
+                .iter()
+                .position(|g| *g == coupling.gearing)
+                .unwrap_or(0),
+        });
+        let (ratio_label, length) = coupling.gearing.ratio_label();
+        widgets.push(w::hinted(
+            coupling.gearing.summary(),
+            w::bound(
+                "ratio",
+                ratio_label,
+                coupling.ratio,
+                if length { Dim::Length } else { Dim::Number },
+                (id, "/ratio"),
+            ),
+        ));
+        widgets.push(w::hinted(
+            "The driven joint moves the other way",
+            w::toggle("reverse", "Reverse", coupling.reverse),
+        ));
+        widgets.push(w::text(
+            "Move the driving joint (drag its body, or drive it) and the driven \
+             one follows.",
+        ));
+        widgets.extend(self.verdict_note());
+        widgets.extend(node.body.and_then(|body| freedom_text(ctx, body)));
+        widgets.push(w::hinted(
+            "Remove the coupling; the joints move apart again",
+            w::button("delete", "Delete coupling", ButtonStyle::Destructive),
+        ));
+        widgets
+    }
+
+    /// A change to a coupling, made as `asm.set` makes it, or the coupling
+    /// deleted.
+    fn coupling_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        (id, created): (FeatureId, bool),
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let coupling = Coupling::from_json(ctx.document.get_feature_data(id)?).ok()?;
+        let movable = movable_joints(ctx);
         let mut args = serde_json::Map::new();
-        let document: &core_document::Document = ctx.document;
-        let mut formula_edits: Vec<(String, Option<String>)> = Vec::new();
-        let mut ratio = coupling.ratio;
-        let mut reverse = coupling.reverse;
-        Card::new().padding(SPACE_3).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            for (label, key, current) in [
-                ("Driving", "driver", coupling.driver),
-                ("Driven", "driven", coupling.driven),
-            ] {
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [90.0, INPUT],
-                        egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+        match event {
+            PanelEvent::Choice { id: key, index } if key == "driver" || key == "driven" => {
+                let current = if key == "driver" {
+                    coupling.driver
+                } else {
+                    coupling.driven
+                };
+                let joint = movable.get(*index).filter(|j| j.id != current)?;
+                args.insert(key.clone(), joint.id.0.to_string().into());
+            }
+            PanelEvent::Choice { id: key, index } if key == "gearing" => {
+                let gearing = *coupling_gearings(&movable, &coupling).get(*index)?;
+                if gearing == coupling.gearing {
+                    return None;
+                }
+                args.insert("gearing".into(), gearing.word().into());
+            }
+            PanelEvent::Number { id: key, value } if key == "ratio" => {
+                if *value <= 0.0 {
+                    return None;
+                }
+                args.insert("ratio".into(), serde_json::json!(*value as f32));
+            }
+            PanelEvent::Toggle { id: key, on } if key == "reverse" => {
+                args.insert("reverse".into(), (*on).into());
+            }
+            PanelEvent::Button { id: key } if key == "delete" => {
+                ctx.document.remove_feature(id).ok()?;
+                if !created {
+                    ctx.record(
+                        "doc.delete",
+                        crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
+                        serde_json::Value::Null,
                     );
-                    egui::ComboBox::from_id_salt(("coupling_joint", id, key))
-                        .selected_text(RichText::new(named(current)).font(sans(FONT_SM)))
-                        .width(ui.available_width() - 2.0 * ui.spacing().button_padding.x)
-                        .show_ui(ui, |ui| {
-                            for joint in &movable {
-                                let on = joint.id == current;
-                                if ui
-                                    .selectable_label(
-                                        on,
-                                        RichText::new(named(joint.id)).font(sans(FONT_SM)),
-                                    )
-                                    .clicked()
-                                    && !on
-                                {
-                                    args.insert(key.into(), joint.id.0.to_string().into());
-                                }
-                            }
-                        });
+                }
+                self.task = None;
+                ctx.active_document_object = None;
+                return Some(TaskOutcome::Accepted {
+                    label: "Delete coupling".to_string(),
                 });
             }
-            let (driver, driven) = (kind_of(coupling.driver), kind_of(coupling.driven));
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new("Kind").font(sans(FONT_SM)).color(TEXT2)),
-                );
-                egui::ComboBox::from_id_salt(("coupling_kind", id))
-                    .selected_text(RichText::new(coupling.gearing.label()).font(sans(FONT_SM)))
-                    .width(ui.available_width() - 2.0 * ui.spacing().button_padding.x)
-                    .show_ui(ui, |ui| {
-                        for gearing in Gearing::ALL {
-                            let fits = driver
-                                .zip(driven)
-                                .is_some_and(|(a, b)| gearing.fits(&a, &b));
-                            let on = gearing == coupling.gearing;
-                            let clicked = ui
-                                .add_enabled(
-                                    fits,
-                                    egui::Button::selectable(
-                                        on,
-                                        RichText::new(gearing.label()).font(sans(FONT_SM)),
-                                    ),
-                                )
-                                .on_hover_text(gearing.summary())
-                                .clicked();
-                            if clicked && !on {
-                                args.insert("gearing".into(), gearing.word().into());
-                            }
-                        }
-                    });
-            });
-            let (ratio_label, length) = coupling.gearing.ratio_label();
-            let dim = if length {
-                core_document::expr::Dim::LENGTH
-            } else {
-                core_document::expr::Dim::NUMBER
-            };
-            if number_row(
-                ui,
-                (document, id, &mut formula_edits),
-                (ratio_label, coupling.gearing.summary()),
-                "/ratio",
-                dim,
-                &mut ratio,
-            ) && ratio > 0.0
-            {
-                args.insert("ratio".into(), serde_json::json!(ratio));
-            }
-            if check_row(ui, &mut reverse, "Reverse")
-                .on_hover_text("The driven joint moves the other way")
-                .changed()
-            {
-                args.insert("reverse".into(), reverse.into());
-            }
-            note(
-                ui,
-                "Move the driving joint (drag its body, or drive it) and the driven \
-                 one follows.",
-            );
-        });
-        for (key, formula) in formula_edits {
-            if let Err(why) = ctx.document.set_feature_formula(id, &key, formula) {
-                ctx.log_warn(why.to_string());
-            }
+            _ => return None,
         }
-        if !args.is_empty() {
-            args.insert("joint".into(), id.0.to_string().into());
-            match crate::commands::run("asm.set", &args, ctx) {
-                Ok(_) => self.verdict = None,
-                Err(err) => self.verdict = Some(Err(err.to_string())),
-            }
+        args.insert("joint".into(), id.0.to_string().into());
+        match crate::commands::run("asm.set", &args, ctx) {
+            Ok(_) => self.verdict = None,
+            Err(err) => self.verdict = Some(Err(err.to_string())),
         }
-        ui.add_space(SPACE_2);
-        self.verdict_card(ui);
-        if let Some(body) = node.body {
-            freedom_line(ui, ctx, body);
-        }
-        ui.add_space(SPACE_2);
-        if destructive_button(ui, "Delete coupling")
-            .on_hover_text("Remove the coupling; the joints move apart again")
-            .clicked()
-            && ctx.document.remove_feature(id).is_ok()
-        {
-            if !created {
-                ctx.record(
-                    "doc.delete",
-                    crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
-                    serde_json::Value::Null,
-                );
-            }
-            self.task = None;
-            ctx.active_document_object = None;
-            return TaskOutcome::Accepted {
-                label: "Delete coupling".to_string(),
-            };
-        }
-        TaskOutcome::Open
+        None
     }
 
     fn move_panel(

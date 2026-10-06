@@ -666,3 +666,95 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
     send(&mut wb, &mut doc, button("remove_column:0"));
     assert!(crate::parts_list(&doc)[0].values.is_empty());
 }
+
+/// Two hinges on a base, the second geared to the first.
+fn geared() -> (Document, FeatureId, FeatureId) {
+    let mut doc = Document::new("t");
+    let [base, g1, g2] = [
+        doc.create_body(None),
+        doc.create_body(None),
+        doc.create_body(None),
+    ];
+    let pin = |x: f32| serde_json::json!({"axis": {"point": [x, 0, 0], "direction": [0, 0, 1]}});
+    let mut hinge = |body: BodyId, x: f32| {
+        run(
+            &mut doc,
+            "asm.hinge",
+            serde_json::json!({"body": body.0.to_string(), "face": pin(x),
+                               "other": base.0.to_string(), "other_face": pin(x)}),
+        )
+    };
+    let (h1, h2) = (hinge(g1, -20.0), hinge(g2, 10.0));
+    let coupling = run(
+        &mut doc,
+        "asm.couple",
+        serde_json::json!({"driver": h1, "driven": h2, "gearing": "gears", "ratio": 2}),
+    );
+    let id = |v: serde_json::Value| FeatureId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap());
+    (doc, id(coupling), id(h1))
+}
+
+#[test]
+fn a_coupling_s_fields_change_it_as_asm_set_does_and_record_the_change() {
+    let (mut doc, coupling, _) = geared();
+    let before = doc.clone();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Coupling {
+            id: coupling,
+            before: doc.get_feature_data(coupling).cloned(),
+            placements: crate::all_placements(&context(&mut doc)),
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    draws(&mut wb, &mut doc);
+    let panel = widgets(&wb, &mut doc);
+    assert_eq!(value_of(&panel, "ratio"), 2.0);
+    let Some(Widget::Number {
+        bind: Some(bind), ..
+    }) = field(&panel, "ratio")
+    else {
+        panic!("the ratio takes formulas");
+    };
+    assert_eq!(bind.key, "/ratio");
+    let Some(Widget::Choice { options, .. }) = field(&panel, "gearing") else {
+        panic!("{panel:?}");
+    };
+    let belt = options
+        .iter()
+        .position(|o| o == Gearing::Belt.label())
+        .expect("two hinges may take a belt");
+    assert!(
+        !options.iter().any(|o| o == Gearing::RackAndPinion.label()),
+        "a rack needs a slider"
+    );
+
+    send(&mut wb, &mut doc, number("ratio", 3.0));
+    send(&mut wb, &mut doc, toggle("reverse", true));
+    send(&mut wb, &mut doc, choose("gearing", belt));
+    let mut by_command = before.clone();
+    run(
+        &mut by_command,
+        "asm.set",
+        serde_json::json!({"joint": coupling.0.to_string(), "ratio": 3.0, "reverse": true,
+                           "gearing": "belt"}),
+    );
+    assert_eq!(
+        doc.get_feature_data(coupling),
+        by_command.get_feature_data(coupling)
+    );
+    draws(&mut wb, &mut doc);
+
+    let recorded = accept(&mut wb, &mut doc);
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].id, "asm.set");
+    let mut replay = before;
+    run(
+        &mut replay,
+        "asm.set",
+        serde_json::Value::Object(recorded[0].args.clone()),
+    );
+    assert_eq!(
+        replay.get_feature_data(coupling),
+        doc.get_feature_data(coupling)
+    );
+}
