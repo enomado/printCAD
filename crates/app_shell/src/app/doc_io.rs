@@ -1150,11 +1150,9 @@ pub(crate) fn preview_shape(
     body: core_document::BodyId,
     mesh: Arc<kernel_api::TriMesh>,
 ) -> crate::thumbnail::Shape {
-    let display = document
-        .bodies()
-        .iter()
-        .find(|b| b.id == body)
-        .and_then(|b| b.display);
+    let entry = document.bodies().iter().find(|b| b.id == body);
+    let display = entry.and_then(|b| b.display);
+    let face_colors = entry.map(|b| b.face_colors.as_slice()).unwrap_or(&[]);
     let vertex_colours =
         display.is_none() && mesh.colors.len() == mesh.positions.len() && !mesh.colors.is_empty();
     let color = match display {
@@ -1162,10 +1160,27 @@ pub(crate) fn preview_shape(
         None if vertex_colours => [1.0; 3],
         None => core_document::BodyDisplay::default().color,
     };
+    // A mesh without its faces named takes no face colours.
+    if face_colors.is_empty() || mesh.faces.len() * 3 != mesh.indices.len() {
+        return crate::thumbnail::Shape {
+            mesh,
+            color,
+            vertex_colours,
+        };
+    }
+    // Faces coloured on their own, over the body's colour, as the view
+    // draws them.
+    let coloured = if display.is_some() {
+        let mut plain = (*mesh).clone();
+        plain.colors.clear();
+        core_document::mesh_with_face_colors(&plain, face_colors, color)
+    } else {
+        core_document::mesh_with_face_colors(&mesh, face_colors, color)
+    };
     crate::thumbnail::Shape {
-        mesh,
-        color,
-        vertex_colours,
+        mesh: Arc::new(coloured),
+        color: [1.0; 3],
+        vertex_colours: true,
     }
 }
 

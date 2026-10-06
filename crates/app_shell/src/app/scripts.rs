@@ -383,7 +383,35 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
              away at once.",
         )
         .see_also("doc.faces")
-        .see_also("doc.set_body"),
+        .see_also("doc.set_body")
+        .example(
+            "A pad's top painted red in a picture, then the body's colour again",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            local top
+            for _, face in ipairs(pc.doc.faces{body = body}) do
+              if face.kind == "plane" and face.normal[3] > 0.99 then top = face.index end
+            end
+            local path = os.tmpname()
+            local function picture()
+              pc.doc.picture{path = path, view = "top", size = {64, 64}}
+              local file = io.open(path, "rb")
+              local bytes = file:read("a")
+              file:close()
+              return bytes
+            end
+            local plain = picture()
+            pc.doc.set_face_color{body = body, face = top, color = {r = 1, g = 0, b = 0}}
+            local red = picture()
+            pc.doc.set_face_color{body = body, face = top}
+            assert(red ~= plain and picture() == plain, "red, then the body's colour again")
+            os.remove(path)
+            "#,
+        ),
         CommandSpec::new(
             "doc.linked_copy",
             "A linked copy of a body beside it: the same shape, following every change",
