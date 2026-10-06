@@ -732,6 +732,14 @@ assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
 - `scale` (number, optional): Millimetres per drawing unit; the drawing's own unit when left out, else 1
 - Returns the sketch's id
 
+Notes:
+
+- Left out, `scale` follows the drawing's own unit: a drawing in inches comes in at 25.4 mm a unit. A drawing that names no unit comes in at 1 mm a unit.
+- It is placed as `sketch.new` places a sketch: without `body` it goes in the selected body, else a new one. It is named after the file unless `name` says otherwise.
+- A file that cannot be read or parsed is refused, and so is a drawing with no curves.
+
+See also `pc.sketch.new`, `pc.sketch.repair`.
+
 `pc.sketch.image`: Lay a picture (PNG or JPEG) on a sketch's plane to draw over: in the sketch given or being edited, else in a new one.
 
 - `body` (id, optional): The body it belongs to; the selected body, else a new one
@@ -753,6 +761,15 @@ assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
 - `sketch` (id, optional): The sketch it goes in
 - Returns {sketch, image}
 
+Notes:
+
+- Without `sketch` it goes in the sketch being edited, else in a new sketch named after the file and placed as `sketch.new` places one (`body`, `plane`, `on`).
+- It lies 100 mm wide, centred on (0, 0), at opacity 0.5, unless `width`, `x`, `y` or `opacity` say otherwise; `angle` is degrees counter-clockwise.
+- The file is kept in the document. The picture only draws: no profile and no constraint come of it.
+- A file that cannot be read, or is not a PNG or JPEG, is refused. The `image` returned is what `sketch.set_image` takes.
+
+See also `pc.sketch.set_image`.
+
 `pc.sketch.set_image`: Move, size, turn or fade a sketch's picture, or take it away.
 
 - `sketch` (id): The sketch to draw in
@@ -764,12 +781,39 @@ assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
 - `image` (id): The picture
 - `remove` (boolean, optional): true: take it away
 
+Notes:
+
+- `image` is the id `sketch.image` returned, and `sketch` must be the sketch holding it, or it is refused.
+- Only what is given changes. `width` must be more than 0, `opacity` is held between 0 and 1, and `angle` is degrees counter-clockwise.
+
+See also `pc.sketch.image`.
+
 `pc.sketch.point`: Add a point.
 
 - `sketch` (id): The sketch to draw in
 - `x` (number)
 - `y` (number)
 - Returns the point's id
+
+Notes:
+
+- A point the sketch already has exactly at (x, y) is returned rather than a second one made.
+- Lines, arcs and circles drawn later with an end or a centre exactly on it take it: making the points first is how a script knows the ids of the ends it constrains.
+
+See also `pc.sketch.constrain`, `pc.sketch.geometry`.
+
+Example: A corner made first and shared.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local corner = pc.sketch.point{sketch = s, x = 10, y = 5}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+local ends = 0
+for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+  if g.Line and (g.Line.start == corner or g.Line["end"] == corner) then ends = ends + 1 end
+end
+assert(ends == 2, "the rectangle's corner is the point made first")
+```
 
 `pc.sketch.line`: Add a line from (x1, y1) to (x2, y2).
 
@@ -779,6 +823,28 @@ assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
 - `x2` (number)
 - `y2` (number)
 - Returns the line's id
+
+Notes:
+
+- Each end takes a point the sketch has exactly there, else a new one: lines drawn end to end share their ends and close a profile.
+- Unlike `sketch.polyline` and `sketch.rect`, it adds no constraint: a level line is not held level.
+- Its ends are points of their own: the line's `start` and `end` in `pc.doc.feature{id = s}.fields.sketch.geometry`, or points made first with `sketch.point`. Two ends at the same spot are refused ("a line needs two different ends").
+
+See also `pc.sketch.polyline`, `pc.sketch.point`.
+
+Example: Three lines end to end close a triangle.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 30, y2 = 0}
+pc.sketch.line{sketch = s, x1 = 30, y1 = 0, x2 = 0, y2 = 20}
+pc.sketch.line{sketch = s, x1 = 0, y1 = 20, x2 = 0, y2 = 0}
+assert(#pc.sketch.constraints{sketch = s} == 0, "nothing holds a line level")
+local pad = pc.design.pad{sketch = s, length = 4}
+assert(#pc.doc.rebuild() == 0, "the ends are shared, so the triangle closes")
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 30 * 20 / 2 * 4) < 1e-3)
+```
 
 `pc.sketch.polyline`: Add lines through a list of points, each ending where the next starts; a level or upright one is held so.
 
@@ -873,10 +939,53 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `end` (number): Degrees from the sketch's X axis
 - Returns the arc's id
 
+Notes:
+
+- Angles are degrees, and the arc runs counter-clockwise from `start` to `end`: -90 to 90 is the right half, 90 to -90 the left.
+- It takes the radius, not the diameter; a radius of 0 or less is refused.
+- Its centre and both ends are points of their own, each taking a point the sketch has exactly there, so a line drawn to an end joins it.
+
+See also `pc.sketch.circle`, `pc.sketch.draw`.
+
+Example: A half disc closed by a line.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.arc{sketch = s, x = 0, y = 0, radius = 10, start = -90, ["end"] = 90}
+pc.sketch.line{sketch = s, x1 = 0, y1 = 10, x2 = 0, y2 = -10}
+local pad = pc.design.pad{sketch = s, length = 2}
+assert(#pc.doc.rebuild() == 0, "the line ends on the arc's ends")
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - math.pi * 100 / 2 * 2) < 0.01, m.volume)
+assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
+```
+
 `pc.sketch.geometry`: List the sketch's elements with their points.
 
 - `sketch` (id): The sketch to draw in
 - Returns a list of {id, kind, points, radius?, construction}
+
+Notes:
+
+- A line's points are its start and end, an arc's its centre, start and end, a circle's and an ellipse's their centre; positions are as last solved. Each element also says whether it is `external`.
+- Ends and centres are listed again as elements of kind point. A spline, a parabola or a hyperbola is kind "other" with no points: its control points are in `pc.doc.feature{id = s}.fields.sketch.geometry`.
+
+See also `pc.sketch.constraints`, `pc.doc.feature`.
+
+Example: Ends and centres are points of their own.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local l = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+pc.sketch.circle{sketch = s, x = 5, y = 5, radius = 2}
+local count = {}
+for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+  count[e.kind] = (count[e.kind] or 0) + 1
+  if e.id == l then assert(e.points[2][1] == 10 and e.points[2][2] == 0) end
+end
+assert(count.line == 1 and count.circle == 1)
+assert(count.point == 3, "the line's ends and the centre are points of their own")
+```
 
 `pc.sketch.constrain`: Constrain elements, as the constraint's toolbar button does for a selection.
 
@@ -887,12 +996,63 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `remove_redundant` (boolean, optional): Take away the older constraints the new ones make redundant
 - Returns the new constraints' ids
 
+Notes:
+
+- Points are elements of their own: a line's ends are the point ids at its `start` and `end` in `pc.doc.feature{id = s}.fields.sketch.geometry`, the line's own id is the line. A point made with `sketch.point` before the line is the same id as the end drawn on it.
+- Without `value` a dimension takes what it measures on the sketch as it stands. Angles are degrees, a diameter the diameter, a radius the radius.
+- "distance" on one line is its length (listed as Length), on two points the distance between them, on a point and a curve or two curves the gap. "dimension" picks as the toolbar does: a line's length, a circle's diameter, an arc's radius, two lines' angle (their distance when parallel).
+- Nothing stays put until constrained: a dimension on free geometry moves every item it names, so tie a corner to "origin" first to keep it where it was drawn.
+- "lock" holds a point by its distances along X and Y from the origin, each the size of a coordinate (a point at x = -5 takes 5 and stays at -5).
+- A constraint that contradicts others is still added; `pc.sketch.status` names the conflict. `remove_redundant` takes away only older constraints the new one repeats, never one it contradicts.
+- A kind that does not fit the items, or is no kind at all, is refused ("the ... constraint does not fit these items"), and so is a `value` for a kind that takes none.
+
+See also `pc.sketch.status`, `pc.sketch.set_value`, `pc.sketch.constraints`.
+
+Example: A plate fully constrained from its corner on the origin.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local corner = pc.sketch.point{sketch = s, x = 1, y = 1}
+local sides = pc.sketch.rect{sketch = s, x = 1, y = 1, width = 20, height = 10}
+pc.sketch.constrain{sketch = s, kind = "coincident", items = {corner, "origin"}}
+pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[1]}, value = 40}
+pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[2]}, value = 25}
+assert(pc.sketch.status{sketch = s}.dof == 0, "fully constrained")
+local pad = pc.design.pad{sketch = s, length = 2}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 40 * 25 * 2) < 1e-3)
+assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.min[2]) < 1e-6, "its corner on the origin")
+```
+
 `pc.sketch.set_value`: Change a dimension's value.
 
 - `sketch` (id): The sketch to draw in
 - `constraint` (id)
 - `value` (number): mm, or degrees for an angle
 - `driving` (boolean, optional): false makes it a reference dimension that only measures
+
+Notes:
+
+- `constraint` is an id `sketch.constrain` returned; an element's id, or a constraint that is not a dimension, is refused.
+- Angles are degrees; a diameter takes the diameter, a radius the radius.
+- To bind a dimension to a formula, `doc.set_formula` takes it by the key `doc.parameters` lists for the sketch, which is the constraint's id.
+
+See also `pc.sketch.constrain`, `pc.doc.parameters`, `pc.doc.set_formula`.
+
+Example: A circle's diameter changed after it was dimensioned.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local c = pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+local d = pc.sketch.constrain{sketch = s, kind = "diameter", items = {c}}
+pc.sketch.set_value{sketch = s, constraint = d[1], value = 20}
+assert(pc.sketch.constraints{sketch = s}[1].value == 20)
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - math.pi * 10 ^ 2) < 0.01, m.volume)
+```
 
 `pc.sketch.draw`: Run a drawing or editing tool over points of the sketch, as clicks there would.
 
@@ -906,11 +1066,59 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `selection` (list, optional): The elements offset, translate, rotate, scale and mirror act on
 - Returns {elements, constraints}: what it made
 
+Notes:
+
+- Each click is in the sketch's millimetres and snaps as a click in the view does: one on the origin is held there and one on an axis is held on it, the constraints coming with what is made.
+- A tool takes the clicks its shape needs: line, circle (centre, then a point on it) and slot (the ends of its centre line) two; rect_center its centre, then a corner; ellipse its centre, an end of the major axis, then a point on it. Clicks short of a shape make nothing, without an error.
+- Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, `fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer takes one click on the corner. A bspline ends with the word "finish" in `points`.
+- A value typed at a click (`typed = {length = 20}`) sets the shape's size; with `constrain = true` it is kept as a dimension.
+- It returns every element made, end points and centres included, and every constraint made with them.
+
+See also `pc.sketch.polyline`, `pc.sketch.rect`, `pc.sketch.circle`.
+
+Example: A slot drawn by its centre line.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local made = pc.sketch.draw{sketch = s, tool = "slot", points = {{0, 0}, {20, 0}}, params = {slot_width = 6}}
+assert(#made.elements > 0 and #made.constraints > 0)
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - (20 * 6 + math.pi * 3 ^ 2)) < 1e-3, m.volume)
+```
+
 `pc.sketch.drag`: Drag elements by a step, the rest of the sketch following its constraints.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): The elements to drag
 - `by` (list): The step, {x, y}
+
+Notes:
+
+- `by` is a step {dx, dy} in mm, not a place to go to: the items move by it as far as their constraints let them, and the rest of the sketch follows.
+- A point held by "lock" stays where it is. A corner of a rectangle from `sketch.rect` stretches it, the opposite corner staying put.
+- Dragging a text block's point moves the whole text.
+
+See also `pc.sketch.set_value`.
+
+Example: A rectangle stretched by its corner.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local corner = pc.sketch.point{sketch = s, x = 20, y = 10}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+pc.sketch.drag{sketch = s, items = {corner}, by = {10, 5}}
+for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+  if e.id == corner then
+    assert(math.abs(e.points[1][1] - 30) < 1e-4 and math.abs(e.points[1][2] - 15) < 1e-4)
+  end
+end
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 30 * 15) < 1e-2, "still a rectangle, stretched")
+```
 
 `pc.sketch.attachment`: Move a sketch on the datum it is attached to: along its normal, across it, turned about it.
 
@@ -919,6 +1127,29 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `turn` (number, optional): About the normal, degrees
 - `sketch` (id): The sketch to draw in
 
+Notes:
+
+- Only a sketch made with `on` (a datum plane or coordinate system) takes it; one on a base plane, a plane of its own or an `attachment` is refused ("is not attached to a datum").
+- Each value given replaces the one the sketch had rather than adding to it: `offset = 5` twice leaves it 5 mm off the datum.
+- `shift` runs along the datum's own x and y; `turn` is degrees about its normal.
+
+See also `pc.sketch.new`, `pc.design.datum`, `pc.sketch.set_plane`.
+
+Example: A sketch set 5 mm off its datum.
+
+```lua
+local body = pc.doc.new_body{name = "Plate"}
+local datum = pc.design.datum{body = body, kind = "plane", plane = "XY", offset = {0, 0, 10}}
+local s = pc.sketch.new{body = body, on = datum}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 4, height = 2}
+pc.sketch.attachment{sketch = s, offset = 5}
+pc.sketch.attachment{sketch = s, offset = 5}
+pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.min[3] - 15) < 1e-6, "5 mm off the datum at 10, however often it is set")
+```
+
 `pc.sketch.external_from`: Bring another sketch's curves and points, or a datum, into this sketch as external geometry that follows them.
 
 - `from` (id): A sketch or a datum
@@ -926,11 +1157,63 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `sketch` (id): The sketch to draw in
 - Returns the external elements made
 
+Notes:
+
+- Every curve and loose point of the other sketch comes, its construction left out; a datum comes as one element.
+- It only guides unless `counts = true`: a sketch holding guides alone has no profile, and a pad of it fails at `pc.doc.rebuild()`.
+- It returns {elements, constraints}: the curves and the points at their ends. Only the curves are external geometry, which `pc.sketch.geometry` marks `external`.
+- `from` must be a sketch other than this one, or a datum; anything else is refused.
+
+See also `pc.sketch.external_defining`, `pc.sketch.carbon_copy`.
+
+Example: A circle from the sketch below, counted and padded.
+
+```lua
+local body = pc.doc.new_body{name = "Boss"}
+local base = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
+local made = pc.sketch.external_from{sketch = top, from = base, counts = true}
+assert(#made.elements == 2, "the circle and its centre")
+pc.design.pad{sketch = top, length = 3}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
+assert(math.abs(m.min[3] - 10) < 1e-6)
+```
+
 `pc.sketch.external_defining`: Count external geometry in the sketch's profiles, or leave it only guiding.
 
 - `items` (list): External elements' ids
 - `on` (boolean, optional): true counts them (the default), false stops
 - `sketch` (id): The sketch to draw in
+
+Notes:
+
+- Every item must be external geometry, or the call is refused ("... is not external geometry"); the elements `pc.sketch.geometry` marks `external` are.
+- Counting takes an element out of construction; `on = false` makes it a guide again.
+
+See also `pc.sketch.external_from`, `pc.sketch.external`.
+
+Example: A guide made to count.
+
+```lua
+local body = pc.doc.new_body{name = "Boss"}
+local base = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
+pc.sketch.external_from{sketch = top, from = base}
+local pad = pc.design.pad{sketch = top, length = 3}
+assert(#pc.doc.rebuild() == 1, "a guide alone is no profile")
+local curves = {}
+for _, e in ipairs(pc.sketch.geometry{sketch = top}) do
+  if e.external then curves[#curves + 1] = e.id end
+end
+pc.sketch.external_defining{sketch = top, items = curves}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
+```
 
 `pc.sketch.solver_settings`: How far the solver goes on this sketch.
 
@@ -938,16 +1221,76 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `tolerance` (number, optional): How small what is left must be, against the sketch's size (1e-9 when never set)
 - `sketch` (id): The sketch to draw in
 
+Notes:
+
+- `iterations` must be at least 1 and `tolerance` above 0 and below 1; either may be left out to keep what the sketch has.
+- The sketch keeps them (`fields.sketch.solver` in `pc.doc.feature`) and is solved again with them at once.
+
+See also `pc.sketch.status`.
+
+Example: Settings kept on the sketch.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+pc.sketch.solver_settings{sketch = s, iterations = 500, tolerance = 1e-6}
+local solver = pc.doc.feature{id = s}.fields.sketch.solver
+assert(solver.max_iterations == 500 and solver.tolerance == 1e-6)
+assert(pc.sketch.status{sketch = s}.solved)
+```
+
 `pc.sketch.repair`: Join ends of curves that nearly meet, and remove curves of no size, doubled curves and constraints left naming nothing.
 
 - `tolerance` (number, optional): How near two ends must be to join, mm (0.01 when left out)
 - `sketch` (id): The sketch to draw in
 - Returns what was repaired, in words
 
+Notes:
+
+- It is the answer to a profile that fails with "profile is not closed" because ends miss by a hair, as a drawing brought in may.
+- It answers in words, such as "2 end(s) joined, 1 duplicate curve(s) removed", or "nothing to repair".
+
+See also `pc.sketch.import_dxf`, `pc.sketch.status`.
+
+Example: Ends that miss by microns joined.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+pc.sketch.line{sketch = s, x1 = 10.005, y1 = 0, x2 = 0, y2 = 10}
+pc.sketch.line{sketch = s, x1 = 0, y1 = 10, x2 = 0, y2 = 0.003}
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 1, "two ends miss by a few microns")
+local said = pc.sketch.repair{sketch = s}
+assert(said:find("2 end"), said)
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 50) < 0.01, m.volume)
+assert(pc.sketch.repair{sketch = s} == "nothing to repair")
+```
+
 `pc.sketch.restore`: Put the sketch back as `data` holds it: an editing session cancelled.
 
 - `data` (any): The sketch as doc.feature lists its data
 - `sketch` (id): The sketch to draw in
+
+Notes:
+
+- `data` is the whole `fields` of `pc.doc.feature{id = s}`, plane included, taken before the edits; a table that is not a sketch's data is refused.
+
+See also `pc.doc.feature`.
+
+Example: Edits put back.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+local saved = pc.doc.feature{id = s}.fields
+pc.sketch.circle{sketch = s, x = 5, y = 2, radius = 1}
+assert(#pc.sketch.geometry{sketch = s} == 10)
+pc.sketch.restore{sketch = s, data = saved}
+assert(#pc.sketch.geometry{sketch = s} == 8, "the circle and its centre are gone")
+```
 
 `pc.sketch.set_plane`: Move the sketch onto another plane, its geometry kept in its own coordinates.
 
@@ -955,6 +1298,26 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `normal` (list): The plane's normal, {x, y, z}
 - `origin` (list, optional): Its origin, {x, y, z}
 - `x_axis` (list, optional): The sketch's X direction, {x, y, z}
+
+Notes:
+
+- The geometry keeps its sketch coordinates and moves with the plane. Without `x_axis` the sketch's x is a direction square to the normal chosen for it (+Y for a normal along X), so give `x_axis` to know which way the geometry lies.
+- The plane given is fixed: a sketch made on a datum stops following it, and `sketch.attachment` refuses it from then on.
+
+See also `pc.sketch.attachment`, `pc.sketch.new`.
+
+Example: A sketch moved onto a plane facing +X.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 4}
+pc.sketch.set_plane{sketch = s, normal = {1, 0, 0}, origin = {5, 0, 0}, x_axis = {0, 1, 0}}
+local pad = pc.design.pad{sketch = s, length = 2}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.min[1] - 5) < 1e-6 and math.abs(m.max[1] - 7) < 1e-6, "padded along +X from x = 5")
+assert(math.abs(m.max[2] - 10) < 1e-6 and math.abs(m.max[3] - 4) < 1e-6, "sketch x along Y, y along Z")
+```
 
 `pc.sketch.array`: Repeat elements in rows and columns.
 
@@ -967,6 +1330,29 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `linked` (boolean, optional): Copies stay the originals' size, spaced by one pitch along the rows and one down the columns (false)
 - Returns {elements}: what it made
 
+Notes:
+
+- The items are the first copy: `rows = 2, cols = 3` makes five more. Columns step along the sketch's x by `dx`, rows along its y by `dy`.
+- `rows` and `cols` must be at least 1, and one of them more than 1 ("an array needs elements and at least two rows or columns").
+- Without `linked` the copies are free geometry; with it, constraints keep them the originals' size and on the pitch.
+- It returns {elements, constraints}: the copies, their points and centres included.
+
+See also `pc.sketch.draw`, `pc.design.linear_pattern`.
+
+Example: A plate with six holes in two rows.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 50, height = 30}
+local hole = pc.sketch.circle{sketch = s, x = 10, y = 10, radius = 2}
+local made = pc.sketch.array{sketch = s, items = {hole}, rows = 2, cols = 3, dx = 15, dy = 10}
+assert(#made.elements == 10, "five more circles and their centres: the original is the first")
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
+```
+
 `pc.sketch.text`: Lay out text as closed outlines standing on a new point: the start of its first line on the baseline.
 
 - `sketch` (id): The sketch to draw in
@@ -978,6 +1364,27 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `angle` (number, optional): Degrees it turns about its point (0)
 - Returns {text, point}: the block and the point it stands on
 
+Notes:
+
+- `at` is where the baseline starts: the letters stand on it, capitals reaching about 0.7 of `size`, the em.
+- The letters are closed outlines that pad as they read; dragging the point returned moves the whole text.
+- A `font` that is not one of the three bundled names is read as a file path, refused when no such file is there. Text with nothing to draw is refused.
+
+See also `pc.sketch.text_edit`.
+
+Example: Letters padded from the baseline.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local t = pc.sketch.text{sketch = s, text = "PC", at = {0, 0}, size = 10}
+assert(t.text and t.point)
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.min[2]) < 0.2, "the baseline is at y = 0")
+assert(m.max[2] > 6 and m.max[2] < 10, "capitals stand under the 10 mm em")
+```
+
 `pc.sketch.text_edit`: Change a text block, its outlines made again where its point stands.
 
 - `sketch` (id): The sketch to draw in
@@ -988,11 +1395,58 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `spacing` (number, optional): mm
 - `angle` (number, optional): degrees
 
+Notes:
+
+- `block` is either the `text` or the `point` that `sketch.text` returned.
+- Only what is given changes, and the outlines are made again on the same point; a `size` of 0 or less is refused.
+
+See also `pc.sketch.text`.
+
+Example: A letter made twice as large.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local t = pc.sketch.text{sketch = s, text = "I", at = {0, 0}, size = 10}
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.feature{id = pad}.body
+local small = pc.doc.measure{body = body}
+pc.sketch.text_edit{sketch = s, block = t.text, size = 20}
+assert(#pc.doc.rebuild() == 0)
+local large = pc.doc.measure{body = body}
+assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
+assert(math.abs(large.volume - 4 * small.volume) < 1e-3, "four times the area")
+```
+
 `pc.sketch.to_bspline`: Make lines, arcs, circles, ellipses and conics into splines that are exactly them.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): The curves to make splines of
 - Returns {elements}: what it made
+
+Notes:
+
+- Each curve is replaced and its id is gone; an arc's ends stay, as the spline's first and last control points. Arcs and circles become rational splines, exact.
+- A spline is kind "other" in `pc.sketch.geometry`; its control points, degree, knots and weights are in `pc.doc.feature{id = s}.fields.sketch.geometry`.
+- It returns {elements, constraints}: the new control points and the spline.
+
+See also `pc.sketch.join`, `pc.sketch.spline_degree`.
+
+Example: A circle made a spline pads the same disc.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local c = pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+local made = pc.sketch.to_bspline{sketch = s, items = {c}}
+assert(#made.elements > 0)
+for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+  assert(e.id ~= c, "the circle is replaced")
+end
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - math.pi * 25) < 0.01, "exactly the circle: " .. m.volume)
+```
 
 `pc.sketch.spline_degree`: Raise or lower the degree of splines: raising keeps the curve, lowering fits the nearest one.
 
@@ -1000,11 +1454,54 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `items` (list): The splines
 - `by` (integer): 1 to raise, -1 to lower
 
+Notes:
+
+- Only the sign of `by` counts: any number above 0 raises one degree, any below lowers one, and 0 is refused.
+- Raising adds a control point. The bspline tool draws degree 3, which the data leaves out: `degree` shows in it once changed.
+
+See also `pc.sketch.spline_knots`, `pc.sketch.to_bspline`.
+
+Example: A cubic raised to degree 4.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+local spline = made.elements[#made.elements]
+local function shape()
+  for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+    if g.BSpline then return g.BSpline end
+  end
+end
+assert(#shape().control_points == 4)
+pc.sketch.spline_degree{sketch = s, items = {spline}, by = 1}
+assert(shape().degree == 4 and #shape().control_points == 5)
+```
+
 `pc.sketch.insert_knot`: Insert a knot into a spline where it passes nearest a point, the curve unchanged.
 
 - `sketch` (id): The sketch to draw in
 - `spline` (id): The spline
 - `at` (list): A point near the curve, {x, y}
+
+Notes:
+
+- `at` need not lie on the curve: the knot goes at the parameter where the spline passes nearest it.
+- Only a spline takes it; a line, arc or circle is refused ("is not a spline").
+
+See also `pc.sketch.knot_multiplicity`, `pc.sketch.spline_knots`.
+
+Example: A knot inserted halfway.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+local spline = made.elements[#made.elements]
+assert(#pc.sketch.spline_knots{sketch = s, spline = spline} == 0)
+pc.sketch.insert_knot{sketch = s, spline = spline, at = {15, 5}}
+local knots = pc.sketch.spline_knots{sketch = s, spline = spline}
+assert(#knots == 1 and knots[1].multiplicity == 1)
+assert(math.abs(knots[1].knot - 0.5) < 1e-6, "halfway along this symmetric spline")
+```
 
 `pc.sketch.knot_multiplicity`: Set how many times a spline's knot stands (1 up to the degree), or remove it with 0.
 
@@ -1013,11 +1510,51 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `knot` (number): The knot's value, as sketch.spline_knots lists it
 - `multiplicity` (integer)
 
+Notes:
+
+- `knot` is a value `sketch.spline_knots` lists; one where the spline has no knot is refused.
+- A multiplicity above the degree is held at the degree. Asking for the one the knot has is refused ("the knot is unchanged").
+
+See also `pc.sketch.spline_knots`, `pc.sketch.insert_knot`.
+
+Example: A knot doubled, then removed.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+local spline = made.elements[#made.elements]
+pc.sketch.insert_knot{sketch = s, spline = spline, at = {15, 5}}
+local knot = pc.sketch.spline_knots{sketch = s, spline = spline}[1].knot
+pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 2}
+assert(pc.sketch.spline_knots{sketch = s, spline = spline}[1].multiplicity == 2)
+pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 0}
+assert(#pc.sketch.spline_knots{sketch = s, spline = spline} == 0, "0 removes it")
+```
+
 `pc.sketch.spline_knots`: A spline's knots inside its ends and how many times each stands.
 
 - `sketch` (id): The sketch to draw in
 - `spline` (id): The spline
 - Returns {{knot, multiplicity}}
+
+Notes:
+
+- The knots at the ends are not listed: a spline fresh from the bspline tool lists none.
+- An element that is not a spline answers an empty list rather than an error.
+
+See also `pc.sketch.insert_knot`, `pc.sketch.knot_multiplicity`.
+
+Example: A half circle as a spline has one double knot.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local arc = pc.sketch.arc{sketch = s, x = 0, y = 0, radius = 5, start = 0, ["end"] = 180}
+local made = pc.sketch.to_bspline{sketch = s, items = {arc}}
+local spline = made.elements[#made.elements]
+local knots = pc.sketch.spline_knots{sketch = s, spline = spline}
+assert(#knots == 1, "the knots at its ends are not listed")
+assert(knots[1].knot == 0.5 and knots[1].multiplicity == 2)
+```
 
 `pc.sketch.spline_weight`: Weigh a spline's control point: more pulls the curve toward it.
 
@@ -1026,12 +1563,57 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `point` (id): One of its control points
 - `weight` (number): More than 0; 1 is plain
 
+Notes:
+
+- `point` is one of the spline's `control_points` in `pc.doc.feature`'s data, where its `weights` stand in the same order; any other point is refused.
+- A weight of 0 or less is refused.
+
+See also `pc.sketch.to_bspline`.
+
+Example: A control point weighed three times.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+local spline = made.elements[#made.elements]
+local function shape()
+  for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+    if g.BSpline then return g.BSpline end
+  end
+end
+local second = shape().control_points[2]
+pc.sketch.spline_weight{sketch = s, spline = spline, point = second, weight = 3}
+local weights = shape().weights
+assert(weights[2] == 3 and weights[1] == 1)
+```
+
 `pc.sketch.join`: Merge curves that meet end to end into one B-spline following them.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): The lines, arcs, arcs of ellipses, parabolas and hyperbolas, and open splines to merge
 - `tolerance` (number, optional): How far the spline may stray from the curves, mm (0.01)
 - Returns {elements}: what it made
+
+Notes:
+
+- The curves are replaced by one spline ending where the chain ends; their ids are gone.
+- It needs two or more curves meeting end to end in one chain: one curve, a gap or a branch is refused. A sharp corner, such as a rectangle's, fails at the default `tolerance` ("No spline follows these curves within 0.01 mm").
+
+See also `pc.sketch.to_bspline`.
+
+Example: A line and a quarter arc made one spline.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local line = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+local arc = pc.sketch.arc{sketch = s, x = 10, y = 5, radius = 5, start = -90, ["end"] = 0}
+local made = pc.sketch.join{sketch = s, items = {line, arc}}
+assert(#made.elements > 0)
+local count = {}
+for _, e in ipairs(pc.sketch.geometry{sketch = s}) do count[e.kind] = (count[e.kind] or 0) + 1 end
+assert(count.line == nil and count.arc == nil, "both are replaced")
+assert(count.other == 1, "by one spline")
+```
 
 `pc.sketch.set_constraint`: Make constraints driving or reference, active or not, parked or not.
 
@@ -1041,10 +1623,51 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `active` (boolean, optional): false: kept but not solved
 - `parked` (boolean, optional): true: its symbol moves to the parked layer, drawn only while that layer shows; it still solves
 
+Notes:
+
+- `items` are constraint ids; an element's id among them is passed over without a word. Only the flags given change.
+- A dimension that is not driving measures and conflicts with nothing; a constraint that is not active is kept but left out of solving.
+
+See also `pc.sketch.set_value`, `pc.sketch.status`.
+
+Example: A repeated dimension made a reference.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local sides = pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 15}
+pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[1]}, value = 30}
+local top = pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[3]}}
+assert(#pc.sketch.status{sketch = s}.redundant > 0, "the top's length says the bottom's again")
+pc.sketch.set_constraint{sketch = s, items = top, driving = false}
+assert(#pc.sketch.status{sketch = s}.redundant == 0, "a reference only measures")
+```
+
 `pc.sketch.mirror_sketch`: A new sketch on the same plane: this one's geometry mirrored across its Y axis.
 
 - `sketch` (id): The sketch to draw in
 - Returns the new sketch's id
+
+Notes:
+
+- It makes a new sketch, named after this one with "mirror", in the same body; this one is left as it is. The mirror is across the sketch's own Y axis: x becomes -x.
+- For both halves in one profile, `sketch.merge` the two, or mirror within one sketch with `sketch.draw`'s mirror tool.
+
+See also `pc.sketch.merge`, `pc.sketch.draw`.
+
+Example: A rectangle mirrored across the Y axis.
+
+```lua
+local body = pc.doc.new_body{name = "Wing"}
+local s = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.rect{sketch = s, x = 5, y = 0, width = 10, height = 5}
+local mirrored = pc.sketch.mirror_sketch{sketch = s}
+assert(pc.doc.feature{id = mirrored}.body == body)
+assert(#pc.sketch.geometry{sketch = s} == 8, "the original keeps only its own")
+pc.design.pad{sketch = mirrored, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.min[1] + 15) < 1e-6 and math.abs(m.max[1] + 5) < 1e-6, "across the sketch's Y axis")
+```
 
 `pc.sketch.merge`: A new sketch holding this one's geometry and other sketches', mapped onto its plane.
 
@@ -1052,11 +1675,57 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `with` (list): The other sketches
 - Returns the new sketch's id
 
+Notes:
+
+- It makes a new sketch, named after this one with "merged", on this one's plane and in its body; the sketches merged are left as they are. Constraints come with the geometry.
+- Each sketch in `with` must lie on a plane parallel to this one ("its plane is not parallel to this one"); its geometry is laid onto this plane, the distance between them dropped.
+
+See also `pc.sketch.carbon_copy`, `pc.sketch.mirror_sketch`.
+
+Example: Two sketches merged and padded as one.
+
+```lua
+local body = pc.doc.new_body{name = "Pair"}
+local left = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.rect{sketch = left, x = -15, y = 0, width = 10, height = 5}
+local right = pc.sketch.new{body = body, plane = "XY", offset = 3}
+pc.sketch.circle{sketch = right, x = 10, y = 2, radius = 2}
+local merged = pc.sketch.merge{sketch = left, with = {right}}
+assert(#pc.sketch.geometry{sketch = merged} == 10)
+pc.design.pad{sketch = merged, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - (50 + math.pi * 4)) < 0.01, m.volume)
+assert(math.abs(m.max[3] - 1) < 1e-6, "on the first sketch's plane")
+```
+
 `pc.sketch.carbon_copy`: Copy another sketch's geometry into this one, mapped onto its plane.
 
 - `sketch` (id): The sketch to draw in
 - `from` (id): The sketch to copy
 - Returns {elements, constraints}: what it made
+
+Notes:
+
+- The geometry comes with its constraints, as plain geometry of this sketch: free to edit, not tied to the sketch it came from.
+- `from` must lie on a plane parallel to this one ("its plane is not parallel to this one"); a sketch cannot copy itself.
+
+See also `pc.sketch.merge`, `pc.sketch.external_from`.
+
+Example: A rectangle copied onto a sketch above it.
+
+```lua
+local body = pc.doc.new_body{name = "Stack"}
+local base = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.rect{sketch = base, x = 0, y = 0, width = 10, height = 5}
+local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+local made = pc.sketch.carbon_copy{sketch = top, from = base}
+assert(#made.elements == 8 and #made.constraints == 4, "the lines, their ends and their constraints")
+pc.design.pad{sketch = top, length = 2}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.min[3] - 5) < 1e-6)
+```
 
 `pc.sketch.paste`: Add geometry held as a sketch of its own, moved by a step.
 
@@ -1065,12 +1734,62 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `by` (list): The step, {x, y}
 - Returns {elements}: what it made
 
+Notes:
+
+- `clipboard` is a sketch's own data: `pc.doc.feature{id = s}.fields.sketch` of any sketch serves, and all of its geometry comes, with its constraints.
+- `by` is a step {dx, dy} in mm. It returns {elements, constraints}.
+
+See also `pc.sketch.carbon_copy`.
+
+Example: A rectangle pasted beside itself.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+local clip = pc.doc.feature{id = s}.fields.sketch
+local made = pc.sketch.paste{sketch = s, clipboard = clip, by = {20, 0}}
+assert(#made.elements == 8)
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.max[1] - 30) < 1e-6)
+```
+
 `pc.sketch.external`: Project edges of solids into the sketch as fixed references.
 
 - `sketch` (id): The sketch to draw in
 - `edges` (list): Each {body, point, direction}: a point on the edge and its direction, in the body's own frame
 - `counts` (boolean, optional): true: it counts in the profile, as drawn geometry does; false (the default): it only guides the sketch
 - Returns {elements}: what it made
+
+Notes:
+
+- Each edge is a point on it and its direction there, in the body's own frame; `pc.doc.edges` gives both (where the body sits, the same until it is moved). The body must be built first (`pc.doc.rebuild()`), else it is refused ("that body has no solid shape").
+- It only guides unless `counts = true`; counted, the projected edges close a profile as drawn lines do. An edge square to the sketch plane projects to a point.
+- It returns {elements, constraints}: the curves and the points at their ends, the curves marked `external` by `pc.sketch.geometry`.
+
+See also `pc.sketch.intersection`, `pc.doc.edges`, `pc.sketch.external_defining`.
+
+Example: A block's top edges projected and padded higher.
+
+```lua
+local body = pc.doc.new_body{name = "Block"}
+local base = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.rect{sketch = base, x = 0, y = 0, width = 20, height = 10}
+pc.design.pad{sketch = base, length = 5}
+assert(#pc.doc.rebuild() == 0)
+local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+local made = pc.sketch.external{sketch = top, counts = true, edges = {
+  {body = body, point = {10, 0, 5}, direction = {1, 0, 0}},
+  {body = body, point = {20, 5, 5}, direction = {0, 1, 0}},
+  {body = body, point = {10, 10, 5}, direction = {1, 0, 0}},
+  {body = body, point = {0, 5, 5}, direction = {0, 1, 0}},
+}}
+assert(#made.elements > 0)
+pc.design.pad{sketch = top, length = 3}
+assert(#pc.doc.rebuild() == 0, "the four top edges close a profile")
+assert(math.abs(pc.doc.measure{body = body}.volume - 20 * 10 * 8) < 1e-3)
+```
 
 `pc.sketch.intersection`: Add where faces of solids cross the sketch plane, as fixed references.
 
@@ -1079,10 +1798,56 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `counts` (boolean, optional): true: it counts in the profile, as drawn geometry does; false (the default): it only guides the sketch
 - Returns {elements}: what it made
 
+Notes:
+
+- Each face is a point on it and its outward normal there, in the body's own frame; `pc.doc.faces` gives both. The body must be built first.
+- A face the sketch plane does not cross adds nothing. What it adds only guides unless `counts = true`.
+- It returns {elements, constraints}: the curves and the points at their ends.
+
+See also `pc.sketch.external`, `pc.doc.faces`.
+
+Example: Where a block's top face crosses a sketch through its middle.
+
+```lua
+local body = pc.doc.new_body{name = "Block"}
+local base = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.rect{sketch = base, x = 0, y = 0, width = 20, height = 10}
+pc.design.pad{sketch = base, length = 5}
+assert(#pc.doc.rebuild() == 0)
+local cut = pc.sketch.new{body = body, plane = "XZ", offset = -5}
+local made = pc.sketch.intersection{sketch = cut, faces = {{body = body, point = {10, 5, 5}, normal = {0, 0, 1}}}}
+assert(#made.elements == 3, "a line and its two ends")
+for _, e in ipairs(pc.sketch.geometry{sketch = cut}) do
+  if e.kind == "line" then
+    assert(e.external and e.points[1][2] == 5 and e.points[2][2] == 5, "the top face, at sketch y = 5")
+  end
+end
+```
+
 `pc.sketch.constraints`: List the sketch's constraints.
 
 - `sketch` (id): The sketch to draw in
 - Returns a list of {id, kind, items, value?}
+
+Notes:
+
+- `kind` is the stored name (Coincident, Horizontal, Length, Diameter, Angle, ...): "distance" on a line lists as Length. `value` is a dimension's, angles in degrees.
+- `items` are the element ids it ties. The origin and the axes show as fixed ids ending in 0001 (origin), 0002 (x axis) and 0003 (y axis), not by name.
+
+See also `pc.sketch.status`, `pc.sketch.set_constraint`.
+
+Example: An angle listed in degrees.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local a = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+local b = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 10}
+local made = pc.sketch.constrain{sketch = s, kind = "angle", items = {a, b}}
+local listed = pc.sketch.constraints{sketch = s}
+assert(#listed == 1 and listed[1].id == made[1])
+assert(listed[1].kind == "Angle" and math.abs(listed[1].value - 45) < 1e-4, "degrees")
+assert(listed[1].items[1] == a and listed[1].items[2] == b)
+```
 
 `pc.sketch.wall_thickness`: How thin the sketch's closed profile gets, for printing.
 
@@ -1090,21 +1855,110 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `minimum` (number, optional): The thinnest wall that prints, mm; the Sketcher preference when left out
 - Returns {thinnest, where = {x, y}, minimum, thin, regions}: the thinnest wall in mm, where it is, whether it is under the minimum, and each region's own
 
+Notes:
+
+- It reads the sketch's closed profile, and refuses a sketch with none ("profile is not closed").
+- `minimum` is the Sketcher preference when left out (0.8 mm unless changed); `thin` is true when the thinnest wall is under it.
+
+See also `pc.sketch.status`.
+
+Example: A frame with 1 mm walls.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+pc.sketch.rect{sketch = s, x = 1, y = 1, width = 18, height = 8}
+local wall = pc.sketch.wall_thickness{sketch = s, minimum = 2.5}
+assert(math.abs(wall.thinnest - 1) < 1e-4, "the frame's wall is 1 mm")
+assert(wall.thin and wall.minimum == 2.5)
+assert(not pc.sketch.wall_thickness{sketch = s, minimum = 0.5}.thin)
+```
+
 `pc.sketch.status`: How constrained the sketch is, and what conflicts.
 
 - `sketch` (id): The sketch to draw in
 - Returns {dof, solved, redundant, conflicting}
+
+Notes:
+
+- `dof` is the freedom left: 0 is fully constrained. A free point has 2, a free circle 3 (its centre and radius); a line's freedom is its two end points'.
+- `solved` false with ids in `conflicting` means constraints contradict; every constraint taking part is listed, not only the newest. `redundant` lists those that say again what others say; the sketch still solves.
+
+See also `pc.sketch.constrain`, `pc.sketch.constraints`.
+
+Example: A circle constrained, then over-constrained.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local c = pc.sketch.circle{sketch = s, x = 3, y = 4, radius = 5}
+assert(pc.sketch.status{sketch = s}.dof == 3, "a centre that moves and a radius")
+pc.sketch.constrain{sketch = s, kind = "radius", items = {c}, value = 5}
+local centre = pc.sketch.geometry{sketch = s}[1].id
+pc.sketch.constrain{sketch = s, kind = "lock", items = {centre}}
+local status = pc.sketch.status{sketch = s}
+assert(status.dof == 0 and status.solved and #status.conflicting == 0)
+pc.sketch.constrain{sketch = s, kind = "diameter", items = {c}, value = 12}
+status = pc.sketch.status{sketch = s}
+assert(not status.solved and #status.conflicting == 2, "radius 5 and diameter 12")
+```
 
 `pc.sketch.delete`: Delete elements or constraints, and what depends on them.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): Element or constraint ids
 
+Notes:
+
+- Deleting a point takes the curves that end or centre on it and their constraints. Deleting a curve leaves its end points behind as loose points.
+- A constraint's id deletes only that constraint. The origin and the axes are passed over; an id the sketch does not have is refused.
+
+See also `pc.sketch.construction`, `pc.sketch.repair`.
+
+Example: A corner deleted with the two lines on it.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local corner = pc.sketch.point{sketch = s, x = 20, y = 10}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+assert(#pc.sketch.constraints{sketch = s} == 4)
+pc.sketch.delete{sketch = s, items = {corner}}
+local lines = 0
+for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+  if e.kind == "line" then lines = lines + 1 end
+end
+assert(lines == 2, "the two lines ending on the corner went with it")
+assert(#pc.sketch.constraints{sketch = s} == 2, "and the constraints on them")
+```
+
 `pc.sketch.construction`: Make elements construction geometry, or normal again.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): Element ids
 - `on` (boolean, optional): true (the default) or false
+
+Notes:
+
+- Construction geometry is left out of profiles: a construction circle inside an outline cuts no hole. Constraints on it still hold.
+- `sketch.draw` makes construction geometry from the start with `construction = true`.
+
+See also `pc.sketch.draw`, `pc.sketch.delete`.
+
+Example: A circle that guides, then cuts.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local guide = pc.sketch.circle{sketch = s, x = 10, y = 5, radius = 3}
+pc.sketch.construction{sketch = s, items = {guide}}
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 200) < 1e-3, "a construction circle cuts no hole")
+pc.sketch.construction{sketch = s, items = {guide}, on = false}
+assert(#pc.doc.rebuild() == 0)
+m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - (200 - math.pi * 9)) < 0.01, m.volume)
+```
 
 `pc.sketch.internal_geometry`: Show or hide curves' internal geometry: an ellipse's axes and foci, a parabola's or hyperbola's axis and focus, a B-spline's control polygon, as construction held to its curve.
 
@@ -1113,10 +1967,47 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `show` (boolean, optional): true makes what is missing, false takes away the pieces nothing else holds; left out, it shows when a piece is missing and hides otherwise
 - Returns {shown, elements}: whether it showed, and what it made or took away
 
+Notes:
+
+- Without `show` it switches: the same call twice makes the pieces and takes them away again. Give `show = true` to be sure they are there.
+- An ellipse gets its major and minor axes with their ends and its two foci, all construction held to it. Items naming no ellipse, parabola, hyperbola or B-spline are refused.
+
+See also `pc.sketch.draw`, `pc.sketch.constrain`.
+
+Example: An ellipse's axes and foci shown and hidden.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local made = pc.sketch.draw{sketch = s, tool = "ellipse", points = {{0, 0}, {10, 0}, {0, 4}}}
+local ellipse = made.elements[#made.elements]
+local shown = pc.sketch.internal_geometry{sketch = s, items = {ellipse}}
+assert(shown.shown and #shown.elements == 8, "two axes with their ends, and two foci")
+for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+  if e.kind == "line" then assert(e.construction) end
+end
+local hidden = pc.sketch.internal_geometry{sketch = s, items = {ellipse}}
+assert(not hidden.shown and #pc.sketch.geometry{sketch = s} == 2, "the same call again takes them away")
+```
+
 `pc.sketch.section_view`: Cut away everything on the viewer's side of the sketch plane while it is edited.
 
 - `sketch` (id): The sketch to draw in
 - `on` (boolean, optional): true (the default) or false
+
+Notes:
+
+- A view setting only: nothing built from the sketch changes, and it shows only while the sketch is open for editing in the window.
+- The sketch's data carries `section_view = true` while it is on.
+
+Example: The setting kept on the sketch.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.section_view{sketch = s}
+assert(pc.doc.feature{id = s}.fields.section_view == true)
+pc.sketch.section_view{sketch = s, on = false}
+assert(pc.doc.feature{id = s}.fields.section_view == nil)
+```
 
 `pc.sketch.remove_axis_alignment`: Turn the horizontal and vertical constraints of lines into parallel and perpendicular ones among them, so the group keeps its shape and turns as a whole.
 
@@ -1124,12 +2015,50 @@ assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
 - `items` (list): The lines
 - Returns how many constraints changed
 
+Notes:
+
+- It returns how many horizontal and vertical constraints went; one fewer parallel or perpendicular constraint takes their place, so the group gains the freedom to turn. Lines with none answer 0.
+
+See also `pc.sketch.constrain`, `pc.sketch.status`.
+
+Example: A rectangle freed to turn.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local sides = pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+assert(pc.sketch.status{sketch = s}.dof == 4)
+assert(pc.sketch.remove_axis_alignment{sketch = s, items = sides} == 4)
+for _, c in ipairs(pc.sketch.constraints{sketch = s}) do
+  assert(c.kind == "Parallel" or c.kind == "Perpendicular", c.kind)
+end
+assert(pc.sketch.status{sketch = s}.dof == 5, "still a rectangle, free to turn")
+```
+
 `pc.sketch.generator`: Change the numbers a generated sketch (a gear, a sprocket, a shaft) is made from, or detach it into a plain sketch.
 
 - `sketch` (id): The generated sketch
 - `detach` (boolean, optional): Keep the curves as they are and forget the numbers: a plain sketch to edit by hand
 - Other arguments: The numbers to change, such as teeth = 24 or module = 1.5; a shaft takes sections = {{length = 20, diameter = 10, chamfer = 0.5, fillet = 0}, ...}
 - Returns what the numbers come to: its diameters, or its length
+
+Notes:
+
+- Called with only `sketch` it changes nothing and answers the sizes: a gear's base, pitch, root and tip diameters, a sprocket's pitch, root and tip, a shaft's length.
+- A field the generator lacks is refused, naming the ones it has. The sketch's curves are made again from the numbers, so anything drawn in it by hand goes.
+- `detach = true` keeps the curves and drops the numbers for good. Each number is also a parameter by its name (`module`, `teeth`), which `doc.set_formula` binds to a formula.
+
+See also `pc.design.gear`, `pc.design.sprocket`, `pc.design.shaft`, `pc.doc.set_formula`.
+
+Example: A gear's teeth changed, and the tip diameter with them.
+
+```lua
+local gear = pc.design.gear{module = 1.5, teeth = 20}
+assert(pc.sketch.generator{sketch = gear}.tip_diameter == 1.5 * 22)
+local size = pc.sketch.generator{sketch = gear, teeth = 30}
+assert(size.pitch_diameter == 1.5 * 30 and size.tip_diameter == 1.5 * 32)
+pc.sketch.generator{sketch = gear, detach = true}
+assert(pc.doc.feature{id = gear}.fields.generator == nil, "a plain sketch")
+```
 
 ### design
 

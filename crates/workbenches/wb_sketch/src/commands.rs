@@ -69,7 +69,22 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Number,
             "Millimetres per drawing unit; the drawing's own unit when left out, else 1",
         )
-        .returns("the sketch's id"),
+        .returns("the sketch's id")
+        .note(
+            "Left out, `scale` follows the drawing's own unit: a drawing in inches comes in \
+             at 25.4 mm a unit. A drawing that names no unit comes in at 1 mm a unit.",
+        )
+        .note(
+            "It is placed as `sketch.new` places a sketch: without `body` it goes in the \
+             selected body, else a new one. It is named after the file unless `name` says \
+             otherwise.",
+        )
+        .note(
+            "A file that cannot be read or parsed is refused, and so is a drawing with no \
+             curves.",
+        )
+        .see_also("sketch.new")
+        .see_also("sketch.repair"),
     );
     context.register_import(FileImport::new("DXF drawing", ["dxf"], "sketch.import_dxf"));
     let placed = |spec: CommandSpec| {
@@ -92,7 +107,24 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("path", ParamKind::String, "The picture file")
         .optional("sketch", ParamKind::Id, "The sketch it goes in")
         .returns("{sketch, image}")
-        .agent_always_asks(),
+        .agent_always_asks()
+        .note(
+            "Without `sketch` it goes in the sketch being edited, else in a new sketch named \
+             after the file and placed as `sketch.new` places one (`body`, `plane`, `on`).",
+        )
+        .note(
+            "It lies 100 mm wide, centred on (0, 0), at opacity 0.5, unless `width`, `x`, \
+             `y` or `opacity` say otherwise; `angle` is degrees counter-clockwise.",
+        )
+        .note(
+            "The file is kept in the document. The picture only draws: no profile and no \
+             constraint come of it.",
+        )
+        .note(
+            "A file that cannot be read, or is not a PNG or JPEG, is refused. The `image` \
+             returned is what `sketch.set_image` takes.",
+        )
+        .see_also("sketch.set_image"),
     );
     context.register_import(FileImport::new(
         "Reference image (sketch)",
@@ -105,13 +137,46 @@ pub fn register(context: &mut WorkbenchContext) {
             "Move, size, turn or fade a sketch's picture, or take it away",
         )))
         .param("image", ParamKind::Id, "The picture")
-        .optional("remove", ParamKind::Bool, "true: take it away"),
+        .optional("remove", ParamKind::Bool, "true: take it away")
+        .note(
+            "`image` is the id `sketch.image` returned, and `sketch` must be the sketch \
+             holding it, or it is refused.",
+        )
+        .note(
+            "Only what is given changes. `width` must be more than 0, `opacity` is held \
+             between 0 and 1, and `angle` is degrees counter-clockwise.",
+        )
+        .see_also("sketch.image"),
     );
     context.register_command(
         sketch(CommandSpec::new("sketch.point", "Add a point"))
             .param("x", ParamKind::Number, "")
             .param("y", ParamKind::Number, "")
-            .returns("the point's id"),
+            .returns("the point's id")
+            .note(
+                "A point the sketch already has exactly at (x, y) is returned rather than a \
+                 second one made.",
+            )
+            .note(
+                "Lines, arcs and circles drawn later with an end or a centre exactly on it \
+                 take it: making the points first is how a script knows the ids of the \
+                 ends it constrains.",
+            )
+            .see_also("sketch.constrain")
+            .see_also("sketch.geometry")
+            .example(
+                "A corner made first and shared",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                local corner = pc.sketch.point{sketch = s, x = 10, y = 5}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+                local ends = 0
+                for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+                  if g.Line and (g.Line.start == corner or g.Line["end"] == corner) then ends = ends + 1 end
+                end
+                assert(ends == 2, "the rectangle's corner is the point made first")
+                "#,
+            ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -122,7 +187,37 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("y1", ParamKind::Number, "")
         .param("x2", ParamKind::Number, "")
         .param("y2", ParamKind::Number, "")
-        .returns("the line's id"),
+        .returns("the line's id")
+        .note(
+            "Each end takes a point the sketch has exactly there, else a new one: lines \
+             drawn end to end share their ends and close a profile.",
+        )
+        .note(
+            "Unlike `sketch.polyline` and `sketch.rect`, it adds no constraint: a level line \
+             is not held level.",
+        )
+        .note(
+            "Its ends are points of their own: the line's `start` and `end` in \
+             `pc.doc.feature{id = s}.fields.sketch.geometry`, or points made first with \
+             `sketch.point`. Two ends at the same spot are refused (\"a line needs two \
+             different ends\").",
+        )
+        .see_also("sketch.polyline")
+        .see_also("sketch.point")
+        .example(
+            "Three lines end to end close a triangle",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 30, y2 = 0}
+            pc.sketch.line{sketch = s, x1 = 30, y1 = 0, x2 = 0, y2 = 20}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 20, x2 = 0, y2 = 0}
+            assert(#pc.sketch.constraints{sketch = s} == 0, "nothing holds a line level")
+            local pad = pc.design.pad{sketch = s, length = 4}
+            assert(#pc.doc.rebuild() == 0, "the ends are shared, so the triangle closes")
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 30 * 20 / 2 * 4) < 1e-3)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -242,7 +337,31 @@ pub fn register(context: &mut WorkbenchContext) {
             "Degrees from the sketch's X axis",
         )
         .param("end", ParamKind::Number, "Degrees from the sketch's X axis")
-        .returns("the arc's id"),
+        .returns("the arc's id")
+        .note(
+            "Angles are degrees, and the arc runs counter-clockwise from `start` to `end`: \
+             -90 to 90 is the right half, 90 to -90 the left.",
+        )
+        .note("It takes the radius, not the diameter; a radius of 0 or less is refused.")
+        .note(
+            "Its centre and both ends are points of their own, each taking a point the \
+             sketch has exactly there, so a line drawn to an end joins it.",
+        )
+        .see_also("sketch.circle")
+        .see_also("sketch.draw")
+        .example(
+            "A half disc closed by a line",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.arc{sketch = s, x = 0, y = 0, radius = 10, start = -90, ["end"] = 90}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 10, x2 = 0, y2 = -10}
+            local pad = pc.design.pad{sketch = s, length = 2}
+            assert(#pc.doc.rebuild() == 0, "the line ends on the arc's ends")
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - math.pi * 100 / 2 * 2) < 0.01, m.volume)
+            assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -250,7 +369,34 @@ pub fn register(context: &mut WorkbenchContext) {
             "List the sketch's elements with their points",
         ))
         .returns("a list of {id, kind, points, radius?, construction}")
-        .read_only(),
+        .read_only()
+        .note(
+            "A line's points are its start and end, an arc's its centre, start and end, a \
+             circle's and an ellipse's their centre; positions are as last solved. Each \
+             element also says whether it is `external`.",
+        )
+        .note(
+            "Ends and centres are listed again as elements of kind point. A spline, a \
+             parabola or a hyperbola is kind \"other\" with no points: its control points \
+             are in `pc.doc.feature{id = s}.fields.sketch.geometry`.",
+        )
+        .see_also("sketch.constraints")
+        .see_also("doc.feature")
+        .example(
+            "Ends and centres are points of their own",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local l = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+            pc.sketch.circle{sketch = s, x = 5, y = 5, radius = 2}
+            local count = {}
+            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+              count[e.kind] = (count[e.kind] or 0) + 1
+              if e.id == l then assert(e.points[2][1] == 10 and e.points[2][2] == 0) end
+            end
+            assert(count.line == 1 and count.circle == 1)
+            assert(count.point == 3, "the line's ends and the centre are points of their own")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -283,7 +429,62 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Bool,
             "Take away the older constraints the new ones make redundant",
         )
-        .returns("the new constraints' ids"),
+        .returns("the new constraints' ids")
+        .note(
+            "Points are elements of their own: a line's ends are the point ids at its \
+             `start` and `end` in `pc.doc.feature{id = s}.fields.sketch.geometry`, the line's \
+             own id is the line. A point made with `sketch.point` before the line is the same \
+             id as the end drawn on it.",
+        )
+        .note(
+            "Without `value` a dimension takes what it measures on the sketch as it stands. \
+             Angles are degrees, a diameter the diameter, a radius the radius.",
+        )
+        .note(
+            "\"distance\" on one line is its length (listed as Length), on two points the \
+             distance between them, on a point and a curve or two curves the gap. \
+             \"dimension\" picks as the toolbar does: a line's length, a circle's diameter, \
+             an arc's radius, two lines' angle (their distance when parallel).",
+        )
+        .note(
+            "Nothing stays put until constrained: a dimension on free geometry moves every \
+             item it names, so tie a corner to \"origin\" first to keep it where it was \
+             drawn.",
+        )
+        .note(
+            "\"lock\" holds a point by its distances along X and Y from the origin, each \
+             the size of a coordinate (a point at x = -5 takes 5 and stays at -5).",
+        )
+        .note(
+            "A constraint that contradicts others is still added; `pc.sketch.status` names \
+             the conflict. `remove_redundant` takes away only older constraints the new one \
+             repeats, never one it contradicts.",
+        )
+        .note(
+            "A kind that does not fit the items, or is no kind at all, is refused (\"the \
+             ... constraint does not fit these items\"), and so is a `value` for a kind \
+             that takes none.",
+        )
+        .see_also("sketch.status")
+        .see_also("sketch.set_value")
+        .see_also("sketch.constraints")
+        .example(
+            "A plate fully constrained from its corner on the origin",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local corner = pc.sketch.point{sketch = s, x = 1, y = 1}
+            local sides = pc.sketch.rect{sketch = s, x = 1, y = 1, width = 20, height = 10}
+            pc.sketch.constrain{sketch = s, kind = "coincident", items = {corner, "origin"}}
+            pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[1]}, value = 40}
+            pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[2]}, value = 25}
+            assert(pc.sketch.status{sketch = s}.dof == 0, "fully constrained")
+            local pad = pc.design.pad{sketch = s, length = 2}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 40 * 25 * 2) < 1e-3)
+            assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.min[2]) < 1e-6, "its corner on the origin")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -296,6 +497,32 @@ pub fn register(context: &mut WorkbenchContext) {
             "driving",
             ParamKind::Bool,
             "false makes it a reference dimension that only measures",
+        )
+        .note(
+            "`constraint` is an id `sketch.constrain` returned; an element's id, or a \
+             constraint that is not a dimension, is refused.",
+        )
+        .note("Angles are degrees; a diameter takes the diameter, a radius the radius.")
+        .note(
+            "To bind a dimension to a formula, `doc.set_formula` takes it by the key \
+             `doc.parameters` lists for the sketch, which is the constraint's id.",
+        )
+        .see_also("sketch.constrain")
+        .see_also("doc.parameters")
+        .see_also("doc.set_formula")
+        .example(
+            "A circle's diameter changed after it was dimensioned",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local c = pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+            local d = pc.sketch.constrain{sketch = s, kind = "diameter", items = {c}}
+            pc.sketch.set_value{sketch = s, constraint = d[1], value = 20}
+            assert(pc.sketch.constraints{sketch = s}[1].value == 20)
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - math.pi * 10 ^ 2) < 0.01, m.volume)
+            "#,
         ),
     );
     context.register_command(
@@ -349,7 +576,47 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::List,
             "The elements offset, translate, rotate, scale and mirror act on",
         )
-        .returns("{elements, constraints}: what it made"),
+        .returns("{elements, constraints}: what it made")
+        .note(
+            "Each click is in the sketch's millimetres and snaps as a click in the view \
+             does: one on the origin is held there and one on an axis is held on it, the \
+             constraints coming with what is made.",
+        )
+        .note(
+            "A tool takes the clicks its shape needs: line, circle (centre, then a point on \
+             it) and slot (the ends of its centre line) two; rect_center its centre, then a \
+             corner; ellipse its centre, an end of the major axis, then a point on it. Clicks \
+             short of a shape make nothing, without an error.",
+        )
+        .note(
+            "Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, \
+             `fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer \
+             takes one click on the corner. A bspline ends with the word \"finish\" in \
+             `points`.",
+        )
+        .note(
+            "A value typed at a click (`typed = {length = 20}`) sets the shape's size; with \
+             `constrain = true` it is kept as a dimension.",
+        )
+        .note(
+            "It returns every element made, end points and centres included, and every \
+             constraint made with them.",
+        )
+        .see_also("sketch.polyline")
+        .see_also("sketch.rect")
+        .see_also("sketch.circle")
+        .example(
+            "A slot drawn by its centre line",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local made = pc.sketch.draw{sketch = s, tool = "slot", points = {{0, 0}, {20, 0}}, params = {slot_width = 6}}
+            assert(#made.elements > 0 and #made.constraints > 0)
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - (20 * 6 + math.pi * 3 ^ 2)) < 1e-3, m.volume)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -357,85 +624,280 @@ pub fn register(context: &mut WorkbenchContext) {
             "Drag elements by a step, the rest of the sketch following its constraints",
         ))
         .param("items", ParamKind::List, "The elements to drag")
-        .param("by", ParamKind::List, "The step, {x, y}"),
+        .param("by", ParamKind::List, "The step, {x, y}")
+        .note(
+            "`by` is a step {dx, dy} in mm, not a place to go to: the items move by it as \
+             far as their constraints let them, and the rest of the sketch follows.",
+        )
+        .note(
+            "A point held by \"lock\" stays where it is. A corner of a rectangle from \
+             `sketch.rect` stretches it, the opposite corner staying put.",
+        )
+        .note("Dragging a text block's point moves the whole text.")
+        .see_also("sketch.set_value")
+        .example(
+            "A rectangle stretched by its corner",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local corner = pc.sketch.point{sketch = s, x = 20, y = 10}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            pc.sketch.drag{sketch = s, items = {corner}, by = {10, 5}}
+            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+              if e.id == corner then
+                assert(math.abs(e.points[1][1] - 30) < 1e-4 and math.abs(e.points[1][2] - 15) < 1e-4)
+              end
+            end
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 30 * 15) < 1e-2, "still a rectangle, stretched")
+            "#,
+        ),
     );
-    context.register_command(sketch(
-        CommandSpec::new(
-            "sketch.attachment",
-            "Move a sketch on the datum it is attached to: along its normal, across it, \
-             turned about it",
+    context.register_command(
+        sketch(
+            CommandSpec::new(
+                "sketch.attachment",
+                "Move a sketch on the datum it is attached to: along its normal, across it, \
+                 turned about it",
+            )
+            .optional("offset", ParamKind::Number, "Along the normal, mm")
+            .optional("shift", ParamKind::List, "Across the plane, {x, y} in mm")
+            .optional("turn", ParamKind::Number, "About the normal, degrees"),
         )
-        .optional("offset", ParamKind::Number, "Along the normal, mm")
-        .optional("shift", ParamKind::List, "Across the plane, {x, y} in mm")
-        .optional("turn", ParamKind::Number, "About the normal, degrees"),
-    ));
-    context.register_command(sketch(
-        CommandSpec::new(
-            "sketch.external_from",
-            "Bring another sketch's curves and points, or a datum, into this sketch as \
-             external geometry that follows them",
+        .note(
+            "Only a sketch made with `on` (a datum plane or coordinate system) takes it; \
+             one on a base plane, a plane of its own or an `attachment` is refused (\"is not \
+             attached to a datum\").",
         )
-        .param("from", ParamKind::Id, "A sketch or a datum")
-        .optional(
-            "counts",
-            ParamKind::Bool,
-            "true: it counts in the profile, as drawn geometry does; false (the default): it \
-             only guides the sketch",
+        .note(
+            "Each value given replaces the one the sketch had rather than adding to it: \
+             `offset = 5` twice leaves it 5 mm off the datum.",
         )
-        .returns("the external elements made"),
-    ));
-    context.register_command(sketch(
-        CommandSpec::new(
-            "sketch.external_defining",
-            "Count external geometry in the sketch's profiles, or leave it only guiding",
-        )
-        .param("items", ParamKind::List, "External elements' ids")
-        .optional(
-            "on",
-            ParamKind::Bool,
-            "true counts them (the default), false stops",
+        .note("`shift` runs along the datum's own x and y; `turn` is degrees about its normal.")
+        .see_also("sketch.new")
+        .see_also("design.datum")
+        .see_also("sketch.set_plane")
+        .example(
+            "A sketch set 5 mm off its datum",
+            r#"
+            local body = pc.doc.new_body{name = "Plate"}
+            local datum = pc.design.datum{body = body, kind = "plane", plane = "XY", offset = {0, 0, 10}}
+            local s = pc.sketch.new{body = body, on = datum}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 4, height = 2}
+            pc.sketch.attachment{sketch = s, offset = 5}
+            pc.sketch.attachment{sketch = s, offset = 5}
+            pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = body}
+            assert(math.abs(m.min[3] - 15) < 1e-6, "5 mm off the datum at 10, however often it is set")
+            "#,
         ),
-    ));
-    context.register_command(sketch(
-        CommandSpec::new(
-            "sketch.solver_settings",
-            "How far the solver goes on this sketch",
+    );
+    context.register_command(
+        sketch(
+            CommandSpec::new(
+                "sketch.external_from",
+                "Bring another sketch's curves and points, or a datum, into this sketch as \
+                 external geometry that follows them",
+            )
+            .param("from", ParamKind::Id, "A sketch or a datum")
+            .optional(
+                "counts",
+                ParamKind::Bool,
+                "true: it counts in the profile, as drawn geometry does; false (the default): \
+                 it only guides the sketch",
+            )
+            .returns("the external elements made"),
         )
-        .optional(
-            "iterations",
-            ParamKind::Number,
-            "The most steps it takes (100 when never set)",
+        .note(
+            "Every curve and loose point of the other sketch comes, its construction left \
+             out; a datum comes as one element.",
         )
-        .optional(
-            "tolerance",
-            ParamKind::Number,
-            "How small what is left must be, against the sketch's size (1e-9 when never set)",
+        .note(
+            "It only guides unless `counts = true`: a sketch holding guides alone has no \
+             profile, and a pad of it fails at `pc.doc.rebuild()`.",
+        )
+        .note(
+            "It returns {elements, constraints}: the curves and the points at their ends. \
+             Only the curves are external geometry, which `pc.sketch.geometry` marks \
+             `external`.",
+        )
+        .note("`from` must be a sketch other than this one, or a datum; anything else is refused.")
+        .see_also("sketch.external_defining")
+        .see_also("sketch.carbon_copy")
+        .example(
+            "A circle from the sketch below, counted and padded",
+            r#"
+            local body = pc.doc.new_body{name = "Boss"}
+            local base = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+            local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
+            local made = pc.sketch.external_from{sketch = top, from = base, counts = true}
+            assert(#made.elements == 2, "the circle and its centre")
+            pc.design.pad{sketch = top, length = 3}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = body}
+            assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
+            assert(math.abs(m.min[3] - 10) < 1e-6)
+            "#,
         ),
-    ));
-    context.register_command(sketch(
-        CommandSpec::new(
-            "sketch.repair",
-            "Join ends of curves that nearly meet, and remove curves of no size, doubled \
-             curves and constraints left naming nothing",
+    );
+    context.register_command(
+        sketch(
+            CommandSpec::new(
+                "sketch.external_defining",
+                "Count external geometry in the sketch's profiles, or leave it only guiding",
+            )
+            .param("items", ParamKind::List, "External elements' ids")
+            .optional(
+                "on",
+                ParamKind::Bool,
+                "true counts them (the default), false stops",
+            ),
         )
-        .optional(
-            "tolerance",
-            ParamKind::Number,
-            "How near two ends must be to join, mm (0.01 when left out)",
+        .note(
+            "Every item must be external geometry, or the call is refused (\"... is not \
+             external geometry\"); the elements `pc.sketch.geometry` marks `external` are.",
         )
-        .returns("what was repaired, in words"),
-    ));
-    context.register_command(sketch(
-        CommandSpec::new(
-            "sketch.restore",
-            "Put the sketch back as `data` holds it: an editing session cancelled",
+        .note(
+            "Counting takes an element out of construction; `on = false` makes it a guide \
+             again.",
         )
-        .param(
-            "data",
-            ParamKind::Any,
-            "The sketch as doc.feature lists its data",
+        .see_also("sketch.external_from")
+        .see_also("sketch.external")
+        .example(
+            "A guide made to count",
+            r#"
+            local body = pc.doc.new_body{name = "Boss"}
+            local base = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+            local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
+            pc.sketch.external_from{sketch = top, from = base}
+            local pad = pc.design.pad{sketch = top, length = 3}
+            assert(#pc.doc.rebuild() == 1, "a guide alone is no profile")
+            local curves = {}
+            for _, e in ipairs(pc.sketch.geometry{sketch = top}) do
+              if e.external then curves[#curves + 1] = e.id end
+            end
+            pc.sketch.external_defining{sketch = top, items = curves}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = body}
+            assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
+            "#,
         ),
-    ));
+    );
+    context.register_command(
+        sketch(
+            CommandSpec::new(
+                "sketch.solver_settings",
+                "How far the solver goes on this sketch",
+            )
+            .optional(
+                "iterations",
+                ParamKind::Number,
+                "The most steps it takes (100 when never set)",
+            )
+            .optional(
+                "tolerance",
+                ParamKind::Number,
+                "How small what is left must be, against the sketch's size (1e-9 when never \
+                 set)",
+            ),
+        )
+        .note(
+            "`iterations` must be at least 1 and `tolerance` above 0 and below 1; either may \
+             be left out to keep what the sketch has.",
+        )
+        .note(
+            "The sketch keeps them (`fields.sketch.solver` in `pc.doc.feature`) and is \
+             solved again with them at once.",
+        )
+        .see_also("sketch.status")
+        .example(
+            "Settings kept on the sketch",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+            pc.sketch.solver_settings{sketch = s, iterations = 500, tolerance = 1e-6}
+            local solver = pc.doc.feature{id = s}.fields.sketch.solver
+            assert(solver.max_iterations == 500 and solver.tolerance == 1e-6)
+            assert(pc.sketch.status{sketch = s}.solved)
+            "#,
+        ),
+    );
+    context.register_command(
+        sketch(
+            CommandSpec::new(
+                "sketch.repair",
+                "Join ends of curves that nearly meet, and remove curves of no size, doubled \
+                 curves and constraints left naming nothing",
+            )
+            .optional(
+                "tolerance",
+                ParamKind::Number,
+                "How near two ends must be to join, mm (0.01 when left out)",
+            )
+            .returns("what was repaired, in words"),
+        )
+        .note(
+            "It is the answer to a profile that fails with \"profile is not closed\" because \
+             ends miss by a hair, as a drawing brought in may.",
+        )
+        .note(
+            "It answers in words, such as \"2 end(s) joined, 1 duplicate curve(s) removed\", \
+             or \"nothing to repair\".",
+        )
+        .see_also("sketch.import_dxf")
+        .see_also("sketch.status")
+        .example(
+            "Ends that miss by microns joined",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+            pc.sketch.line{sketch = s, x1 = 10.005, y1 = 0, x2 = 0, y2 = 10}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 10, x2 = 0, y2 = 0.003}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 1, "two ends miss by a few microns")
+            local said = pc.sketch.repair{sketch = s}
+            assert(said:find("2 end"), said)
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 50) < 0.01, m.volume)
+            assert(pc.sketch.repair{sketch = s} == "nothing to repair")
+            "#,
+        ),
+    );
+    context.register_command(
+        sketch(
+            CommandSpec::new(
+                "sketch.restore",
+                "Put the sketch back as `data` holds it: an editing session cancelled",
+            )
+            .param(
+                "data",
+                ParamKind::Any,
+                "The sketch as doc.feature lists its data",
+            ),
+        )
+        .note(
+            "`data` is the whole `fields` of `pc.doc.feature{id = s}`, plane included, taken \
+             before the edits; a table that is not a sketch's data is refused.",
+        )
+        .see_also("doc.feature")
+        .example(
+            "Edits put back",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+            local saved = pc.doc.feature{id = s}.fields
+            pc.sketch.circle{sketch = s, x = 5, y = 2, radius = 1}
+            assert(#pc.sketch.geometry{sketch = s} == 10)
+            pc.sketch.restore{sketch = s, data = saved}
+            assert(#pc.sketch.geometry{sketch = s} == 8, "the circle and its centre are gone")
+            "#,
+        ),
+    );
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.set_plane",
@@ -447,6 +909,30 @@ pub fn register(context: &mut WorkbenchContext) {
             "x_axis",
             ParamKind::List,
             "The sketch's X direction, {x, y, z}",
+        )
+        .note(
+            "The geometry keeps its sketch coordinates and moves with the plane. Without \
+             `x_axis` the sketch's x is a direction square to the normal chosen for it (+Y \
+             for a normal along X), so give `x_axis` to know which way the geometry lies.",
+        )
+        .note(
+            "The plane given is fixed: a sketch made on a datum stops following it, and \
+             `sketch.attachment` refuses it from then on.",
+        )
+        .see_also("sketch.attachment")
+        .see_also("sketch.new")
+        .example(
+            "A sketch moved onto a plane facing +X",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 4}
+            pc.sketch.set_plane{sketch = s, normal = {1, 0, 0}, origin = {5, 0, 0}, x_axis = {0, 1, 0}}
+            local pad = pc.design.pad{sketch = s, length = 2}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.min[1] - 5) < 1e-6 and math.abs(m.max[1] - 7) < 1e-6, "padded along +X from x = 5")
+            assert(math.abs(m.max[2] - 10) < 1e-6 and math.abs(m.max[3] - 4) < 1e-6, "sketch x along Y, y along Z")
+            "#,
         ),
     );
     context.register_command(
@@ -465,7 +951,39 @@ pub fn register(context: &mut WorkbenchContext) {
             "Copies stay the originals' size, spaced by one pitch along the rows and one \
              down the columns (false)",
         )
-        .returns("{elements}: what it made"),
+        .returns("{elements}: what it made")
+        .note(
+            "The items are the first copy: `rows = 2, cols = 3` makes five more. Columns \
+             step along the sketch's x by `dx`, rows along its y by `dy`.",
+        )
+        .note(
+            "`rows` and `cols` must be at least 1, and one of them more than 1 (\"an array \
+             needs elements and at least two rows or columns\").",
+        )
+        .note(
+            "Without `linked` the copies are free geometry; with it, constraints keep them \
+             the originals' size and on the pitch.",
+        )
+        .note(
+            "It returns {elements, constraints}: the copies, their points and centres \
+             included.",
+        )
+        .see_also("sketch.draw")
+        .see_also("design.linear_pattern")
+        .example(
+            "A plate with six holes in two rows",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 50, height = 30}
+            local hole = pc.sketch.circle{sketch = s, x = 10, y = 10, radius = 2}
+            local made = pc.sketch.array{sketch = s, items = {hole}, rows = 2, cols = 3, dx = 15, dy = 10}
+            assert(#made.elements == 10, "five more circles and their centres: the original is the first")
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -496,7 +1014,33 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Number,
             "Degrees it turns about its point (0)",
         )
-        .returns("{text, point}: the block and the point it stands on"),
+        .returns("{text, point}: the block and the point it stands on")
+        .note(
+            "`at` is where the baseline starts: the letters stand on it, capitals reaching \
+             about 0.7 of `size`, the em.",
+        )
+        .note(
+            "The letters are closed outlines that pad as they read; dragging the point \
+             returned moves the whole text.",
+        )
+        .note(
+            "A `font` that is not one of the three bundled names is read as a file path, \
+             refused when no such file is there. Text with nothing to draw is refused.",
+        )
+        .see_also("sketch.text_edit")
+        .example(
+            "Letters padded from the baseline",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local t = pc.sketch.text{sketch = s, text = "PC", at = {0, 0}, size = 10}
+            assert(t.text and t.point)
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.min[2]) < 0.2, "the baseline is at y = 0")
+            assert(m.max[2] > 6 and m.max[2] < 10, "capitals stand under the 10 mm em")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -508,7 +1052,29 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional("font", ParamKind::String, "")
         .optional("size", ParamKind::Number, "mm")
         .optional("spacing", ParamKind::Number, "mm")
-        .optional("angle", ParamKind::Number, "degrees"),
+        .optional("angle", ParamKind::Number, "degrees")
+        .note("`block` is either the `text` or the `point` that `sketch.text` returned.")
+        .note(
+            "Only what is given changes, and the outlines are made again on the same point; \
+             a `size` of 0 or less is refused.",
+        )
+        .see_also("sketch.text")
+        .example(
+            "A letter made twice as large",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local t = pc.sketch.text{sketch = s, text = "I", at = {0, 0}, size = 10}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.feature{id = pad}.body
+            local small = pc.doc.measure{body = body}
+            pc.sketch.text_edit{sketch = s, block = t.text, size = 20}
+            assert(#pc.doc.rebuild() == 0)
+            local large = pc.doc.measure{body = body}
+            assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
+            assert(math.abs(large.volume - 4 * small.volume) < 1e-3, "four times the area")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -516,7 +1082,35 @@ pub fn register(context: &mut WorkbenchContext) {
             "Make lines, arcs, circles, ellipses and conics into splines that are exactly them",
         ))
         .param("items", ParamKind::List, "The curves to make splines of")
-        .returns("{elements}: what it made"),
+        .returns("{elements}: what it made")
+        .note(
+            "Each curve is replaced and its id is gone; an arc's ends stay, as the spline's \
+             first and last control points. Arcs and circles become rational splines, \
+             exact.",
+        )
+        .note(
+            "A spline is kind \"other\" in `pc.sketch.geometry`; its control points, degree, \
+             knots and weights are in `pc.doc.feature{id = s}.fields.sketch.geometry`.",
+        )
+        .note("It returns {elements, constraints}: the new control points and the spline.")
+        .see_also("sketch.join")
+        .see_also("sketch.spline_degree")
+        .example(
+            "A circle made a spline pads the same disc",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local c = pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+            local made = pc.sketch.to_bspline{sketch = s, items = {c}}
+            assert(#made.elements > 0)
+            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+              assert(e.id ~= c, "the circle is replaced")
+            end
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - math.pi * 25) < 0.01, "exactly the circle: " .. m.volume)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -525,7 +1119,33 @@ pub fn register(context: &mut WorkbenchContext) {
              nearest one",
         ))
         .param("items", ParamKind::List, "The splines")
-        .param("by", ParamKind::Integer, "1 to raise, -1 to lower"),
+        .param("by", ParamKind::Integer, "1 to raise, -1 to lower")
+        .note(
+            "Only the sign of `by` counts: any number above 0 raises one degree, any below \
+             lowers one, and 0 is refused.",
+        )
+        .note(
+            "Raising adds a control point. The bspline tool draws degree 3, which the data \
+             leaves out: `degree` shows in it once changed.",
+        )
+        .see_also("sketch.spline_knots")
+        .see_also("sketch.to_bspline")
+        .example(
+            "A cubic raised to degree 4",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+            local spline = made.elements[#made.elements]
+            local function shape()
+              for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+                if g.BSpline then return g.BSpline end
+              end
+            end
+            assert(#shape().control_points == 4)
+            pc.sketch.spline_degree{sketch = s, items = {spline}, by = 1}
+            assert(shape().degree == 4 and #shape().control_points == 5)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -533,7 +1153,27 @@ pub fn register(context: &mut WorkbenchContext) {
             "Insert a knot into a spline where it passes nearest a point, the curve unchanged",
         ))
         .param("spline", ParamKind::Id, "The spline")
-        .param("at", ParamKind::List, "A point near the curve, {x, y}"),
+        .param("at", ParamKind::List, "A point near the curve, {x, y}")
+        .note(
+            "`at` need not lie on the curve: the knot goes at the parameter where the spline \
+             passes nearest it.",
+        )
+        .note("Only a spline takes it; a line, arc or circle is refused (\"is not a spline\").")
+        .see_also("sketch.knot_multiplicity")
+        .see_also("sketch.spline_knots")
+        .example(
+            "A knot inserted halfway",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+            local spline = made.elements[#made.elements]
+            assert(#pc.sketch.spline_knots{sketch = s, spline = spline} == 0)
+            pc.sketch.insert_knot{sketch = s, spline = spline, at = {15, 5}}
+            local knots = pc.sketch.spline_knots{sketch = s, spline = spline}
+            assert(#knots == 1 and knots[1].multiplicity == 1)
+            assert(math.abs(knots[1].knot - 0.5) < 1e-6, "halfway along this symmetric spline")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -546,7 +1186,31 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Number,
             "The knot's value, as sketch.spline_knots lists it",
         )
-        .param("multiplicity", ParamKind::Integer, ""),
+        .param("multiplicity", ParamKind::Integer, "")
+        .note(
+            "`knot` is a value `sketch.spline_knots` lists; one where the spline has no knot \
+             is refused.",
+        )
+        .note(
+            "A multiplicity above the degree is held at the degree. Asking for the one the \
+             knot has is refused (\"the knot is unchanged\").",
+        )
+        .see_also("sketch.spline_knots")
+        .see_also("sketch.insert_knot")
+        .example(
+            "A knot doubled, then removed",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+            local spline = made.elements[#made.elements]
+            pc.sketch.insert_knot{sketch = s, spline = spline, at = {15, 5}}
+            local knot = pc.sketch.spline_knots{sketch = s, spline = spline}[1].knot
+            pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 2}
+            assert(pc.sketch.spline_knots{sketch = s, spline = spline}[1].multiplicity == 2)
+            pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 0}
+            assert(#pc.sketch.spline_knots{sketch = s, spline = spline} == 0, "0 removes it")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -555,7 +1219,26 @@ pub fn register(context: &mut WorkbenchContext) {
         ))
         .param("spline", ParamKind::Id, "The spline")
         .returns("{{knot, multiplicity}}")
-        .read_only(),
+        .read_only()
+        .note(
+            "The knots at the ends are not listed: a spline fresh from the bspline tool \
+             lists none.",
+        )
+        .note("An element that is not a spline answers an empty list rather than an error.")
+        .see_also("sketch.insert_knot")
+        .see_also("sketch.knot_multiplicity")
+        .example(
+            "A half circle as a spline has one double knot",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local arc = pc.sketch.arc{sketch = s, x = 0, y = 0, radius = 5, start = 0, ["end"] = 180}
+            local made = pc.sketch.to_bspline{sketch = s, items = {arc}}
+            local spline = made.elements[#made.elements]
+            local knots = pc.sketch.spline_knots{sketch = s, spline = spline}
+            assert(#knots == 1, "the knots at its ends are not listed")
+            assert(knots[1].knot == 0.5 and knots[1].multiplicity == 2)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -564,7 +1247,30 @@ pub fn register(context: &mut WorkbenchContext) {
         ))
         .param("spline", ParamKind::Id, "The spline")
         .param("point", ParamKind::Id, "One of its control points")
-        .param("weight", ParamKind::Number, "More than 0; 1 is plain"),
+        .param("weight", ParamKind::Number, "More than 0; 1 is plain")
+        .note(
+            "`point` is one of the spline's `control_points` in `pc.doc.feature`'s data, \
+             where its `weights` stand in the same order; any other point is refused.",
+        )
+        .note("A weight of 0 or less is refused.")
+        .see_also("sketch.to_bspline")
+        .example(
+            "A control point weighed three times",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local made = pc.sketch.draw{sketch = s, tool = "bspline", points = {{0, 0}, {10, 10}, {20, 0}, {30, 10}, "finish"}}
+            local spline = made.elements[#made.elements]
+            local function shape()
+              for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+                if g.BSpline then return g.BSpline end
+              end
+            end
+            local second = shape().control_points[2]
+            pc.sketch.spline_weight{sketch = s, spline = spline, point = second, weight = 3}
+            local weights = shape().weights
+            assert(weights[2] == 3 and weights[1] == 1)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -581,7 +1287,31 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Number,
             "How far the spline may stray from the curves, mm (0.01)",
         )
-        .returns("{elements}: what it made"),
+        .returns("{elements}: what it made")
+        .note(
+            "The curves are replaced by one spline ending where the chain ends; their ids \
+             are gone.",
+        )
+        .note(
+            "It needs two or more curves meeting end to end in one chain: one curve, a gap \
+             or a branch is refused. A sharp corner, such as a rectangle's, fails at the \
+             default `tolerance` (\"No spline follows these curves within 0.01 mm\").",
+        )
+        .see_also("sketch.to_bspline")
+        .example(
+            "A line and a quarter arc made one spline",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local line = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+            local arc = pc.sketch.arc{sketch = s, x = 10, y = 5, radius = 5, start = -90, ["end"] = 0}
+            local made = pc.sketch.join{sketch = s, items = {line, arc}}
+            assert(#made.elements > 0)
+            local count = {}
+            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do count[e.kind] = (count[e.kind] or 0) + 1 end
+            assert(count.line == nil and count.arc == nil, "both are replaced")
+            assert(count.other == 1, "by one spline")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -600,6 +1330,28 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Bool,
             "true: its symbol moves to the parked layer, drawn only while that layer shows; \
              it still solves",
+        )
+        .note(
+            "`items` are constraint ids; an element's id among them is passed over without \
+             a word. Only the flags given change.",
+        )
+        .note(
+            "A dimension that is not driving measures and conflicts with nothing; a \
+             constraint that is not active is kept but left out of solving.",
+        )
+        .see_also("sketch.set_value")
+        .see_also("sketch.status")
+        .example(
+            "A repeated dimension made a reference",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local sides = pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 15}
+            pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[1]}, value = 30}
+            local top = pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[3]}}
+            assert(#pc.sketch.status{sketch = s}.redundant > 0, "the top's length says the bottom's again")
+            pc.sketch.set_constraint{sketch = s, items = top, driving = false}
+            assert(#pc.sketch.status{sketch = s}.redundant == 0, "a reference only measures")
+            "#,
         ),
     );
     context.register_command(
@@ -607,7 +1359,33 @@ pub fn register(context: &mut WorkbenchContext) {
             "sketch.mirror_sketch",
             "A new sketch on the same plane: this one's geometry mirrored across its Y axis",
         ))
-        .returns("the new sketch's id"),
+        .returns("the new sketch's id")
+        .note(
+            "It makes a new sketch, named after this one with \"mirror\", in the same body; \
+             this one is left as it is. The mirror is across the sketch's own Y axis: x \
+             becomes -x.",
+        )
+        .note(
+            "For both halves in one profile, `sketch.merge` the two, or mirror within one \
+             sketch with `sketch.draw`'s mirror tool.",
+        )
+        .see_also("sketch.merge")
+        .see_also("sketch.draw")
+        .example(
+            "A rectangle mirrored across the Y axis",
+            r#"
+            local body = pc.doc.new_body{name = "Wing"}
+            local s = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 5, y = 0, width = 10, height = 5}
+            local mirrored = pc.sketch.mirror_sketch{sketch = s}
+            assert(pc.doc.feature{id = mirrored}.body == body)
+            assert(#pc.sketch.geometry{sketch = s} == 8, "the original keeps only its own")
+            pc.design.pad{sketch = mirrored, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = body}
+            assert(math.abs(m.min[1] + 15) < 1e-6 and math.abs(m.max[1] + 5) < 1e-6, "across the sketch's Y axis")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -615,7 +1393,36 @@ pub fn register(context: &mut WorkbenchContext) {
             "A new sketch holding this one's geometry and other sketches', mapped onto its plane",
         ))
         .param("with", ParamKind::List, "The other sketches")
-        .returns("the new sketch's id"),
+        .returns("the new sketch's id")
+        .note(
+            "It makes a new sketch, named after this one with \"merged\", on this one's plane \
+             and in its body; the sketches merged are left as they are. Constraints come \
+             with the geometry.",
+        )
+        .note(
+            "Each sketch in `with` must lie on a plane parallel to this one (\"its plane is \
+             not parallel to this one\"); its geometry is laid onto this plane, the distance \
+             between them dropped.",
+        )
+        .see_also("sketch.carbon_copy")
+        .see_also("sketch.mirror_sketch")
+        .example(
+            "Two sketches merged and padded as one",
+            r#"
+            local body = pc.doc.new_body{name = "Pair"}
+            local left = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.rect{sketch = left, x = -15, y = 0, width = 10, height = 5}
+            local right = pc.sketch.new{body = body, plane = "XY", offset = 3}
+            pc.sketch.circle{sketch = right, x = 10, y = 2, radius = 2}
+            local merged = pc.sketch.merge{sketch = left, with = {right}}
+            assert(#pc.sketch.geometry{sketch = merged} == 10)
+            pc.design.pad{sketch = merged, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = body}
+            assert(math.abs(m.volume - (50 + math.pi * 4)) < 0.01, m.volume)
+            assert(math.abs(m.max[3] - 1) < 1e-6, "on the first sketch's plane")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -623,7 +1430,32 @@ pub fn register(context: &mut WorkbenchContext) {
             "Copy another sketch's geometry into this one, mapped onto its plane",
         ))
         .param("from", ParamKind::Id, "The sketch to copy")
-        .returns("{elements, constraints}: what it made"),
+        .returns("{elements, constraints}: what it made")
+        .note(
+            "The geometry comes with its constraints, as plain geometry of this sketch: free \
+             to edit, not tied to the sketch it came from.",
+        )
+        .note(
+            "`from` must lie on a plane parallel to this one (\"its plane is not parallel to \
+             this one\"); a sketch cannot copy itself.",
+        )
+        .see_also("sketch.merge")
+        .see_also("sketch.external_from")
+        .example(
+            "A rectangle copied onto a sketch above it",
+            r#"
+            local body = pc.doc.new_body{name = "Stack"}
+            local base = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.rect{sketch = base, x = 0, y = 0, width = 10, height = 5}
+            local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+            local made = pc.sketch.carbon_copy{sketch = top, from = base}
+            assert(#made.elements == 8 and #made.constraints == 4, "the lines, their ends and their constraints")
+            pc.design.pad{sketch = top, length = 2}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = body}
+            assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.min[3] - 5) < 1e-6)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -636,7 +1468,27 @@ pub fn register(context: &mut WorkbenchContext) {
             "The geometry, as a sketch's fields (what copying in the sketcher holds)",
         )
         .param("by", ParamKind::List, "The step, {x, y}")
-        .returns("{elements}: what it made"),
+        .returns("{elements}: what it made")
+        .note(
+            "`clipboard` is a sketch's own data: `pc.doc.feature{id = s}.fields.sketch` of \
+             any sketch serves, and all of its geometry comes, with its constraints.",
+        )
+        .note("`by` is a step {dx, dy} in mm. It returns {elements, constraints}.")
+        .see_also("sketch.carbon_copy")
+        .example(
+            "A rectangle pasted beside itself",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+            local clip = pc.doc.feature{id = s}.fields.sketch
+            local made = pc.sketch.paste{sketch = s, clipboard = clip, by = {20, 0}}
+            assert(#made.elements == 8)
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.max[1] - 30) < 1e-6)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -655,7 +1507,46 @@ pub fn register(context: &mut WorkbenchContext) {
             "true: it counts in the profile, as drawn geometry does; false (the default): it \
              only guides the sketch",
         )
-        .returns("{elements}: what it made"),
+        .returns("{elements}: what it made")
+        .note(
+            "Each edge is a point on it and its direction there, in the body's own frame; \
+             `pc.doc.edges` gives both (where the body sits, the same until it is moved). \
+             The body must be built first (`pc.doc.rebuild()`), else it is refused (\"that \
+             body has no solid shape\").",
+        )
+        .note(
+            "It only guides unless `counts = true`; counted, the projected edges close a \
+             profile as drawn lines do. An edge square to the sketch plane projects to a \
+             point.",
+        )
+        .note(
+            "It returns {elements, constraints}: the curves and the points at their ends, \
+             the curves marked `external` by `pc.sketch.geometry`.",
+        )
+        .see_also("sketch.intersection")
+        .see_also("doc.edges")
+        .see_also("sketch.external_defining")
+        .example(
+            "A block's top edges projected and padded higher",
+            r#"
+            local body = pc.doc.new_body{name = "Block"}
+            local base = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.rect{sketch = base, x = 0, y = 0, width = 20, height = 10}
+            pc.design.pad{sketch = base, length = 5}
+            assert(#pc.doc.rebuild() == 0)
+            local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+            local made = pc.sketch.external{sketch = top, counts = true, edges = {
+              {body = body, point = {10, 0, 5}, direction = {1, 0, 0}},
+              {body = body, point = {20, 5, 5}, direction = {0, 1, 0}},
+              {body = body, point = {10, 10, 5}, direction = {1, 0, 0}},
+              {body = body, point = {0, 5, 5}, direction = {0, 1, 0}},
+            }}
+            assert(#made.elements > 0)
+            pc.design.pad{sketch = top, length = 3}
+            assert(#pc.doc.rebuild() == 0, "the four top edges close a profile")
+            assert(math.abs(pc.doc.measure{body = body}.volume - 20 * 10 * 8) < 1e-3)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -674,7 +1565,36 @@ pub fn register(context: &mut WorkbenchContext) {
             "true: it counts in the profile, as drawn geometry does; false (the default): it \
              only guides the sketch",
         )
-        .returns("{elements}: what it made"),
+        .returns("{elements}: what it made")
+        .note(
+            "Each face is a point on it and its outward normal there, in the body's own \
+             frame; `pc.doc.faces` gives both. The body must be built first.",
+        )
+        .note(
+            "A face the sketch plane does not cross adds nothing. What it adds only guides \
+             unless `counts = true`.",
+        )
+        .note("It returns {elements, constraints}: the curves and the points at their ends.")
+        .see_also("sketch.external")
+        .see_also("doc.faces")
+        .example(
+            "Where a block's top face crosses a sketch through its middle",
+            r#"
+            local body = pc.doc.new_body{name = "Block"}
+            local base = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.rect{sketch = base, x = 0, y = 0, width = 20, height = 10}
+            pc.design.pad{sketch = base, length = 5}
+            assert(#pc.doc.rebuild() == 0)
+            local cut = pc.sketch.new{body = body, plane = "XZ", offset = -5}
+            local made = pc.sketch.intersection{sketch = cut, faces = {{body = body, point = {10, 5, 5}, normal = {0, 0, 1}}}}
+            assert(#made.elements == 3, "a line and its two ends")
+            for _, e in ipairs(pc.sketch.geometry{sketch = cut}) do
+              if e.kind == "line" then
+                assert(e.external and e.points[1][2] == 5 and e.points[2][2] == 5, "the top face, at sketch y = 5")
+              end
+            end
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -682,7 +1602,31 @@ pub fn register(context: &mut WorkbenchContext) {
             "List the sketch's constraints",
         ))
         .returns("a list of {id, kind, items, value?}")
-        .read_only(),
+        .read_only()
+        .note(
+            "`kind` is the stored name (Coincident, Horizontal, Length, Diameter, Angle, \
+             ...): \"distance\" on a line lists as Length. `value` is a dimension's, angles \
+             in degrees.",
+        )
+        .note(
+            "`items` are the element ids it ties. The origin and the axes show as fixed ids \
+             ending in 0001 (origin), 0002 (x axis) and 0003 (y axis), not by name.",
+        )
+        .see_also("sketch.status")
+        .see_also("sketch.set_constraint")
+        .example(
+            "An angle listed in degrees",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local a = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+            local b = pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 10}
+            local made = pc.sketch.constrain{sketch = s, kind = "angle", items = {a, b}}
+            local listed = pc.sketch.constraints{sketch = s}
+            assert(#listed == 1 and listed[1].id == made[1])
+            assert(listed[1].kind == "Angle" and math.abs(listed[1].value - 45) < 1e-4, "degrees")
+            assert(listed[1].items[1] == a and listed[1].items[2] == b)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -698,7 +1642,28 @@ pub fn register(context: &mut WorkbenchContext) {
             "{thinnest, where = {x, y}, minimum, thin, regions}: the thinnest wall in mm, \
              where it is, whether it is under the minimum, and each region's own",
         )
-        .read_only(),
+        .read_only()
+        .note(
+            "It reads the sketch's closed profile, and refuses a sketch with none (\"profile \
+             is not closed\").",
+        )
+        .note(
+            "`minimum` is the Sketcher preference when left out (0.8 mm unless changed); \
+             `thin` is true when the thinnest wall is under it.",
+        )
+        .see_also("sketch.status")
+        .example(
+            "A frame with 1 mm walls",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            pc.sketch.rect{sketch = s, x = 1, y = 1, width = 18, height = 8}
+            local wall = pc.sketch.wall_thickness{sketch = s, minimum = 2.5}
+            assert(math.abs(wall.thinnest - 1) < 1e-4, "the frame's wall is 1 mm")
+            assert(wall.thin and wall.minimum == 2.5)
+            assert(not pc.sketch.wall_thickness{sketch = s, minimum = 0.5}.thin)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -706,14 +1671,67 @@ pub fn register(context: &mut WorkbenchContext) {
             "How constrained the sketch is, and what conflicts",
         ))
         .returns("{dof, solved, redundant, conflicting}")
-        .read_only(),
+        .read_only()
+        .note(
+            "`dof` is the freedom left: 0 is fully constrained. A free point has 2, a free \
+             circle 3 (its centre and radius); a line's freedom is its two end points'.",
+        )
+        .note(
+            "`solved` false with ids in `conflicting` means constraints contradict; every \
+             constraint taking part is listed, not only the newest. `redundant` lists those \
+             that say again what others say; the sketch still solves.",
+        )
+        .see_also("sketch.constrain")
+        .see_also("sketch.constraints")
+        .example(
+            "A circle constrained, then over-constrained",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local c = pc.sketch.circle{sketch = s, x = 3, y = 4, radius = 5}
+            assert(pc.sketch.status{sketch = s}.dof == 3, "a centre that moves and a radius")
+            pc.sketch.constrain{sketch = s, kind = "radius", items = {c}, value = 5}
+            local centre = pc.sketch.geometry{sketch = s}[1].id
+            pc.sketch.constrain{sketch = s, kind = "lock", items = {centre}}
+            local status = pc.sketch.status{sketch = s}
+            assert(status.dof == 0 and status.solved and #status.conflicting == 0)
+            pc.sketch.constrain{sketch = s, kind = "diameter", items = {c}, value = 12}
+            status = pc.sketch.status{sketch = s}
+            assert(not status.solved and #status.conflicting == 2, "radius 5 and diameter 12")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.delete",
             "Delete elements or constraints, and what depends on them",
         ))
-        .param("items", ParamKind::List, "Element or constraint ids"),
+        .param("items", ParamKind::List, "Element or constraint ids")
+        .note(
+            "Deleting a point takes the curves that end or centre on it and their \
+             constraints. Deleting a curve leaves its end points behind as loose points.",
+        )
+        .note(
+            "A constraint's id deletes only that constraint. The origin and the axes are \
+             passed over; an id the sketch does not have is refused.",
+        )
+        .see_also("sketch.construction")
+        .see_also("sketch.repair")
+        .example(
+            "A corner deleted with the two lines on it",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local corner = pc.sketch.point{sketch = s, x = 20, y = 10}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            assert(#pc.sketch.constraints{sketch = s} == 4)
+            pc.sketch.delete{sketch = s, items = {corner}}
+            local lines = 0
+            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+              if e.kind == "line" then lines = lines + 1 end
+            end
+            assert(lines == 2, "the two lines ending on the corner went with it")
+            assert(#pc.sketch.constraints{sketch = s} == 2, "and the constraints on them")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -721,7 +1739,33 @@ pub fn register(context: &mut WorkbenchContext) {
             "Make elements construction geometry, or normal again",
         ))
         .param("items", ParamKind::List, "Element ids")
-        .optional("on", ParamKind::Bool, "true (the default) or false"),
+        .optional("on", ParamKind::Bool, "true (the default) or false")
+        .note(
+            "Construction geometry is left out of profiles: a construction circle inside an \
+             outline cuts no hole. Constraints on it still hold.",
+        )
+        .note(
+            "`sketch.draw` makes construction geometry from the start with `construction = true`.",
+        )
+        .see_also("sketch.draw")
+        .see_also("sketch.delete")
+        .example(
+            "A circle that guides, then cuts",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local guide = pc.sketch.circle{sketch = s, x = 10, y = 5, radius = 3}
+            pc.sketch.construction{sketch = s, items = {guide}}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 200) < 1e-3, "a construction circle cuts no hole")
+            pc.sketch.construction{sketch = s, items = {guide}, on = false}
+            assert(#pc.doc.rebuild() == 0)
+            m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - (200 - math.pi * 9)) < 0.01, m.volume)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -741,14 +1785,55 @@ pub fn register(context: &mut WorkbenchContext) {
             "true makes what is missing, false takes away the pieces nothing else holds; \
              left out, it shows when a piece is missing and hides otherwise",
         )
-        .returns("{shown, elements}: whether it showed, and what it made or took away"),
+        .returns("{shown, elements}: whether it showed, and what it made or took away")
+        .note(
+            "Without `show` it switches: the same call twice makes the pieces and takes them \
+             away again. Give `show = true` to be sure they are there.",
+        )
+        .note(
+            "An ellipse gets its major and minor axes with their ends and its two foci, all \
+             construction held to it. Items naming no ellipse, parabola, hyperbola or \
+             B-spline are refused.",
+        )
+        .see_also("sketch.draw")
+        .see_also("sketch.constrain")
+        .example(
+            "An ellipse's axes and foci shown and hidden",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local made = pc.sketch.draw{sketch = s, tool = "ellipse", points = {{0, 0}, {10, 0}, {0, 4}}}
+            local ellipse = made.elements[#made.elements]
+            local shown = pc.sketch.internal_geometry{sketch = s, items = {ellipse}}
+            assert(shown.shown and #shown.elements == 8, "two axes with their ends, and two foci")
+            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+              if e.kind == "line" then assert(e.construction) end
+            end
+            local hidden = pc.sketch.internal_geometry{sketch = s, items = {ellipse}}
+            assert(not hidden.shown and #pc.sketch.geometry{sketch = s} == 2, "the same call again takes them away")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.section_view",
             "Cut away everything on the viewer's side of the sketch plane while it is edited",
         ))
-        .optional("on", ParamKind::Bool, "true (the default) or false"),
+        .optional("on", ParamKind::Bool, "true (the default) or false")
+        .note(
+            "A view setting only: nothing built from the sketch changes, and it shows only \
+             while the sketch is open for editing in the window.",
+        )
+        .note("The sketch's data carries `section_view = true` while it is on.")
+        .example(
+            "The setting kept on the sketch",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.section_view{sketch = s}
+            assert(pc.doc.feature{id = s}.fields.section_view == true)
+            pc.sketch.section_view{sketch = s, on = false}
+            assert(pc.doc.feature{id = s}.fields.section_view == nil)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -757,7 +1842,27 @@ pub fn register(context: &mut WorkbenchContext) {
              perpendicular ones among them, so the group keeps its shape and turns as a whole",
         ))
         .param("items", ParamKind::List, "The lines")
-        .returns("how many constraints changed"),
+        .returns("how many constraints changed")
+        .note(
+            "It returns how many horizontal and vertical constraints went; one fewer \
+             parallel or perpendicular constraint takes their place, so the group gains the \
+             freedom to turn. Lines with none answer 0.",
+        )
+        .see_also("sketch.constrain")
+        .see_also("sketch.status")
+        .example(
+            "A rectangle freed to turn",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local sides = pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            assert(pc.sketch.status{sketch = s}.dof == 4)
+            assert(pc.sketch.remove_axis_alignment{sketch = s, items = sides} == 4)
+            for _, c in ipairs(pc.sketch.constraints{sketch = s}) do
+              assert(c.kind == "Parallel" or c.kind == "Perpendicular", c.kind)
+            end
+            assert(pc.sketch.status{sketch = s}.dof == 5, "still a rectangle, free to turn")
+            "#,
+        ),
     );
 }
 
