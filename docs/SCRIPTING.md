@@ -443,6 +443,20 @@ assert(math.abs(m.max[3] - 10) < 1e-6 and math.abs(m.min[1] + 5) < 1e-6)
 assert(math.abs(m.centre[3] - 5) < 1e-6)
 ```
 
+`pc.doc.picture`: Write a PNG of the bodies, the same for the same arguments whatever the user's camera (except view "current").
+
+- `path` (string): Where to write the PNG
+- `view` (any, optional): Where to look from: "current" (the user's view direction; the default), "iso", "front", "back", "left", "right", "top", "bottom", {azimuth, elevation} in degrees (azimuth 0 the front, 90 the right side; elevation 90 from straight above), or {direction, up?}, the way the view looks. Always orthographic and framed to what is drawn
+- `bodies` (list, optional): Only these bodies (ids or names), framed to them; every visible body when left out
+- `highlight` (list, optional): Paint: a list of {body, faces?, edges?, color?}; faces by doc.faces index or name, edges by the kernel edge index; the whole body when neither is given
+- `markers` (list, optional): A dot and a label at world points: a list of {point, label?, color?}
+- `section` (any, optional): Cut at the plane {origin, normal}: what lies on the side the normal points to is cut away, the cut drawn flat and darker
+- `edges` (boolean, optional): Draw the faces' outlines (true)
+- `xray` (boolean, optional): Bodies see-through, painted faces solid (false)
+- `size` (list, optional): [width, height] in pixels (800 × 600, at most 2048 a side)
+- `annotate` (boolean, optional): Draw an axis triad and the drawn bodies' box with its sizes (false)
+- Returns {path, width, height}
+
 `pc.doc.parameters`: A feature's numbers that formulas set and read.
 
 - `id` (id): The feature

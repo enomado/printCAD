@@ -9,6 +9,7 @@ mod headless;
 mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
+mod proof;
 mod script_library;
 mod thumbnail;
 mod ui;

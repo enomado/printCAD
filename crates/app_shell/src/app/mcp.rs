@@ -363,10 +363,13 @@ pub(crate) fn tools() -> Vec<Tool> {
         Tool {
             name: "view".into(),
             title: "Look at the view".into(),
-            description: "A picture of the visible bodies from the direction the view \
-                          looks, as a PNG."
+            description: "A picture of the bodies as a PNG, drawn the same for the same \
+                          arguments whatever the user's camera (except view \"current\", \
+                          the default): a standard view or any direction, framed to what \
+                          is drawn, with outlines, painted faces and edges, markers, a \
+                          section, see-through bodies and the box's sizes."
                 .into(),
-            input_schema: json!({"type": "object", "properties": {}}),
+            input_schema: crate::proof::schema(),
             read_only: true,
             always_load: true,
         },
@@ -444,7 +447,7 @@ impl PrintCadApp {
                         .join("\n"),
                 )
             }
-            "view" => self.view_picture(),
+            "view" => self.view_picture(args),
             "call" | "lua" => {
                 let named = (request.tool == "call")
                     .then(|| request.args.get("command").and_then(Value::as_str))
@@ -621,18 +624,33 @@ impl PrintCadApp {
         crate::thumbnail::render_at(&shapes, forward, up, width, height)
     }
 
-    fn view_picture(&self) -> ToolAnswer {
+    fn view_picture(&self, args: &Value) -> ToolAnswer {
         use base64::Engine as _;
-        match self.view_png(800, 600) {
-            Some(png) => ToolAnswer {
+        let none = serde_json::Map::new();
+        let drawn = crate::proof::parse(args.as_object().unwrap_or(&none))
+            .and_then(|request| self.picture(&request));
+        match drawn {
+            Ok(png) => ToolAnswer {
                 content: vec![Content::Image {
                     data: base64::engine::general_purpose::STANDARD.encode(png),
                     mime: "image/png".to_string(),
                 }],
                 is_error: false,
             },
-            None => ToolAnswer::text("Nothing is visible to draw."),
+            Err(why) => ToolAnswer::error(why),
         }
+    }
+
+    /// The picture `request` asks for of the active document, `current`
+    /// looking the way the user's view looks.
+    pub(crate) fn picture(&self, request: &crate::proof::Request) -> Result<Vec<u8>, String> {
+        let camera = &self.session.camera;
+        crate::proof::picture(
+            &self.session.document,
+            request,
+            Some(camera.view_basis()),
+            camera.axis_system(),
+        )
     }
 }
 

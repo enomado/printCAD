@@ -14,6 +14,11 @@ const SANS_MEDIUM: &str = "sans-medium";
 const SANS_SEMIBOLD: &str = "sans-semibold";
 const MONO_MEDIUM: &str = "mono-medium";
 
+/// The bundled faces' bytes, for drawing text outside egui (pictures
+/// rendered on the CPU) without scanning the system's fonts.
+pub const SANS_REGULAR_TTF: &[u8] = include_bytes!("../fonts/IBMPlexSans-Regular.ttf");
+pub const MONO_REGULAR_TTF: &[u8] = include_bytes!("../fonts/IBMPlexMono-Regular.ttf");
+
 /// Proportional UI text at `size` px.
 pub fn sans(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
@@ -53,10 +58,7 @@ pub fn font_definitions() -> FontDefinitions {
             .font_data
             .insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
     };
-    add(
-        "plex-sans",
-        include_bytes!("../fonts/IBMPlexSans-Regular.ttf"),
-    );
+    add("plex-sans", SANS_REGULAR_TTF);
     add(
         "plex-sans-medium",
         include_bytes!("../fonts/IBMPlexSans-Medium.ttf"),
@@ -65,10 +67,7 @@ pub fn font_definitions() -> FontDefinitions {
         "plex-sans-semibold",
         include_bytes!("../fonts/IBMPlexSans-SemiBold.ttf"),
     );
-    add(
-        "plex-mono",
-        include_bytes!("../fonts/IBMPlexMono-Regular.ttf"),
-    );
+    add("plex-mono", MONO_REGULAR_TTF);
     add(
         "plex-mono-medium",
         include_bytes!("../fonts/IBMPlexMono-Medium.ttf"),

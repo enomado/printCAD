@@ -187,6 +187,7 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.move_after",
     "doc.recompute",
     "doc.measure",
+    "doc.picture",
 ];
 
 fn file_commands() -> Vec<CommandSpec> {
@@ -294,6 +295,13 @@ impl Headless {
                     _ => return Err(CommandError::bad("id", "cannot be deleted here")),
                 }
                 Ok(Value::Null)
+            }
+            "doc.picture" => {
+                self.rebuild();
+                let document = &self.document;
+                crate::app::scripts::picture_command(&args, |request| {
+                    crate::proof::picture(document, request, None, axes::AxisSystem::default())
+                })
             }
             "file.save_as" => {
                 let path = PathBuf::from(a.string("path")?);
@@ -529,17 +537,26 @@ mod tests {
             local m = pc.doc.measure{body = body}
             print(string.format("%.1f", m.volume))
             pc.file.export{path = arg[2]}
+            local shot = pc.doc.picture{path = arg[3], view = "iso", size = {400, 300},
+                highlight = {{body = body, faces = {0}}}, annotate = true,
+                markers = {{point = {0, 0, 5}, label = "corner"}}}
+            assert(shot.width == 400 and shot.height == 300)
             "#,
         )
         .unwrap();
         let stl = dir.join("block.stl");
         let saved = dir.join("block.prtcad");
+        let picture = dir.join("shots/block.png");
         let ok = run(
             &Invocation {
                 script,
                 open: None,
                 save: Some(saved.clone()),
-                args: vec!["5".into(), stl.display().to_string()],
+                args: vec![
+                    "5".into(),
+                    stl.display().to_string(),
+                    picture.display().to_string(),
+                ],
             },
             registry,
         )
@@ -549,6 +566,8 @@ mod tests {
             std::fs::metadata(&stl).unwrap().len() > 84,
             "an STL with triangles"
         );
+        let png = tiny_skia::Pixmap::load_png(&picture).unwrap();
+        assert_eq!((png.width(), png.height()), (400, 300));
         let reopened = Document::load_from_file(&saved).unwrap();
         assert_eq!(reopened.bodies().len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();

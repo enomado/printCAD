@@ -354,6 +354,16 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             assert(math.abs(m.centre[3] - 5) < 1e-6)
             "#,
         ),
+        crate::proof::with_arguments(
+            CommandSpec::new(
+                "doc.picture",
+                "Write a PNG of the bodies, the same for the same arguments whatever the \
+                 user's camera (except view \"current\")",
+            )
+            .param("path", ParamKind::String, "Where to write the PNG"),
+        )
+        .returns("{path, width, height}")
+        .read_only(),
         CommandSpec::new(
             "doc.parameters",
             "A feature's numbers that formulas set and read",
@@ -1326,6 +1336,7 @@ impl PrintCadApp {
         }
         let a = Args(args);
         match id {
+            "doc.picture" => picture_command(args, |request| self.picture(request)),
             "doc.selection" => Ok(json!({
                 "item": self.session.tree_selection.and_then(item_id).map(|u| u.to_string()),
                 "body": self.session.active_body_id.map(|b| b.0.to_string()),
@@ -1629,6 +1640,26 @@ fn short_json(value: &Value) -> String {
 pub(crate) struct RebuildWait {
     reply: std::sync::mpsc::Sender<CommandResult>,
     deadline: std::time::Instant,
+}
+
+/// `doc.picture`: the request in `args` drawn by `draw` and written to
+/// its `path`.
+pub(crate) fn picture_command(
+    args: &CommandArgs,
+    draw: impl FnOnce(&crate::proof::Request) -> Result<Vec<u8>, String>,
+) -> CommandResult {
+    let path = std::path::PathBuf::from(Args(args).string("path")?);
+    let request = crate::proof::parse(args).map_err(CommandError::failed)?;
+    let png = draw(&request).map_err(CommandError::failed)?;
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| CommandError::failed(e.to_string()))?;
+    }
+    std::fs::write(&path, png).map_err(|e| CommandError::failed(e.to_string()))?;
+    Ok(json!({
+        "path": path.display().to_string(),
+        "width": request.size.0,
+        "height": request.size.1,
+    }))
 }
 
 /// The commands every host of a document answers the same way, with or
