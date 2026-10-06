@@ -72,6 +72,25 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 - `pc.doc.faces{body = b}` lists a solid's faces with a point on each and
   a flat face's normal or a round face's axis. Assembly joints take those
   faces as they are listed.
+- `pc.doc.edges{body = b}` lists a solid's edges: line, circle or other,
+  a point halfway along each and its direction there, its length, the
+  indices `doc.faces` gives the two faces it runs between and their names
+  (strings), and a circle's centre and radius. A fillet, a chamfer or a
+  surface step takes an edge as that point and direction:
+
+  ```lua
+  local pick
+  for _, e in ipairs(pc.doc.edges{body = body}) do
+    if e.kind == "line" and math.abs(e.direction[3]) > 0.99 then pick = e end
+  end
+  pc.design.fillet{body = body, radius = 2, edges = {Edges = {
+    {point = pick.point, direction = pick.direction, faces = pick.names}}}}
+  ```
+
+  Points and directions are where the body sits; for a body with a
+  placement of its own, a feature's picks are in the body's frame.
+- A script's `return` is its answer: the console shows it, and an AI
+  agent's `lua` gets it back as JSON (tables as objects or lists).
 - Scripts run on a thread of their own, so the window stays live while
   one runs. The status bar and the console show it with a Stop button.
   Lines and scripts started meanwhile wait their turn. On the command line
@@ -393,6 +412,11 @@ assert(top and math.abs(top.point[3] - 4) < 1e-6, "the top is at z = 4")
 assert(math.abs(top.area - 200) < 1e-3)
 assert(type(top.name) == "string")
 ```
+
+`pc.doc.edges`: The edges of a body's solid, where it sits.
+
+- `body` (id)
+- Returns a list of {index, kind, point, direction, length, faces, names?, centre?, normal?, radius?}: kind is line, circle or other; point lies halfway along the edge and direction is its way there, in world space, as an edge pick takes them ({point = e.point, direction = e.direction}); faces are the indices doc.faces gives the two faces it runs between, names theirs as strings; a circle's centre, normal and radius
 
 `pc.doc.measure`: A body's volume, surface area, centre and bounds.
 

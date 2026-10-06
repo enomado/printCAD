@@ -287,8 +287,10 @@ pub(crate) fn tools() -> Vec<Tool> {
             name: "lua".into(),
             title: "Run a Lua script".into(),
             description: "Run a Lua script: pc.<command id>{name = value} calls a command \
-                          and returns its result; print() output and the error that stops \
-                          it come back. The whole script is one undo step."
+                          and returns its result. Answers {returned, printed} as JSON: what \
+                          the script returns (tables as objects or lists) and its print() \
+                          output; {error, printed} when an error stops it. The whole script \
+                          is one undo step."
                 .into(),
             input_schema: json!({
                 "type": "object",

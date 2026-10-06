@@ -634,6 +634,12 @@ UI thread in `drive_scripts` (8 ms a frame, in the tab the run started in,
 (`OpJournal::hold`) from `Started` to `Finished`, so a run is one undo
 step. The thread wakes the loop through `AppEvent::Script` and a busy
 thread counts as async work. Stop sets the engine's stop flag.
+A run's chunk value comes back as `RunOutput::returned` (JSON: a table
+with keys 1 to n a list, any other an object); the console shows it and
+an agent's `lua` answers `{returned, printed}` (`script_answer`).
+`doc.faces`/`doc.edges` (`app/edges.rs::edges_of`: kind, a point halfway
+along and its direction, length, the faces' indices and names as strings)
+read geometry where the body sits, the picks the edge-taking commands use.
 Tools end in commands, which is what recording rests on: a bench calls
 `ctx.record(id, args, result)` where a UI action ends in the code its
 command runs (`HookOutcome.recorded`, carried through `PanelWriteback`

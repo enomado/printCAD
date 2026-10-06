@@ -81,6 +81,11 @@ It can ask at any time what is open: the document and its file, unsaved
 changes, the workbench, what is selected and being edited, the bodies and
 the features that fail to build (the `context` tool).
 
+It is told to work script-first: to plan, then make a part in one Lua
+script that computes positions, reads faces and edges (`doc.faces`,
+`doc.edges`) and picks from them, rebuilds and returns what it made, so
+a part takes one step you approve and one undo, not one per command.
+
 Some commands an agent never runs, whatever you allowed: quitting printCAD
 and closing a tab would end its own session. The rules the agent keeps to
 are yours to set, so it cannot change them either. Commands that reach past
@@ -130,7 +135,7 @@ While the application runs it listens on a local socket,
 | `context` | What is open, selected and being edited, and the rules |
 | `commands` | Lists the commands, with their arguments, optionally by prefix |
 | `call` | Runs one command with named arguments and answers its result |
-| `lua` | Runs a Lua script and answers what it printed |
+| `lua` | Runs a Lua script and answers `{returned, printed}` as JSON: what the script returns and what it printed |
 | `view` | A picture of the scene from the current view |
 | `log` | The application's recent messages |
 

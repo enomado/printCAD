@@ -311,6 +311,17 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                 assert(type(top.name) == "string")
                 "#,
             ),
+        CommandSpec::new("doc.edges", "The edges of a body's solid, where it sits")
+            .param("body", ParamKind::Id, "")
+            .returns(
+                "a list of {index, kind, point, direction, length, faces, names?, centre?, \
+                 normal?, radius?}: kind is line, circle or other; point lies halfway along \
+                 the edge and direction is its way there, in world space, as an edge pick \
+                 takes them ({point = e.point, direction = e.direction}); faces are the \
+                 indices doc.faces gives the two faces it runs between, names theirs as \
+                 strings; a circle's centre, normal and radius",
+            )
+            .read_only(),
         CommandSpec::new(
             "doc.measure",
             "A body's volume, surface area, centre and bounds",
@@ -1059,13 +1070,20 @@ impl PrintCadApp {
                     app.close_gesture();
                 });
                 self.script_runs.pop_front();
-                if let Some(RunKind::Agent { reply, .. }) = kind {
-                    let _ = reply.send(agent_answer(output));
+                if let Some(RunKind::Agent { reply, single }) = kind {
+                    let answer = if single {
+                        agent_answer(output)
+                    } else {
+                        script_answer(output)
+                    };
+                    let _ = reply.send(answer);
                     self.redraw_needed = true;
                     return;
                 }
-                if let Some(value) = output.value {
-                    console::push(LineKind::Value, value);
+                match (output.value, &output.returned) {
+                    (Some(value), _) => console::push(LineKind::Value, value),
+                    (None, Some(returned)) => console::push(LineKind::Value, short_json(returned)),
+                    (None, None) => {}
                 }
                 match output.error {
                     Some(error) => {
@@ -1579,6 +1597,34 @@ fn agent_answer(output: scripting::RunOutput) -> agents::mcp::ToolAnswer {
     }
 }
 
+/// What an agent's `lua` answers: `{returned, printed}` as JSON, the
+/// script's return value and its printed lines as one text, or
+/// `{error, printed}` as an error when something stopped it.
+fn script_answer(output: scripting::RunOutput) -> agents::mcp::ToolAnswer {
+    let printed = output.printed.join("\n");
+    let text = |value: Value| serde_json::to_string_pretty(&value).unwrap_or_default();
+    match output.error {
+        Some(error) => {
+            agents::mcp::ToolAnswer::error(text(json!({"error": error, "printed": printed})))
+        }
+        None => agents::mcp::ToolAnswer::text(text(json!({
+            "returned": output.returned.unwrap_or(Value::Null),
+            "printed": printed,
+        }))),
+    }
+}
+
+/// A script's return value as one console line: compact JSON, cut short
+/// past a few hundred characters.
+fn short_json(value: &Value) -> String {
+    const MOST: usize = 300;
+    let text = value.to_string();
+    match text.char_indices().nth(MOST) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
+    }
+}
+
 /// A `doc.rebuild` waiting on the kernel.
 pub(crate) struct RebuildWait {
     reply: std::sync::mpsc::Sender<CommandResult>,
@@ -1797,6 +1843,13 @@ pub(crate) fn document_command(
                 .imported_geometry(body)
                 .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
             Ok(faces_of(&geometry.mesh))
+        }
+        "doc.edges" => {
+            let body = body_arg(document, &a)?;
+            let geometry = document
+                .imported_geometry(body)
+                .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
+            Ok(crate::app::edges::edges_of(&geometry.mesh))
         }
         "doc.measure" => {
             let body = body_arg(document, &a)?;
@@ -2545,6 +2598,40 @@ mod tests {
         assert_eq!(faces[1]["kind"], "cylinder");
         assert_eq!(faces[1]["axis"]["direction"], json!([0.0, 0.0, 1.0]));
         assert_eq!(faces[1]["radius"], json!(3.0));
+    }
+
+    /// An agent's script answers what it returned beside what it printed,
+    /// or what stopped it.
+    #[test]
+    fn a_script_answers_the_agent_its_return_value_and_output() {
+        let answer = |output: scripting::RunOutput| {
+            let answer = script_answer(output);
+            let agents::mcp::Content::Text(text) = &answer.content[0] else {
+                panic!("text");
+            };
+            (
+                answer.is_error,
+                serde_json::from_str::<Value>(text).unwrap(),
+            )
+        };
+        let (failed, body) = answer(scripting::RunOutput {
+            printed: vec!["one".into(), "two".into()],
+            returned: Some(json!({"pad": "f-1", "volume": 1000.0})),
+            ..Default::default()
+        });
+        assert!(!failed);
+        assert_eq!(
+            body,
+            json!({"returned": {"pad": "f-1", "volume": 1000.0}, "printed": "one\ntwo"})
+        );
+        let (_, body) = answer(scripting::RunOutput::default());
+        assert_eq!(body, json!({"returned": null, "printed": ""}));
+        let (failed, body) = answer(scripting::RunOutput {
+            error: Some("design.pad: no sketch".into()),
+            ..Default::default()
+        });
+        assert!(failed);
+        assert_eq!(body["error"], "design.pad: no sketch");
     }
 
     /// Where the reference sits in `docs/SCRIPTING.md`.

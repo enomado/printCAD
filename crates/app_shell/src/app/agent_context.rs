@@ -44,6 +44,15 @@ with named arguments, and `lua` runs several at once as a Lua script in which \
 each command is pc.<id>{name = value, ...} and returns what it makes (help() \
 lists them there too). Ids of bodies, features and sketch elements are \
 strings. Lengths are millimetres; sketch coordinates are the sketch's own. \
+Work script-first: plan the steps, then run them as one `lua` script rather \
+than a `call` each. Compute positions with Lua's arithmetic and loops; read \
+geometry inside the script with doc.faces and doc.edges and pick from them by \
+filtering (a normal, a direction, a kind, a length); end with doc.rebuild and \
+`return` what was made, which `lua` answers as JSON beside what it printed. A \
+face or edge is picked by a point on it and its normal or direction, in world \
+space as doc.faces and doc.edges give them; names are strings. Use one `call` \
+for a single step, or for the commands that ask the user every time, which a \
+script cannot run. \
 Numbers can be formulas over variables (var.new, var.set, var.list) and other \
 objects' dimensions (doc.parameters lists them, doc.set_formula sets one): \
 `3 * Printer.nozzle`, `Pad.length / 2`, with units such as mm, in and deg; \

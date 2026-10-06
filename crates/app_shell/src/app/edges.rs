@@ -372,6 +372,131 @@ fn edge_length(mesh: &TriMesh, edge: u32) -> f32 {
         .sum()
 }
 
+/// `doc.edges`: each kernel edge of `mesh`, in the mesh's frame: its index,
+/// whether it is a line, a circle (or an arc of one) or another curve, a
+/// point halfway along it and its direction there (what an edge pick
+/// takes), its length, the indices of the faces it runs between as
+/// `doc.faces` numbers them, their names as strings, and a circle's
+/// centre, normal and radius.
+pub(crate) fn edges_of(mesh: &TriMesh) -> serde_json::Value {
+    use serde_json::json;
+    let key = |i: u32| {
+        let p = Vec3::from_array(mesh.positions[i as usize]);
+        (p * 1000.0).round().as_ivec3().to_array()
+    };
+    let side = |a: u32, b: u32| {
+        let (a, b) = (key(a), key(b));
+        if a <= b { (a, b) } else { (b, a) }
+    };
+    // The faces each triangle side belongs to, to find an edge's faces
+    // where the mesh names none.
+    let mut sides: std::collections::HashMap<_, Vec<u32>> = Default::default();
+    for (t, face) in mesh.faces.iter().enumerate() {
+        let corner = |i: usize| mesh.indices[3 * t + i];
+        for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+            let list = sides.entry(side(corner(a), corner(b))).or_default();
+            if !list.contains(face) {
+                list.push(*face);
+            }
+        }
+    }
+    let named = |name: kernel_api::TopoName| {
+        let mut found = mesh
+            .face_names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| name != 0 && **n == name);
+        match (found.next(), found.next()) {
+            (Some((f, _)), None) => Some(f as u32),
+            _ => None,
+        }
+    };
+    let mut ids = mesh.edge_ids.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    let list = ids
+        .into_iter()
+        .filter_map(|edge| {
+            let hit = edge_hit(mesh, Uuid::nil(), edge)?;
+            let points = edge_points(mesh, edge);
+            let names = mesh
+                .edge_faces
+                .get(edge as usize)
+                .copied()
+                .unwrap_or_default();
+            let faces: Vec<u32> = match (named(names[0]), named(names[1])) {
+                (Some(a), Some(b)) => vec![a, b],
+                _ => {
+                    let mut faces = Vec::new();
+                    for (pair, _) in mesh
+                        .edges
+                        .chunks(2)
+                        .zip(&mesh.edge_ids)
+                        .filter(|(_, id)| **id == edge)
+                    {
+                        for f in sides.get(&side(pair[0], pair[1])).into_iter().flatten() {
+                            if !faces.contains(f) {
+                                faces.push(*f);
+                            }
+                        }
+                    }
+                    faces.truncate(2);
+                    faces
+                }
+            };
+            let a = Vec3::from_array(points[0]);
+            let far = points
+                .iter()
+                .map(|p| Vec3::from_array(*p))
+                .max_by(|p, q| p.distance_squared(a).total_cmp(&q.distance_squared(a)))
+                .unwrap_or(a);
+            let chord = (far - a).normalize_or_zero();
+            let straight = chord != Vec3::ZERO
+                && points.iter().all(|p| {
+                    (Vec3::from_array(*p) - a)
+                        .reject_from_normalized(chord)
+                        .length()
+                        <= 1e-3 * a.distance(far)
+                });
+            let circle = if straight { None } else { hit.circle };
+            let mut point = Vec3::from_array(hit.point);
+            if let Some(c) = circle {
+                // The chord's middle lies inside the curve: put it on it.
+                let centre = Vec3::from_array(c.center);
+                let normal = Vec3::from_array(c.normal).normalize_or_zero();
+                let out = (point - centre).reject_from(normal).normalize_or_zero();
+                if out != Vec3::ZERO {
+                    point = centre + out * c.radius;
+                }
+            }
+            let kind = match (straight, circle) {
+                (true, _) => "line",
+                (false, Some(_)) => "circle",
+                (false, None) => "other",
+            };
+            let mut out = json!({
+                "index": edge,
+                "kind": kind,
+                "point": point.to_array(),
+                "direction": hit.direction,
+                "length": hit.length_mm,
+                "faces": faces,
+            });
+            if names.iter().any(|n| *n != 0) {
+                // Strings, since a script's numbers cannot hold every name.
+                out["names"] = json!(names.map(|n| n.to_string()));
+            }
+            if let Some(c) = circle {
+                out["centre"] = json!(c.center);
+                out["normal"] = json!(c.normal);
+                out["radius"] = json!(c.radius);
+            }
+            Some(out)
+        })
+        .collect();
+    serde_json::Value::Array(list)
+}
+
 /// A stable id and a content revision for an edge highlight line body.
 pub(crate) fn highlight_revision(body: Uuid, edges: &[u32], revision: u64) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -703,6 +828,40 @@ mod tests {
             mesh.edge_ids.push(i as u32);
         }
         mesh
+    }
+
+    /// With no face names, an edge's faces are the ones whose triangles
+    /// share its segments; an arc is a circle with its point on the curve.
+    #[test]
+    fn edges_are_listed_with_their_faces_and_kind() {
+        let mut mesh = cube();
+        // The bottom (z = 0) and front (y = 0) faces.
+        mesh.indices = vec![0, 1, 3, 0, 3, 2, 0, 1, 5, 0, 5, 4];
+        mesh.faces = vec![0, 0, 1, 1];
+        let arc: Vec<[f32; 3]> = (0..=8)
+            .map(|i| {
+                let a = std::f32::consts::FRAC_PI_2 * i as f32 / 8.0;
+                [30.0 + 5.0 * a.cos(), 5.0 * a.sin(), 0.0]
+            })
+            .collect();
+        let base = mesh.positions.len() as u32;
+        mesh.positions.extend(&arc);
+        for i in 1..arc.len() as u32 {
+            mesh.edges.extend([base + i - 1, base + i]);
+            mesh.edge_ids.push(12);
+        }
+        let listed = edges_of(&mesh);
+        let listed = listed.as_array().unwrap();
+        assert_eq!(listed.len(), 13);
+        assert_eq!(listed[0]["kind"], "line");
+        assert_eq!(listed[0]["faces"], serde_json::json!([0, 1]));
+        assert_eq!(listed[0]["point"], serde_json::json!([5.0, 0.0, 0.0]));
+        assert!((listed[0]["length"].as_f64().unwrap() - 10.0).abs() < 1e-4);
+        let arc = &listed[12];
+        assert_eq!(arc["kind"], "circle");
+        assert!((arc["radius"].as_f64().unwrap() - 5.0).abs() < 1e-3);
+        let p: Vec<f64> = serde_json::from_value(arc["point"].clone()).unwrap();
+        assert!(((p[0] - 30.0).hypot(p[1]) - 5.0).abs() < 1e-3, "on the arc");
     }
 
     fn project(p: [f32; 3]) -> Option<(f32, f32)> {

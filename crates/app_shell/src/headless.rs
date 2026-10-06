@@ -179,6 +179,7 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.set_tip",
     "doc.rebuild",
     "doc.faces",
+    "doc.edges",
     "doc.set_body",
     "doc.set_face_color",
     "doc.set_textures",
@@ -552,6 +553,85 @@ mod tests {
         assert_eq!(reopened.bodies().len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+    /// `doc.edges` lists a box's twelve lines and a cylinder's circles, and
+    /// an edge taken from it is what a fillet takes.
+    #[test]
+    fn a_script_finds_edges_and_fillets_one_it_picked() {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let dir = std::env::temp_dir().join(format!("printcad-edges-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("edges.lua");
+        std::fs::write(
+            &script,
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            local round = pc.doc.new_body{name = "Round"}
+            local c = pc.sketch.new{body = round, plane = "XY"}
+            pc.sketch.circle{sketch = c, x = 50, y = 0, radius = 4}
+            pc.design.pad{sketch = c, length = 6}
+            assert(#pc.doc.rebuild() == 0, "both build")
+
+            local edges = pc.doc.edges{body = body}
+            assert(#edges == 12, "a box has 12 edges, not " .. #edges)
+            local count = {}
+            for _, e in ipairs(edges) do
+              assert(e.kind == "line", "every edge of a box is a line")
+              assert(#e.faces == 2, "between two faces")
+              local l = math.floor(e.length + 0.5)
+              count[l] = (count[l] or 0) + 1
+            end
+            assert(count[20] == 4 and count[10] == 4 and count[5] == 4, "lengths")
+
+            local circles = 0
+            for _, e in ipairs(pc.doc.edges{body = round}) do
+              if e.kind == "circle" then
+                circles = circles + 1
+                assert(math.abs(e.radius - 4) < 1e-3, "radius " .. e.radius)
+                assert(math.abs(e.centre[1] - 50) < 1e-3, "centre")
+              end
+            end
+            assert(circles >= 2, "a cylinder's rims are circles")
+
+            -- The upright edge at x = 20, y = 10, between two side faces.
+            local faces = {}
+            for _, f in ipairs(pc.doc.faces{body = body}) do faces[f.index] = f end
+            local pick
+            for _, e in ipairs(edges) do
+              if math.abs(e.direction[3]) > 0.99 and e.point[1] > 19 and e.point[2] > 9 then
+                pick = e
+              end
+            end
+            for _, i in ipairs(pick.faces) do
+              assert(math.abs(faces[i].normal[3]) < 1e-3, "a side face")
+            end
+            local before = pc.doc.measure{body = body}.volume
+            pc.design.fillet{body = body, radius = 2, edges = {Edges = {
+              {point = pick.point, direction = pick.direction, faces = pick.names}}}}
+            assert(#pc.doc.rebuild() == 0, "the fillet builds")
+            local taken = before - pc.doc.measure{body = body}.volume
+            local wanted = (4 - math.pi) * 5
+            assert(math.abs(taken - wanted) < 0.05, "one edge rounded: " .. taken)
+            "#,
+        )
+        .unwrap();
+        let ok = run(
+            &Invocation {
+                script,
+                open: None,
+                save: None,
+                args: Vec::new(),
+            },
+            registry,
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(ok, "the script runs");
+    }
+
     #[test]
     fn variables_drive_a_pad_and_their_formulas_are_saved() {
         let mut registry = DocumentService::default();
