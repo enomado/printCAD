@@ -1473,6 +1473,9 @@ fn an_edge_projects_onto_a_plane_as_an_exact_curve() {
         .project_edge(&solid.brep_blob, [5.0, 0.0, 6.0], &raised)
         .expect("the seam projects");
     assert!(matches!(seam, ProjectedEdge::Point(_)), "{seam:?}");
+    // A point far from every edge names none.
+    let far = kernel_ogeom::QUERIES.project_edge(&solid.brep_blob, [200.0, 200.0, 6.0], &raised);
+    assert!(far.is_err(), "{far:?}");
 }
 
 /// A spline edge projects as the spline it is, not points along it: a pad

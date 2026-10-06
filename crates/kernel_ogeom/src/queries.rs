@@ -206,13 +206,17 @@ impl KernelQueries for OgeomQueries {
     ) -> KernelResult<ProjectedEdge> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;
-        let edge = nearest_of(
-            &mut model,
-            &root,
-            ShapeType::Edge,
-            Point::new(near[0], near[1], near[2]),
-        )
-        .map_err(other)?;
+        let probe = Point::new(near[0], near[1], near[2]);
+        let (edge, distance) =
+            crate::ops::dressup::nearest_with_distance(&mut model, &root, ShapeType::Edge, probe)
+                .map_err(other)?;
+        // A pick names an edge only within reach of it, as a fillet's does.
+        if distance > crate::ops::dressup::pick_reach(&model, &root) {
+            return Err(other(format!(
+                "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
+                near[0], near[1], near[2]
+            )));
+        }
         let plane = plane_of(plane)?;
         let projected = project_edge_onto_plane(&model, &edge, &plane, tol).map_err(other)?;
         in_plane(projected)

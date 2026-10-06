@@ -31,7 +31,7 @@ pub fn nearest_of(
 }
 
 /// [`nearest_of`] and how far the probe is from it.
-fn nearest_with_distance(
+pub(crate) fn nearest_with_distance(
     model: &mut Model,
     root: &Shape,
     want: ShapeType,
@@ -75,7 +75,7 @@ fn face_named_or_nearest(
 /// How far from an edge a picked point may lie and still name it: a tenth
 /// of the solid's diagonal, room for the edge to move with an upstream
 /// edit while a point in the middle of a face names nothing.
-fn pick_reach(model: &Model, solid: &Shape) -> f64 {
+pub(crate) fn pick_reach(model: &Model, solid: &Shape) -> f64 {
     crate::tess::robust_bounds(model, solid)
         .map(|(lo, hi)| (hi - lo).magnitude() * 0.1)
         .unwrap_or(f64::INFINITY)
