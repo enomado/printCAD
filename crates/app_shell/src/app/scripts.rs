@@ -463,7 +463,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                  afresh.",
             )
             .note("A feature's id is refused (\"is not a body of this document\").")
+            .note(
+                "A frozen body is refused (\"is frozen\"): it keeps the solid it has. \
+                 Thawed with `pc.doc.set_body{body = ..., frozen = false}`, it builds what \
+                 changed meanwhile.",
+            )
             .see_also("doc.rebuild")
+            .see_also("doc.set_body")
             .example(
                 "A body built again from its sketch",
                 r#"
@@ -475,6 +481,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                 pc.doc.recompute{body = body}
                 assert(#pc.doc.rebuild() == 0, "built again from the sketch")
                 assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6)
+                pc.doc.set_body{body = body, frozen = true}
+                local ok, why = pcall(pc.doc.recompute, {body = body})
+                assert(not ok and tostring(why):find("is frozen"), tostring(why))
+                assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "kept")
                 "#,
             ),
         CommandSpec::new("doc.set_visible", "Show or hide a body or a feature")
@@ -2763,6 +2773,13 @@ pub(crate) fn document_command(
         }
         "doc.recompute" => {
             let body = body_arg(document, &a)?;
+            if document.body_frozen(body) {
+                return Err(CommandError::bad(
+                    "body",
+                    "is frozen: it keeps the solid it has until it is thawed \
+                     (doc.set_body{frozen = false})",
+                ));
+            }
             registry.invalidate_body(document, body);
             Ok(Value::Null)
         }

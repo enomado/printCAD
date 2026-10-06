@@ -560,8 +560,9 @@ Notes:
 
 - It builds nothing itself: it marks every feature of the body for building from the start, and `pc.doc.rebuild()` builds them and waits. Edits mark what they change already, so a script needs it only to build a body afresh.
 - A feature's id is refused ("is not a body of this document").
+- A frozen body is refused ("is frozen"): it keeps the solid it has. Thawed with `pc.doc.set_body{body = ..., frozen = false}`, it builds what changed meanwhile.
 
-See also `pc.doc.rebuild`.
+See also `pc.doc.rebuild`, `pc.doc.set_body`.
 
 Example: A body built again from its sketch.
 
@@ -574,6 +575,10 @@ assert(#pc.doc.rebuild() == 0)
 pc.doc.recompute{body = body}
 assert(#pc.doc.rebuild() == 0, "built again from the sketch")
 assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6)
+pc.doc.set_body{body = body, frozen = true}
+local ok, why = pcall(pc.doc.recompute, {body = body})
+assert(not ok and tostring(why):find("is frozen"), tostring(why))
+assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "kept")
 ```
 
 `pc.doc.set_visible`: Show or hide a body or a feature.

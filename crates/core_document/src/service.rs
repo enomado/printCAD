@@ -442,7 +442,12 @@ impl DocumentService {
         jobs
     }
 
+    /// Every bench's derived solid of `body` is stale. A frozen body keeps
+    /// what it has: nothing would build it again until it thaws.
     pub fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        if document.body_frozen(body) {
+            return;
+        }
         for wb in self.benches() {
             wb.invalidate_body(document, body);
         }
