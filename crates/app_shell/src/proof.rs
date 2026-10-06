@@ -134,7 +134,7 @@ fn arguments() -> Vec<(&'static str, ParamKind, Value, &'static str)> {
                 "color": colour
             }, "required": ["body"]}}),
             "Paint: a list of {body, faces?, edges?, color?}; faces by doc.faces index or \
-             name, edges by the kernel edge index; the whole body when neither is given",
+             name, edges by doc.edges index; the whole body when neither is given",
         ),
         (
             "markers",
