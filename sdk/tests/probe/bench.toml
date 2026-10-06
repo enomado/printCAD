@@ -1,0 +1,9 @@
+id = "test.probe"
+name = "Probe"
+version = "0.1.0"
+api = "printcad:workbench@0.1"
+description = "A package reaching what the examples leave out, for the host's tests"
+feature_kinds = ["test.probe.thing"]
+
+[capabilities]
+save_dialog = true
