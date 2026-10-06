@@ -962,7 +962,7 @@ Notes:
 
 - A formula that does not parse is refused. One that parses but does not work out (a missing name, a loop, an angle where a length is wanted) is kept: the answer has `error` and no `value`, the feature builds from the plain number its fields keep, and `pc.doc.rebuild()` does not list it. Check the answer's `error`.
 - A bare number takes the parameter's unit: "12" is 12 mm for a length and 12 degrees for an angle. The fields keep their plain number; `pc.doc.feature`'s `values` show what the formula gives.
-- Taking the formula away leaves the plain number the fields keep, not what the formula came to.
+- Taking the formula away keeps the number as it stands: the fields take what the formula came to. A formula that did not work out leaves the plain number they had.
 - It sets one feature's number; `pc.var.set` defines a variable that formulas read.
 
 See also `pc.doc.parameters`, `pc.doc.set_value`, `pc.var.set`.
@@ -983,6 +983,10 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 800) < 1e-6)
 pc.var.set{set = "Printer", name = "nozzle", formula = "0.6 mm"}
 assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = body}.volume - 1200) < 1e-6, "the pad follows")
+local kept = pc.doc.set_formula{id = pad, parameter = "length"}
+assert(math.abs(kept.value - 6) < 1e-9 and kept.formula == nil, "the 6 mm it came to stays")
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - 1200) < 1e-6)
 local bad = pc.doc.set_formula{id = pad, parameter = "length", formula = "30 deg"}
 assert(bad.value == nil and bad.error:find("angle"), bad.error)
 ```

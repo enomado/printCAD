@@ -1718,7 +1718,8 @@ impl Document {
 
     /// Set the formula behind the feature's number `key` (its bench's key,
     /// `Workbench::parameters`), or take it away so the number stands as
-    /// it is.
+    /// it is: at the value the formula last gave it, when the formulas are
+    /// worked out for the document as it stands.
     pub fn set_feature_formula(
         &mut self,
         feature_id: FeatureId,
@@ -1731,6 +1732,19 @@ impl Document {
             .get_node(feature_id)
             .ok_or(DocumentError::FeatureNotFound(feature_id))?;
         if node.formulas.get(&key) != formula.as_ref() {
+            // The plain numbers take what the formulas gave them, this
+            // one's among them, before it goes.
+            let kept = (formula.is_none() && !self.needs_evaluation())
+                .then(|| self.evaluated.evaluation.unsettled.get(&feature_id))
+                .flatten()
+                .filter(|values| **values != node.data)
+                .cloned();
+            if let Some(data) = kept {
+                self.record_and_apply(op::DocumentOp::UpdateFeatureData {
+                    id: feature_id,
+                    data,
+                });
+            }
             self.record_and_apply(op::DocumentOp::SetFeatureFormula {
                 id: feature_id,
                 key,

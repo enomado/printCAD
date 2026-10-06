@@ -301,8 +301,8 @@ impl DocumentService {
             let data = evaluation.data.get_mut(&id).expect("listed");
             // The same values as last time settle the same way.
             if let Some(settled) = document.settled_values(id, data) {
-                *data = settled.clone();
-                evaluation.unsettled.insert(id, data.clone());
+                let unsettled = std::mem::replace(data, settled.clone());
+                evaluation.unsettled.insert(id, unsettled);
                 continue;
             }
             let unsettled = data.clone();

@@ -962,8 +962,9 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
              `pc.doc.feature`'s `values` show what the formula gives.",
         )
         .note(
-            "Taking the formula away leaves the plain number the fields keep, not what the \
-             formula came to.",
+            "Taking the formula away keeps the number as it stands: the fields take what \
+             the formula came to. A formula that did not work out leaves the plain number \
+             they had.",
         )
         .note(
             "It sets one feature's number; `pc.var.set` defines a variable that formulas \
@@ -988,6 +989,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             pc.var.set{set = "Printer", name = "nozzle", formula = "0.6 mm"}
             assert(#pc.doc.rebuild() == 0)
             assert(math.abs(pc.doc.measure{body = body}.volume - 1200) < 1e-6, "the pad follows")
+            local kept = pc.doc.set_formula{id = pad, parameter = "length"}
+            assert(math.abs(kept.value - 6) < 1e-9 and kept.formula == nil, "the 6 mm it came to stays")
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = body}.volume - 1200) < 1e-6)
             local bad = pc.doc.set_formula{id = pad, parameter = "length", formula = "30 deg"}
             assert(bad.value == nil and bad.error:find("angle"), bad.error)
             "#,
@@ -2886,9 +2891,11 @@ pub(crate) fn document_command(
                 .parameter_named(document, feature, a.string("parameter")?)
                 .map_err(CommandError::failed)?;
             let formula = a.opt_string("formula")?.map(str::to_string);
-            if let Some(text) = &formula {
-                core_document::expr::check_syntax(text)
-                    .map_err(|e| CommandError::failed(e.message))?;
+            match &formula {
+                Some(text) => core_document::expr::check_syntax(text)
+                    .map_err(|e| CommandError::failed(e.message))?,
+                // What the formula comes to now is the number kept.
+                None => registry.evaluate(document),
             }
             document
                 .set_feature_formula(feature, parameter.key.clone(), formula)
