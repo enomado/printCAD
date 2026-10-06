@@ -115,6 +115,33 @@ fn an_open_sketch_extrudes_into_a_surface_body() {
     );
 }
 
+/// A step made by a command takes the name it is given, as a Design
+/// feature does.
+#[test]
+fn a_surface_command_names_its_step() {
+    let mut host = benches();
+    run(
+        &mut host,
+        r#"
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.polyline{sketch = s, points = {{0, 0}, {10, 0}, {10, 10}}}
+        local wall = pc.surface.extrude{sketches = {s}, length = 5, name = "Wall"}
+        pc.surface.sew{body = wall, name = "Joined"}
+        "#,
+    );
+    let names: Vec<String> = host
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == "wb.surface")
+        .map(|(_, n)| n.name.clone())
+        .collect();
+    assert!(
+        names.contains(&"Wall".to_string()) && names.contains(&"Joined".to_string()),
+        "{names:?}"
+    );
+}
+
 /// Walls and a floor sewn: an open box, one shell of five faces.
 #[test]
 fn walls_and_a_floor_sew_into_one_shell() {

@@ -4205,6 +4205,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.extrude`: Extrude curves into a surface.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4212,6 +4213,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.revolve`: Revolve curves about an axis into a surface.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4219,6 +4221,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.planar`: Fill closed flat loops with a planar surface.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4226,6 +4229,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.fill`: Fill the hole curves close with a surface.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4233,6 +4237,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.ruled`: Span two curves with straight lines.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4240,6 +4245,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.loft`: Loft a surface through sections in order.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4247,6 +4253,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.sweep`: Sweep a profile along a path into a surface.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4254,6 +4261,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.offset`: Copy faces at a distance along their normals.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4261,6 +4269,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.extend`: Extend faces past picked edges.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4268,6 +4277,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.blend`: Bridge two edges with a surface.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4275,6 +4285,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.split`: Split faces along curves.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4282,11 +4293,13 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.sew`: Sew the body's surfaces together.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - Returns The new feature's id
 
 `pc.surface.fillet`: Round edges where two faces of a surface meet.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4294,6 +4307,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.thicken`: Thicken the body's surfaces into solids.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4301,6 +4315,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.trim`: Keep what of the body lies on one side of a plane.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches it is built from, in order: every chain of each, open or closed
 - Other arguments: Any field of the surface, by name (`length`, `direction`, `angle_deg`, `continuity`…)
 - Returns The new feature's id
@@ -4308,6 +4323,7 @@ assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 `pc.surface.mirror`: Add the body's reflection in a plane.
 
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
 - Other arguments: `plane` ("YZ", "XZ", "XY" or {"Custom": {"origin", "normal"}}) and `offset`
 - Returns The new feature's id
 

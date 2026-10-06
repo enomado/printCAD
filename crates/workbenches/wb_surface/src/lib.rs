@@ -459,6 +459,9 @@ impl SurfaceWorkbench {
             return Err(CommandError::failed(format!("it needs {missing}")));
         }
         let (made, _) = self.add(ctx, body, feature).map_err(CommandError::failed)?;
+        if let Some(name) = core_document::command::Args(args).opt_string("name")? {
+            ctx.document.rename_feature(made, name);
+        }
         Ok(json!(made.0.to_string()))
     }
 }
@@ -642,7 +645,7 @@ fn merge_fields(data: &mut Value, args: &CommandArgs) -> Result<(), CommandError
         return Ok(());
     };
     for (name, value) in args {
-        if matches!(name.as_str(), "body" | "sketches") {
+        if matches!(name.as_str(), "body" | "sketches" | "name") {
             continue;
         }
         if !fields.contains_key(name) {
@@ -998,6 +1001,7 @@ fn command_spec(kind: &feature::Kind) -> CommandSpec {
             "The surface body it goes in, or a feature in it; else its sketch's body when \
              that holds only drawings and surfaces, else a new one",
         )
+        .optional("name", ParamKind::String, "Its name in the tree")
         .returns("The new feature's id");
     match kind.tool {
         "surface.sew" => spec,
