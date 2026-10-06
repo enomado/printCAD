@@ -400,7 +400,37 @@ pub fn register(context: &mut WorkbenchContext) {
     .optional("degrees", ParamKind::Number, "An angle joint's angle")
     .optional("radius", ParamKind::Number, "A tangent's radius, mm")
     .optional("drive", ParamKind::Any, DRIVE)
-    .optional("limits", ParamKind::Any, LIMITS);
+    .optional("limits", ParamKind::Any, LIMITS)
+    .optional(
+        "kind",
+        ParamKind::String,
+        "A joint's new kind (mate, align, hinge, ...), from where the bodies stand",
+    )
+    .optional(
+        "face",
+        ParamKind::Any,
+        "The moving body's face, picked afresh, as the joint's command takes it",
+    )
+    .optional(
+        "other",
+        ParamKind::Id,
+        "The body it is held against, picked afresh",
+    )
+    .optional(
+        "other_face",
+        ParamKind::Any,
+        "The other body's face, picked afresh",
+    )
+    .optional(
+        "moving_end",
+        ParamKind::Number,
+        "How far the moving end sits along its own normal or axis, mm",
+    )
+    .optional(
+        "fixed_end",
+        ParamKind::Number,
+        "How far the fixed end sits along its own normal or axis, mm",
+    );
     context.register_command(align_drives(set));
     context.register_command(
         CommandSpec::new(
@@ -2347,9 +2377,20 @@ mod tests {
     use super::*;
     use core_document::Document;
 
+    /// Run a command as a script does: its arguments checked against its
+    /// registered spec first.
     fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
+        let args = args.as_object().unwrap();
+        let mut registered = core_document::WorkbenchContext::default();
+        register(&mut registered);
+        let spec = registered
+            .commands()
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap_or_else(|| panic!("`{id}` is registered"));
+        spec.check(args)?;
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        run(id, args.as_object().unwrap(), &mut ctx)
+        run(id, args, &mut ctx)
     }
 
     #[test]

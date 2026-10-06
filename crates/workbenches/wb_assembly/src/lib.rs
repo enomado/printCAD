@@ -2338,6 +2338,12 @@ impl Workbench for AssemblyWorkbench {
             .register_tool(tool("asm.replace", "Replace body", "carbon-copy").shortcut("Shift+Y"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
+        context.register_tool(
+            tool("asm.motion", "Motion over time", "polar-pattern").shortcut("Shift+M"),
+        );
+        context.register_tool(
+            tool("asm.save_state", "Save assembly state", "save").shortcut("Shift+E"),
+        );
     }
 
     fn run_command(

@@ -1286,7 +1286,7 @@ impl AssemblyWorkbench {
                         ctx.request(core_document::HostRequest::SelectBody(b.body));
                     }
                     ui.label(
-                        RichText::new(mass_text(b.volume_mm3 * density / 1000.0))
+                        RichText::new(mass_text(b.mass_g(density)))
                             .font(ui_kit::mono(FONT_SM))
                             .color(TEXT1),
                     );
