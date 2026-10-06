@@ -5068,6 +5068,7 @@ assert(math.abs(math.deg(2 * math.acos(w)) - 90) < 1e-3,
 Notes:
 
 - The plane is in world space. The copy keeps the identity placement and draws the source mirrored, following its changes.
+- The mirrored mesh shows at once; its solid, which measuring and STEP export read, is made by `pc.doc.rebuild()`.
 - A mirror of a mirrored copy is refused, as is a zero normal.
 
 See also `pc.asm.copy`.
@@ -5086,6 +5087,8 @@ for _, f in ipairs(faces) do
   local x = f.point[1]
   assert(x <= -10 + 1e-4 and x >= -30 - 1e-4, "on the other side of X = 0")
 end
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = m}.volume - 1000) < 1e-6, "its solid, mirrored")
 ```
 
 `pc.asm.replace`: Put another body in a body's place, with its joints found again on the new body's faces.
@@ -5199,11 +5202,12 @@ assert(pc.asm.placement{body = c}.translation[2] == 0, "c is not in it")
 - `component` (id): The component
 - `name` (string, optional): A new name
 - `flexible` (boolean, optional): The joints inside it move
-- `parent` (any, optional): The component it goes in, or null for the top
+- `parent` (any, optional): The component it goes in, or "top" (or JSON null) for the top level
 
 Notes:
 
 - Only what is given changes. Made rigid again, the bodies move together from where they sit then.
+- Lua has no null in a table, so `parent = "top"` takes a component out of the one it is in, to the top level.
 - A component cannot be put inside itself; an unknown component is refused.
 
 See also `pc.asm.component`, `pc.asm.component_add`.
@@ -5297,7 +5301,7 @@ assert(not renamed, "the component is gone")
 
 Notes:
 
-- Each formula gives its drive's value at time `t`, seconds: a hinge's angle in degrees, a slider's position in mm. A formula that does not read is refused.
+- Each formula gives its drive's value at time `t`, seconds: a hinge's angle in degrees, a slider's position in mm. A plain number takes the drive's unit; a formula that does not read, or gives a length for a hinge ("1 in * t") or an angle for a slider, is refused, and so is a joint that is not a hinge or a slider.
 - `end` is a Lua keyword: write `["end"] = 1`. `start`, `end` and `step` are 0, 2 and 0.05 s when left out.
 - Making it moves nothing: `asm.motion_frames` and `asm.trace` play it on a copy. `study` changes a motion already made, keeping its id.
 
@@ -5331,7 +5335,7 @@ assert(pc.asm.travel{joint = h} == 0, "making it moves nothing")
 Notes:
 
 - Frames run from `start` to `end`, both included, every `step`: 0 to 1 s every 0.25 s is 5 frames. Every body is in every frame.
-- Each frame solves the joints with every drive held at its formula's value, on a copy: the bodies stay where they are.
+- Each frame solves the joints with every drive held at its formula's value, on a copy: the bodies stay where they are. An id that is not a motion is refused ("is not a motion").
 
 See also `pc.asm.motion`, `pc.asm.trace`.
 
@@ -5370,7 +5374,7 @@ assert(pc.asm.placement{body = arm}.rotation[4] == 1, "the arm has not moved")
 
 Notes:
 
-- `point` is given in the body's own frame; each frame's `point` is where it is in the world then. Nothing moves.
+- `point` is given in the body's own frame; each frame's `point` is where it is in the world then. Nothing moves. An id that is not a motion is refused ("is not a motion").
 
 See also `pc.asm.motion_frames`, `pc.asm.motion`.
 
@@ -5571,7 +5575,7 @@ assert(#extra == 1 and extra[1].joint == p and extra[1].name == "Parallel 1",
 Notes:
 
 - `steps` positions are checked, `low` and `high` among them: 3 from 0 to 180 are 0, 90 and 180. Each is solved on a copy: nothing moves.
-- A pair is listed only where it shares more material than it does where the joint stands now, so a contact already there does not count.
+- A pair is listed only where it shares more material than it does where the joint stands now, so a contact already there does not count. A joint that is not a hinge or a slider is refused.
 
 See also `pc.asm.interference`, `pc.asm.motion`.
 
@@ -5886,7 +5890,7 @@ assert(pc.asm.ground{body = base, grounded = false} == nil)
 
 Notes:
 
-- Grounded bodies, and bodies no joint moves, are not listed. A held drive takes its motion away; a limit does not.
+- Grounded bodies, and bodies no joint moves, are not listed. A held drive takes its motion away; a limit does not: a hinge, slider or alignment resting on a limit keeps the motion, `at_limit`. A point on a path keeps its run along it at a corner too, and at an open path's end `at_limit`.
 - `through` is a point on a turn's axis, in world space.
 
 See also `pc.asm.redundant`, `pc.asm.solve`.
@@ -5928,6 +5932,7 @@ Notes:
 
 - The joint commands, `asm.set` and `asm.ground` solve as they run; `asm.place` and `asm.move` do not, so solve after them.
 - It answers "Moved 1 body; every joint holds", or "Every joint holds" when nothing had to move.
+- A joint moves the body it belongs to; one that belongs to a grounded body moves the body at its other end instead. A joint between two bodies that cannot move (both grounded) and does not hold is refused, named ("cannot hold all its joints at once").
 
 See also `pc.asm.place`, `pc.asm.move`.
 

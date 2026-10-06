@@ -188,6 +188,20 @@ fn advance(
     Ok(released)
 }
 
+/// The motion `study` names.
+fn motion_study(
+    a: &Args,
+    document: &core_document::Document,
+) -> Result<crate::MotionStudy, CommandError> {
+    let not_a_motion = || CommandError::bad("study", "is not a motion");
+    let node = document
+        .get_feature_meta(FeatureId(a.id("study")?))
+        .filter(|n| n.workbench_id.as_str() == crate::MOTION_KIND)
+        .ok_or_else(not_a_motion)?;
+    <crate::MotionStudy as core_document::WorkbenchFeature>::from_json(&node.data)
+        .map_err(|_| not_a_motion())
+}
+
 /// Read `drive` and `limits` into a hinge's or a slider's drive.
 fn drive_args(a: &Args, drive: &mut Drive) -> Result<(), CommandError> {
     drive_args_named(a, drive, "drive", "limits")
@@ -608,6 +622,10 @@ pub fn register(context: &mut WorkbenchContext) {
             "The plane is in world space. The copy keeps the identity placement and draws \
              the source mirrored, following its changes.",
         )
+        .note(
+            "The mirrored mesh shows at once; its solid, which measuring and STEP export \
+             read, is made by `pc.doc.rebuild()`.",
+        )
         .note("A mirror of a mirrored copy is refused, as is a zero normal.")
         .see_also("asm.copy")
         .example(
@@ -624,6 +642,8 @@ pub fn register(context: &mut WorkbenchContext) {
               local x = f.point[1]
               assert(x <= -10 + 1e-4 and x >= -30 - 1e-4, "on the other side of X = 0")
             end
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = m}.volume - 1000) < 1e-6, "its solid, mirrored")
             "#,
         ),
     );
@@ -783,11 +803,15 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional(
             "parent",
             ParamKind::Any,
-            "The component it goes in, or null for the top",
+            "The component it goes in, or \"top\" (or JSON null) for the top level",
         )
         .note(
             "Only what is given changes. Made rigid again, the bodies move together from \
              where they sit then.",
+        )
+        .note(
+            "Lua has no null in a table, so `parent = \"top\"` takes a component out of \
+             the one it is in, to the top level.",
         )
         .note("A component cannot be put inside itself; an unknown component is refused.")
         .see_also("asm.component")
@@ -809,6 +833,26 @@ pub fn register(context: &mut WorkbenchContext) {
             pc.asm.component_set{component = k, flexible = false}
             pc.asm.move{body = a, by = {0, 1, 0}}
             assert(pc.asm.placement{body = b}.translation[2] == 1, "rigid: they move as one")
+            "#,
+        )
+        .example(
+            "A component put in another and taken out to the top level",
+            r#"
+            local function box(x)
+              local s = pc.sketch.new{plane = "XY"}
+              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
+              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
+            end
+            local a, b = box(0), box(10)
+            assert(#pc.doc.rebuild() == 0)
+            local outer = pc.asm.component{bodies = {a}, name = "Frame"}
+            local inner = pc.asm.component{bodies = {b}, name = "Arm"}
+            pc.asm.component_set{component = inner, parent = outer}
+            pc.asm.move{body = a, by = {0, 4, 0}}
+            assert(pc.asm.placement{body = b}.translation[2] == 4, "inside the frame, it follows")
+            pc.asm.component_set{component = inner, parent = "top"}
+            pc.asm.move{body = a, by = {0, 4, 0}}
+            assert(pc.asm.placement{body = b}.translation[2] == 4, "at the top, it stays")
             "#,
         ),
     );
@@ -914,7 +958,10 @@ pub fn register(context: &mut WorkbenchContext) {
         .returns("the motion's id")
         .note(
             "Each formula gives its drive's value at time `t`, seconds: a hinge's angle in \
-             degrees, a slider's position in mm. A formula that does not read is refused.",
+             degrees, a slider's position in mm. A plain number takes the drive's unit; a \
+             formula that does not read, or gives a length for a hinge (\"1 in * t\") or an \
+             angle for a slider, is refused, and so is a joint that is not a hinge or a \
+             slider.",
         )
         .note(
             "`end` is a Lua keyword: write `[\"end\"] = 1`. `start`, `end` and `step` are 0, \
@@ -962,7 +1009,8 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .note(
             "Each frame solves the joints with every drive held at its formula's value, on \
-             a copy: the bodies stay where they are.",
+             a copy: the bodies stay where they are. An id that is not a motion is refused \
+             (\"is not a motion\").",
         )
         .see_also("asm.motion")
         .see_also("asm.trace")
@@ -1009,7 +1057,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .read_only()
         .note(
             "`point` is given in the body's own frame; each frame's `point` is where it is in \
-             the world then. Nothing moves.",
+             the world then. Nothing moves. An id that is not a motion is refused (\"is not \
+             a motion\").",
         )
         .see_also("asm.motion_frames")
         .see_also("asm.motion")
@@ -1260,7 +1309,8 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .note(
             "A pair is listed only where it shares more material than it does where the joint \
-             stands now, so a contact already there does not count.",
+             stands now, so a contact already there does not count. A joint that is not a \
+             hinge or a slider is refused.",
         )
         .see_also("asm.interference")
         .see_also("asm.motion")
@@ -1682,7 +1732,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .read_only()
         .note(
             "Grounded bodies, and bodies no joint moves, are not listed. A held drive takes \
-             its motion away; a limit does not.",
+             its motion away; a limit does not: a hinge, slider or alignment resting on a \
+             limit keeps the motion, `at_limit`. A point on a path keeps its run along it at \
+             a corner too, and at an open path's end `at_limit`.",
         )
         .note("`through` is a point on a turn's axis, in world space.")
         .see_also("asm.redundant")
@@ -1727,6 +1779,12 @@ pub fn register(context: &mut WorkbenchContext) {
             .note(
                 "It answers \"Moved 1 body; every joint holds\", or \"Every joint holds\" \
                  when nothing had to move.",
+            )
+            .note(
+                "A joint moves the body it belongs to; one that belongs to a grounded body \
+                 moves the body at its other end instead. A joint between two bodies that \
+                 cannot move (both grounded) and does not hold is refused, named \
+                 (\"cannot hold all its joints at once\").",
             )
             .see_also("asm.place")
             .see_also("asm.move")
@@ -2904,12 +2962,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             match a.0.get("parent") {
                 None => {}
                 Some(Value::Null) => component.parent = None,
+                Some(Value::String(p)) if p == "top" => component.parent = None,
                 Some(Value::String(p)) => {
                     let parent = uuid::Uuid::parse_str(p)
                         .map_err(|_| CommandError::bad("parent", "is not an id"))?;
                     component.parent = Some(ComponentId(parent));
                 }
-                Some(_) => return Err(CommandError::bad("parent", "is an id or null")),
+                Some(_) => return Err(CommandError::bad("parent", "is an id or \"top\"")),
             }
             ctx.document
                 .update_component(component)
@@ -2943,7 +3002,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     .map_err(|e| CommandError::bad("drives", e.to_string()))?,
             };
             for drive in &study.drives {
-                crate::motion::value_at(&drive.formula, 0.0)
+                let want = crate::motion::drive_dim(ctx.document, drive.joint)
+                    .map_err(|e| CommandError::bad("drives", e))?;
+                crate::motion::value_at(&drive.formula, 0.0, want)
                     .map_err(|e| CommandError::bad("drives", e))?;
             }
             let data = core_document::WorkbenchFeature::to_json(&study);
@@ -2969,14 +3030,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Ok(json!(id.0.to_string()))
         }
         "asm.motion_frames" => {
-            let id = FeatureId(a.id("study")?);
-            let study = ctx
-                .document
-                .get_feature_data(id)
-                .and_then(|d| {
-                    <crate::MotionStudy as core_document::WorkbenchFeature>::from_json(d).ok()
-                })
-                .ok_or_else(|| CommandError::bad("study", "is not a motion"))?;
+            let study = motion_study(&a, ctx.document)?;
             let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
             Ok(Value::Array(
                 frames
@@ -2998,14 +3052,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             ))
         }
         "asm.trace" => {
-            let id = FeatureId(a.id("study")?);
-            let study = ctx
-                .document
-                .get_feature_data(id)
-                .and_then(|d| {
-                    <crate::MotionStudy as core_document::WorkbenchFeature>::from_json(d).ok()
-                })
-                .ok_or_else(|| CommandError::bad("study", "is not a motion"))?;
+            let study = motion_study(&a, ctx.document)?;
             let body = body(&a, ctx)?;
             let point = vector(a.0.get("point").unwrap_or(&Value::Null), "point")?;
             let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
@@ -3107,6 +3154,15 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .kernel
                 .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
             let joint = FeatureId(a.id("joint")?);
+            if !joints(ctx.document).iter().any(|j| {
+                j.id == joint
+                    && matches!(
+                        j.feature.kind,
+                        JointKind::Hinge { .. } | JointKind::Slider { .. }
+                    )
+            }) {
+                return Err(CommandError::bad("joint", "is not a hinge or a slider"));
+            }
             let steps = a.opt_number("steps")?.unwrap_or(24.0).clamp(2.0, 1000.0) as usize;
             let (low, high) = (a.number("low")? as f32, a.number("high")? as f32);
             let Some(check) = crate::sweep_check::plan(ctx.document, joint, low, high, steps)
@@ -4745,6 +4801,21 @@ mod tests {
             &mut doc,
             "asm.component_set",
             json!({"component": inner.0.to_string(), "parent": null}),
+        )
+        .unwrap();
+        assert_eq!(doc.component_bodies(outer), vec![a]);
+        // "top" stands for null where a script cannot write one.
+        call(
+            &mut doc,
+            "asm.component_set",
+            json!({"component": inner.0.to_string(), "parent": outer.0.to_string()}),
+        )
+        .unwrap();
+        assert_eq!(doc.component_bodies(outer), vec![a, b, c]);
+        call(
+            &mut doc,
+            "asm.component_set",
+            json!({"component": inner.0.to_string(), "parent": "top"}),
         )
         .unwrap();
         assert_eq!(doc.component_bodies(outer), vec![a]);

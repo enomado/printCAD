@@ -141,7 +141,8 @@ along it, and each can be driven or limited the same way (`turn_drive`,
 Motion over time (Shift+M) drives several hinges and sliders at once,
 each by a formula of the time `t` in seconds (`90 * t`, `30 * sin(t *
 180°)`): a hinge's angle in degrees, a slider's position in millimetres,
-from a start to an end in steps. Work out the motion solves every frame on
+from a start to an end in steps. A plain number takes the drive's unit; a
+length for a hinge or an angle for a slider is refused. Work out the motion solves every frame on
 a copy of the document and keeps the motion as a row of the tree; the
 scrubber shows any frame, Play plays them at their own pace, and Record
 saves them as an animation. The bodies go back when it closes. Follow a

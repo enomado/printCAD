@@ -1034,13 +1034,17 @@ impl AssemblyWorkbench {
         }
         // Each driven joint's value over time too, scaled to the plot.
         for drive in &draft.drives {
+            let Ok(want) = crate::motion::drive_dim(ctx.document, drive.joint) else {
+                continue;
+            };
             curves.push(
                 frames
                     .iter()
                     .filter_map(|(t, _)| {
                         Some((
                             *t,
-                            crate::motion::value_at(&drive.formula, f64::from(*t)).ok()? as f32,
+                            crate::motion::value_at(&drive.formula, f64::from(*t), want).ok()?
+                                as f32,
                         ))
                     })
                     .collect(),

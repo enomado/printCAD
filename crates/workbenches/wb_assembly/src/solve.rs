@@ -37,6 +37,17 @@ pub struct Joint {
     pub feature: JointFeature,
 }
 
+impl Joint {
+    /// The body across the joint from `body`.
+    fn other_end(&self, body: BodyId) -> BodyId {
+        if self.body == body {
+            self.feature.other_body
+        } else {
+            self.body
+        }
+    }
+}
+
 /// Every joint that is not suppressed, in history order.
 pub fn joints(document: &Document) -> Vec<Joint> {
     let mut found: Vec<(u64, Joint)> = document
@@ -100,7 +111,8 @@ fn usable(document: &Document) -> Vec<Joint> {
 }
 
 /// The bodies the solver moves: those that own a joint and are not
-/// grounded. Every other body stays where it is.
+/// grounded, and the body at the other end of a joint a grounded body
+/// owns, which moves for it. Every other body stays where it is.
 fn free_bodies(all: &[Joint]) -> BTreeSet<BodyId> {
     let grounded: BTreeSet<BodyId> = all
         .iter()
@@ -109,8 +121,14 @@ fn free_bodies(all: &[Joint]) -> BTreeSet<BodyId> {
         .collect();
     all.iter()
         .filter(|j| j.feature.kind != JointKind::Ground)
-        .map(|j| j.body)
-        .filter(|b| !grounded.contains(b))
+        .map(|j| {
+            if grounded.contains(&j.body) {
+                j.feature.other_body
+            } else {
+                j.body
+            }
+        })
+        .filter(|b| *b != WORLD && !grounded.contains(b))
         .collect()
 }
 
@@ -147,11 +165,16 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
         .collect();
     let mut pending: Vec<BodyId> = free.iter().copied().collect();
     while !pending.is_empty() {
+        // A body's joints: its own, and those a body the solver does not
+        // move holds it by.
+        let held_by = |j: &Joint, body: BodyId| {
+            j.body == body || (j.feature.other_body == body && !free.contains(&j.body))
+        };
         let holds_to = |body: BodyId| -> Vec<&Joint> {
             holding
                 .iter()
                 .copied()
-                .filter(|j| j.body == body && placed.contains(&j.feature.other_body))
+                .filter(|j| held_by(j, body) && placed.contains(&j.other_end(body)))
                 .collect()
         };
         // Ready: every joint holds to something placed. In a ring none is;
@@ -159,12 +182,12 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
         let next = pending
             .iter()
             .copied()
-            .find(|b| holding.iter().filter(|j| j.body == *b).count() == holds_to(*b).len())
+            .find(|b| holding.iter().filter(|j| held_by(j, *b)).count() == holds_to(*b).len())
             .or_else(|| pending.iter().copied().max_by_key(|b| holds_to(*b).len()))
             .expect("pending is not empty");
         let joints_now = holds_to(next);
         if !joints_now.is_empty() {
-            let at = place(placements[&next], &joints_now, &placements);
+            let at = place(next, placements[&next], &joints_now, &placements);
             placements.insert(next, at);
         }
         placed.insert(next);
@@ -206,6 +229,33 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
             if conflict.is_none() {
                 conflict = Some((*body, left_apart));
             }
+        }
+    }
+    // A joint between two bodies the solver moves neither of (both
+    // grounded, say) holds only if they already sit as it asks.
+    if conflict.is_none() {
+        let stuck: Vec<&Joint> = all
+            .iter()
+            .filter(|j| {
+                j.feature.kind != JointKind::Ground
+                    && !free.contains(&j.body)
+                    && !free.contains(&j.feature.other_body)
+                    && worst(
+                        &j.feature,
+                        &placements[&j.body],
+                        &placements[&j.feature.other_body],
+                    ) > HOLDS_MM
+            })
+            .collect();
+        if let Some(first) = stuck.first() {
+            conflict = Some((
+                first.body,
+                stuck
+                    .iter()
+                    .filter(|j| j.body == first.body)
+                    .map(|j| j.name.clone())
+                    .collect(),
+            ));
         }
     }
     // A body joined, however far round, to one whose joints are apart
@@ -586,14 +636,14 @@ fn solve_dense(mut m: Vec<f64>, mut b: Vec<f64>, n: usize) -> Option<Vec<f64>> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Motion {
     /// A turn about a line through `through`, along `axis`. `at_limit`: a
-    /// hinge's limit holds it at one end, so it turns one way only.
+    /// hinge's or an alignment's limit holds it at one end, so it turns one way only.
     Turn {
         axis: [f64; 3],
         through: [f64; 3],
         at_limit: bool,
     },
-    /// A slide along `direction`. `at_limit`: a slider's limit holds it at
-    /// one end, so it slides one way only.
+    /// A slide along `direction`. `at_limit`: a slider's or an alignment's limit,
+    /// or a path's end, holds it at one end, so it slides one way only.
     Slide { direction: [f64; 3], at_limit: bool },
 }
 
@@ -631,36 +681,104 @@ impl Motion {
     }
 }
 
-/// How near an end of its limits, in degrees or millimetres, a hinge or a
-/// slider rests on it.
+/// How near an end of its limits, in degrees or millimetres, a hinge, a
+/// slider or an alignment rests on it, or a point on a path's end.
 const AT_LIMIT: f64 = 1e-3;
 
 /// The lines along which a limit holds a motion at one end, for `body`:
-/// each a hinge's axis (`true`) or a slider's (`false`), in the world.
+/// each the line of a turn (`true`) or of a slide (`false`), in the world.
+/// A hinge's axis, a slider's, an alignment's for either of its motions,
+/// and a path's end, where the point runs back along the last segment
+/// only.
 fn limits_reached(
     joints: &[Joint],
     placements: &HashMap<BodyId, Rigid>,
     body: BodyId,
 ) -> Vec<(bool, DVec3)> {
-    joints
+    let mut found = Vec::new();
+    for j in joints
         .iter()
         .filter(|j| j.body == body || j.feature.other_body == body)
-        .filter_map(|j| {
-            let (hinge, drive) = match j.feature.kind {
-                JointKind::Hinge { drive, .. } => (true, drive),
-                JointKind::Slider { drive, .. } => (false, drive),
-                _ => return None,
-            };
-            let [low, high] = drive.limits.filter(|_| drive.to.is_none())?;
-            let (moving, fixed) = (
-                placements.get(&j.body)?,
-                placements.get(&j.feature.other_body)?,
-            );
-            let now = j.feature.travel(moving, fixed)?;
-            let near = |end: f32| (now - f64::from(end)).abs() <= AT_LIMIT;
-            (near(low) || near(high)).then(|| (hinge, j.feature.fixed.placed(fixed).1))
-        })
-        .collect()
+    {
+        let (Some(moving), Some(fixed)) = (
+            placements.get(&j.body),
+            placements.get(&j.feature.other_body),
+        ) else {
+            continue;
+        };
+        let axis = j.feature.fixed.placed(fixed).1;
+        // A drive held between limits, with where its motion is now.
+        let resting = |drive: crate::joint::Drive, now: f64| {
+            drive.to.is_none()
+                && drive.limits.is_some_and(|[low, high]| {
+                    let near = |end: f32| (now - f64::from(end)).abs() <= AT_LIMIT;
+                    near(low) || near(high)
+                })
+        };
+        match j.feature.kind {
+            JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } => {
+                let hinge = matches!(j.feature.kind, JointKind::Hinge { .. });
+                if let Some(now) = j.feature.travel(moving, fixed)
+                    && resting(drive, now)
+                {
+                    found.push((hinge, axis));
+                }
+            }
+            JointKind::Align { turn, slide, .. } => {
+                if let Some((turned, slid)) = j.feature.align_travel(moving, fixed) {
+                    if resting(turn, turned) {
+                        found.push((true, axis));
+                    }
+                    if resting(slide, slid) {
+                        found.push((false, axis));
+                    }
+                }
+            }
+            JointKind::Path => {
+                if let Some((_, tangent, end)) = path_tangent(&j.feature, moving, fixed)
+                    && end
+                {
+                    found.push((false, tangent));
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Where a path joint's point stands on its line, the other body at
+/// `fixed`: the nearest point, the line's direction there (at a corner,
+/// the segment after it), and whether that is an end of an open line.
+fn path_tangent(
+    feature: &JointFeature,
+    moving: &Rigid,
+    fixed: &Rigid,
+) -> Option<(DVec3, DVec3, bool)> {
+    let line: Vec<DVec3> = feature
+        .shape
+        .iter()
+        .map(|p| fixed.rotation * DVec3::from_array(p.map(f64::from)) + fixed.translation)
+        .collect();
+    let (pm, _) = feature.moving.placed(moving);
+    let (i, q) = line
+        .windows(2)
+        .enumerate()
+        .map(|(i, w)| (i, crate::shapes::nearest_on_segment(pm, w[0], w[1])))
+        .min_by(|a, b| a.1.distance(pm).total_cmp(&b.1.distance(pm)))?;
+    let closed = line.len() > 2 && line[0].distance(line[line.len() - 1]) < 1e-6;
+    let last = line.len() - 2;
+    // At the segment's far end, the one after it carries on.
+    let i = if q.distance(line[i + 1]) < 1e-6 && i < last {
+        i + 1
+    } else {
+        i
+    };
+    let tangent = (line[i + 1] - line[i]).try_normalize()?;
+    let end = !closed
+        && ((i == 0 && q.distance(line[0]) < 1e-6)
+            || (i == last && q.distance(line[i + 1]) < 1e-6));
+    Some((q, tangent, end))
 }
 
 /// What each jointed body may still do where it sits: the motions its
@@ -668,16 +786,37 @@ fn limits_reached(
 /// is fully placed.
 pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
     let limited = usable(document);
+    let placements: HashMap<BodyId, Rigid> = rigid_placements(document);
     // A limit stops a motion only at its ends: the motion is still there,
-    // marked one way where a limit holds it.
+    // marked one way where a limit holds it. A path's point runs along the
+    // line through where it stands, a corner or an end of the path too.
     let all: Vec<Joint> = limited
         .clone()
         .into_iter()
         .map(|mut j| {
-            if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } =
-                &mut j.feature.kind
-            {
-                drive.limits = None;
+            match &mut j.feature.kind {
+                JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } => {
+                    drive.limits = None;
+                }
+                JointKind::Align { turn, slide, .. } => {
+                    turn.limits = None;
+                    slide.limits = None;
+                }
+                JointKind::Path => {
+                    if let (Some(moving), Some(fixed)) = (
+                        placements.get(&j.body),
+                        placements.get(&j.feature.other_body),
+                    ) && let Some((q, tangent, _)) = path_tangent(&j.feature, moving, fixed)
+                    {
+                        let local = |p: DVec3| {
+                            let p = fixed.rotation.inverse() * (p - fixed.translation);
+                            p.as_vec3().to_array()
+                        };
+                        j.feature.shape =
+                            vec![local(q - tangent * 10.0), local(q + tangent * 10.0)];
+                    }
+                }
+                _ => {}
             }
             j
         })
@@ -687,7 +826,6 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
         .iter()
         .filter(|j| j.feature.kind != JointKind::Ground)
         .collect();
-    let placements: HashMap<BodyId, Rigid> = rigid_placements(document);
     let pivots = pivots(&placements, &free, &holding);
     // A coupling holds the body its driven joint moves: that body follows
     // the driver, which keeps its own motion.
@@ -915,16 +1053,30 @@ fn eigen6(mut a: [[f64; 6]; 6]) -> ([f64; 6], [[f64; 6]; 6]) {
     (values, vectors)
 }
 
-/// The placement nearest `start` at which `joints` hold, the bodies they
-/// hold against sitting at `others`.
-fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Rigid {
-    // Turns pivot about the moving anchors' middle, so a turn does not
+/// The placement of `body` nearest `start` at which `joints` hold, the
+/// bodies they hold against sitting at `others`. A joint may belong to
+/// `body` or hold it from the other end.
+fn place(body: BodyId, start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Rigid {
+    let owns = |joint: &Joint| joint.body == body;
+    // The anchor on `body` and the one across the joint.
+    let mine = |joint: &Joint| {
+        if owns(joint) {
+            joint.feature.moving
+        } else {
+            joint.feature.fixed
+        }
+    };
+    let theirs = |joint: &Joint| {
+        if owns(joint) {
+            (joint.feature.fixed, &others[&joint.feature.other_body])
+        } else {
+            (joint.feature.moving, &others[&joint.body])
+        }
+    };
+    // Turns pivot about the body's anchors' middle, so a turn does not
     // throw the body across the room.
     let pivot = {
-        let points: Vec<DVec3> = joints
-            .iter()
-            .map(|j| j.feature.moving.placed(&start).0)
-            .collect();
+        let points: Vec<DVec3> = joints.iter().map(|j| mine(j).placed(&start).0).collect();
         points.iter().copied().sum::<DVec3>() / points.len().max(1) as f64
     };
     let turned = |at: Rigid, turn: DQuat| Rigid {
@@ -938,11 +1090,9 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
     // An angle names no single direction, so the first joint that does
     // sets the turn.
     let first_turn = joints.iter().find_map(|joint| {
-        let (_, dm) = joint.feature.moving.placed(&current);
-        let (_, df) = joint
-            .feature
-            .fixed
-            .placed(&others[&joint.feature.other_body]);
+        let (_, dm) = mine(joint).placed(&current);
+        let (anchor, at) = theirs(joint);
+        let (_, df) = anchor.placed(at);
         let target = match joint.feature.kind {
             JointKind::Mate { flip: false, .. } => -df,
             JointKind::Mate { flip: true, .. } => df,
@@ -950,11 +1100,16 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
             JointKind::Align { .. } | JointKind::Hinge { .. } | JointKind::Parallel => {
                 if dm.dot(df) < 0.0 { -df } else { df }
             }
-            // A held turn is the whole rotation, not only a direction.
+            // A held turn is the whole rotation, not only a direction: the
+            // moving body's is the fixed one's turned by it.
             JointKind::Slider { turn, .. } | JointKind::Fixed { turn, .. } => {
-                let fixed = &others[&joint.feature.other_body];
-                let want = (fixed.rotation * crate::joint::quat(turn)).normalize();
-                return Some((want * current.rotation.inverse()).normalize());
+                let turn = crate::joint::quat(turn);
+                let want = if owns(joint) {
+                    at.rotation * turn
+                } else {
+                    at.rotation * turn.inverse()
+                };
+                return Some((want.normalize() * current.rotation.inverse()).normalize());
             }
             JointKind::Angle { .. }
             | JointKind::Ground
@@ -982,11 +1137,9 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
                 JointKind::Perpendicular => 90.0,
                 _ => return None,
             };
-            let (_, dm) = joint.feature.moving.placed(&current);
-            let (_, df) = joint
-                .feature
-                .fixed
-                .placed(&others[&joint.feature.other_body]);
+            let (_, dm) = mine(joint).placed(&current);
+            let (anchor, at) = theirs(joint);
+            let (_, df) = anchor.placed(at);
             let now = dm.cross(df).length().atan2(dm.dot(df));
             let axis = df
                 .cross(dm)
@@ -1011,9 +1164,13 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
     let residuals = |p: &Rigid| {
         let mut r = Vec::new();
         for joint in joints {
-            joint
-                .feature
-                .residuals(p, &others[&joint.feature.other_body], &mut r);
+            if owns(joint) {
+                joint
+                    .feature
+                    .residuals(p, &others[&joint.feature.other_body], &mut r);
+            } else {
+                joint.feature.residuals(&others[&joint.body], p, &mut r);
+            }
         }
         r
     };
@@ -1868,5 +2025,141 @@ mod tests {
         assert!(close(handle, [-10.0, 0.0, 0.0]), "{handle:?}");
         // The frame has no joints of its own: nothing drags it.
         assert!(drag(&doc, frame, [0.0; 3], [5.0, 5.0, 5.0]).is_empty());
+    }
+
+    fn ground(doc: &mut Document, body: BodyId) {
+        let anchor = plane([0.0; 3], [0.0, 0.0, 1.0]);
+        add_joint(
+            doc,
+            body,
+            JointFeature {
+                second: None,
+                shape: Vec::new(),
+                ends: [0.0; 2],
+                names: [0; 2],
+                kind: JointKind::Ground,
+                moving: anchor,
+                other_body: body,
+                fixed: anchor,
+            },
+        );
+    }
+
+    #[test]
+    fn a_grounded_body_s_joint_moves_the_body_at_its_other_end() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let lid = doc.create_body(None);
+        // The base starts turned and off to the side.
+        doc.set_body_placement(
+            base,
+            BodyPlacement::new(Quat::from_rotation_x(2.5), Vec3::new(30.0, 4.0, 9.0)),
+        );
+        ground(&mut doc, lid);
+        // The lid's underside (z = 0) on the base's top (z = 5).
+        add_joint(
+            &mut doc,
+            lid,
+            mate(
+                plane([0.0; 3], [0.0, 0.0, -1.0]),
+                base,
+                plane([0.0, 0.0, 5.0], [0.0, 0.0, 1.0]),
+                false,
+                0.0,
+            ),
+        );
+        apply(&mut doc);
+        assert!(holds(&doc), "the mate holds");
+        assert!(doc.body_placement(lid).is_identity(), "the lid stays put");
+        let placed = doc.body_placement(base);
+        assert!(
+            (placed.point([0.0, 0.0, 5.0])[2]).abs() < 1e-3,
+            "{placed:?}"
+        );
+        assert!(close(placed.direction([0.0, 0.0, 1.0]), [0.0, 0.0, 1.0]));
+
+        // Both grounded, nothing can move: the joint is named, not held.
+        ground(&mut doc, base);
+        doc.set_body_placement(
+            base,
+            BodyPlacement::new(Quat::IDENTITY, Vec3::new(0.0, 0.0, -9.0)),
+        );
+        match solve(&doc) {
+            Err(SolveError::Conflict { joints, .. }) => assert_eq!(joints, ["joint"]),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_limit_or_a_path_s_corner_leaves_the_motion_it_rests_on() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let pin = doc.create_body(None);
+        let rider = doc.create_body(None);
+        // A pin in a hole, resting on the near end of its slide's limits.
+        let mut kind = JointKind::align();
+        if let JointKind::Align { slide, .. } = &mut kind {
+            slide.limits = Some([0.0, 3.0]);
+        }
+        add_joint(
+            &mut doc,
+            pin,
+            JointFeature {
+                second: None,
+                shape: Vec::new(),
+                ends: [0.0; 2],
+                names: [0; 2],
+                kind,
+                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
+                other_body: base,
+                fixed: axis([5.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            },
+        );
+        let motions = free_after_solving(&mut doc, pin);
+        assert_eq!(motions.len(), 2, "{motions:?}");
+        assert!(
+            motions
+                .iter()
+                .any(|m| matches!(m, Motion::Slide { at_limit: true, .. })),
+            "{motions:?}"
+        );
+
+        // A point on a square's corner runs on along the next side, and
+        // turns every way.
+        add_joint(
+            &mut doc,
+            rider,
+            JointFeature {
+                second: None,
+                shape: vec![
+                    [0.0, 0.0, 10.0],
+                    [10.0, 0.0, 10.0],
+                    [10.0, 10.0, 10.0],
+                    [0.0, 10.0, 10.0],
+                    [0.0, 0.0, 10.0],
+                ],
+                ends: [0.0; 2],
+                names: [0; 2],
+                kind: JointKind::Path,
+                moving: Anchor::Point { point: [0.0; 3] },
+                other_body: base,
+                fixed: Anchor::Point {
+                    point: [10.0, 0.0, 10.0],
+                },
+            },
+        );
+        doc.set_body_placement(
+            rider,
+            BodyPlacement::new(Quat::IDENTITY, Vec3::new(10.0, 0.0, 10.0)),
+        );
+        let motions = free_after_solving(&mut doc, rider);
+        assert_eq!(motions.len(), 4, "{motions:?}");
+        assert!(
+            motions.iter().any(|m| matches!(
+                m,
+                Motion::Slide { direction, at_limit: false } if (direction[1].abs() - 1.0).abs() < 1e-3
+            )),
+            "{motions:?}"
+        );
     }
 }

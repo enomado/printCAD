@@ -2,6 +2,7 @@
 //! the time `t` in seconds, from a start to an end in steps. The frames
 //! are solved on a copy of the document; the document itself is not moved.
 
+use core_document::expr::Dim;
 use core_document::{
     Document, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
 };
@@ -81,16 +82,40 @@ fn with_time(formula: &str, t: f64) -> String {
     out
 }
 
-/// The value `formula` gives at `t` seconds: degrees for an angle,
-/// millimetres for a length, else the number.
-pub fn value_at(formula: &str, t: f64) -> Result<f64, String> {
+/// The value `formula` gives at `t` seconds for a drive that takes
+/// `want`: degrees for an angle, millimetres for a length. A plain number
+/// (`30 * sin(t * 90°)` too) takes the drive's unit; any other kind is
+/// refused.
+pub fn value_at(formula: &str, t: f64, want: Dim) -> Result<f64, String> {
     let ctx = core_document::expr::Context {
         length_unit: core_document::units::Unit::Mm,
         resolve: &core_document::expr::NoReferences,
     };
-    core_document::expr::evaluate(&with_time(formula, t), &ctx)
-        .map(|q| q.value)
-        .map_err(|e| format!("{formula}: {e}"))
+    let q = core_document::expr::evaluate(&with_time(formula, t), &ctx)
+        .map_err(|e| format!("{formula}: {e}"))?;
+    if q.dim != want && q.dim != Dim::NUMBER {
+        return Err(format!(
+            "{formula}: this gives {} where {} is needed",
+            q.dim.describe(),
+            want.describe()
+        ));
+    }
+    Ok(q.value)
+}
+
+/// What a drive of `joint` takes: an angle for a hinge, a length for a
+/// slider.
+pub fn drive_dim(document: &Document, joint: FeatureId) -> Result<Dim, String> {
+    let feature = document
+        .get_feature_meta(joint)
+        .filter(|n| n.workbench_id.as_str() == crate::JOINT_KIND)
+        .and_then(|n| JointFeature::from_json(&n.data).ok())
+        .ok_or("a driven joint is gone")?;
+    match feature.kind {
+        JointKind::Hinge { .. } => Ok(Dim::ANGLE),
+        JointKind::Slider { .. } => Ok(Dim::LENGTH),
+        _ => Err("only hinges and sliders are driven".into()),
+    }
 }
 
 impl MotionStudy {
@@ -108,7 +133,8 @@ impl MotionStudy {
         let mut frames = Vec::new();
         for t in self.times() {
             for drive in &self.drives {
-                let value = value_at(&drive.formula, f64::from(t))? as f32;
+                let want = drive_dim(&copy, drive.joint)?;
+                let value = value_at(&drive.formula, f64::from(t), want)? as f32;
                 let mut feature = copy
                     .get_feature_data(drive.joint)
                     .and_then(|d| JointFeature::from_json(d).ok())
@@ -169,8 +195,9 @@ mod tests {
 
     #[test]
     fn a_formula_reads_the_time() {
-        assert_eq!(value_at("90 * t", 0.5).unwrap(), 45.0);
-        assert!((value_at("30 * sin(t * 90°)", 1.0).unwrap() - 30.0).abs() < 1e-9);
+        assert_eq!(value_at("90 * t", 0.5, Dim::ANGLE).unwrap(), 45.0);
+        assert!((value_at("30 * sin(t * 90°)", 1.0, Dim::LENGTH).unwrap() - 30.0).abs() < 1e-9);
+        assert!((value_at("1 in * t", 2.0, Dim::LENGTH).unwrap() - 50.8).abs() < 1e-9);
         assert_eq!(with_time("tan(t) + t2 + a.t", 2.0), "tan((2)) + t2 + a.t");
         let study = MotionStudy {
             start: 0.0,
@@ -179,6 +206,17 @@ mod tests {
             drives: Vec::new(),
         };
         assert_eq!(study.times(), [0.0, 0.25, 0.5, 0.75, 1.0]);
+    }
+
+    #[test]
+    fn a_formula_of_the_wrong_kind_is_refused() {
+        // A hinge turns by angles, a slider moves by lengths.
+        assert!(value_at("1 in * t", 1.0, Dim::ANGLE).is_err());
+        assert!(value_at("90° * t", 1.0, Dim::LENGTH).is_err());
+        assert_eq!(
+            value_at("1 rad * t", 1.0, Dim::ANGLE).unwrap().round(),
+            57.0
+        );
     }
 
     #[test]
