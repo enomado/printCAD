@@ -352,7 +352,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   joints, which closes rings; joints still apart are reported by name;
   `freedom` reads each body's remaining motions off its joints' Jacobian,
   cached per edit for the status bar), and task panels for picking,
-  joint settings and moving a body by numbers. Solves run inside the
+  joint settings and moving a body by numbers (`panel.rs`: every panel is
+  declared widgets, `task_widgets`, drawn by `core_document::panel` as a
+  package's is, its events handled in `task_event`, which edits through
+  the bench's own commands, `asm.set`, `asm.place` and the rest, where
+  one makes the change; `panel_tests.rs` checks each against its
+  command). Solves run inside the
   gesture that made or edited a joint and record ordinary
   `SetBodyPlacement` ops. Components (`core_document/src/components.rs`: `Component`
   with a parent and `flexible`, `Body.component`, ops `SetComponent` and

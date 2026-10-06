@@ -1,7 +1,8 @@
 # RFC 0001: WebAssembly workbenches
 
 - Status: built (milestones 1 to 4, the CAM prototype included, the
-  contract still at 0.1); milestone 0 in part, see "As built"
+  contract still at 0.1); milestone 0 with the Assembly's panels
+  declared, its other edits and checks in part, see "As built"
 - Date: 2026-09-25
 - Scope: `core_document` (workbench seam), a new `wb_wasm` crate, `ui_kit`,
   the `workbenches` facade, the plugin SDK
@@ -106,8 +107,22 @@ it. `docs/PLUGINS.md` is the guide for package authors.
   `List`.
 - **Milestone 0.** The declared panels (`core_document::panel`), runtime
   icons (`ui_kit::icon::register`), world-space polylines and jobs exist
-  and are exercised by packages. The built-in benches keep their egui
-  panels; moving Assembly onto declared panels remains to do.
+  and are exercised by packages. Every Assembly task panel is declared
+  widgets drawn by that renderer (`wb_assembly/src/panel.rs`), the
+  motion's plot a diagram; the Assembly has no Preferences page to move.
+  Moving it added widgets packages have too: a header with an icon, a
+  read-only value, a row of widgets side by side, a hint on any widget,
+  a small button, a slider, and a sheet (a table whose cells may be
+  links, text fields or check boxes, told back as `cell_text` and
+  `cell_check`). Its panel edits go through its own commands (`asm.set`,
+  `asm.place`, `asm.copy`, `asm.mirror`, `asm.exploded_view`,
+  `asm.motion`, `asm.parts_table`), called in process rather than
+  through the WIT `call`, with the same arguments a package passes.
+  Left as they were: a fixed joint's shift (no command takes it), the
+  restore on Cancel, deletes (the host's `doc.delete`), replacing a body
+  and making a rigid group, and the bench's drags and picks; Design's
+  editors stay on egui, and the interference, mass and motion checks run
+  on the bench's own threads rather than as jobs.
 
 ## Motivation
 
