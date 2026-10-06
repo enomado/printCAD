@@ -450,21 +450,7 @@ impl Headless {
             }
         }
         self.mirror_copies();
-        let mut nodes: Vec<_> = self
-            .document
-            .feature_tree()
-            .all_nodes()
-            .map(|(_, n)| n)
-            .collect();
-        nodes.sort_by_key(|n| n.seq);
-        nodes
-            .into_iter()
-            .filter_map(|n| {
-                n.error
-                    .as_ref()
-                    .map(|e| json!({"feature": n.id.0.to_string(), "name": n.name, "error": e}))
-            })
-            .collect()
+        crate::app::scripts::rebuild_failures(&self.document)
     }
 
     /// Give every mirrored copy without one its snapshot: its source's,
@@ -743,6 +729,34 @@ mod tests {
             Some("Printer.wall * 10")
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A formula that fails is a failure of its feature: `doc.rebuild`
+    /// names it, and the feature does not build from the number it held.
+    #[test]
+    fn a_failing_formula_fails_its_feature_s_build() {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let script = r#"
+            pc.var.new{name = "Dims"}
+            pc.var.set{set = "Dims", name = "thickness", formula = "6"}
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0, "it builds")
+            pc.doc.set_formula{id = pad, parameter = "length", formula = "Dims.thickness"}
+            local failed = pc.doc.rebuild()
+            assert(#failed == 1, "one failure, not " .. #failed)
+            assert(failed[1].feature == pad, "the pad fails")
+            assert(failed[1].error:find("formula"), failed[1].error)
+            assert(not pcall(pc.doc.measure, {body = body}), "no solid from the old length")
+            pc.var.set{set = "Dims", name = "thickness", formula = "6 mm"}
+            assert(#pc.doc.rebuild() == 0, "it builds again")
+            local m = pc.doc.measure{body = body}
+            assert(math.abs(m.max[3] - m.min[3] - 6) < 1e-3, "6 mm")
+        "#;
+        crate::headless::run_in_empty_document(&mut registry, script, "formula").unwrap();
     }
 
     #[test]

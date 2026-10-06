@@ -2150,16 +2150,7 @@ impl PrintCadApp {
         };
         let answer = if self.kernel_worker.in_flight() == 0 {
             let errors = self
-                .in_script_tab(|app| {
-                    features_in_order(&app.session.document, None)
-                        .into_iter()
-                        .filter_map(|n| {
-                            n.error.as_ref().map(|e| {
-                                json!({"feature": n.id.0.to_string(), "name": n.name, "error": e})
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })
+                .in_script_tab(|app| rebuild_failures(&app.session.document))
                 .unwrap_or_default();
             Ok(Value::Array(errors))
         } else if std::time::Instant::now() > wait.deadline {
@@ -3481,6 +3472,19 @@ pub(crate) fn body_list(value: Option<&Value>) -> Result<Option<Vec<BodyId>>, Co
 }
 
 /// The features of `body` (or all of them) in build order.
+/// What `doc.rebuild` answers: every feature that failed, in history
+/// order, as `{feature, name, error}`: its build error, or the formula of
+/// its that fails.
+pub(crate) fn rebuild_failures(document: &core_document::Document) -> Vec<Value> {
+    features_in_order(document, None)
+        .into_iter()
+        .filter_map(|n| {
+            let error = n.error.clone().or_else(|| document.formula_error(n.id))?;
+            Some(json!({"feature": n.id.0.to_string(), "name": n.name, "error": error}))
+        })
+        .collect()
+}
+
 fn features_in_order(
     document: &core_document::Document,
     body: Option<BodyId>,

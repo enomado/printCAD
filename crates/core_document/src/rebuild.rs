@@ -57,6 +57,43 @@ pub fn sort_answers(
     sorted
 }
 
+impl BuildPlan {
+    /// Stop the plan at the first feature whose formula fails
+    /// (`Document::build_formula_error`): it fails with the formula's
+    /// error, as an unplannable feature does, rather than build from the
+    /// number its data held before, and what follows it is left unbuilt.
+    pub fn stop_at_failing_formulas(&mut self, document: &crate::Document) {
+        let Some((at, feature, why)) = self
+            .op_features
+            .iter()
+            .enumerate()
+            .find_map(|(i, f)| document.build_formula_error(*f).map(|why| (i, *f, why)))
+        else {
+            return;
+        };
+        let mut unbuilt: Vec<FeatureId> = Vec::new();
+        let earlier_failure = self.failed.take().and_then(|e| e.feature);
+        for f in self.op_features[at..]
+            .iter()
+            .copied()
+            .chain(earlier_failure)
+            .chain(std::mem::take(&mut self.unbuilt))
+        {
+            if f != feature && !unbuilt.contains(&f) {
+                unbuilt.push(f);
+            }
+        }
+        self.ops.truncate(at);
+        self.op_features.truncate(at);
+        self.probes.retain(|p| p.probe.after_op <= at);
+        self.failed = Some(BuildError {
+            feature: Some(feature),
+            message: why,
+        });
+        self.unbuilt = unbuilt;
+    }
+}
+
 /// A translation failure attributed to the feature that caused it.
 #[derive(Debug, Clone)]
 pub struct BuildError {

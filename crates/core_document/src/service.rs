@@ -439,6 +439,11 @@ impl DocumentService {
         }
         // A frozen body keeps what it has.
         jobs.retain(|job| !document.body_frozen(job.body));
+        for job in &mut jobs {
+            if let Ok(plan) = &mut job.plan {
+                plan.stop_at_failing_formulas(document);
+            }
+        }
         jobs
     }
 

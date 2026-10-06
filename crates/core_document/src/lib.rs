@@ -1600,6 +1600,45 @@ impl Document {
             .unwrap_or(&[])
     }
 
+    /// The first of the feature's own formulas that fails to work out, as
+    /// an error: what keeps it from building, since its data still holds
+    /// the number set before the formula.
+    pub fn formula_error(&self, id: FeatureId) -> Option<String> {
+        self.evaluated_slots(id)
+            .iter()
+            .find_map(|slot| match (&slot.formula, &slot.result) {
+                (Some(formula), Err(why)) => Some(format!(
+                    "the formula of {} (`{formula}`) fails: {why}",
+                    slot.label
+                )),
+                _ => None,
+            })
+    }
+
+    /// Why the feature cannot build for a formula: one of its own fails,
+    /// or one of a feature it reads, however far back.
+    pub fn build_formula_error(&self, id: FeatureId) -> Option<String> {
+        if let Some(why) = self.formula_error(id) {
+            return Some(why);
+        }
+        let mut seen = std::collections::HashSet::from([id]);
+        let mut next = self.feature_tree.dependencies(id);
+        while let Some(dep) = next.pop() {
+            if !seen.insert(dep) {
+                continue;
+            }
+            if let Some(why) = self.formula_error(dep) {
+                let name = self
+                    .feature_tree
+                    .get_node(dep)
+                    .map_or_else(String::new, |n| n.name.clone());
+                return Some(format!("{name}: {why}"));
+            }
+            next.extend(self.feature_tree.dependencies(dep));
+        }
+        None
+    }
+
     /// What the feature's data settled to last time its values were
     /// `unsettled`, if they were.
     pub fn settled_values(
@@ -1633,8 +1672,26 @@ impl Document {
                 changed.push(*id);
             }
         }
+        // A formula that starts or stops failing changes what the feature
+        // builds as much as a value does.
+        let failing = |slots: &HashMap<FeatureId, Vec<evaluate::SlotValue>>| {
+            slots
+                .iter()
+                .filter(|(_, s)| s.iter().any(|s| s.formula.is_some() && s.result.is_err()))
+                .map(|(id, _)| *id)
+                .collect::<std::collections::HashSet<_>>()
+        };
+        let (was, is) = (
+            failing(&self.evaluated.evaluation.slots),
+            failing(&evaluation.slots),
+        );
         for id in &changed {
             self.feature_tree.mark_dirty(*id);
+        }
+        for id in was.symmetric_difference(&is) {
+            if self.feature_tree.get_node(*id).is_some() {
+                self.feature_tree.mark_dirty(*id);
+            }
         }
         let mut moved = std::mem::take(&mut self.evaluated.moved);
         for id in &changed {
