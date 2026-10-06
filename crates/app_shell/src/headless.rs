@@ -441,6 +441,7 @@ impl Headless {
                 }
             }
         }
+        self.mirror_copies();
         let mut nodes: Vec<_> = self
             .document
             .feature_tree()
@@ -456,6 +457,32 @@ impl Headless {
                     .map(|e| json!({"feature": n.id.0.to_string(), "name": n.name, "error": e}))
             })
             .collect()
+    }
+
+    /// Give every mirrored copy without one its snapshot: its source's,
+    /// mirrored by the kernel.
+    fn mirror_copies(&mut self) {
+        use kernel_api::KernelQueries;
+        for (body, from, plane) in self.document.copies_awaiting_shape() {
+            match kernel_ogeom::QUERIES.mirror(
+                &from,
+                plane.point.map(f64::from),
+                plane.normal.map(f64::from),
+            ) {
+                Ok(blob) => {
+                    self.document.set_mirrored_shape(body, &from, blob);
+                }
+                Err(error) => {
+                    let name = self
+                        .document
+                        .bodies()
+                        .iter()
+                        .find(|b| b.id == body)
+                        .map_or("a mirrored copy", |b| b.name.as_str());
+                    eprintln!("`{name}` could not be mirrored: {error}");
+                }
+            }
+        }
     }
 
     /// Delete a feature the way its workbench deletes it.
