@@ -138,8 +138,31 @@ While the application runs it listens on a local socket,
 | `describe` | A command's or guide section's whole entry, by id, bare name or a near spelling |
 | `call` | Runs one command with named arguments and answers its result |
 | `lua` | Runs a Lua script and answers `{returned, printed}` as JSON: what the script returns and what it printed |
-| `view` | A picture of the scene from the current view |
+| `view` | A picture of the bodies, from the current view or a fixed one |
 | `log` | The application's recent messages |
+
+### Pictures for proof
+
+`view` draws on the CPU, so the same arguments give the same picture
+whatever the user's camera is doing. With no arguments it looks the way
+the view looks. Its arguments, all optional:
+
+| Argument | What it does |
+| --- | --- |
+| `view` | `"current"` (the default), `"iso"`, `"front"`, `"back"`, `"left"`, `"right"`, `"top"`, `"bottom"`, `{azimuth, elevation}` in degrees (azimuth 0 is the front, 90 the right side; elevation 90 looks straight down), or `{direction, up?}`, the way the view looks. Directions follow the axis preset in Preferences (Z up by default). |
+| `bodies` | Only these bodies (ids or names), framed to them. Every visible body otherwise. |
+| `highlight` | A list of `{body, faces?, edges?, color?}`: faces by their `doc.faces` index or name, edges by the kernel's edge index, the whole body when neither is given. The colour is `[r, g, b]` from 0 to 1 or `"#rrggbb"`; amber when left out. |
+| `markers` | A list of `{point, label?, color?}`: a dot and a label at a world point. |
+| `section` | `{origin, normal}`: what lies on the side the normal points to is cut away, and the cut shows flat and darker. |
+| `edges` | The faces' outlines (on by default). |
+| `xray` | Bodies see-through, highlighted faces solid. |
+| `size` | `[width, height]`, 800 × 600 by default, at most 2048 a side. |
+| `annotate` | An axis triad and the drawn bodies' box with its sizes in mm. |
+
+Every picture is orthographic and framed to what it draws, markers
+included. The command `doc.picture{path, …}` takes the same arguments
+and writes the PNG instead, in the app or in `printcad --script`, where
+`"current"` draws the isometric view.
 
 Every tool is marked to load from the start, so an agent that defers
 tools until it searches for them (Claude Code does, once many are

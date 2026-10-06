@@ -735,7 +735,13 @@ overtaken is dropped, and the choice is kept per agent in
 images, small UTF-8 files embedded, the rest as `resource_link`s. They
 come from the "+" menu (`FileDialogKind::Attach`, `attach_view` over
 `view_png`), a paste of file paths, or a drop on the panel (winit delivers
-drops on X11 only). Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide. `docs/ASSEMBLY.md` is the Assembly user guide.
+drops on X11 only). The `view` tool and `doc.picture` (headless too)
+draw through `proof.rs`: a `Request` (view by name, angles or direction
+in the axis preset's frame, bodies, highlight, markers, section, edges,
+xray, size, annotate) over `thumbnail::draw` and its `Look`, framed to
+what is drawn, labels as SVG through usvg with only the bundled Plex
+face (`ui_kit::theme::SANS_REGULAR_TTF`); every view but `current`
+draws the same bytes whatever the camera. Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide. `docs/ASSEMBLY.md` is the Assembly user guide.
 
 **Variables and formulas.** Any number a bench lists
 (`Workbench::parameters`: a `Parameter` with a stable key, a JSON pointer
