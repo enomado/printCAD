@@ -250,6 +250,12 @@ const SYNONYM_WEIGHT: f32 = 0.6;
 /// before it: the first is what the user most likely means.
 const LATER_SYNONYM: f32 = 0.85;
 
+/// Verbs a task opens with that say only that something is to be done:
+/// they count for less than the thing named, so "draw a circle" finds
+/// the circle rather than the drawing tool.
+const GENERIC_VERBS: &[&str] = &["add", "create", "draw", "make", "put"];
+const GENERIC_WEIGHT: f32 = 0.3;
+
 /// A query's words with their synonyms, each once, at its best weight.
 fn query_terms(query: &str) -> Vec<Term> {
     let mut terms: Vec<Term> = Vec::new();
@@ -261,7 +267,12 @@ fn query_terms(query: &str) -> Vec<Term> {
         }),
     };
     for word in words(query) {
-        add(&word, 1.0);
+        let own = if GENERIC_VERBS.contains(&word.as_str()) {
+            GENERIC_WEIGHT
+        } else {
+            1.0
+        };
+        add(&word, own);
         for (said, meant) in SYNONYMS {
             if said.contains(&word.as_str()) {
                 let mut weight = SYNONYM_WEIGHT;
@@ -280,6 +291,13 @@ fn query_terms(query: &str) -> Vec<Term> {
 const ID_WEIGHT: f32 = 3.0;
 const SUMMARY_WEIGHT: f32 = 2.0;
 const OTHER_WEIGHT: f32 = 1.0;
+/// What a note's words weigh: a match in one counts less than in the
+/// summary, and the note does not make its entry longer, so a well-noted
+/// command ranks by what it is, not by how much is said of it.
+const NOTE_WEIGHT: f32 = 1.0;
+/// A guide or recipe ranks below a command that matches as well: the
+/// command is what a task runs, the guide what it reads after.
+const DOCUMENT_FACTOR: f32 = 0.75;
 /// What a query word naming an entry outright (`fillet` for
 /// `design.fillet`) adds, in that word's weight.
 const NAME_BONUS: f32 = 1.5;
@@ -307,7 +325,7 @@ impl Bag {
         bag.add(&entry.other_args, OTHER_WEIGHT);
         bag.add(&entry.returns, OTHER_WEIGHT);
         for note in &entry.notes {
-            bag.add(note, OTHER_WEIGHT);
+            bag.add_unmeasured(note, NOTE_WEIGHT);
         }
         bag.add(&entry.text, OTHER_WEIGHT);
         bag
@@ -317,6 +335,14 @@ impl Bag {
         for w in words(text) {
             *self.counts.entry(w).or_default() += weight;
             self.length += weight;
+        }
+    }
+
+    /// Words that match without making the entry longer: a command's
+    /// notes, which would otherwise lower its rank by being written.
+    fn add_unmeasured(&mut self, text: &str, weight: f32) {
+        for w in words(text) {
+            *self.counts.entry(w).or_default() += weight;
         }
     }
 }
@@ -420,6 +446,9 @@ impl Catalog {
             } else if name_words.len() > 1 && name_words.contains(word) {
                 score += rarity * NAME_BONUS / 2.0;
             }
+        }
+        if self.entries[at].kind == Kind::Document {
+            score *= DOCUMENT_FACTOR;
         }
         score
     }

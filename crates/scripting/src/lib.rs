@@ -454,9 +454,16 @@ pub fn command_entry(spec: &CommandSpec) -> agents::discovery::Entry {
             .details
             .push(format!("An agent never runs it: {why}.")),
     }
-    // RFC 0002 milestone 1 fills `entry.notes`, `entry.examples` and
-    // `entry.see_also` here from `CommandSpec`'s notes, examples and
-    // see-also, which `search` ranks and `describe` shows.
+    entry.notes = spec.notes.clone();
+    entry.examples = spec
+        .examples
+        .iter()
+        .map(|e| agents::discovery::Example {
+            title: e.title.clone(),
+            script: e.script.clone(),
+        })
+        .collect();
+    entry.see_also = spec.see_also.clone();
     entry
 }
 

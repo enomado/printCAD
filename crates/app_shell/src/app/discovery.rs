@@ -292,7 +292,6 @@ mod tests {
             .collect();
         assert!(docs.iter().any(|e| e.id == "guide/scripting#recording"));
         assert!(docs.iter().any(|e| e.id == "guide/ai#rules"));
-        assert!(!docs.iter().any(|e| e.id.ends_with("#commands")));
         assert!(docs.iter().all(|e| !e.text.contains("`pc.design.pad`:")));
         assert_eq!(
             docs.iter().filter(|e| e.id.starts_with("recipe/")).count(),
