@@ -7,6 +7,7 @@ pub(crate) mod annotations;
 pub(crate) mod chat_store;
 pub(crate) mod chats;
 pub(crate) mod commands;
+pub(crate) mod discovery;
 pub(crate) mod doc_io;
 pub(crate) mod edges;
 pub(crate) mod export;

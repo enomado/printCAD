@@ -8,6 +8,8 @@
 //! there. The tools sit on the command API:
 //!
 //! - `commands` lists the commands with their arguments;
+//! - `search` and `describe` find commands and guides by the words of a
+//!   task, and give their whole entries (`app/discovery.rs`);
 //! - `call` runs one, `lua` runs a script: both on the script thread, as
 //!   the console's lines do, each one undo step;
 //! - `log` gives the application's recent messages, `view` a picture of
@@ -266,6 +268,50 @@ pub(crate) fn tools() -> Vec<Tool> {
             always_load: true,
         },
         Tool {
+            name: "search".into(),
+            title: "Search commands and guides".into(),
+            description: "Find the commands and guides for a task by its words (\"round the \
+                          edges\", \"shell a box\"), CAD synonyms included: for each query, \
+                          the best matches, one line each."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "queries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "What to look for; each query answers a ranked group of its own"
+                    },
+                    "limit": {"type": "integer", "description": "How many matches a query (8)"}
+                },
+                "required": ["queries"]
+            }),
+            read_only: true,
+            always_load: true,
+        },
+        Tool {
+            name: "describe".into(),
+            title: "Describe commands".into(),
+            description: "The whole entry of each command or guide named: arguments, what it \
+                          answers, notes, examples, related commands. A key is an id \
+                          (\"design.fillet\"), a bare name (\"fillet\" lists what it could \
+                          mean), a prefix (\"surface\") or a near spelling."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Command ids, names or guide ids"
+                    }
+                },
+                "required": ["keys"]
+            }),
+            read_only: true,
+            always_load: true,
+        },
+        Tool {
             name: "call".into(),
             title: "Run a command".into(),
             description: "Run one command with named arguments, as `commands` lists them, \
@@ -382,6 +428,10 @@ impl PrintCadApp {
                     .collect();
                 ToolAnswer::text(serde_json::to_string_pretty(&listed).unwrap_or_default())
             }
+            "search" => crate::app::discovery::search(&self.registry, args)
+                .map_or_else(ToolAnswer::error, ToolAnswer::text),
+            "describe" => crate::app::discovery::describe(&self.registry, args)
+                .map_or_else(ToolAnswer::error, ToolAnswer::text),
             "log" => {
                 let lines = args.get("lines").and_then(Value::as_u64).unwrap_or(50) as usize;
                 let entries = crate::log_panel::entries();

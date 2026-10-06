@@ -199,7 +199,9 @@ pub(crate) fn prompt_text(name: &str, args: &Value) -> Option<String> {
 /// agents name a server's tool `mcp__printcad__lua`, `lua (printcad MCP
 /// Server)` or plain `lua`.
 fn own_tool(title: &str) -> Option<&'static str> {
-    const TOOLS: [&str; 6] = ["context", "commands", "call", "lua", "log", "view"];
+    const TOOLS: [&str; 8] = [
+        "context", "commands", "search", "describe", "call", "lua", "log", "view",
+    ];
     let lower = title.to_ascii_lowercase();
     let name = if let Some(rest) = lower.strip_prefix("mcp__") {
         let (server, tool) = rest.rsplit_once("__")?;
@@ -258,6 +260,24 @@ pub(crate) fn tool_label(
             Some(prefix) => format!("List the {prefix} commands"),
             None => "List the commands".to_string(),
         },
+        "search" | "describe" => {
+            let key = if tool == "search" { "queries" } else { "keys" };
+            let named: Vec<&str> = input
+                .and_then(|i| i.get(key))
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let verb = if tool == "search" {
+                "Search for"
+            } else {
+                "Read about"
+            };
+            if named.is_empty() {
+                format!("{verb} commands")
+            } else {
+                format!("{verb} {}", named.join(", "))
+            }
+        }
         "context" => "Look at what is open".to_string(),
         "log" => "Read the log".to_string(),
         _ => "Look at the view".to_string(),
@@ -360,6 +380,13 @@ impl PrintCadApp {
             "{ABOUT}\n\nYour chat works on the document {}, whichever tab is on screen.\n\n{TOOLS}",
             self.document_words(chat)
         );
+        out.push_str(&format!(
+            "\n\n{}\n\n{}",
+            crate::app::discovery::ABOUT_INDEX,
+            crate::app::discovery::catalog(&self.registry)
+                .index()
+                .trim_end()
+        ));
         let rules = self.agent_rules(chat);
         if !rules.is_empty() {
             out.push_str(
