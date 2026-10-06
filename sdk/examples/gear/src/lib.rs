@@ -198,8 +198,7 @@ impl Bench for Gears {
                 returns: "{body, feature}".into(),
                 read_only: false,
                 notes: vec![
-                    "It always makes a new body; it does not add a gear to an existing one."
-                        .into(),
+                    "It always makes a new body; it does not add a gear to an existing one.".into(),
                     "It refuses fewer than 6 teeth, and a bore that reaches the teeth's roots."
                         .into(),
                 ],
@@ -291,9 +290,9 @@ impl Bench for Gears {
                     let mut wires = vec![ProfileWire::new(segments)];
                     if gear.bore > 0.0 {
                         wires.push(ProfileWire::new(vec![ProfileSegment::Circle {
-                                center: [0.0, 0.0],
-                                radius: gear.bore / 2.0,
-                            }]));
+                            center: [0.0, 0.0],
+                            radius: gear.bore / 2.0,
+                        }]));
                     }
                     ops.push(SolidOp::Sweep {
                         profile: Profile {
@@ -523,6 +522,7 @@ impl Bench for Gears {
                 columns: vec!["Radius".into(), "Tooth width".into()],
                 rows: self.table.clone(),
                 selected: None,
+                editable: Vec::new(),
             });
             frame.panel.push(Widget::Button {
                 id: "save".into(),

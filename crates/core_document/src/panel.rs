@@ -289,6 +289,7 @@ fn show_one(
             columns,
             rows,
             selected,
+            editable,
         } => {
             egui::Grid::new(id.with(("table", wid)))
                 .striped(true)
@@ -305,6 +306,19 @@ fn show_one(
                     for (i, cells) in rows.iter().enumerate() {
                         let on = *selected == Some(i);
                         for (c, cell) in cells.iter().enumerate() {
+                            if editable.get(c).copied().unwrap_or(false) {
+                                if let Some(value) =
+                                    cell_edit(ui, id.with(("cell", wid, i, c)), cell)
+                                {
+                                    out.events.push(PanelEvent::Cell {
+                                        id: wid.clone(),
+                                        row: i,
+                                        column: c,
+                                        value,
+                                    });
+                                }
+                                continue;
+                            }
                             let text = RichText::new(cell)
                                 .font(ui_kit::theme::mono(FONT_SM))
                                 .color(if on { ACCENT } else { TEXT1 });
@@ -526,6 +540,33 @@ fn pill(painter: &egui::Painter, center: egui::Pos2, text: &str, emphasis: bool)
     painter.galley(rect.min + pad, galley, color);
 }
 
+/// An editable table cell: a text edit holding its draft while focused,
+/// the text as left when focus goes and it changed.
+fn cell_edit(ui: &mut Ui, key: egui::Id, value: &str) -> Option<String> {
+    let mut draft: String = ui
+        .data(|d| d.get_temp(key))
+        .unwrap_or_else(|| value.to_string());
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut draft)
+            .id(key)
+            .font(ui_kit::theme::mono(FONT_SM))
+            .desired_width(CELL_WIDTH),
+    );
+    if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(key, draft.clone()));
+    }
+    if response.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(key));
+        if draft != value {
+            return Some(draft);
+        }
+    }
+    None
+}
+
+/// The width of an editable table cell.
+const CELL_WIDTH: f32 = 64.0;
+
 /// A labelled row: the label column, then the control.
 fn row(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
@@ -654,6 +695,7 @@ mod tests {
                 columns: vec!["A".into(), "B".into()],
                 rows: vec![vec!["1".into(), "2".into()]],
                 selected: None,
+                editable: vec![false, true],
             },
             Widget::Group {
                 title: "G".into(),
@@ -709,6 +751,61 @@ mod tests {
                 }],
             },
         ]
+    }
+
+    #[test]
+    fn typing_in_an_editable_cell_reports_the_cell_once_it_is_left() {
+        let table = vec![Widget::Table {
+            id: "tools".into(),
+            columns: vec!["Name".into(), "Diameter".into()],
+            rows: vec![vec!["Flat".into(), "6".into()]],
+            selected: None,
+            editable: vec![false, true],
+        }];
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let panel = egui::Id::new("cells");
+        let cell = panel.with(("cell", "tools", 0usize, 1usize));
+        let frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut out = None;
+            let mut output = ctx.run_ui(input, |ui| out = Some(show(ui, panel, &table, None)));
+            output.textures_delta.clear();
+            out.unwrap_or_default()
+        };
+        frame(Vec::new());
+        ctx.memory_mut(|m| m.request_focus(cell));
+        assert!(
+            frame(Vec::new()).events.is_empty(),
+            "focus alone says nothing"
+        );
+        let typed = frame(vec![egui::Event::Text("5".into())]);
+        assert!(typed.events.is_empty(), "nothing while the cell is edited");
+        let key = |pressed| egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        let left = frame(vec![key(true), key(false)]);
+        match left.events.as_slice() {
+            [
+                PanelEvent::Cell {
+                    id,
+                    row: 0,
+                    column: 1,
+                    value,
+                },
+            ] => {
+                assert_eq!(id, "tools");
+                assert!(value.contains('5') && value.contains('6'), "{value}");
+            }
+            other => panic!("one cell event: {other:?}"),
+        }
     }
 
     #[test]

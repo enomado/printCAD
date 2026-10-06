@@ -706,13 +706,18 @@ pub enum Widget {
         #[serde(default)]
         selected: Option<usize>,
     },
-    /// Columns of text, one row selectable.
+    /// Columns of text, one row selectable. A column marked in
+    /// `editable` takes typing in its cells (`PanelEvent::Cell`): a tool
+    /// table, a list of settings by row.
     Table {
         id: String,
         columns: Vec<String>,
         rows: Vec<Vec<String>>,
         #[serde(default)]
         selected: Option<usize>,
+        /// One per column; a column left out is read-only.
+        #[serde(default)]
+        editable: Vec<bool>,
     },
     Group {
         title: String,
@@ -879,13 +884,39 @@ pub enum PanelSlot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PanelEvent {
-    Number { id: String, value: f64 },
-    Choice { id: String, index: usize },
-    Toggle { id: String, on: bool },
-    Text { id: String, value: String },
-    Button { id: String },
-    Pick { id: String },
-    Select { id: String, index: usize },
+    Number {
+        id: String,
+        value: f64,
+    },
+    Choice {
+        id: String,
+        index: usize,
+    },
+    Toggle {
+        id: String,
+        on: bool,
+    },
+    Text {
+        id: String,
+        value: String,
+    },
+    Button {
+        id: String,
+    },
+    Pick {
+        id: String,
+    },
+    Select {
+        id: String,
+        index: usize,
+    },
+    /// A cell of a table's editable column, typed in: its text as left.
+    Cell {
+        id: String,
+        row: usize,
+        column: usize,
+        value: String,
+    },
 }
 
 impl PanelEvent {
@@ -897,7 +928,8 @@ impl PanelEvent {
             | PanelEvent::Text { id, .. }
             | PanelEvent::Button { id }
             | PanelEvent::Pick { id }
-            | PanelEvent::Select { id, .. } => id,
+            | PanelEvent::Select { id, .. }
+            | PanelEvent::Cell { id, .. } => id,
         }
     }
 }
