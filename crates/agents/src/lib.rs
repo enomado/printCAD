@@ -8,10 +8,13 @@
 //!   an agent (or any MCP client) calls to read and change the document.
 //! - [`bridge`]: `printcad --mcp`, which an agent starts as an MCP server
 //!   over stdio and which relays to the running application's socket.
+//! - [`discovery`]: finding a command or a guide by the words of a task,
+//!   over the entries the application hands it.
 //!
 //! Both protocols are JSON-RPC 2.0, one message a line ([`rpc`]).
 
 pub mod acp;
 pub mod bridge;
+pub mod discovery;
 pub mod mcp;
 pub mod rpc;
