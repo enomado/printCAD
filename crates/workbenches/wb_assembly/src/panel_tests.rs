@@ -598,7 +598,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         ..AssemblyWorkbench::default()
     };
     draws(&mut wb, &mut doc);
-    let parts = crate::parts_list(&doc);
+    let parts = crate::parts_list(&doc, &[]);
     let Some(Widget::Sheet { rows, columns, .. }) =
         field(&widgets(&wb, &mut doc), "parts").cloned()
     else {
@@ -646,7 +646,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         },
     );
     send(&mut wb, &mut doc, button("number"));
-    let first = &crate::parts_list(&doc)[0];
+    let first = &crate::parts_list(&doc, &[])[0];
     assert_eq!(first.values.get("Maker").map(String::as_str), Some("ACME"));
     assert!(first.bought);
     assert_eq!(first.number, Some(1));
@@ -664,7 +664,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
     assert!(wb.copied.is_none(), "drawn onto the clipboard");
 
     send(&mut wb, &mut doc, button("remove_column:0"));
-    assert!(crate::parts_list(&doc)[0].values.is_empty());
+    assert!(crate::parts_list(&doc, &[])[0].values.is_empty());
 }
 
 /// Two hinges on a base, the second geared to the first.

@@ -174,6 +174,11 @@ hiding it, placing a body). Calls are allowed while the bench handles an
 event, a panel change, a menu entry or a command, and refused while it
 draws or plans. A feature's data is any JSON the bench likes.
 
+**Bought parts.** `Registration::bought_kinds` names those of its kinds
+whose bodies are bought rather than made, such as catalog screws and
+bearings. The parts list marks such a body bought until the user clears
+the mark, and an export of everything and the slicer leave it out.
+
 **Parameters and formulas.** `parameters` lists a feature's numbers: a key,
 a JSON pointer into its data, a dimension. Those numbers take formulas
 anywhere the app shows them, and the data a bench reads (`host::feature`,

@@ -336,6 +336,11 @@ pub struct WorkbenchDescriptor {
     /// that bench as the one to return to when the session ends. Never
     /// the bench a new document lands in.
     pub modal: bool,
+    /// Feature kinds, among `feature_kinds`, whose bodies are bought
+    /// rather than made (catalog hardware): the parts list counts such a
+    /// body bought unless the user says it is made, and exports and the
+    /// slicer leave it out as they do any bought part.
+    pub bought_kinds: Vec<WorkbenchId>,
 }
 
 impl WorkbenchDescriptor {
@@ -351,6 +356,7 @@ impl WorkbenchDescriptor {
             icon: "workbench-print",
             feature_kinds: Vec::new(),
             modal: false,
+            bought_kinds: Vec::new(),
         }
     }
 
@@ -370,6 +376,15 @@ impl WorkbenchDescriptor {
 
     pub fn modal(mut self) -> Self {
         self.modal = true;
+        self
+    }
+
+    pub fn bought_kinds<I, S>(mut self, kinds: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.bought_kinds = kinds.into_iter().map(WorkbenchId::new).collect();
         self
     }
 }
@@ -925,7 +940,9 @@ pub trait Workbench: Send {
 
     /// Bodies that are not made (bought parts): an export of every
     /// visible body and what goes to the slicer leave them out.
-    fn not_printed(&self, _document: &Document) -> Vec<BodyId> {
+    /// `bought_kinds` are the feature kinds every bench declares bought
+    /// (`WorkbenchDescriptor::bought_kinds`).
+    fn not_printed(&self, _document: &Document, _bought_kinds: &[WorkbenchId]) -> Vec<BodyId> {
         Vec::new()
     }
 

@@ -565,10 +565,27 @@ impl DocumentService {
             .collect()
     }
 
+    /// The feature kinds benches declare bought
+    /// (`WorkbenchDescriptor::bought_kinds`), each only where the bench
+    /// claims it.
+    pub fn bought_kinds(&self) -> Vec<WorkbenchId> {
+        self.order
+            .iter()
+            .filter_map(|id| self.descriptor(id))
+            .flat_map(|d| {
+                d.bought_kinds
+                    .iter()
+                    .filter(|kind| d.feature_kinds.contains(kind))
+                    .cloned()
+            })
+            .collect()
+    }
+
     /// The bodies any bench says are not made.
     pub fn not_printed(&self, document: &Document) -> Vec<BodyId> {
+        let bought = self.bought_kinds();
         self.benches()
-            .flat_map(|wb| wb.not_printed(document))
+            .flat_map(|wb| wb.not_printed(document, &bought))
             .collect()
     }
 

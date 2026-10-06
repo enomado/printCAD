@@ -2120,8 +2120,12 @@ impl Workbench for AssemblyWorkbench {
 
     /// Bought parts are not made: exports of the model and the slicer
     /// leave them out.
-    fn not_printed(&self, document: &core_document::Document) -> Vec<BodyId> {
-        parts::bought_bodies(document)
+    fn not_printed(
+        &self,
+        document: &core_document::Document,
+        bought_kinds: &[core_document::WorkbenchId],
+    ) -> Vec<BodyId> {
+        parts::bought_bodies(document, bought_kinds)
     }
 
     fn menu_items(
@@ -3798,7 +3802,7 @@ mod tests {
             "a width and a tenth on"
         );
         assert!((x(made[1], &doc) - 22.0).abs() < 1e-3);
-        let parts = parts_list(&doc);
+        let parts = parts_list(&doc, &[]);
         assert!(
             parts.iter().any(|p| p.bodies.len() == 3),
             "one part, three of it"

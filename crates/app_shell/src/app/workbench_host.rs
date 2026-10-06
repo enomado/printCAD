@@ -142,6 +142,7 @@ impl PrintCadApp {
         params: WbCtxParams,
         f: impl FnOnce(&mut dyn Workbench, &mut WorkbenchRuntimeContext<'_>) -> R,
     ) -> Option<(R, HookOutcome)> {
+        let bought_kinds = self.registry.bought_kinds();
         let Ok(wb) = self.registry.workbench_mut(wb_id) else {
             return None;
         };
@@ -164,6 +165,7 @@ impl PrintCadApp {
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         ctx.ctrl_down = params.ctrl_down;
         ctx.shift_down = params.shift_down;
+        ctx.bought_kinds = bought_kinds;
 
         let result = f(wb.as_mut(), &mut ctx);
 

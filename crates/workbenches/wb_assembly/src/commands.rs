@@ -2684,7 +2684,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             }))
         }
         "asm.parts" => {
-            let parts = crate::parts_list(ctx.document);
+            let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
             let entry = |part: &crate::Part, bodies: &[BodyId]| {
                 json!({
                     "name": part.name,
@@ -2732,20 +2732,24 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "asm.part" => {
             let body = body(&a, ctx)?;
-            let bodies = crate::parts_list(ctx.document)
+            let part = crate::parts_list(ctx.document, &ctx.bought_kinds)
                 .into_iter()
-                .find(|p| p.bodies.contains(&body))
-                .map(|p| p.bodies)
-                .unwrap_or_else(|| vec![body]);
+                .find(|p| p.bodies.contains(&body));
+            let bodies = part
+                .as_ref()
+                .map_or_else(|| vec![body], |p| p.bodies.clone());
             let mut table = crate::parts::table_of(ctx.document)
                 .map(|(_, t)| t)
                 .unwrap_or_default();
+            if let Some(bought) = a.opt_bool("bought")? {
+                match &part {
+                    Some(part) => table.set_bought(part, bought),
+                    None => table.entry_mut(&bodies).bought = bought,
+                }
+            }
             let entry = table.entry_mut(&bodies);
             if let Some(n) = a.opt_number("number")? {
                 entry.number = n.max(0.0) as u32;
-            }
-            if let Some(bought) = a.opt_bool("bought")? {
-                entry.bought = bought;
             }
             if let Some(values) = a.0.get("values").and_then(Value::as_object) {
                 for (column, value) in values {
@@ -4198,7 +4202,7 @@ mod tests {
         assert_eq!(listed[0]["bought"], json!(true));
         assert_eq!(listed[0]["number"], json!(4));
         assert_eq!(listed[0]["values"]["Supplier"], json!("Fasteners Ltd"));
-        let mut not_made = crate::AssemblyWorkbench::default().not_printed(&doc);
+        let mut not_made = crate::AssemblyWorkbench::default().not_printed(&doc, &[]);
         not_made.sort();
         let mut both = vec![a, b];
         both.sort();

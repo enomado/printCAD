@@ -41,6 +41,10 @@ pub struct PartEntry {
     pub number: u32,
     /// Bought rather than made: left out of exports and the slicer.
     pub bought: bool,
+    /// Made, though a bench declares its kind bought
+    /// (`WorkbenchDescriptor::bought_kinds`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub made: bool,
     /// Its value in each added column, by column.
     pub values: BTreeMap<String, String>,
 }
@@ -115,6 +119,13 @@ impl PartsTable {
         self.entries.entry(key).or_default()
     }
 
+    /// Mark the part `part` stands for bought or made.
+    pub fn set_bought(&mut self, part: &Part, bought: bool) {
+        let entry = self.entry_mut(&part.bodies);
+        entry.bought = bought;
+        entry.made = !bought && part.bought_kind;
+    }
+
     /// Number every part that has no number, after the highest in use, in
     /// the order given.
     pub fn number(&mut self, parts: &[Part]) {
@@ -143,22 +154,38 @@ pub struct Part {
     pub number: Option<u32>,
     /// Bought rather than made.
     pub bought: bool,
+    /// Of a kind a bench declares bought, so bought unless the table says
+    /// it is made.
+    pub bought_kind: bool,
     /// Its values in the list's added columns.
     pub values: BTreeMap<String, String>,
 }
 
 /// The bodies of bought parts: what an export of the model, or the
-/// slicer, leaves out.
-pub fn bought_bodies(document: &Document) -> Vec<BodyId> {
-    parts_list(document)
+/// slicer, leaves out. `bought_kinds` are the feature kinds benches
+/// declare bought.
+pub fn bought_bodies(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<BodyId> {
+    parts_list(document, bought_kinds)
         .into_iter()
         .filter(|p| p.bought)
         .flat_map(|p| p.bodies)
         .collect()
 }
 
-/// Every body, bodies of the same shape as one part, in name order.
-pub fn parts_list(document: &Document) -> Vec<Part> {
+/// Every body, bodies of the same shape as one part, in name order. A
+/// body with a feature of one of `bought_kinds` is a bought part unless
+/// the table says it is made.
+pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part> {
+    let of_bought_kind: std::collections::HashSet<BodyId> = if bought_kinds.is_empty() {
+        Default::default()
+    } else {
+        document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| bought_kinds.contains(&n.workbench_id))
+            .filter_map(|(_, n)| n.body)
+            .collect()
+    };
     let mut parts: Vec<(u64, Part)> = Vec::new();
     for body in document.bodies() {
         let local = document.local_geometry(body.id);
@@ -180,7 +207,10 @@ pub fn parts_list(document: &Document) -> Vec<Part> {
         }
         let key = hasher.finish();
         match parts.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, part)) => part.bodies.push(body.id),
+            Some((_, part)) => {
+                part.bodies.push(body.id);
+                part.bought_kind |= of_bought_kind.contains(&body.id);
+            }
             None => parts.push((
                 key,
                 Part {
@@ -190,6 +220,7 @@ pub fn parts_list(document: &Document) -> Vec<Part> {
                     mesh: document.is_mesh_body(body.id),
                     number: None,
                     bought: false,
+                    bought_kind: of_bought_kind.contains(&body.id),
                     values: BTreeMap::new(),
                 },
             )),
@@ -199,9 +230,10 @@ pub fn parts_list(document: &Document) -> Vec<Part> {
     let mut out: Vec<Part> = parts
         .into_iter()
         .map(|(_, mut p)| {
+            p.bought = p.bought_kind;
             if let Some(entry) = table.entry(&p.bodies) {
                 p.number = (entry.number > 0).then_some(entry.number);
-                p.bought = entry.bought;
+                p.bought = entry.bought || (p.bought_kind && !entry.made);
                 p.values = entry.values.clone();
             }
             p
@@ -366,7 +398,7 @@ mod tests {
         let top = document.create_component("Top".into(), None).unwrap();
         document.set_body_component(bolt, Some(top)).unwrap();
         document.set_body_component(lid, Some(top)).unwrap();
-        let parts = parts_list(&document);
+        let parts = parts_list(&document, &[]);
         let rows = parts_by_component(&document, &parts);
         let names: Vec<(usize, String, usize)> = rows
             .iter()
@@ -405,7 +437,7 @@ mod tests {
         document.set_imported_brep_data(a, b"bolt".to_vec(), Vec::new());
         document.set_imported_brep_data(b, b"bolt".to_vec(), Vec::new());
         document.set_imported_brep_data(c, b"bracket".to_vec(), Vec::new());
-        let parts = parts_list(&document);
+        let parts = parts_list(&document, &[]);
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].name, "Bolt");
         assert_eq!(parts[0].bodies, [a, b]);
@@ -429,7 +461,7 @@ mod tests {
             columns: vec!["Supplier".into()],
             ..PartsTable::default()
         };
-        let parts = parts_list(&document);
+        let parts = parts_list(&document, &[]);
         table.number(&parts);
         table.entry_mut(&[a]).bought = true;
         table
@@ -437,12 +469,12 @@ mod tests {
             .values
             .insert("Supplier".into(), "ACME, Inc".into());
         store_table(&mut document, &table).unwrap();
-        let parts = parts_list(&document);
+        let parts = parts_list(&document, &[]);
         assert_eq!(parts[0].name, "Alpha", "numbered first by name");
         assert_eq!(parts[0].number, Some(1));
         assert_eq!(parts[1].number, Some(2));
         assert!(parts[1].bought);
-        assert_eq!(bought_bodies(&document), [a]);
+        assert_eq!(bought_bodies(&document, &[]), [a]);
         let csv = parts_csv(&parts, &table.columns);
         assert!(csv.starts_with("Item,Part,Quantity"), "{csv}");
         assert!(
@@ -452,5 +484,39 @@ mod tests {
         // Stored once: a second store updates the same feature.
         let (id, _) = table_of(&document).unwrap();
         assert_eq!(store_table(&mut document, &table).unwrap(), id);
+    }
+
+    /// A body of a kind a bench declares bought is a bought part until
+    /// the table says it is made, and bought again once it says so.
+    #[test]
+    fn a_bought_kind_is_bought_until_marked_made() {
+        let mut document = Document::new("t");
+        let screw = document.create_body(Some("Screw".into()));
+        let bracket = document.create_body(Some("Bracket".into()));
+        document.set_imported_brep_data(screw, b"screw".to_vec(), Vec::new());
+        document.set_imported_brep_data(bracket, b"bracket".to_vec(), Vec::new());
+        let screw_kind = WorkbenchId::from("acme.hardware.screw");
+        document.add_feature_of_kind(
+            screw_kind.clone(),
+            "Screw".into(),
+            Some(screw),
+            Vec::new(),
+            serde_json::json!({}),
+            core_document::FeatureOrigin::default(),
+        );
+        let kinds = [screw_kind];
+        assert_eq!(bought_bodies(&document, &kinds), [screw]);
+        assert!(bought_bodies(&document, &[]).is_empty());
+
+        let parts = parts_list(&document, &kinds);
+        let part = parts.iter().find(|p| p.bodies == [screw]).unwrap();
+        let mut table = PartsTable::default();
+        table.set_bought(part, false);
+        store_table(&mut document, &table).unwrap();
+        assert!(bought_bodies(&document, &kinds).is_empty());
+
+        table.set_bought(part, true);
+        store_table(&mut document, &table).unwrap();
+        assert_eq!(bought_bodies(&document, &kinds), [screw]);
     }
 }

@@ -718,6 +718,18 @@ fn a_bench_changes_only_its_own_kinds() {
     assert_eq!(document.feature_tree().all_nodes().count(), 1);
 }
 
+/// A package declares which of its kinds are bought parts; a kind it does
+/// not own is left out.
+#[test]
+fn a_package_declares_its_own_kinds_bought() {
+    let package = installed("tests/rogue", "rogue.wasm", "rogue-bought");
+    let registry = registry_with(&package, Capabilities::default());
+    assert_eq!(
+        registry.bought_kinds(),
+        [WorkbenchId::new("test.rogue.thing")]
+    );
+}
+
 #[test]
 fn a_bench_removes_the_body_it_made_but_not_one_holding_anothers_feature() {
     let package = installed("tests/rogue", "rogue.wasm", "rogue-bodies");

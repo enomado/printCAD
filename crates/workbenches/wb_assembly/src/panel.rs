@@ -1766,7 +1766,7 @@ impl AssemblyWorkbench {
 
     fn parts_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
         use bench_api::Cell;
-        let parts = crate::parts_list(ctx.document);
+        let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
         let table = crate::parts::table_of(ctx.document)
             .map(|(_, t)| t)
             .unwrap_or_default();
@@ -1891,7 +1891,7 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
-        let parts = crate::parts_list(ctx.document);
+        let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
         let mut table = crate::parts::table_of(ctx.document)
             .map(|(_, t)| t)
             .unwrap_or_default();
@@ -1911,7 +1911,7 @@ impl AssemblyWorkbench {
             }
             PanelEvent::CellCheck { row, on, .. } => {
                 let (part, _) = part_at(*row)?;
-                table.entry_mut(&part.bodies).bought = *on;
+                table.set_bought(part, *on);
             }
             PanelEvent::CellText {
                 row, column, value, ..

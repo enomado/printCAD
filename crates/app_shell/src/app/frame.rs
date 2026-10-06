@@ -775,6 +775,7 @@ impl PrintCadApp {
             selected_face: self.session.last_face_hit.as_ref().map(|(_, f)| *f),
             selected_faces: self.selected_face_refs(),
             selected_edges: self.selected_edge_refs(),
+            bought_kinds: self.registry.bought_kinds(),
         };
 
         let commands;

@@ -127,6 +127,12 @@ pub struct Registration {
     /// document's length unit.
     #[serde(default)]
     pub length_keys: Vec<String>,
+    /// Feature kinds of the package's own whose bodies are bought rather
+    /// than made (catalog hardware): the parts list marks them bought
+    /// until the user says otherwise, and exports and the slicer leave
+    /// them out.
+    #[serde(default)]
+    pub bought_kinds: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -344,11 +344,13 @@ impl Headless {
                     .registry
                     .command(id)
                     .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
+                let bought_kinds = self.registry.bought_kinds();
                 let wb = self
                     .registry
                     .workbench_mut(&bench)
                     .map_err(|e| CommandError::failed(e.to_string()))?;
                 let mut ctx = context(&mut self.document);
+                ctx.bought_kinds = bought_kinds;
                 wb.run_command(id, &args, &mut ctx)
             }
         }

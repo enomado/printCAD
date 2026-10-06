@@ -18,6 +18,8 @@ pub struct HostCtxParams {
     pub selected_face: Option<core_document::FaceRef>,
     pub selected_faces: Vec<core_document::FaceRef>,
     pub selected_edges: Vec<core_document::EdgeRef>,
+    /// The feature kinds benches declare bought.
+    pub bought_kinds: Vec<core_document::WorkbenchId>,
 }
 
 impl Default for HostCtxParams {
@@ -31,6 +33,7 @@ impl Default for HostCtxParams {
             selected_face: None,
             selected_faces: Vec::new(),
             selected_edges: Vec::new(),
+            bought_kinds: Vec::new(),
         }
     }
 }
@@ -54,6 +57,7 @@ pub fn panel_ctx<'a>(
     ctx.selected_faces = params.selected_faces.clone();
     ctx.selected_edges = params.selected_edges.clone();
     ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    ctx.bought_kinds = params.bought_kinds.clone();
     ctx
 }
 

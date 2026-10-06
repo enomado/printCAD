@@ -106,6 +106,10 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// `None` where no kernel is at hand (tests, a context built for a
     /// panel only).
     pub kernel: Option<&'static dyn kernel_api::KernelQueries>,
+
+    /// Host → workbench: the feature kinds every bench declares bought
+    /// (`DocumentService::bought_kinds`), for the parts list.
+    pub bought_kinds: Vec<crate::WorkbenchId>,
 }
 
 /// A picked edge on a solid body: a point on the edge, the edge's
@@ -408,6 +412,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             ctrl_down: false,
             shift_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
+            bought_kinds: Vec::new(),
         }
     }
 

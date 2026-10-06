@@ -101,7 +101,14 @@ pub fn load(package: &Package, granted: &bench_api::Capabilities) -> Result<Wasm
         },
     )
     .icon(icon_of(&registration.icon))
-    .feature_kinds(manifest.feature_kinds.clone());
+    .feature_kinds(manifest.feature_kinds.clone())
+    .bought_kinds(
+        registration
+            .bought_kinds
+            .iter()
+            .filter(|kind| manifest.feature_kinds.contains(kind))
+            .cloned(),
+    );
     if registration.modal {
         descriptor = descriptor.modal();
     }
