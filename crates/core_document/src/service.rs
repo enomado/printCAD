@@ -456,6 +456,16 @@ impl DocumentService {
         for wb in self.benches() {
             wb.invalidate_body(document, body);
         }
+        // A body none of whose features builds solid has no history left to
+        // make its shape; an imported shape outlives that.
+        let builds = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.body == Some(body))
+            .any(|(_, n)| self.feature_info(n).is_some_and(|info| info.builds_solid));
+        if !builds && !document.body_solid_is_imported(body) {
+            document.remove_imported_geometry(body);
+        }
     }
 
     pub fn invalidate_all(&self, document: &mut Document) {

@@ -1450,6 +1450,11 @@ impl PrintCadApp {
                     .document
                     .get_feature_meta(feature)
                     .and_then(|n| self.registry.owner_id_of(&n.workbench_id).cloned());
+                let body = self
+                    .session
+                    .document
+                    .get_feature_meta(feature)
+                    .and_then(|n| n.body);
                 let removed = match owner {
                     Some(owner) => {
                         let params = self.interaction_ctx_params();
@@ -1469,6 +1474,12 @@ impl PrintCadApp {
                     None => self.session.document.remove_feature(feature).is_ok(),
                 };
                 if removed {
+                    // The body rebuilds from what is left, or drops the
+                    // shape nothing builds any more.
+                    if let Some(body) = body {
+                        self.registry
+                            .invalidate_body(&mut self.session.document, body);
+                    }
                     if self.session.active_document_object == Some(feature) {
                         self.session.active_document_object = None;
                     }

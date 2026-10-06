@@ -81,13 +81,12 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
         .collect()
 }
 
-/// The body's history changed shape: build it from the start, or drop its
-/// shape when no surface feature is left.
+/// The body's history changed shape: build it from its first surface
+/// step. A body with none is the registry's to clear
+/// (`DocumentService::invalidate_body`).
 pub fn invalidate_body(document: &mut Document, body: BodyId) {
-    match surface_features_of_body(document, body).first() {
-        Some((first, _)) => document.mark_feature_dirty(*first),
-        None if !document.body_solid_is_imported(body) => document.remove_imported_geometry(body),
-        None => {}
+    if let Some((first, _)) = surface_features_of_body(document, body).first() {
+        document.mark_feature_dirty(*first);
     }
 }
 

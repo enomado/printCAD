@@ -407,8 +407,8 @@ fn tool_inputs(document: &Document, body: BodyId, tool: BodyId) -> u64 {
 }
 
 /// Remove a feature and settle what depended on it: the sketches it
-/// consumed show again, and its body rebuilds from the start or drops the
-/// solid its history produced. `false` when nothing was removed.
+/// consumed show again, and its body rebuilds from the start. `false` when
+/// nothing was removed.
 pub fn delete_feature(document: &mut Document, id: FeatureId) -> bool {
     let body = document.get_feature_meta(id).and_then(|n| n.body);
     let feature = document
@@ -436,14 +436,12 @@ pub fn delete_feature(document: &mut Document, id: FeatureId) -> bool {
     true
 }
 
-/// The body's history changed shape: rebuild it from its first feature,
-/// or, with no history left, drop the solid the history produced. An
-/// imported solid is not the history's to drop.
+/// The body's history changed shape: rebuild it from its first Design
+/// feature. A body with none is the registry's to clear
+/// (`DocumentService::invalidate_body`).
 pub fn invalidate_body(document: &mut Document, body: BodyId) {
-    match design_feature_ids(document, body).first() {
-        Some(first) => document.mark_feature_dirty(*first),
-        None if !document.body_solid_is_imported(body) => document.remove_imported_geometry(body),
-        None => {}
+    if let Some(first) = design_feature_ids(document, body).first() {
+        document.mark_feature_dirty(*first);
     }
 }
 
@@ -3428,7 +3426,7 @@ mod tests {
     }
 
     #[test]
-    fn invalidating_a_body_restarts_its_history_or_drops_a_built_solid() {
+    fn invalidating_a_body_restarts_its_history_and_leaves_clearing_to_the_registry() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         let pad_id = doc
             .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
@@ -3451,12 +3449,10 @@ mod tests {
             },
         );
         invalidate_body(&mut doc, body);
-        assert!(doc.imported_geometry(body).is_none(), "a built solid goes");
-
-        let (mut doc, body, _) = doc_with_body_sketch();
-        import_into(&mut doc, body);
-        invalidate_body(&mut doc, body);
-        assert!(doc.imported_geometry(body).is_some(), "an import stays");
+        assert!(
+            doc.imported_geometry(body).is_some(),
+            "another bench's features may build it: the registry clears it"
+        );
     }
 
     #[test]

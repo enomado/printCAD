@@ -488,6 +488,7 @@ impl Headless {
             .get_feature_meta(feature)
             .map(|n| n.workbench_id.clone())
             .ok_or_else(|| CommandError::bad("id", "is not in this document"))?;
+        let body = self.document.get_feature_meta(feature).and_then(|n| n.body);
         let deleted = match self.registry.owner_id_of(&kind).cloned() {
             Some(owner) => {
                 let wb = self
@@ -500,6 +501,11 @@ impl Headless {
             None => self.document.remove_feature(feature).is_ok(),
         };
         if deleted {
+            // The body rebuilds from what is left, or drops the shape
+            // nothing builds any more.
+            if let Some(body) = body {
+                self.registry.invalidate_body(&mut self.document, body);
+            }
             Ok(())
         } else {
             Err(CommandError::failed("the feature could not be deleted"))
@@ -540,6 +546,58 @@ mod tests {
         assert_eq!(run.args, ["20", "x"]);
         assert!(parse(&words("--save out.prtcad")).is_err());
         assert!(parse(&words("--script")).is_err());
+    }
+
+    /// Deleting a step rebuilds its body from what is left, and the last
+    /// step's going leaves the body no shape: for surface steps as for
+    /// Design features.
+    #[test]
+    fn deleting_a_step_rebuilds_its_body_or_clears_it() {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let dir = std::env::temp_dir().join(format!("printcad-delete-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("delete.lua");
+        std::fs::write(
+            &script,
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.polyline{sketch = s, points = {{1, 0}, {11, 0}}}
+            local walls = pc.surface.extrude{sketches = {s}, length = 5}
+            local body = pc.doc.feature{id = walls}.body
+            local mirror = pc.surface.mirror{body = body, plane = "YZ"}
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = body}.area - 100) < 1e-6)
+            pc.doc.delete{id = mirror}
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = body}.area - 50) < 1e-6, "the mirror is gone")
+            pc.doc.delete{id = walls}
+            assert(#pc.doc.rebuild() == 0)
+            assert(not pcall(pc.doc.measure, {body = body}), "nothing builds the body")
+
+            local p = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = p, x = 0, y = 0, width = 10, height = 10}
+            local pad = pc.design.pad{sketch = p, length = 2}
+            local block = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            pc.doc.delete{id = pad}
+            assert(#pc.doc.rebuild() == 0)
+            assert(not pcall(pc.doc.measure, {body = block}), "the pad's solid went with it")
+            "#,
+        )
+        .unwrap();
+        let ok = run(
+            &Invocation {
+                script,
+                open: None,
+                save: None,
+                args: Vec::new(),
+            },
+            registry,
+        )
+        .unwrap();
+        assert!(ok);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
