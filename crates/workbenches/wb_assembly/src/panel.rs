@@ -2,15 +2,16 @@
 //! a joint's or a coupling's settings, a body moved by numbers, and the
 //! assembly's own tasks (interference, exploded views, motion over time,
 //! linked copies, replacing a body, rigid groups, mass, the parts list).
+//!
+//! Each is declared as widgets (`task_widgets`) and drawn by the same
+//! renderer a package's panel is; what the user does comes back as panel
+//! events (`task_event`), which change the document through the bench's
+//! own commands where one makes the change.
 
 use core_document::{
     BodyId, BodyPlacement, FeatureId, TaskOutcome, TaskRequest, WorkbenchFeature,
     WorkbenchRuntimeContext,
 };
-use egui::RichText;
-use ui_kit::tokens::*;
-use ui_kit::widgets::{QtyField, overline};
-use ui_kit::{sans, sans_semibold};
 
 use bench_api::{Bind, ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
 
@@ -186,6 +187,17 @@ fn choice(id: &str, label: &str, options: &[&str], selected: usize) -> Widget {
     }
 }
 
+/// The hinges and sliders a motion does not drive yet.
+fn motion_unused<'a>(
+    movable: &'a [crate::Joint],
+    draft: &crate::MotionStudy,
+) -> Vec<&'a crate::Joint> {
+    movable
+        .iter()
+        .filter(|j| !draft.drives.iter().any(|d| d.joint == j.id))
+        .collect()
+}
+
 /// The hinges and sliders: the joints a coupling ties and a motion drives.
 fn movable_joints(ctx: &WorkbenchRuntimeContext) -> Vec<crate::Joint> {
     crate::joints(ctx.document)
@@ -274,26 +286,6 @@ fn number_event(event: &PanelEvent) -> Option<(&str, f32)> {
 /// Frames in a recorded sweep: there and back in four seconds.
 const SWEEP_FRAMES: usize = 60;
 
-fn header(ui: &mut egui::Ui, icon: &str, title: &str) {
-    egui::Frame::new()
-        .fill(BG2)
-        .stroke(egui::Stroke::new(1.0, BORDER))
-        .corner_radius(5)
-        .inner_margin(egui::Margin::symmetric(8, 6))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_2;
-                ui_kit::icon::draw(ui, icon, 18.0, ACCENT);
-                ui.label(
-                    RichText::new(title)
-                        .font(sans_semibold(FONT_MD))
-                        .color(TEXT1),
-                );
-            });
-        });
-}
-
 impl AssemblyWorkbench {
     pub(crate) fn draw_task_panel(
         &mut self,
@@ -337,7 +329,7 @@ impl AssemblyWorkbench {
                 self.declared_panel(ui, ctx)
             }
             Some(Task::Parts) => self.parts_panel(ui, ctx, request),
-            Some(Task::Motion(studying)) => self.motion_panel(ui, ctx, request, *studying),
+            Some(Task::Motion(_)) => self.motion_panel(ui, ctx, request),
             Some(Task::Copies {
                 body,
                 count,
@@ -426,6 +418,7 @@ impl AssemblyWorkbench {
             Some(Task::Parts) => self.parts_widgets(ctx),
             Some(Task::Coupling { id, .. }) => self.coupling_widgets(ctx, *id),
             Some(Task::Joint { id, .. }) => self.joint_widgets(ctx, *id),
+            Some(Task::Motion(studying)) => Self::motion_widgets(ctx, studying),
             _ => Vec::new(),
         }
     }
@@ -470,6 +463,7 @@ impl AssemblyWorkbench {
                 before,
                 placements,
             }) => self.joint_event(ctx, (id, before.is_none(), &placements), event),
+            Some(Task::Motion(_)) => self.motion_event(ctx, event),
             _ => None,
         }
     }
@@ -915,233 +909,133 @@ impl AssemblyWorkbench {
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
-        mut studying: crate::Studying,
     ) -> TaskOutcome {
         if request.accept || request.cancel {
             self.put_back_motion(ctx);
             return TaskOutcome::Cancelled;
         }
-        header(ui, "polar-pattern", "Motion over time");
-        ui.add_space(SPACE_2);
-        let mut settings_changed = false;
-        for (label, value, unit) in [
-            ("Start", &mut studying.draft.start, " s"),
-            ("End", &mut studying.draft.end, " s"),
-            ("Step", &mut studying.draft.step, " s"),
-        ] {
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
-                );
-                settings_changed |= QtyField::new(value).unit(unit).speed(0.01).show(ui);
-            });
+        let outcome = self.declared_panel(ui, ctx);
+        if matches!(&self.task, Some(Task::Motion(s)) if s.playing) {
+            ui.ctx().request_repaint();
         }
-        ui.add_space(SPACE_1);
-        overline(ui, "Drives");
-        let movable: Vec<crate::Joint> = crate::joints(ctx.document)
-            .into_iter()
-            .filter(|j| {
-                matches!(
-                    j.feature.kind,
-                    JointKind::Hinge { .. } | JointKind::Slider { .. }
-                )
-            })
-            .collect();
+        outcome
+    }
+
+    fn motion_widgets(ctx: &WorkbenchRuntimeContext, studying: &crate::Studying) -> Vec<Widget> {
+        let draft = &studying.draft;
+        let mut widgets = vec![w::header("polar-pattern", "Motion over time")];
+        for (key, label, value) in [
+            ("start", "Start, s", draft.start),
+            ("end", "End, s", draft.end),
+            ("step", "Step, s", draft.step),
+        ] {
+            widgets.push(w::number(key, label, value, Dim::Number));
+        }
+        let movable = movable_joints(ctx);
         let name_of = |id: FeatureId| {
             movable
                 .iter()
                 .find(|j| j.id == id)
                 .map_or("a removed joint".to_string(), |j| j.name.clone())
         };
-        let mut remove = None;
-        for (i, drive) in studying.draft.drives.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(name_of(drive.joint))
-                        .font(sans(FONT_SM))
-                        .color(TEXT1),
-                );
-                let edit = ui.add(
-                    egui::TextEdit::singleline(&mut drive.formula)
-                        .desired_width(140.0)
-                        .font(ui_kit::mono(FONT_SM)),
-                );
-                settings_changed |= edit.changed();
-                if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
-                    remove = Some(i);
-                }
-            });
-        }
-        if let Some(i) = remove {
-            studying.draft.drives.remove(i);
-            settings_changed = true;
-        }
-        let unused: Vec<&crate::Joint> = movable
+        let mut drives: Vec<Widget> = draft
+            .drives
             .iter()
-            .filter(|j| !studying.draft.drives.iter().any(|d| d.joint == j.id))
+            .enumerate()
+            .map(|(i, drive)| {
+                w::row(vec![
+                    w::text(name_of(drive.joint)),
+                    Widget::TextField {
+                        id: format!("formula:{i}"),
+                        label: String::new(),
+                        value: drive.formula.clone(),
+                    },
+                    w::button(&format!("remove_drive:{i}"), "Remove", ButtonStyle::Small),
+                ])
+            })
             .collect();
+        let unused = motion_unused(&movable, draft);
         if !unused.is_empty() {
-            egui::ComboBox::from_id_salt("motion_add_drive")
-                .selected_text(RichText::new("Drive a joint…").font(sans(FONT_SM)))
-                .show_ui(ui, |ui| {
-                    for joint in unused {
-                        if ui
-                            .selectable_label(false, RichText::new(&joint.name).font(sans(FONT_SM)))
-                            .clicked()
-                        {
-                            let formula = match joint.feature.kind {
-                                JointKind::Hinge { .. } => "90 * t",
-                                _ => "10 * t",
-                            };
-                            studying.draft.drives.push(crate::TimedDrive {
-                                joint: joint.id,
-                                formula: formula.to_string(),
-                            });
-                            settings_changed = true;
-                        }
-                    }
-                });
+            let mut options = vec!["Drive a joint…".to_string()];
+            options.extend(unused.iter().map(|j| j.name.clone()));
+            drives.push(Widget::Choice {
+                id: "add_drive".into(),
+                label: String::new(),
+                options,
+                selected: 0,
+            });
         }
-        ui.label(
-            RichText::new(
-                "Each formula gives the joint's drive at time t, in seconds: a hinge's angle \
-                 in degrees, a slider's position in millimetres (30 * sin(t * 180°)).",
-            )
-            .font(sans(FONT_XS))
-            .color(TEXT3),
-        );
-        if settings_changed {
-            studying.frames = None;
-            studying.playing = false;
-        }
-        ui.add_space(SPACE_2);
-        if studying.frames.is_none()
-            && !studying.draft.drives.is_empty()
-            && ui_kit::widgets::secondary_button(ui, "Work out the motion").clicked()
-        {
-            crate::restore_placements(ctx, &studying.placements);
-            match studying.draft.frames(ctx.document) {
-                Ok(frames) => {
-                    studying.frames = Some(frames);
-                    studying.frame = 0;
-                    let data = studying.draft.to_json();
-                    match studying.study {
-                        Some(id) => {
-                            if ctx.document.update_feature_data(id, data).is_ok() {
-                                ctx.document.clear_feature_dirty(id);
-                            }
-                        }
-                        None => {
-                            let name = crate::commands::next_name(ctx.document, "Motion");
-                            if let Ok(id) =
-                                ctx.document
-                                    .add_feature_in_body(studying.draft.clone(), name, None)
-                            {
-                                ctx.document.clear_feature_dirty(id);
-                                studying.study = Some(id);
-                            }
-                        }
-                    }
-                    if let Some(id) = studying.study {
-                        let mut args = serde_json::to_value(&studying.draft).unwrap_or_default();
-                        args["study"] = serde_json::json!(id.0.to_string());
-                        ctx.record(
-                            "asm.motion",
-                            crate::commands::object(args),
-                            serde_json::json!(id.0.to_string()),
-                        );
-                    }
-                }
-                Err(why) => ctx.log_warn(format!("The motion could not be worked out: {why}")),
+        drives.push(w::text(
+            "Each formula gives the joint's drive at time t, in seconds: a hinge's angle \
+             in degrees, a slider's position in millimetres (30 * sin(t * 180°)).",
+        ));
+        widgets.push(Widget::Group {
+            title: "Drives".into(),
+            open: true,
+            children: drives,
+        });
+        let Some(frames) = &studying.frames else {
+            if !draft.drives.is_empty() {
+                widgets.push(w::button(
+                    "work_out",
+                    "Work out the motion",
+                    ButtonStyle::Secondary,
+                ));
             }
-        }
-        let mut show = false;
-        if let Some(frames) = &studying.frames {
-            let last = frames.len().saturating_sub(1);
-            let mut frame = studying.frame as f32;
-            let time = frames.get(studying.frame).map_or(0.0, |(t, _)| *t);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, INPUT],
-                    egui::Label::new(
-                        RichText::new(format!("t = {time:.2} s"))
-                            .font(ui_kit::mono(FONT_SM))
-                            .color(TEXT2),
-                    ),
-                );
-                if ui
-                    .add(
-                        egui::Slider::new(&mut frame, 0.0..=last as f32)
-                            .step_by(1.0)
-                            .show_value(false),
-                    )
-                    .changed()
-                {
-                    studying.frame = frame as usize;
-                    show = true;
-                }
-            });
-            ui.horizontal(|ui| {
-                let label = if studying.playing { "Stop" } else { "Play" };
-                if ui_kit::widgets::secondary_button(ui, label).clicked() {
-                    studying.playing = !studying.playing;
-                }
-                if ui_kit::widgets::secondary_button(ui, "Record")
-                    .on_hover_text("Save the frames as an animation seen from the current view")
-                    .clicked()
-                {
-                    ctx.request(core_document::HostRequest::RecordAnimation {
-                        name: "motion".into(),
-                        frames: frames.iter().map(|(_, p)| p.clone()).collect(),
-                        frame_ms: (studying.draft.step.max(0.01) * 1000.0) as u32,
-                    });
-                }
-            });
-        }
-        if let Some(frames) = &studying.frames {
-            ui.add_space(SPACE_2);
-            overline(ui, "Traces");
-            if ui_kit::widgets::small_secondary_button(
-                ui,
+            return widgets;
+        };
+        let time = frames.get(studying.frame).map_or(0.0, |(t, _)| *t);
+        widgets.push(Widget::Slider {
+            id: "frame".into(),
+            label: format!("t = {time:.2} s"),
+            value: studying.frame as f64,
+            min: 0.0,
+            max: frames.len().saturating_sub(1) as f64,
+            step: Some(1.0),
+            decimals: 0,
+            show_value: false,
+        });
+        widgets.push(w::row(vec![
+            w::button(
+                "play",
+                if studying.playing { "Stop" } else { "Play" },
+                ButtonStyle::Secondary,
+            ),
+            w::hinted(
+                "Save the frames as an animation seen from the current view",
+                w::button("record", "Record", ButtonStyle::Secondary),
+            ),
+        ]));
+        let mut traces = vec![w::hinted(
+            "Click a face of a body: its path and speed through the motion",
+            w::button(
+                "trace",
                 if studying.tracing {
                     "Click a point on a body…"
                 } else {
                     "Follow a point"
                 },
-            )
-            .on_hover_text("Click a face of a body: its path and speed through the motion")
-            .clicked()
-            {
-                studying.tracing = !studying.tracing;
-            }
-            let mut remove = None;
-            let mut curves: Vec<Vec<(f32, f32)>> = Vec::new();
-            for (i, (body, point)) in studying.traces.iter().enumerate() {
-                let path = crate::motion::trace(frames, *body, *point);
-                let now = path.get(studying.frame).map_or(0.0, |(_, _, v)| *v);
-                let top = path.iter().map(|(_, _, v)| *v).fold(0.0f32, f32::max);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!(
-                            "{}: {now:.1} mm/s now, {top:.1} at most",
-                            body_name(ctx, *body)
-                        ))
-                        .font(sans(FONT_SM))
-                        .color(TEXT1),
-                    );
-                    if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
-                        remove = Some(i);
-                    }
-                });
-                curves.push(path.iter().map(|(t, _, v)| (*t, *v)).collect());
-            }
-            if let Some(i) = remove {
-                studying.traces.remove(i);
-            }
-            // Each driven joint's value over time too, scaled to the plot.
-            for drive in &studying.draft.drives {
-                let values: Vec<(f32, f32)> = frames
+                ButtonStyle::Small,
+            ),
+        )];
+        let mut curves: Vec<Vec<(f32, f32)>> = Vec::new();
+        for (i, (body, point)) in studying.traces.iter().enumerate() {
+            let path = crate::motion::trace(frames, *body, *point);
+            let now = path.get(studying.frame).map_or(0.0, |(_, _, v)| *v);
+            let top = path.iter().map(|(_, _, v)| *v).fold(0.0f32, f32::max);
+            traces.push(w::row(vec![
+                w::text(format!(
+                    "{}: {now:.1} mm/s now, {top:.1} at most",
+                    body_name(ctx, *body)
+                )),
+                w::button(&format!("remove_trace:{i}"), "Remove", ButtonStyle::Small),
+            ]));
+            curves.push(path.iter().map(|(t, _, v)| (*t, *v)).collect());
+        }
+        // Each driven joint's value over time too, scaled to the plot.
+        for drive in &draft.drives {
+            curves.push(
+                frames
                     .iter()
                     .filter_map(|(t, _)| {
                         Some((
@@ -1149,22 +1043,150 @@ impl AssemblyWorkbench {
                             crate::motion::value_at(&drive.formula, f64::from(*t)).ok()? as f32,
                         ))
                     })
-                    .collect();
-                curves.push(values);
-            }
-            if !curves.is_empty() {
-                let time = frames.get(studying.frame).map(|(t, _)| *t);
-                plot(ui, &curves, studying.traces.len(), time);
-            }
+                    .collect(),
+            );
         }
-        self.task = Some(Task::Motion(Box::new(studying)));
+        if !curves.is_empty() {
+            traces.extend(plot(&curves, studying.traces.len(), Some(time)));
+        }
+        widgets.push(Widget::Group {
+            title: "Traces".into(),
+            open: true,
+            children: traces,
+        });
+        widgets
+    }
+
+    /// A change to the motion's settings (which drops the frames worked
+    /// out), the motion worked out and kept as `asm.motion` keeps it, or
+    /// its frames scrubbed, played, recorded or traced.
+    fn motion_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let movable = movable_joints(ctx);
+        let Some(Task::Motion(studying)) = &mut self.task else {
+            return None;
+        };
+        let draft = &mut studying.draft;
+        let mut settings_changed = true;
+        let mut show = false;
+        match event {
+            PanelEvent::Number { id, value } => match id.as_str() {
+                "start" => draft.start = *value as f32,
+                "end" => draft.end = *value as f32,
+                "step" => draft.step = *value as f32,
+                "frame" => {
+                    settings_changed = false;
+                    studying.frame = *value as usize;
+                    show = true;
+                }
+                _ => return None,
+            },
+            PanelEvent::Text { id, value } => {
+                let i = id
+                    .strip_prefix("formula:")
+                    .and_then(|i| i.parse::<usize>().ok())?;
+                draft.drives.get_mut(i)?.formula = value.clone();
+            }
+            PanelEvent::Choice { id, index } if id == "add_drive" => {
+                let joint = *motion_unused(&movable, draft).get(index.checked_sub(1)?)?;
+                let formula = match joint.feature.kind {
+                    JointKind::Hinge { .. } => "90 * t",
+                    _ => "10 * t",
+                };
+                draft.drives.push(crate::TimedDrive {
+                    joint: joint.id,
+                    formula: formula.to_string(),
+                });
+            }
+            PanelEvent::Button { id } => {
+                settings_changed = false;
+                match id.as_str() {
+                    "work_out" => {
+                        let mut studying = (**studying).clone();
+                        self.work_out_motion(ctx, &mut studying);
+                        self.task = Some(Task::Motion(Box::new(studying)));
+                        return None;
+                    }
+                    "play" => studying.playing = !studying.playing,
+                    "record" => {
+                        let frames = studying.frames.as_ref()?;
+                        ctx.request(core_document::HostRequest::RecordAnimation {
+                            name: "motion".into(),
+                            frames: frames.iter().map(|(_, p)| p.clone()).collect(),
+                            frame_ms: (draft.step.max(0.01) * 1000.0) as u32,
+                        });
+                    }
+                    "trace" => studying.tracing = !studying.tracing,
+                    other => {
+                        if let Some(i) = other
+                            .strip_prefix("remove_drive:")
+                            .and_then(|i| i.parse::<usize>().ok())
+                            .filter(|i| *i < draft.drives.len())
+                        {
+                            draft.drives.remove(i);
+                            settings_changed = true;
+                        } else if let Some(i) = other
+                            .strip_prefix("remove_trace:")
+                            .and_then(|i| i.parse::<usize>().ok())
+                            .filter(|i| *i < studying.traces.len())
+                        {
+                            studying.traces.remove(i);
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        }
+        if settings_changed {
+            studying.frames = None;
+            studying.playing = false;
+        }
         if show {
             self.show_frame(ctx);
         }
-        if matches!(&self.task, Some(Task::Motion(s)) if s.playing) {
-            ui.ctx().request_repaint();
+        None
+    }
+
+    /// Work the motion out into frames from where the bodies sat, and keep
+    /// it in the document as `asm.motion` keeps it.
+    fn work_out_motion(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        studying: &mut crate::Studying,
+    ) {
+        crate::restore_placements(ctx, &studying.placements);
+        let frames = match studying.draft.frames(ctx.document) {
+            Ok(frames) => frames,
+            Err(why) => {
+                ctx.log_warn(format!("The motion could not be worked out: {why}"));
+                return;
+            }
+        };
+        studying.frames = Some(frames);
+        studying.frame = 0;
+        let mut args = serde_json::to_value(&studying.draft).unwrap_or_default();
+        if let Some(id) = studying.study {
+            args["study"] = serde_json::json!(id.0.to_string());
         }
-        TaskOutcome::Open
+        let made = crate::commands::run("asm.motion", &crate::commands::object(args.clone()), ctx);
+        match made
+            .ok()
+            .and_then(|id| uuid::Uuid::parse_str(id.as_str()?).ok())
+        {
+            Some(id) => {
+                studying.study = Some(FeatureId(id));
+                args["study"] = serde_json::json!(id.to_string());
+                ctx.record(
+                    "asm.motion",
+                    crate::commands::object(args),
+                    serde_json::json!(id.to_string()),
+                );
+            }
+            None => ctx.log_warn("Could not keep the motion"),
+        }
     }
 
     /// Linked copies of a body: how many and how far apart; OK inserts them
@@ -2289,7 +2311,12 @@ impl AssemblyWorkbench {
         if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = joint.kind {
             let hinge = matches!(joint.kind, JointKind::Hinge { .. });
             let range = motion_range(drive.limits, hinge, now);
-            widgets.extend(self.motion_widgets(ctx, id, range, if hinge { "°" } else { " mm" }));
+            widgets.extend(self.sweep_check_widgets(
+                ctx,
+                id,
+                range,
+                if hinge { "°" } else { " mm" },
+            ));
         }
         if joint.kind != JointKind::Ground {
             widgets.push(w::row(vec![
@@ -2419,7 +2446,7 @@ impl AssemblyWorkbench {
 
     /// The check of a joint's motion for collisions: its button, its
     /// progress, what it found.
-    fn motion_widgets(
+    fn sweep_check_widgets(
         &self,
         ctx: &WorkbenchRuntimeContext,
         id: FeatureId,
@@ -3137,14 +3164,17 @@ fn mass_text(grams: f64) -> String {
     }
 }
 
-/// Curves over time, each scaled to its own range: the first `speeds` in
-/// the accent colour (traced points' speeds), the rest (driven joints'
-/// values) in the second; a line where the frame shown stands.
-fn plot(ui: &mut egui::Ui, curves: &[Vec<(f32, f32)>], speeds: usize, at: Option<f32>) {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(width, 90.0), egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, BG1);
+/// The plot's space, as wide and as tall as it shows in a panel of the
+/// usual width.
+const PLOT: [f32; 2] = [300.0, 90.0];
+
+/// Curves over time as a diagram, each scaled to its own range: the first
+/// `speeds` (traced points' speeds) in the accent colour, the rest (driven
+/// joints' values) as outlines; a line where the frame shown stands. Then
+/// what the lines are.
+fn plot(curves: &[Vec<(f32, f32)>], speeds: usize, at: Option<f32>) -> Vec<Widget> {
+    use bench_api::{DiagramShape, DiagramStroke};
+    let [width, height] = PLOT;
     let (t0, t1) = curves
         .iter()
         .flatten()
@@ -3152,47 +3182,54 @@ fn plot(ui: &mut egui::Ui, curves: &[Vec<(f32, f32)>], speeds: usize, at: Option
             (lo.min(*t), hi.max(*t))
         });
     let span = (t1 - t0).max(1e-6);
-    let x = |t: f32| rect.left() + rect.width() * (t - t0) / span;
+    let x = |t: f32| width * (t - t0) / span;
+    let mut shapes = vec![DiagramShape::Path {
+        points: vec![[0.0, 0.0], [width, 0.0], [width, height], [0.0, height]],
+        closed: true,
+        stroke: DiagramStroke::Thin,
+        fill: true,
+    }];
     for (i, curve) in curves.iter().enumerate() {
         let (lo, hi) = curve.iter().fold((f32::MAX, f32::MIN), |(lo, hi), (_, v)| {
             (lo.min(*v), hi.max(*v))
         });
         let range = (hi - lo).max(1e-6);
-        let points: Vec<egui::Pos2> = curve
-            .iter()
-            .map(|(t, v)| {
-                egui::pos2(
-                    x(*t),
-                    rect.bottom() - 4.0 - (rect.height() - 8.0) * (v - lo) / range,
-                )
-            })
-            .collect();
-        let color = if i < speeds { ACCENT } else { WARNING };
-        painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, color)));
+        shapes.push(DiagramShape::Path {
+            points: curve
+                .iter()
+                .map(|(t, v)| [x(*t), 4.0 + (height - 8.0) * (v - lo) / range])
+                .collect(),
+            closed: false,
+            stroke: if i < speeds {
+                DiagramStroke::Accent
+            } else {
+                DiagramStroke::Outline
+            },
+            fill: false,
+        });
     }
     if let Some(t) = at {
-        painter.line_segment(
-            [
-                egui::pos2(x(t), rect.top()),
-                egui::pos2(x(t), rect.bottom()),
-            ],
-            egui::Stroke::new(1.0, TEXT3),
-        );
+        shapes.push(DiagramShape::Path {
+            points: vec![[x(t), 0.0], [x(t), height]],
+            closed: false,
+            stroke: DiagramStroke::Thin,
+            fill: false,
+        });
     }
-    ui.horizontal(|ui| {
-        if speeds > 0 {
-            ui.label(
-                RichText::new("speed")
-                    .font(ui_kit::mono(FONT_SM))
-                    .color(ACCENT),
-            );
-        }
-        if curves.len() > speeds {
-            ui.label(
-                RichText::new("drives")
-                    .font(ui_kit::mono(FONT_SM))
-                    .color(WARNING),
-            );
-        }
-    });
+    let legend = match (speeds > 0, curves.len() > speeds) {
+        (true, true) => "Speed in the accent colour, drives in white, each to its own scale",
+        (true, false) => "Speed, each point to its own scale",
+        _ => "Drives, each to its own scale",
+    };
+    vec![
+        Widget::Diagram {
+            id: "plot".into(),
+            width,
+            height,
+            shapes,
+            dimensions: Vec::new(),
+            callouts: Vec::new(),
+        },
+        w::text(legend),
+    ]
 }

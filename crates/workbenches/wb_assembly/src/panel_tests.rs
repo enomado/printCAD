@@ -964,3 +964,78 @@ fn a_joint_s_turn_and_delete_record_their_commands() {
     assert_eq!(recorded[0].id, "doc.delete");
     assert!(doc.get_feature_meta(id).is_none());
 }
+
+fn studying(wb: &AssemblyWorkbench) -> &crate::Studying {
+    match &wb.task {
+        Some(Task::Motion(studying)) => studying,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_motion_is_worked_out_kept_as_asm_motion_and_scrubbed() {
+    let (mut doc, _, hinge) = geared();
+    let mut wb = AssemblyWorkbench::default();
+    wb.on_input(
+        &WorkbenchInputEvent::ToolActivated,
+        Some("asm.motion"),
+        &mut context(&mut doc),
+    );
+    let panel = widgets(&wb, &mut doc);
+    let Some(Widget::Choice { options, .. }) = field(&panel, "add_drive") else {
+        panic!("{panel:?}");
+    };
+    assert_eq!(options.len(), 3, "a placeholder and the two hinges");
+    assert!(field(&panel, "work_out").is_none(), "nothing driven yet");
+    draws(&mut wb, &mut doc);
+
+    send(&mut wb, &mut doc, choose("add_drive", 1));
+    assert_eq!(studying(&wb).draft.drives[0].joint, hinge);
+    assert_eq!(studying(&wb).draft.drives[0].formula, "90 * t");
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::Text {
+            id: "formula:0".into(),
+            value: "45 * t".into(),
+        },
+    );
+    send(&mut wb, &mut doc, number("end", 1.0));
+    send(&mut wb, &mut doc, number("step", 0.25));
+    let (_, recorded) = send(&mut wb, &mut doc, button("work_out"));
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].id, "asm.motion");
+    let study = studying(&wb).study.expect("kept in the document");
+    assert_eq!(recorded[0].result, serde_json::json!(study.0.to_string()));
+    assert_eq!(recorded[0].args["drives"][0]["formula"], "45 * t");
+    let frames = studying(&wb).frames.clone().expect("worked out");
+    let listed = run(
+        &mut doc,
+        "asm.motion_frames",
+        serde_json::json!({"study": study.0.to_string()}),
+    );
+    assert_eq!(listed.as_array().unwrap().len(), frames.len());
+
+    let panel = widgets(&wb, &mut doc);
+    assert_eq!(value_of(&panel, "frame"), 0.0);
+    assert!(
+        flat(&panel)
+            .iter()
+            .any(|w| matches!(w, Widget::Diagram { .. })),
+        "the drive's value is plotted"
+    );
+    draws(&mut wb, &mut doc);
+    send(&mut wb, &mut doc, number("frame", 2.0));
+    assert_eq!(studying(&wb).frame, 2);
+    for (body, placement) in &frames[2].1 {
+        assert_eq!(doc.body_placement(*body), *placement);
+    }
+    send(&mut wb, &mut doc, button("play"));
+    assert!(studying(&wb).playing);
+    // A setting changed: the frames worked out no longer hold.
+    send(&mut wb, &mut doc, number("start", 0.5));
+    assert!(studying(&wb).frames.is_none());
+    assert!(!studying(&wb).playing);
+    send(&mut wb, &mut doc, button("remove_drive:0"));
+    assert!(studying(&wb).draft.drives.is_empty());
+}
