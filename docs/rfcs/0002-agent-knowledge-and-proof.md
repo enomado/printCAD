@@ -1,10 +1,15 @@
 # RFC 0002: What an agent knows, and how it proves its work
 
-- Status: milestones 1 to 4 built; milestone 5 (notes and an example for
-  every command, more recipes) in progress, the Surface commands' notes
-  first. Open: Design's face and edge picks are in the body's own frame
-  while `doc.faces`/`doc.edges` give world points, which differ for a
-  placed body; the before-and-after picture.
+- Status: milestones 1 to 5 built. Every bench command and every `doc.*`
+  command has notes and an example, but for these, which have notes only:
+  `doc.agent_rules`, `doc.set_agent_rules`, `doc.selection`,
+  `doc.select`, `doc.repair`, `doc.convert_to_solid`, `doc.refine`,
+  `doc.replace_shape`, `sketch.import_dxf`, `sketch.image` and
+  `sketch.set_image` (the window, a file or the user's selection). The
+  app's keymap commands (`app.*`, `file.*`, `edit.*`, `view.*`, `tab.*`)
+  have their summary alone. Open: Design's face and edge picks are in
+  the body's own frame while `doc.faces`/`doc.edges` give world points,
+  which differ for a placed body; the before-and-after picture.
 - Date: 2026-10-06
 - Scope: `core_document::command` (the command contract), the `agents`
   crate, `app_shell` (`app/mcp.rs`, `app/agent_context.rs`,
