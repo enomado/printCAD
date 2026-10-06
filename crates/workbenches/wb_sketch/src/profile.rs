@@ -86,6 +86,28 @@ pub fn plane_of(plane: &SketchPlane) -> ProfilePlane {
 /// apart at part sizes.
 const PROJECTED_JOIN: f64 = 1e-4;
 
+/// A sketch feature's closed loops on its plane, in its body's frame, as
+/// its formulas leave it; `None` for a feature that is not a sketch or a
+/// sketch that closes nothing. What workbench packages read as a
+/// feature's profile.
+pub fn closed_profile(
+    document: &core_document::Document,
+    id: core_document::FeatureId,
+) -> Option<kernel_api::Profile> {
+    use core_document::WorkbenchFeature;
+    let node = document.get_feature_meta(id)?;
+    if node.workbench_id.as_str() != "wb.sketch" {
+        return None;
+    }
+    let data = document.feature_values(id).unwrap_or(&node.data);
+    let feature = crate::SketchFeature::from_json(data).ok()?;
+    let wires = extract_wires(&feature.sketch).ok()?;
+    Some(kernel_api::Profile {
+        plane: plane_of(&feature.plane),
+        wires,
+    })
+}
+
 /// Extract every closed wire from the sketch. Standalone points are
 /// ignored; circles are closed wires by themselves; lines/arcs must form
 /// closed loops via shared endpoints, and those that do not are left out.

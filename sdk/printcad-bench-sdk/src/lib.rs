@@ -179,6 +179,13 @@ pub mod host {
         raw::body_shape(body)
     }
 
+    /// A feature's closed loops (a sketch's) placed in world space: the
+    /// plane, then the loops, holes inside their outlines. `None` when it
+    /// closes no area.
+    pub fn profile(feature: &str) -> Option<api::kernel_api::Profile> {
+        serde_json::from_str(&raw::profile(feature)?).ok()
+    }
+
     /// Run a document command (`api::calls`).
     pub fn call(command: &str, args: Value) -> Result<Value, String> {
         let answer = raw::call(command, &args.to_string())?;

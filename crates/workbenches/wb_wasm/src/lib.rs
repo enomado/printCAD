@@ -15,4 +15,5 @@ pub mod store;
 
 pub use bench::{WasmWorkbench, load};
 pub use bench_api::{Capabilities, Manifest};
+pub use host::{ProfileSource, set_profile_source};
 pub use package::{Package, discover, install, pack, uninstall};

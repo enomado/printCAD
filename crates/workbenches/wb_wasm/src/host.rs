@@ -22,6 +22,38 @@ wasmtime::component::bindgen!({
 pub(crate) use exports::printcad::workbench::bench::Guest as BenchExports;
 pub(crate) use printcad::workbench::host::Mesh;
 
+/// Where a feature's closed loops come from: a function of the bench that
+/// draws them, answering in the feature's body frame.
+pub type ProfileSource = fn(&Document, FeatureId) -> Option<kernel_api::Profile>;
+
+static PROFILES: std::sync::OnceLock<ProfileSource> = std::sync::OnceLock::new();
+
+/// Name where packages read features' closed loops (`host.profile`); the
+/// first one named holds. Without one, no feature has a profile.
+pub fn set_profile_source(source: ProfileSource) {
+    let _ = PROFILES.set(source);
+}
+
+/// A feature's closed loops placed where its body sits.
+fn placed_profile(document: &Document, id: FeatureId) -> Option<kernel_api::Profile> {
+    let mut profile = PROFILES.get()?(document, id)?;
+    let placement = document
+        .get_feature_meta(id)?
+        .body
+        .map(|body| document.body_placement(body))
+        .unwrap_or_default();
+    if !placement.is_identity() {
+        let plane = &mut profile.plane;
+        let point = |p: [f64; 3]| placement.point(p.map(|c| c as f32)).map(f64::from);
+        let turn = |d: [f64; 3]| placement.direction(d.map(|c| c as f32)).map(f64::from);
+        plane.origin = point(plane.origin);
+        plane.x_axis = turn(plane.x_axis);
+        plane.y_axis = turn(plane.y_axis);
+        plane.normal = turn(plane.normal);
+    }
+    Some(profile)
+}
+
 /// What the package is, for every call its instances make.
 #[derive(Debug)]
 pub(crate) struct PackageInfo {
@@ -389,6 +421,12 @@ impl printcad::workbench::host::Host for State {
         document
             .imported_brep_blob(body_id(&body).ok()?)
             .map(<[u8]>::to_vec)
+    }
+
+    fn profile(&mut self, feature: String) -> Option<String> {
+        let document = self.document()?;
+        let profile = placed_profile(document, feature_id(&feature).ok()?)?;
+        serde_json::to_string(&profile).ok()
     }
 
     fn call(&mut self, command: String, args: String) -> Result<String, String> {

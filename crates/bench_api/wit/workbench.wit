@@ -18,6 +18,10 @@ interface host {
     /// A body's solid in the kernel's native format, for `SolidOp::Shape`
     /// and `SolidOp::Boolean`.
     body-shape: func(body: string) -> option<list<u8>>;
+    /// A feature's closed loops (a sketch's), as a `kernel_api::Profile`
+    /// placed in world space: its plane, then the loops, holes inside
+    /// their outlines. None when the feature closes no area.
+    profile: func(feature: string) -> option<string>;
 
     /// Run a document command (`bench_api::calls`): arguments and answer
     /// as JSON. Allowed while the bench handles an event, a panel change,

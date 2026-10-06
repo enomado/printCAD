@@ -120,6 +120,8 @@ pub fn prepare_package(
     package: &Package,
     granted: &Capabilities,
 ) -> Result<Box<dyn Workbench>, String> {
+    // A package reads a sketch's closed loops as a feature's profile.
+    wb_wasm::set_profile_source(wb_sketch::profile::closed_profile);
     wb_wasm::load(package, granted).map(|bench| Box::new(bench) as Box<dyn Workbench>)
 }
 
