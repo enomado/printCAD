@@ -167,7 +167,29 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         CommandSpec::new("doc.set_visible", "Show or hide a body or a feature")
             .param("id", ParamKind::Id, "")
             .param("visible", ParamKind::Bool, ""),
-        CommandSpec::new("doc.delete", "Delete a body or a feature").param("id", ParamKind::Id, ""),
+        CommandSpec::new("doc.delete", "Delete a body or a feature")
+            .param("id", ParamKind::Id, "")
+            .note("A body goes with every feature in it.")
+            .note(
+                "A feature goes alone: deleting a pad keeps its sketch, and deleting a sketch \
+                 a later feature uses is not refused; that feature then fails at \
+                 `pc.doc.rebuild()` (\"references a missing sketch\").",
+            )
+            .see_also("doc.suppress")
+            .example(
+                "A fillet taken away again",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+                local pad = pc.design.pad{sketch = s, length = 5}
+                local body = pc.doc.feature{id = pad}.body
+                local round = pc.design.fillet{body = body, radius = 1}
+                pc.doc.delete{id = round}
+                assert(#pc.doc.rebuild() == 0)
+                assert(#pc.doc.faces{body = body} == 6, "the block is square again")
+                assert(#pc.doc.features{body = body} == 2, "the sketch and the pad")
+                "#,
+            ),
         CommandSpec::new(
             "doc.repair",
             "Repair the shapes the kernel's checker calls broken",
@@ -226,7 +248,29 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         )
         .optional("timeout", ParamKind::Number, "Seconds to wait at most (60)")
         .returns("a list of {feature, error} for every feature that failed")
-        .read_only(),
+        .read_only()
+        .note(
+            "Commands that make or change features build nothing; this builds them, and is \
+             where a feature that cannot build is told. An empty list means every feature \
+             built: check `#pc.doc.rebuild() == 0` before measuring.",
+        )
+        .note(
+            "A body whose feature failed keeps the solid of the history before that feature, \
+             so a measurement after a failure measures the earlier solid.",
+        )
+        .see_also("doc.measure")
+        .see_also("doc.faces")
+        .example(
+            "A profile that does not close is told here",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.polyline{sketch = s, points = {{0, 0}, {10, 0}, {10, 10}}}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local failed = pc.doc.rebuild()
+            assert(#failed == 1 and failed[1].feature == pad, "the pad failed")
+            assert(failed[1].error:find("not closed"), failed[1].error)
+            "#,
+        ),
         CommandSpec::new("doc.faces", "The faces of a body's solid, where it sits")
             .param("body", ParamKind::Id, "")
             .returns(
@@ -234,14 +278,71 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                  point lies on the face, normal is a flat face's outward one, \
                  axis a turned face's {point, direction}",
             )
-            .read_only(),
+            .read_only()
+            .note(
+                "It reads the built solid: run `pc.doc.rebuild()` first; a body not yet \
+                 built is refused (\"the body has no solid yet\").",
+            )
+            .note(
+                "Points, normals and axes are in world space, where the body sits; features \
+                 take faces in the body's own frame, the same unless the body was moved.",
+            )
+            .note(
+                "Every rebuild numbers the faces afresh: find a face by its kind, normal \
+                 and point in the same script rather than keep its index. `name` is a \
+                 string.",
+            )
+            .see_also("doc.measure")
+            .example(
+                "The top face of a block found by its normal",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+                local pad = pc.design.pad{sketch = s, length = 4}
+                assert(#pc.doc.rebuild() == 0)
+                local faces = pc.doc.faces{body = pc.doc.feature{id = pad}.body}
+                assert(#faces == 6)
+                local top
+                for _, face in ipairs(faces) do
+                  if face.kind == "plane" and face.normal[3] > 0.99 then top = face end
+                end
+                assert(top and math.abs(top.point[3] - 4) < 1e-6, "the top is at z = 4")
+                assert(math.abs(top.area - 200) < 1e-3)
+                assert(type(top.name) == "string")
+                "#,
+            ),
         CommandSpec::new(
             "doc.measure",
             "A body's volume, surface area, centre and bounds",
         )
         .param("body", ParamKind::Id, "")
         .returns("{volume, area, centre, min, max, approximate}")
-        .read_only(),
+        .read_only()
+        .note(
+            "It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is \
+             refused (\"the body has no solid yet\").",
+        )
+        .note(
+            "Volume is in mm³ and area in mm², the bounds and centre in world space. \
+             `approximate` is true when some face had no closed form and the figures were \
+             summed over its triangles: close (a fraction of a percent) rather than exact. \
+             A mesh body is refused; it has no solid to measure.",
+        )
+        .see_also("doc.rebuild")
+        .see_also("doc.faces")
+        .example(
+            "A cylinder's volume and bounds",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+            local pad = pc.design.pad{sketch = s, length = 10}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - math.pi * 25 * 10) < 1e-3, m.volume)
+            assert(math.abs(m.max[3] - 10) < 1e-6 and math.abs(m.min[1] + 5) < 1e-6)
+            assert(math.abs(m.centre[3] - 5) < 1e-6)
+            "#,
+        ),
         CommandSpec::new(
             "doc.parameters",
             "A feature's numbers that formulas set and read",
@@ -624,6 +725,23 @@ pub(crate) fn reference(commands: &[CommandSpec]) -> String {
                 out.push('\n');
                 out.push_str(&lines.join("\n"));
                 out.push('\n');
+            }
+            if !c.notes.is_empty() {
+                out.push_str("\nNotes:\n\n");
+                for note in &c.notes {
+                    out.push_str(&format!("- {note}\n"));
+                }
+            }
+            if !c.see_also.is_empty() {
+                let others: Vec<String> = c.see_also.iter().map(|s| format!("`pc.{s}`")).collect();
+                out.push_str(&format!("\nSee also {}.\n", others.join(", ")));
+            }
+            if let Some(example) = c.examples.first() {
+                out.push_str(&format!(
+                    "\nExample: {}.\n\n```lua\n{}\n```\n",
+                    example.title.trim_end_matches('.'),
+                    example.script.trim()
+                ));
             }
         }
     }
@@ -2457,6 +2575,85 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The ```lua blocks of a markdown text.
+    fn lua_blocks(text: &str) -> Vec<String> {
+        let mut blocks = Vec::new();
+        let mut open: Option<String> = None;
+        for line in text.lines() {
+            match open.as_mut() {
+                None if line.trim_start() == "```lua" => open = Some(String::new()),
+                Some(_) if line.trim_start() == "```" => blocks.extend(open.take()),
+                Some(block) => {
+                    block.push_str(line);
+                    block.push('\n');
+                }
+                None => {}
+            }
+        }
+        blocks
+    }
+
+    #[test]
+    fn markdown_lua_blocks_are_found_whole() {
+        let text =
+            "Text\n```lua\nlocal a = 1\nassert(a)\n```\n```\nnot lua\n```\n```lua\nb()\n```\n";
+        assert_eq!(lua_blocks(text), ["local a = 1\nassert(a)\n", "b()\n"]);
+    }
+
+    /// Every example of every command, and every Lua block of every recipe
+    /// under `docs/recipes/`, runs from an empty document as `printcad
+    /// --script` runs a file, and its asserts hold.
+    #[test]
+    fn every_command_example_and_recipe_runs() {
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let mut runs: Vec<(String, String, String)> = command_specs(&registry)
+            .into_iter()
+            .flat_map(|c| {
+                c.examples
+                    .into_iter()
+                    .map(move |e| (c.id.clone(), e.title, e.script))
+            })
+            .collect();
+        let recipes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/recipes");
+        let mut files: Vec<_> = std::fs::read_dir(&recipes)
+            .expect("docs/recipes")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "md"))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "docs/recipes has recipes");
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let name = format!(
+                "docs/recipes/{}",
+                file.file_name().unwrap().to_string_lossy()
+            );
+            assert!(
+                !text.contains('\u{2014}'),
+                "{name}: the docs use no long dash"
+            );
+            let blocks = lua_blocks(&text);
+            assert!(!blocks.is_empty(), "{name} has a lua block");
+            for (n, block) in blocks.into_iter().enumerate() {
+                runs.push((name.clone(), format!("block {}", n + 1), block));
+            }
+        }
+        let mut failed = Vec::new();
+        for (owner, title, script) in &runs {
+            if let Err(error) = crate::headless::run_in_empty_document(&mut registry, script, title)
+            {
+                failed.push(format!("{owner}, \"{title}\": {error}"));
+            }
+        }
+        assert!(
+            failed.is_empty(),
+            "examples that fail:\n{}",
+            failed.join("\n")
+        );
     }
 
     #[test]

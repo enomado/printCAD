@@ -654,7 +654,13 @@ bindings (`Target::Script`), the Scripts menu, toolbar button and palette.
 `printcad --script` (`headless.rs`) runs before the event loop, rebuilds
 on the calling thread, logs to stderr. `docs/SCRIPTING.md`'s command
 reference is generated; a test fails when it drifts
-(`PRINTCAD_WRITE_DOCS=1` rewrites it).
+(`PRINTCAD_WRITE_DOCS=1` rewrites it). A `CommandSpec` carries `notes`,
+`examples` (Lua ending in `assert`s) and `see_also` (`.note`, `.example`,
+`.see_also`; a package's `bench_api::Command` the same), which the
+reference prints; `every_command_example_and_recipe_runs`
+(`app/scripts.rs`) runs every example and every ```lua block of
+`docs/recipes/*.md` from an empty document through the headless path
+(`headless::run_in_empty_document`).
 Commands never open a task; Design's make features through
 `create_feature`, the toolbar's own path, then merge named fields into the
 feature's JSON. `kernel_ogeom/tests/kernel/scripted_part.rs` runs a script through

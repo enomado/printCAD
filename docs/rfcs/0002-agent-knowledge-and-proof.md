@@ -1,6 +1,8 @@
 # RFC 0002: What an agent knows, and how it proves its work
 
-- Status: proposed
+- Status: in progress; milestone 1 built (the contract, its runner and the
+  reference, a first batch of notes and two recipes; the Surface
+  commands' notes still to come)
 - Date: 2026-10-06
 - Scope: `core_document::command` (the command contract), the `agents`
   crate, `app_shell` (`app/mcp.rs`, `app/agent_context.rs`,

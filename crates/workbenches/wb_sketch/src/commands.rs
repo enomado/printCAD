@@ -24,7 +24,37 @@ pub fn register(context: &mut WorkbenchContext) {
             "sketch.new",
             "Make an empty sketch on a base plane",
         ))
-        .returns("the sketch's id"),
+        .returns("the sketch's id")
+        .note(
+            "Without `body` the sketch goes in the selected body, else in a new one: in a \
+             script two sketches made without `body` land in two bodies, and a pocket or a \
+             hole from the second is refused for want of material. Give `body` from \
+             `pc.doc.feature{id = ...}.body` or `pc.doc.new_body`.",
+        )
+        .note(
+            "`body` takes any body, a surface body too: that is how a sketch starts in a \
+             surface body, as the Surface bench's Create sketch does.",
+        )
+        .note(
+            "XY faces +Z, YZ faces +X and XZ faces -Y, so a pad from an XZ sketch grows \
+             toward -Y and `offset` moves an XZ sketch toward -Y. The sketch's x and y run \
+             along the plane's two letters (on XZ, y is world Z). Lower case names are \
+             taken too.",
+        )
+        .see_also("doc.new_body")
+        .see_also("sketch.rect")
+        .see_also("design.datum")
+        .example(
+            "Two sketches in one body",
+            r#"
+            local body = pc.doc.new_body{name = "Bracket"}
+            local base = pc.sketch.new{body = body, plane = "XY"}
+            local side = pc.sketch.new{body = body, plane = "XZ", offset = 5}
+            assert(pc.doc.feature{id = base}.body == body)
+            assert(pc.doc.feature{id = side}.body == body)
+            assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
+            "#,
+        ),
     );
     context.register_command(
         placing(CommandSpec::new(
@@ -106,7 +136,31 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Bool,
             "Join the last point to the first",
         )
-        .returns("the lines' ids"),
+        .returns("the lines' ids")
+        .note(
+            "A point is `{x, y}` or `{x = .., y = ..}`. Ending on the first point closes the \
+             outline as `closed = true` does: an end landing exactly on a point the sketch \
+             has takes that point.",
+        )
+        .note(
+            "Only closed loops count in a profile: an open polyline is left out of what a \
+             pad or pocket uses, and a sketch with no closed loop fails at `pc.doc.rebuild()` \
+             with \"profile is not closed\", not when the feature is made.",
+        )
+        .see_also("sketch.rect")
+        .see_also("sketch.line")
+        .example(
+            "A closed triangle padded",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local lines = pc.sketch.polyline{sketch = s, points = {{0, 0}, {30, 0}, {0, 20}}, closed = true}
+            assert(#lines == 3)
+            local pad = pc.design.pad{sketch = s, length = 5}
+            assert(#pc.doc.rebuild() == 0, "the triangle closes")
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 30 * 20 / 2 * 5) < 1e-3)
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -118,14 +172,61 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("y", ParamKind::Number, "")
         .param("width", ParamKind::Number, "")
         .param("height", ParamKind::Number, "")
-        .returns("the four lines' ids"),
+        .returns("the four lines' ids")
+        .note(
+            "(x, y) is a corner, not the centre: a rectangle centred on the origin starts \
+             at (-width / 2, -height / 2). A negative width or height draws it to the left \
+             or below.",
+        )
+        .note(
+            "Its sides are held level and upright but carry no dimensions; \
+             `pc.sketch.constrain` adds them.",
+        )
+        .see_also("sketch.polyline")
+        .see_also("sketch.constrain")
+        .example(
+            "A plate centred on the origin",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local sides = pc.sketch.rect{sketch = s, x = -20, y = -15, width = 40, height = 30}
+            assert(#sides == 4)
+            local pad = pc.design.pad{sketch = s, length = 3}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 40 * 30 * 3) < 1e-3)
+            assert(math.abs(m.centre[1]) < 1e-6 and math.abs(m.centre[2]) < 1e-6, "centred")
+            "#,
+        ),
     );
     context.register_command(
         sketch(CommandSpec::new("sketch.circle", "Add a circle"))
             .param("x", ParamKind::Number, "The centre")
             .param("y", ParamKind::Number, "The centre")
             .param("radius", ParamKind::Number, "")
-            .returns("the circle's id"),
+            .returns("the circle's id")
+            .note("It takes the radius, not the diameter; a radius of 0 or less is refused.")
+            .note(
+                "A circle inside a closed outline of the same sketch is a hole in what is \
+                 padded from it; circles apart from each other pad as separate solids in \
+                 one body.",
+            )
+            .note(
+                "`pc.design.hole` reads only a circle's centre: the hole's size is its own \
+                 `diameter`, whatever the circle's radius.",
+            )
+            .see_also("design.hole")
+            .example(
+                "A washer: a ring padded from two circles",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+                pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 4}
+                local pad = pc.design.pad{sketch = s, length = 2}
+                assert(#pc.doc.rebuild() == 0)
+                local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+                assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
+                "#,
+            ),
     );
     context.register_command(
         sketch(CommandSpec::new(

@@ -83,6 +83,183 @@ const OWN_ARGS: &[&str] = &[
     "face_normal",
 ];
 
+/// Feature command `id`'s notes and examples, beyond what every feature
+/// command says.
+fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
+    match id {
+        "design.pad" => spec
+            .note(
+                "`length` is 10 mm when left out. The pad grows along the sketch's normal; \
+                 `reversed = true` grows it the other way, `symmetric = true` half each way.",
+            )
+            .note(
+                "It goes in the sketch's body. With no sketch, `face_point` and `face_normal` \
+                 name a flat face of the solid to extrude instead.",
+            )
+            .see_also("sketch.new")
+            .see_also("design.pocket")
+            .example(
+                "A plate padded from a rectangle",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+                local pad = pc.design.pad{sketch = s, length = 5}
+                assert(#pc.doc.rebuild() == 0, "the pad builds")
+                local body = pc.doc.feature{id = pad}.body
+                assert(math.abs(pc.doc.measure{body = body}.volume - 40 * 30 * 5) < 1e-3)
+                assert(#pc.doc.faces{body = body} == 6, "a box has six faces")
+                "#,
+            ),
+        "design.pocket" => spec
+            .note(
+                "It cuts against its sketch's normal: from a sketch at the top face's height \
+                 it digs down into the solid. From a sketch on the bottom (XY at 0 under a \
+                 pad) it cuts away from the material and removes nothing, without an \
+                 error; `reversed = true` turns it.",
+            )
+            .note(
+                "`through_all = true` cuts through everything; else `depth`, 5 mm when left \
+                 out.",
+            )
+            .note(
+                "It is refused in a body with no solid feature yet. Its sketch must be in \
+                 the padded body: `pc.sketch.new{body = ...}`, since a sketch made without \
+                 `body` starts a new one.",
+            )
+            .see_also("sketch.new")
+            .see_also("design.hole")
+            .example(
+                "A square window cut through a plate",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+                local pad = pc.design.pad{sketch = s, length = 5}
+                local body = pc.doc.feature{id = pad}.body
+                local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+                pc.sketch.rect{sketch = top, x = 15, y = 10, width = 10, height = 10}
+                pc.design.pocket{sketch = top, through_all = true}
+                assert(#pc.doc.rebuild() == 0, "the pocket builds")
+                local volume = pc.doc.measure{body = body}.volume
+                assert(math.abs(volume - (40 * 30 - 10 * 10) * 5) < 1e-3, volume)
+                assert(#pc.doc.faces{body = body} == 10, "six faces and four walls")
+                "#,
+            ),
+        "design.hole" => spec
+            .note(
+                "It drills at every circle's centre and every point of its sketch; the \
+                 circles' sizes are ignored, the hole's own `diameter` (5 mm when left out) \
+                 is what it drills.",
+            )
+            .note(
+                "It drills against the sketch's normal, `depth` deep (10 mm) or \
+                 `through_all = true`. A sketch on the bottom of a pad drills away from the \
+                 material and removes nothing, without an error; `reversed = true` turns it.",
+            )
+            .note(
+                "Counterbores, countersinks and threads are fields too (`cut`, `threaded`, \
+                 `thread`); docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` \
+                 shows a hole's fields.",
+            )
+            .see_also("sketch.circle")
+            .see_also("design.pocket")
+            .example(
+                "Two holes through a plate, one at a circle and one at a point",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+                local pad = pc.design.pad{sketch = s, length = 4}
+                local body = pc.doc.feature{id = pad}.body
+                local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+                pc.sketch.circle{sketch = at, x = 10, y = 10, radius = 1}
+                pc.sketch.point{sketch = at, x = 30, y = 10}
+                pc.design.hole{sketch = at, diameter = 6, through_all = true}
+                assert(#pc.doc.rebuild() == 0, "the holes build")
+                local bores = 0
+                for _, face in ipairs(pc.doc.faces{body = body}) do
+                  if face.kind == "cylinder" then
+                    bores = bores + 1
+                    assert(math.abs(face.radius - 3) < 1e-6, "the hole's diameter, not the circle's")
+                  end
+                end
+                assert(bores == 2)
+                local volume = pc.doc.measure{body = body}.volume
+                assert(math.abs(volume - (40 * 20 - 2 * math.pi * 9) * 4) < 1e-3, volume)
+                "#,
+            ),
+        "design.fillet" | "design.chamfer" => {
+            let (size, round) = if id == "design.fillet" {
+                ("`radius`", "rounds")
+            } else {
+                ("`size`", "bevels")
+            };
+            let spec = spec
+                .note(&format!(
+                    "Without `edges` it {round} every edge of the solid (`edges = \"All\"`); \
+                     {size} is 1 mm when left out. In the app, edges selected in the view \
+                     are taken instead."
+                ))
+                .note(
+                    "`edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` \
+                     picks edges by a point on each and its direction there, and \
+                     `edges = {Faces = {{point = .., normal = ..}}}` every edge around those \
+                     faces, in the body's own frame. A bare list of picks is refused.",
+                )
+                .note(
+                    "Edges running on tangentially are taken too (`follow_tangent`, on by \
+                     default).",
+                )
+                .see_also("doc.faces");
+            if id == "design.fillet" {
+                spec.note(
+                    "A radius larger than the faces beside an edge can take fails at \
+                     `pc.doc.rebuild()`.",
+                )
+                .see_also("design.chamfer")
+                .example(
+                    "One top edge of a block rounded",
+                    r#"
+                    local s = pc.sketch.new{plane = "XY"}
+                    pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+                    local pad = pc.design.pad{sketch = s, length = 10}
+                    local body = pc.doc.feature{id = pad}.body
+                    pc.design.fillet{body = body, radius = 3,
+                      edges = {Edges = {{point = {20, 0, 10}, direction = {1, 0, 0}}}}}
+                    assert(#pc.doc.rebuild() == 0, "the fillet builds")
+                    assert(#pc.doc.faces{body = body} == 7, "six faces and the round")
+                    local taken = (9 - math.pi * 9 / 4) * 40
+                    local volume = pc.doc.measure{body = body}.volume
+                    assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
+                    "#,
+                )
+            } else {
+                spec.note(
+                    "`mode` is EqualDistance, TwoDistances (with `size2`) or DistanceAngle \
+                     (with `angle_deg`).",
+                )
+                .see_also("design.fillet")
+                .example(
+                    "The top face's edges bevelled",
+                    r#"
+                    local s = pc.sketch.new{plane = "XY"}
+                    pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+                    local pad = pc.design.pad{sketch = s, length = 10}
+                    local body = pc.doc.feature{id = pad}.body
+                    pc.design.chamfer{body = body, size = 2,
+                      edges = {Faces = {{point = {20, 15, 10}, normal = {0, 0, 1}}}}}
+                    assert(#pc.doc.rebuild() == 0, "the chamfer builds")
+                    assert(#pc.doc.faces{body = body} == 10, "six faces and four bevels")
+                    -- A 2 x 2 prism along each edge, less what two share at a corner.
+                    local taken = 2 * (40 + 30) * 2 - 4 * 8 / 3
+                    local volume = pc.doc.measure{body = body}.volume
+                    assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
+                    "#,
+                )
+            }
+        }
+        _ => spec,
+    }
+}
+
 /// Register every command this module runs.
 pub fn register(context: &mut WorkbenchContext) {
     for (id, summary) in FEATURES {
@@ -113,10 +290,19 @@ pub fn register(context: &mut WorkbenchContext) {
                 "box (the default), cylinder, sphere, cone, torus or wedge",
             );
         }
-        context.register_command(
+        context.register_command(explained(
+            id,
             spec.extra_args("Any field of the feature, such as length = 20 or reversed = true")
-                .returns("the feature's id"),
-        );
+                .returns("the feature's id")
+                .note(
+                    "It makes the feature and builds nothing: a feature that cannot build \
+                     is told by `pc.doc.rebuild()`, in the list it returns, and its body \
+                     stays the solid before it. A misspelt field is refused here, naming the \
+                     fields the feature has.",
+                )
+                .see_also("doc.rebuild")
+                .see_also("design.set"),
+        ));
     }
     context.register_command(
         CommandSpec::new("design.set", "Change fields of a Design feature or a datum")

@@ -179,7 +179,15 @@ end
 pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 ```
 
+Longer workflows, each a script that checks what it made, are under
+[recipes](recipes/).
+
 ## Commands
+
+Some commands carry notes (what they refuse, do without saying, or are
+easily mistaken for) and an example. The test suite runs every example
+of every command, and every recipe, from an empty document, so they
+work as written.
 
 <!-- commands: generated from the registered commands -->
 ### doc
@@ -274,6 +282,27 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - `id` (id)
 
+Notes:
+
+- A body goes with every feature in it.
+- A feature goes alone: deleting a pad keeps its sketch, and deleting a sketch a later feature uses is not refused; that feature then fails at `pc.doc.rebuild()` ("references a missing sketch").
+
+See also `pc.doc.suppress`.
+
+Example: A fillet taken away again.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local round = pc.design.fillet{body = body, radius = 1}
+pc.doc.delete{id = round}
+assert(#pc.doc.rebuild() == 0)
+assert(#pc.doc.faces{body = body} == 6, "the block is square again")
+assert(#pc.doc.features{body = body} == 2, "the sketch and the pad")
+```
+
 `pc.doc.repair`: Repair the shapes the kernel's checker calls broken.
 
 - `bodies` (list): The bodies
@@ -316,15 +345,79 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `timeout` (number, optional): Seconds to wait at most (60)
 - Returns a list of {feature, error} for every feature that failed
 
+Notes:
+
+- Commands that make or change features build nothing; this builds them, and is where a feature that cannot build is told. An empty list means every feature built: check `#pc.doc.rebuild() == 0` before measuring.
+- A body whose feature failed keeps the solid of the history before that feature, so a measurement after a failure measures the earlier solid.
+
+See also `pc.doc.measure`, `pc.doc.faces`.
+
+Example: A profile that does not close is told here.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.polyline{sketch = s, points = {{0, 0}, {10, 0}, {10, 10}}}
+local pad = pc.design.pad{sketch = s, length = 5}
+local failed = pc.doc.rebuild()
+assert(#failed == 1 and failed[1].feature == pad, "the pad failed")
+assert(failed[1].error:find("not closed"), failed[1].error)
+```
+
 `pc.doc.faces`: The faces of a body's solid, where it sits.
 
 - `body` (id)
 - Returns a list of {index, kind, point, area, normal?, axis?, radius?, name?}: point lies on the face, normal is a flat face's outward one, axis a turned face's {point, direction}
 
+Notes:
+
+- It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is refused ("the body has no solid yet").
+- Points, normals and axes are in world space, where the body sits; features take faces in the body's own frame, the same unless the body was moved.
+- Every rebuild numbers the faces afresh: find a face by its kind, normal and point in the same script rather than keep its index. `name` is a string.
+
+See also `pc.doc.measure`.
+
+Example: The top face of a block found by its normal.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 4}
+assert(#pc.doc.rebuild() == 0)
+local faces = pc.doc.faces{body = pc.doc.feature{id = pad}.body}
+assert(#faces == 6)
+local top
+for _, face in ipairs(faces) do
+  if face.kind == "plane" and face.normal[3] > 0.99 then top = face end
+end
+assert(top and math.abs(top.point[3] - 4) < 1e-6, "the top is at z = 4")
+assert(math.abs(top.area - 200) < 1e-3)
+assert(type(top.name) == "string")
+```
+
 `pc.doc.measure`: A body's volume, surface area, centre and bounds.
 
 - `body` (id)
 - Returns {volume, area, centre, min, max, approximate}
+
+Notes:
+
+- It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is refused ("the body has no solid yet").
+- Volume is in mm³ and area in mm², the bounds and centre in world space. `approximate` is true when some face had no closed form and the figures were summed over its triangles: close (a fraction of a percent) rather than exact. A mesh body is refused; it has no solid to measure.
+
+See also `pc.doc.rebuild`, `pc.doc.faces`.
+
+Example: A cylinder's volume and bounds.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+local pad = pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - math.pi * 25 * 10) < 1e-3, m.volume)
+assert(math.abs(m.max[3] - 10) < 1e-6 and math.abs(m.min[1] + 5) < 1e-6)
+assert(math.abs(m.centre[3] - 5) < 1e-6)
+```
 
 `pc.doc.parameters`: A feature's numbers that formulas set and read.
 
@@ -566,6 +659,25 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `x_axis` (list, optional): With normal: the sketch's X direction, {x, y, z}
 - Returns the sketch's id
 
+Notes:
+
+- Without `body` the sketch goes in the selected body, else in a new one: in a script two sketches made without `body` land in two bodies, and a pocket or a hole from the second is refused for want of material. Give `body` from `pc.doc.feature{id = ...}.body` or `pc.doc.new_body`.
+- `body` takes any body, a surface body too: that is how a sketch starts in a surface body, as the Surface bench's Create sketch does.
+- XY faces +Z, YZ faces +X and XZ faces -Y, so a pad from an XZ sketch grows toward -Y and `offset` moves an XZ sketch toward -Y. The sketch's x and y run along the plane's two letters (on XZ, y is world Z). Lower case names are taken too.
+
+See also `pc.doc.new_body`, `pc.sketch.rect`, `pc.design.datum`.
+
+Example: Two sketches in one body.
+
+```lua
+local body = pc.doc.new_body{name = "Bracket"}
+local base = pc.sketch.new{body = body, plane = "XY"}
+local side = pc.sketch.new{body = body, plane = "XZ", offset = 5}
+assert(pc.doc.feature{id = base}.body == body)
+assert(pc.doc.feature{id = side}.body == body)
+assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
+```
+
 `pc.sketch.import_dxf`: Make a sketch of a DXF drawing: its lines, arcs, circles, ellipses and polylines as sketch curves, splines as lines through points on them, hidden ones as construction, ends that meet sharing one point.
 
 - `body` (id, optional): The body it belongs to; the selected body, else a new one
@@ -637,6 +749,25 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `closed` (boolean, optional): Join the last point to the first
 - Returns the lines' ids
 
+Notes:
+
+- A point is `{x, y}` or `{x = .., y = ..}`. Ending on the first point closes the outline as `closed = true` does: an end landing exactly on a point the sketch has takes that point.
+- Only closed loops count in a profile: an open polyline is left out of what a pad or pocket uses, and a sketch with no closed loop fails at `pc.doc.rebuild()` with "profile is not closed", not when the feature is made.
+
+See also `pc.sketch.rect`, `pc.sketch.line`.
+
+Example: A closed triangle padded.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local lines = pc.sketch.polyline{sketch = s, points = {{0, 0}, {30, 0}, {0, 20}}, closed = true}
+assert(#lines == 3)
+local pad = pc.design.pad{sketch = s, length = 5}
+assert(#pc.doc.rebuild() == 0, "the triangle closes")
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 30 * 20 / 2 * 5) < 1e-3)
+```
+
 `pc.sketch.rect`: Add a rectangle from its corner (x, y), its width and its height, its sides held level and upright.
 
 - `sketch` (id): The sketch to draw in
@@ -646,6 +777,26 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `height` (number)
 - Returns the four lines' ids
 
+Notes:
+
+- (x, y) is a corner, not the centre: a rectangle centred on the origin starts at (-width / 2, -height / 2). A negative width or height draws it to the left or below.
+- Its sides are held level and upright but carry no dimensions; `pc.sketch.constrain` adds them.
+
+See also `pc.sketch.polyline`, `pc.sketch.constrain`.
+
+Example: A plate centred on the origin.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local sides = pc.sketch.rect{sketch = s, x = -20, y = -15, width = 40, height = 30}
+assert(#sides == 4)
+local pad = pc.design.pad{sketch = s, length = 3}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 40 * 30 * 3) < 1e-3)
+assert(math.abs(m.centre[1]) < 1e-6 and math.abs(m.centre[2]) < 1e-6, "centred")
+```
+
 `pc.sketch.circle`: Add a circle.
 
 - `sketch` (id): The sketch to draw in
@@ -653,6 +804,26 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `y` (number): The centre
 - `radius` (number)
 - Returns the circle's id
+
+Notes:
+
+- It takes the radius, not the diameter; a radius of 0 or less is refused.
+- A circle inside a closed outline of the same sketch is a hole in what is padded from it; circles apart from each other pad as separate solids in one body.
+- `pc.design.hole` reads only a circle's centre: the hole's size is its own `diameter`, whatever the circle's radius.
+
+See also `pc.design.hole`.
+
+Example: A washer: a ring padded from two circles.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 4}
+local pad = pc.design.pad{sketch = s, length = 2}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
+```
 
 `pc.sketch.arc`: Add an arc, counter-clockwise from the start angle to the end angle.
 
@@ -934,6 +1105,26 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `length` is 10 mm when left out. The pad grows along the sketch's normal; `reversed = true` grows it the other way, `symmetric = true` half each way.
+- It goes in the sketch's body. With no sketch, `face_point` and `face_normal` name a flat face of the solid to extrude instead.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.new`, `pc.design.pocket`.
+
+Example: A plate padded from a rectangle.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 5}
+assert(#pc.doc.rebuild() == 0, "the pad builds")
+local body = pc.doc.feature{id = pad}.body
+assert(math.abs(pc.doc.measure{body = body}.volume - 40 * 30 * 5) < 1e-3)
+assert(#pc.doc.faces{body = body} == 6, "a box has six faces")
+```
+
 `pc.design.pocket`: Cut a sketch into the body.
 
 - `sketch` (id, optional): The sketch it uses
@@ -943,6 +1134,31 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It cuts against its sketch's normal: from a sketch at the top face's height it digs down into the solid. From a sketch on the bottom (XY at 0 under a pad) it cuts away from the material and removes nothing, without an error; `reversed = true` turns it.
+- `through_all = true` cuts through everything; else `depth`, 5 mm when left out.
+- It is refused in a body with no solid feature yet. Its sketch must be in the padded body: `pc.sketch.new{body = ...}`, since a sketch made without `body` starts a new one.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.new`, `pc.design.hole`.
+
+Example: A square window cut through a plate.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.rect{sketch = top, x = 15, y = 10, width = 10, height = 10}
+pc.design.pocket{sketch = top, through_all = true}
+assert(#pc.doc.rebuild() == 0, "the pocket builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (40 * 30 - 10 * 10) * 5) < 1e-3, volume)
+assert(#pc.doc.faces{body = body} == 10, "six faces and four walls")
+```
 
 `pc.design.revolve`: Turn a sketch about an axis.
 
@@ -954,6 +1170,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.groove`: Cut a sketch turned about an axis.
 
 - `sketch` (id, optional): The sketch it uses
@@ -963,6 +1185,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.loft`: Loft through sketches.
 
@@ -974,6 +1202,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.subtractive_loft`: Cut a loft through sketches.
 
 - `sketch` (id, optional): The sketch it uses
@@ -983,6 +1217,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.pipe`: Sweep a sketch along a path.
 
@@ -994,6 +1234,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.subtractive_pipe`: Cut a sketch swept along a path.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1003,6 +1249,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.helix`: Sweep a sketch along a helix.
 
@@ -1014,6 +1266,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.subtractive_helix`: Cut a sketch swept along a helix.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1023,6 +1281,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.primitive`: Add a box, cylinder, sphere, cone, torus or wedge.
 
@@ -1035,6 +1299,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.subtractive_primitive`: Cut a box, cylinder, sphere, cone, torus or wedge.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1046,6 +1316,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.hole`: Drill holes at a sketch's circles and points.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1055,6 +1331,39 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- It drills at every circle's centre and every point of its sketch; the circles' sizes are ignored, the hole's own `diameter` (5 mm when left out) is what it drills.
+- It drills against the sketch's normal, `depth` deep (10 mm) or `through_all = true`. A sketch on the bottom of a pad drills away from the material and removes nothing, without an error; `reversed = true` turns it.
+- Counterbores, countersinks and threads are fields too (`cut`, `threaded`, `thread`); docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` shows a hole's fields.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.circle`, `pc.design.pocket`.
+
+Example: Two holes through a plate, one at a circle and one at a point.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+local pad = pc.design.pad{sketch = s, length = 4}
+local body = pc.doc.feature{id = pad}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.circle{sketch = at, x = 10, y = 10, radius = 1}
+pc.sketch.point{sketch = at, x = 30, y = 10}
+pc.design.hole{sketch = at, diameter = 6, through_all = true}
+assert(#pc.doc.rebuild() == 0, "the holes build")
+local bores = 0
+for _, face in ipairs(pc.doc.faces{body = body}) do
+  if face.kind == "cylinder" then
+    bores = bores + 1
+    assert(math.abs(face.radius - 3) < 1e-6, "the hole's diameter, not the circle's")
+  end
+end
+assert(bores == 2)
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (40 * 20 - 2 * math.pi * 9) * 4) < 1e-3, volume)
+```
 
 `pc.design.fillet`: Round edges.
 
@@ -1066,6 +1375,32 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- Without `edges` it rounds every edge of the solid (`edges = "All"`); `radius` is 1 mm when left out. In the app, edges selected in the view are taken instead.
+- `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
+- Edges running on tangentially are taken too (`follow_tangent`, on by default).
+- A radius larger than the faces beside an edge can take fails at `pc.doc.rebuild()`.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.chamfer`.
+
+Example: One top edge of a block rounded.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+pc.design.fillet{body = body, radius = 3,
+  edges = {Edges = {{point = {20, 0, 10}, direction = {1, 0, 0}}}}}
+assert(#pc.doc.rebuild() == 0, "the fillet builds")
+assert(#pc.doc.faces{body = body} == 7, "six faces and the round")
+local taken = (9 - math.pi * 9 / 4) * 40
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
+```
+
 `pc.design.chamfer`: Bevel edges.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1075,6 +1410,33 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- Without `edges` it bevels every edge of the solid (`edges = "All"`); `size` is 1 mm when left out. In the app, edges selected in the view are taken instead.
+- `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
+- Edges running on tangentially are taken too (`follow_tangent`, on by default).
+- `mode` is EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with `angle_deg`).
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.fillet`.
+
+Example: The top face's edges bevelled.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+pc.design.chamfer{body = body, size = 2,
+  edges = {Faces = {{point = {20, 15, 10}, normal = {0, 0, 1}}}}}
+assert(#pc.doc.rebuild() == 0, "the chamfer builds")
+assert(#pc.doc.faces{body = body} == 10, "six faces and four bevels")
+-- A 2 x 2 prism along each edge, less what two share at a corner.
+local taken = 2 * (40 + 30) * 2 - 4 * 8 / 3
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
+```
 
 `pc.design.draft`: Tilt faces.
 
@@ -1086,6 +1448,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.thickness`: Hollow the solid.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1095,6 +1463,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.delete_faces`: Delete faces and close the openings from their neighbours.
 
@@ -1106,6 +1480,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.offset_faces`: Push or pull faces along their normals, their neighbours following.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1115,6 +1495,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.move_faces`: Move or turn faces, their neighbours following.
 
@@ -1126,6 +1512,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.mirror`: Mirror the last feature.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1135,6 +1527,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.linear_pattern`: Repeat the last feature along a line.
 
@@ -1146,6 +1544,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.polar_pattern`: Repeat the last feature about an axis.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1155,6 +1559,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.scaled`: Scale the last feature.
 
@@ -1166,6 +1576,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
+
 `pc.design.boolean`: Combine with another body.
 
 - `sketch` (id, optional): The sketch it uses
@@ -1175,6 +1591,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+
+See also `pc.doc.rebuild`, `pc.design.set`.
 
 `pc.design.set`: Change fields of a Design feature or a datum.
 
