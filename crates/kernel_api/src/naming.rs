@@ -66,6 +66,18 @@ where
     }
 }
 
+/// Reads a pair of names, each written as a number or as a string of its
+/// digits, as [`name_from_number_or_text`] reads one: an edge's two faces.
+pub fn names_from_numbers_or_text<'de, D>(deserializer: D) -> Result<[TopoName; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    struct Name(#[serde(deserialize_with = "name_from_number_or_text")] TopoName);
+    let [a, b] = <[Name; 2] as serde::Deserialize>::deserialize(deserializer)?;
+    Ok([a.0, b.0])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,5 +92,21 @@ mod tests {
             child(name_of(b"pad"), b"end")
         );
         assert_ne!(name_of(&[]), 0);
+    }
+
+    /// A script hands names back as the strings it was given them as.
+    #[test]
+    fn a_pair_of_names_reads_from_numbers_or_strings() {
+        #[derive(serde::Deserialize)]
+        struct Pick {
+            #[serde(deserialize_with = "names_from_numbers_or_text")]
+            faces: [TopoName; 2],
+        }
+        let read = |text: &str| serde_json::from_str::<Pick>(text).map(|p| p.faces);
+        assert_eq!(
+            read(r#"{"faces": ["18446744073709551615", 7]}"#).unwrap(),
+            [u64::MAX, 7]
+        );
+        assert!(read(r#"{"faces": ["x", 7]}"#).is_err());
     }
 }

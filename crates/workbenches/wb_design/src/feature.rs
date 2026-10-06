@@ -577,7 +577,11 @@ pub struct EdgePick {
     pub direction: [f32; 3],
     /// The names of the two faces the edge ran between when it was picked,
     /// which a rebuild finds it by; zeros when the pick had none.
-    #[serde(default, skip_serializing_if = "are_unnamed")]
+    #[serde(
+        default,
+        skip_serializing_if = "are_unnamed",
+        deserialize_with = "kernel_api::naming::names_from_numbers_or_text"
+    )]
     pub faces: [kernel_api::TopoName; 2],
 }
 

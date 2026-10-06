@@ -23,7 +23,10 @@ pub enum CurveRef {
 pub struct EdgePick {
     pub point: [f32; 3],
     pub direction: [f32; 3],
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "kernel_api::naming::names_from_numbers_or_text"
+    )]
     pub faces: [TopoName; 2],
     /// Its length when picked, to name it by.
     #[serde(default)]
