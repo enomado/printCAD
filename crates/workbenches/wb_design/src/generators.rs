@@ -118,7 +118,10 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                  module times teeth, the tip diameter two modules more. It lies on XY \
                  centred on the origin, with a 5 mm `bore` (0 for none).",
             )
-            .note("A bore that does not fit inside the root circle is refused.")
+            .note(
+                "A bore that does not fit inside the root circle is refused, and no body \
+                 is made for it.",
+            )
             .see_also("design.pad")
             .example(
                 "A 12-tooth gear padded 5 mm",
@@ -192,10 +195,11 @@ fn face_plane(point: [f32; 3], normal: [f32; 3]) -> SketchPlane {
     SketchPlane::from_frame(point, frame.normal, frame.x_axis)
 }
 
-/// Add the sketch `generator` makes to `body` on `plane`.
+/// Add the sketch `generator` makes to `body` on `plane`; with no body,
+/// to a new one, made only once the sketch is.
 fn add(
     ctx: &mut WorkbenchRuntimeContext,
-    body: BodyId,
+    body: Option<BodyId>,
     plane: SketchPlane,
     generator: Generator,
     name: Option<&str>,
@@ -205,6 +209,7 @@ fn add(
         None => DesignWorkbench::next_feature_name(ctx, generator.base_name()),
     };
     let feature = new_sketch(generator, plane, &name)?;
+    let body = body.unwrap_or_else(|| ctx.document.create_body(None));
     ctx.document
         .add_feature_in_body(feature, name.clone(), Some(body))
         .map_err(|e| format!("Failed to create {name}: {e}"))
@@ -239,7 +244,7 @@ pub(crate) fn insert(ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResu
         }
     };
     let label = generator.label();
-    match add(ctx, body, plane, generator, None) {
+    match add(ctx, Some(body), plane, generator, None) {
         Ok(id) => {
             if let Value::Object(map) = &mut args {
                 map.insert("body".into(), json!(body.0.to_string()));
@@ -281,12 +286,9 @@ pub(crate) fn command(
             if !ctx.document.bodies().iter().any(|b| b.id == body) {
                 return Err(CommandError::bad("body", "is not a body of this document"));
             }
-            body
+            Some(body)
         }
-        None => match ctx.selected_body_id {
-            Some(id) => BodyId(id),
-            None => ctx.document.create_body(None),
-        },
+        None => ctx.selected_body_id.map(BodyId),
     };
     let plane = if a.has("face_point") {
         face_plane(
@@ -367,6 +369,19 @@ mod tests {
         let shaft = FeatureId(uuid::Uuid::parse_str(shaft.as_str().unwrap()).unwrap());
         let feature = SketchFeature::from_json(doc.get_feature_data(shaft).unwrap()).unwrap();
         assert_eq!(feature.plane.normal, SketchPlane::xz().normal);
+    }
+
+    #[test]
+    fn a_refused_gear_leaves_no_body_behind() {
+        let mut doc = Document::new("g");
+        let err = run(&mut doc, "design.gear", json!({"teeth": 3, "bore": 20})).unwrap_err();
+        assert!(err.to_string().contains("bore"), "{err}");
+        assert!(
+            doc.bodies().is_empty(),
+            "no body is made for a refused gear"
+        );
+        run(&mut doc, "design.gear", json!({"teeth": 12})).unwrap();
+        assert_eq!(doc.bodies().len(), 1, "a gear given no body makes its own");
     }
 
     #[test]

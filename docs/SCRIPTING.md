@@ -4128,7 +4128,7 @@ Notes:
 - Without `body` it goes in the selected body, else in a new one: in a script each call without `body` starts a body of its own.
 - A field the generator lacks is refused, naming the ones it has; fields left out keep their defaults, which `pc.doc.feature{id = ...}.fields.generator` shows.
 - `module` is in mm (2 when left out) and `teeth` 20: the pitch diameter is module times teeth, the tip diameter two modules more. It lies on XY centred on the origin, with a 5 mm `bore` (0 for none).
-- A bore that does not fit inside the root circle is refused.
+- A bore that does not fit inside the root circle is refused, and no body is made for it.
 
 See also `pc.sketch.generator`, `pc.design.pad`.
 
