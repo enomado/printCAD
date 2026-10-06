@@ -126,7 +126,6 @@ impl SelectionShape {
 }
 
 /// The constraint tool ids, without the `sketch.constrain.` prefix.
-#[cfg(test)]
 pub const TOOLS: &[&str] = &[
     "coincident",
     "point_on_object",

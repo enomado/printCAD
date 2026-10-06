@@ -10,6 +10,7 @@
 use core_document::{DatumFeature, DatumShape, Document, FeatureId, WorkbenchFeature};
 use glam::Vec3;
 use kernel_api::ProjectedEdge;
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::sketch::{ExternalReference, GeometryElement, SketchPlane};
@@ -40,21 +41,42 @@ pub fn project(
     plane: &SketchPlane,
     reference: ExternalReference,
 ) -> Result<Vec<ProjectedEdge>, String> {
+    project_with(
+        document,
+        &|id| document.feature_values(id).cloned(),
+        plane,
+        reference,
+    )
+}
+
+/// [`project`], with `values_of` giving each sketch's and datum's working
+/// data (a sketch's solved) where the document's last evaluation would.
+pub fn project_with(
+    document: &Document,
+    values_of: &dyn Fn(FeatureId) -> Option<Value>,
+    plane: &SketchPlane,
+    reference: ExternalReference,
+) -> Result<Vec<ProjectedEdge>, String> {
     match reference {
         ExternalReference::SketchElement { sketch, element } => {
-            project_element(document, plane, FeatureId(sketch), element)
+            project_element(document, values_of, plane, FeatureId(sketch), element)
         }
-        ExternalReference::Datum { datum } => project_datum(document, plane, FeatureId(datum)),
+        ExternalReference::Datum { datum } => {
+            project_datum(document, values_of, plane, FeatureId(datum))
+        }
     }
 }
 
 fn project_element(
     document: &Document,
+    values_of: &dyn Fn(FeatureId) -> Option<Value>,
     plane: &SketchPlane,
     sketch: FeatureId,
     element: Uuid,
 ) -> Result<Vec<ProjectedEdge>, String> {
-    let other = crate::stored_sketch(document, sketch).ok_or("that sketch is gone")?;
+    let other = values_of(sketch)
+        .and_then(|data| crate::SketchFeature::from_json(&data).ok())
+        .ok_or("that sketch is gone")?;
     let from = crate::placed_plane(&other.plane, &crate::sketch_placement(document, sketch));
     let geom = other
         .sketch
@@ -186,11 +208,12 @@ pub(crate) fn element_samples(
 
 fn project_datum(
     document: &Document,
+    values_of: &dyn Fn(FeatureId) -> Option<Value>,
     plane: &SketchPlane,
     id: FeatureId,
 ) -> Result<Vec<ProjectedEdge>, String> {
-    let data = document.feature_values(id).ok_or("that datum is gone")?;
-    let datum = DatumFeature::from_json(data).map_err(|_| "that is not a datum".to_string())?;
+    let data = values_of(id).ok_or("that datum is gone")?;
+    let datum = DatumFeature::from_json(&data).map_err(|_| "that is not a datum".to_string())?;
     let placement = document
         .get_feature_meta(id)
         .and_then(|node| node.body)

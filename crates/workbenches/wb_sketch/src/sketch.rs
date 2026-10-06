@@ -61,6 +61,11 @@ pub struct Sketch {
     pub constraints: Vec<Constraint>,
     /// Whether the sketch is fully constrained.
     pub is_fully_constrained: bool,
+    /// The last solve left constraints unmet (they conflict, or the
+    /// solver gave up): the geometry is not what the constraints say, and
+    /// nothing is built from it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unsolved: bool,
     /// Ids of geometry flagged as construction:
     /// guides that snap, hit-test and constrain like normal geometry but are
     /// excluded from profile extraction. Defaults to empty so sketches saved
@@ -212,6 +217,7 @@ impl Sketch {
             geometry: Vec::new(),
             constraints: Vec::new(),
             is_fully_constrained: false,
+            unsolved: false,
             construction: std::collections::HashSet::new(),
             external: std::collections::HashMap::new(),
             solver: SolverSettings::default(),

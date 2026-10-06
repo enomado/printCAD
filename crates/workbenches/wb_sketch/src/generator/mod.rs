@@ -323,8 +323,13 @@ pub fn command(
         .filter(|(k, _)| !matches!(k.as_str(), "sketch" | "detach"))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    // The answer is what builds: the numbers formulas set, with these.
+    let mut built = crate::stored_sketch(ctx.document, id)
+        .and_then(|f| f.generator)
+        .unwrap_or_else(|| generator.clone());
     generator.merge(&fields).map_err(CommandError::failed)?;
-    let answer = summary(generator);
+    built.merge(&fields).map_err(CommandError::failed)?;
+    let answer = summary(&built);
     if a.opt_bool("detach")?.unwrap_or(false) {
         feature.generator = None;
     } else {

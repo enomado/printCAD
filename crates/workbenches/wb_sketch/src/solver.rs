@@ -94,6 +94,7 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
         // move though no constraint names it.
         sketch.is_fully_constrained = sketch.geometry.iter().any(|g| !sketch.is_external(g.id()))
             && dof_estimate(sketch) == 0;
+        sketch.unsolved = false;
         return SolveOutcome::NothingToSolve;
     }
 
@@ -181,6 +182,7 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     };
     sketch.is_fully_constrained =
         matches!(outcome, SolveOutcome::Converged { .. }) && dof_estimate(sketch) == 0;
+    sketch.unsolved = matches!(outcome, SolveOutcome::NotConverged { .. });
     outcome
 }
 

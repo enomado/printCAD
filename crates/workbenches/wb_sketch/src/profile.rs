@@ -23,6 +23,9 @@ pub enum ProfileError {
     BranchingAt(Uuid),
     /// A curve references a missing point element.
     MissingPoint(Uuid),
+    /// The sketch's constraints are not met: its curves are not where
+    /// they say.
+    Unsolved,
 }
 
 impl std::fmt::Display for ProfileError {
@@ -34,6 +37,9 @@ impl std::fmt::Display for ProfileError {
                 write!(f, "profile branches (more than two curves share a point)")
             }
             ProfileError::MissingPoint(_) => write!(f, "curve references a missing point"),
+            ProfileError::Unsolved => {
+                write!(f, "the sketch does not solve: its constraints conflict")
+            }
         }
     }
 }
@@ -252,6 +258,9 @@ pub fn extract_chains(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError>
 /// periodic splines) as wires of their own, the rest as curves between two
 /// end points, projected ends at one spot joined.
 fn curves(sketch: &Sketch) -> Result<(Vec<ProfileWire>, Vec<EdgeCurve>), ProfileError> {
+    if sketch.unsolved {
+        return Err(ProfileError::Unsolved);
+    }
     let mut wires = Vec::new();
     let mut edges: Vec<EdgeCurve> = Vec::new();
 

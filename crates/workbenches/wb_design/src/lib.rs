@@ -2113,6 +2113,7 @@ impl Workbench for DesignWorkbench {
         node: &core_document::FeatureNode,
         values: &mut serde_json::Value,
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+        _document: &core_document::Document,
     ) -> bool {
         use core_document::{LineAnchor, PointAnchor, WorkbenchFeature};
         if node.workbench_id.as_str() == "wb.design" {
@@ -2135,6 +2136,7 @@ impl Workbench for DesignWorkbench {
                 },
                 &mut datum_values,
                 values_of,
+                _document,
             ) {
                 datum.follow_datums(&|id| {
                     let data = values_of(id)?;

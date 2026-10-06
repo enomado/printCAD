@@ -2587,30 +2587,34 @@ impl Workbench for SketchWorkbench {
     }
 
     /// A sketch drawn on a datum sits on the datum's plane as the datum is
-    /// now.
+    /// now, and its geometry from other sketches and datums stands where
+    /// their working data places it.
     fn derive(
         &self,
-        _node: &core_document::FeatureNode,
+        node: &core_document::FeatureNode,
         values: &mut serde_json::Value,
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+        document: &core_document::Document,
     ) -> bool {
         let Ok(mut feature) = SketchFeature::from_json(values) else {
             return false;
         };
-        let Some(plane) = feature
+        let mut moved = false;
+        if let Some(plane) = feature
             .support
             .as_ref()
             .and_then(|s| values_of(s.datum).and_then(|data| s.plane_from(&data)))
-        else {
-            return false;
-        };
-        if feature.plane == plane && feature.sketch.plane == plane {
-            return false;
+            && (feature.plane != plane || feature.sketch.plane != plane)
+        {
+            feature.plane = plane;
+            feature.sketch.plane = plane;
+            moved = true;
         }
-        feature.plane = plane;
-        feature.sketch.plane = plane;
-        *values = feature.to_json();
-        true
+        moved |= follow_references(&mut feature, node.id, values_of, document);
+        if moved {
+            *values = feature.to_json();
+        }
+        moved
     }
 
     fn derive_on_solid(
@@ -4766,6 +4770,9 @@ impl SketchWorkbench {
                 problems.push("a curve missing its point".to_string());
                 self.selected.insert(id);
             }
+            Err(profile::ProfileError::Unsolved) => {
+                problems.push("conflicting constraints, so no profile".to_string());
+            }
         }
         ctx.log_info(format!("Sketch check: {}", problems.join(", ")));
         InputResult::consumed()
@@ -6019,6 +6026,59 @@ pub(crate) fn project_source(
         .project_edge(brep, f(source.point), &plane)
         .map(|edge| vec![edge])
         .map_err(|e| e.to_string())
+}
+
+/// Move the sketch's geometry from other sketches' elements and datums to
+/// where they stand in `values_of` (the working data of this evaluation),
+/// in place: an element that is now another kind of curve, or one gone,
+/// waits for the sketch to be edited. Answers whether anything moved.
+fn follow_references(
+    feature: &mut SketchFeature,
+    id: FeatureId,
+    values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+    document: &core_document::Document,
+) -> bool {
+    let groups: Vec<_> = external::groups(&feature.sketch)
+        .into_iter()
+        .filter(|(source, _)| source.reference.is_some())
+        .collect();
+    if groups.is_empty() {
+        return false;
+    }
+    // Another sketch as it builds: solved for what formulas gave it, once
+    // however many of its elements come here.
+    let solved: std::cell::RefCell<HashMap<FeatureId, Option<serde_json::Value>>> =
+        Default::default();
+    let settled = |other: FeatureId| -> Option<serde_json::Value> {
+        if let Some(known) = solved.borrow().get(&other) {
+            return known.clone();
+        }
+        let mut data = values_of(other);
+        let is_sketch = document
+            .get_feature_meta(other)
+            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
+        if is_sketch && let Some(data) = data.as_mut() {
+            params::settle(data);
+        }
+        solved.borrow_mut().insert(other, data.clone());
+        data
+    };
+    let placed = placed_plane(&feature.plane, &sketch_placement(document, id));
+    let before = serde_json::to_value(&feature.sketch.geometry).ok();
+    for (source, group) in groups {
+        let Some(reference) = source.reference else {
+            continue;
+        };
+        let Ok(projected) = external_ref::project_with(document, &settled, &placed, reference)
+        else {
+            continue;
+        };
+        let kept = feature.sketch.geometry.clone();
+        if !external::refresh_in_place(&mut feature.sketch, &group, &projected) {
+            feature.sketch.geometry = kept;
+        }
+    }
+    serde_json::to_value(&feature.sketch.geometry).ok() != before
 }
 
 /// A sketch as the document has it, its plane in its body's frame: its

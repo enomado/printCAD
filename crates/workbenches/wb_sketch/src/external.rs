@@ -265,6 +265,57 @@ pub fn groups(sketch: &Sketch) -> Vec<(ExternalSource, Vec<Uuid>)> {
     by_source.into_values().collect()
 }
 
+/// Move one source's elements to `projected` where they are the same kinds
+/// of shape, keeping their ids. Returns whether they were; when not, the
+/// sketch may be partly moved.
+pub fn refresh_in_place(sketch: &mut Sketch, group: &[Uuid], projected: &[ProjectedEdge]) -> bool {
+    let counts: Vec<usize> = projected.iter().map(element_count).collect();
+    counts.iter().sum::<usize>() == group.len() && {
+        let mut at = 0;
+        projected.iter().zip(&counts).all(|(curve, n)| {
+            let fits = update(sketch, &group[at..at + n], curve);
+            at += n;
+            fits
+        })
+    }
+}
+
+/// Whether `projected` is what one source's elements already are: the same
+/// kinds of shape, every point within `REPEAT_MM` of where it is.
+pub fn already_holds(sketch: &Sketch, group: &[Uuid], projected: &[ProjectedEdge]) -> bool {
+    let mut moved = sketch.clone();
+    if !refresh_in_place(&mut moved, group, projected) {
+        return false;
+    }
+    let near = |a: Option<Vec2D>, b: Option<Vec2D>| match (a, b) {
+        (Some(a), Some(b)) => (a.to_glam() - b.to_glam()).length() <= REPEAT_MM,
+        _ => false,
+    };
+    group.iter().all(|id| {
+        let (Some(was), Some(now)) = (sketch.get_geometry(*id), moved.get_geometry(*id)) else {
+            return false;
+        };
+        let points: Vec<Uuid> = match was {
+            GeometryElement::Point(p) => vec![p.id],
+            other => Sketch::curve_point_ids(other),
+        };
+        let size = |g: &GeometryElement| match g {
+            GeometryElement::Circle(c) => c.radius,
+            GeometryElement::Arc(a) => a.radius,
+            GeometryElement::Ellipse(e) => e.major.to_glam().length() * (1.0 + e.ratio),
+            _ => 0.0,
+        };
+        (size(was) - size(now)).abs() <= REPEAT_MM
+            && points
+                .iter()
+                .all(|p| near(sketch.point_position(*p), moved.point_position(*p)))
+    })
+}
+
+/// How close a projection must come to external geometry already in the
+/// sketch to be the same curve again, mm.
+const REPEAT_MM: f32 = 1e-3;
+
 /// Bring one source's elements up to `projected`, the curves its edge or
 /// face comes to now: moved in place where they are the same kinds of
 /// shape as before, else made again (constraints on the old ones go with
@@ -275,16 +326,7 @@ pub fn refresh_group(
     group: &[Uuid],
     projected: &[ProjectedEdge],
 ) {
-    let counts: Vec<usize> = projected.iter().map(element_count).collect();
-    let in_place = counts.iter().sum::<usize>() == group.len() && {
-        let mut at = 0;
-        projected.iter().zip(&counts).all(|(curve, n)| {
-            let fits = update(sketch, &group[at..at + n], curve);
-            at += n;
-            fits
-        })
-    };
-    if !in_place {
+    if !refresh_in_place(sketch, group, projected) {
         sketch.remove_geometry_cascade(group);
         for curve in projected {
             add(sketch, curve, source);
@@ -310,6 +352,27 @@ mod tests {
     /// A projected spline is one spline of the sketch, with the kernel's
     /// degree, knots and weights, which the profile hands on exactly and a
     /// fresh projection moves in place.
+    /// An edge projected again, from any point along it, is the curve the
+    /// sketch holds; a neighbouring one is not.
+    #[test]
+    fn a_projection_already_held_is_known_again() {
+        let mut sketch = Sketch::new("t");
+        let edge = |y: f64| ProjectedEdge::Line {
+            start: [0.0, y],
+            end: [10.0, y],
+        };
+        add(&mut sketch, &edge(0.0), source());
+        let (_, group) = groups(&sketch).remove(0);
+        assert!(already_holds(&sketch, &group, &[edge(0.0)]));
+        assert!(!already_holds(&sketch, &group, &[edge(1.0)]));
+        let circle = ProjectedEdge::Circle {
+            centre: [0.0, 0.0],
+            radius: 2.0,
+            range: (0.0, TAU),
+        };
+        assert!(!already_holds(&sketch, &group, &[circle]));
+    }
+
     #[test]
     fn a_projected_spline_stays_a_spline() {
         let mut sketch = Sketch::new("t");

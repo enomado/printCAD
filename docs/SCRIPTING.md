@@ -1792,7 +1792,7 @@ assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
 
 Notes:
 
-- A line's points are its start and end, an arc's its centre, start and end, a circle's and an ellipse's their centre; positions are as last solved. Each element also says whether it is `external`.
+- A line's points are its start and end, an arc's its centre, start and end, a circle's and an ellipse's their centre; positions are as last solved, with the values formulas give its dimensions (what builds, which `pc.doc.feature{id = s}.fields` may not yet be). Each element also says whether it is `external`.
 - Ends and centres are listed again as elements of kind point. A spline, a parabola or a hyperbola is kind "other" with no points: its control points are in `pc.doc.feature{id = s}.fields.sketch.geometry`.
 
 See also `pc.sketch.constraints`, `pc.doc.feature`.
@@ -1828,8 +1828,8 @@ Notes:
 - "distance" on one line is its length (listed as Length), on two points the distance between them, on a point and a curve or two curves the gap. "dimension" picks as the toolbar does: a line's length, a circle's diameter, an arc's radius, two lines' angle (their distance when parallel).
 - Nothing stays put until constrained: a dimension on free geometry moves every item it names, so tie a corner to "origin" first to keep it where it was drawn.
 - "lock" holds a point by its distances along X and Y from the origin, each the size of a coordinate (a point at x = -5 takes 5 and stays at -5).
-- A constraint that contradicts others is still added; `pc.sketch.status` names the conflict. `remove_redundant` takes away only older constraints the new one repeats, never one it contradicts.
-- A kind that does not fit the items, or is no kind at all, is refused ("the ... constraint does not fit these items"), and so is a `value` for a kind that takes none.
+- A constraint that contradicts others is still added; `pc.sketch.status` names the conflict. While it stands the sketch does not solve, gives no profile, and what is built from it fails at `pc.doc.rebuild()` ("the sketch does not solve: its constraints conflict"). `remove_redundant` takes away only older constraints the new one repeats, never one it contradicts.
+- A kind that does not fit the items is refused ("the ... constraint does not fit these items"), one that is no kind at all is refused with the list of kinds, and so is a `value` for a kind that takes none.
 
 See also `pc.sketch.status`, `pc.sketch.set_value`, `pc.sketch.constraints`.
 
@@ -1988,15 +1988,18 @@ Notes:
 - It only guides unless `counts = true`: a sketch holding guides alone has no profile, and a pad of it fails at `pc.doc.rebuild()`.
 - It returns {elements, constraints}: the curves and the points at their ends. Only the curves are external geometry, which `pc.sketch.geometry` marks `external`.
 - `from` must be a sketch other than this one, or a datum; anything else is refused.
+- The elements follow their source without this sketch being opened: when the other sketch or the datum moves (by hand or by a formula), `pc.sketch.geometry` reads them where it now is and the next `pc.doc.rebuild()` builds from that. A source curve that becomes another kind of curve, or is deleted, is caught up with when this sketch is next edited.
+- What the sketch already holds comes once: bringing the same sketch again adds only what is new in it, and is refused ("... already in the sketch ...") when nothing is.
 
 See also `pc.sketch.external_defining`, `pc.sketch.carbon_copy`.
 
-Example: A circle from the sketch below, counted and padded.
+Example: A circle from the sketch below, counted, padded and following its source.
 
 ```lua
 local body = pc.doc.new_body{name = "Boss"}
 local base = pc.sketch.new{body = body, plane = "XY"}
-pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+local circle = pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+local radius = pc.sketch.constrain{sketch = base, kind = "radius", items = {circle}, value = 5}
 local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
 local made = pc.sketch.external_from{sketch = top, from = base, counts = true}
 assert(#made.elements == 2, "the circle and its centre")
@@ -2005,6 +2008,10 @@ assert(#pc.doc.rebuild() == 0)
 local m = pc.doc.measure{body = body}
 assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
 assert(math.abs(m.min[3] - 10) < 1e-6)
+pc.sketch.set_value{sketch = base, constraint = radius[1], value = 6}
+assert(#pc.doc.rebuild() == 0)
+m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - math.pi * 36 * 3) < 0.01, "the copy follows: " .. m.volume)
 ```
 
 `pc.sketch.external_defining`: Count external geometry in the sketch's profiles, or leave it only guiding.
@@ -2015,7 +2022,7 @@ assert(math.abs(m.min[3] - 10) < 1e-6)
 
 Notes:
 
-- Every item must be external geometry, or the call is refused ("... is not external geometry"); the elements `pc.sketch.geometry` marks `external` are.
+- Every item must be external geometry, or the call is refused ("... is not external geometry"); the elements `pc.sketch.geometry` marks `external` are. The points at an external curve's ends and centre go with their curve, so the `elements` `sketch.external`, `sketch.external_from` and `sketch.intersection` return can be passed as they come.
 - Counting takes an element out of construction; `on = false` makes it a guide again.
 
 See also `pc.sketch.external_from`, `pc.sketch.external`.
@@ -2027,14 +2034,10 @@ local body = pc.doc.new_body{name = "Boss"}
 local base = pc.sketch.new{body = body, plane = "XY"}
 pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
 local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
-pc.sketch.external_from{sketch = top, from = base}
+local made = pc.sketch.external_from{sketch = top, from = base}
 local pad = pc.design.pad{sketch = top, length = 3}
 assert(#pc.doc.rebuild() == 1, "a guide alone is no profile")
-local curves = {}
-for _, e in ipairs(pc.sketch.geometry{sketch = top}) do
-  if e.external then curves[#curves + 1] = e.id end
-end
-pc.sketch.external_defining{sketch = top, items = curves}
+pc.sketch.external_defining{sketch = top, items = made.elements}
 assert(#pc.doc.rebuild() == 0)
 local m = pc.doc.measure{body = body}
 assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
@@ -2450,7 +2453,7 @@ assert(count.other == 1, "by one spline")
 
 Notes:
 
-- `items` are constraint ids; an element's id among them is passed over without a word. Only the flags given change.
+- `items` are constraint ids; an element's id among them is refused. Only the flags given change, and `driving = false` is refused for a constraint that is not a dimension.
 - A dimension that is not driving measures and conflicts with nothing; a constraint that is not active is kept but left out of solving.
 
 See also `pc.sketch.set_value`, `pc.sketch.status`.
@@ -2592,6 +2595,7 @@ Notes:
 - Each edge is a point on it and its direction there, in the body's own frame; `pc.doc.edges` gives both (where the body sits, the same until it is moved). The body must be built first (`pc.doc.rebuild()`), else it is refused ("that body has no solid shape").
 - It only guides unless `counts = true`; counted, the projected edges close a profile as drawn lines do. An edge square to the sketch plane projects to a point.
 - It returns {elements, constraints}: the curves and the points at their ends, the curves marked `external` by `pc.sketch.geometry`.
+- A point names an edge only within a tenth of the body's diagonal of it; one farther from every edge is refused ("no edge near ..."). An edge the sketch already holds comes once: picked again, at any point along it, it is passed over, and a call that brings nothing new is refused ("... already in the sketch ...").
 
 See also `pc.sketch.intersection`, `pc.doc.edges`, `pc.sketch.external_defining`.
 
@@ -2656,7 +2660,7 @@ end
 
 Notes:
 
-- `kind` is the stored name (Coincident, Horizontal, Length, Diameter, Angle, ...): "distance" on a line lists as Length. `value` is a dimension's, angles in degrees.
+- `kind` is the stored name (Coincident, Horizontal, Length, Diameter, Angle, ...): "distance" on a line lists as Length. `value` is a dimension's, angles in degrees, as its formula sets it when it has one.
 - `items` are the element ids it ties. The origin and the axes show as fixed ids ending in 0001 (origin), 0002 (x axis) and 0003 (y axis), not by name.
 
 See also `pc.sketch.status`, `pc.sketch.set_constraint`.
@@ -2707,7 +2711,7 @@ assert(not pc.sketch.wall_thickness{sketch = s, minimum = 0.5}.thin)
 Notes:
 
 - `dof` is the freedom left: 0 is fully constrained. A free point has 2, a free circle 3 (its centre and radius); a line's freedom is its two end points'.
-- `solved` false with ids in `conflicting` means constraints contradict; every constraint taking part is listed, not only the newest. `redundant` lists those that say again what others say; the sketch still solves.
+- `solved` false with ids in `conflicting` means constraints contradict; every constraint taking part is listed, not only the newest. `redundant` lists those that say again what others say; the sketch still solves. While `solved` is false, what is built from the sketch fails at `pc.doc.rebuild()`.
 
 See also `pc.sketch.constrain`, `pc.sketch.constraints`.
 

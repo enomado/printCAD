@@ -720,14 +720,16 @@ pub trait Workbench: Send {
     /// Bring an owned feature's working data up to date with the features
     /// it follows (a sketch takes the plane of the datum it was drawn on),
     /// before it settles. `values` is what formulas made of its data;
-    /// `values_of` gives another feature's working data the same way.
-    /// Answers whether it changed anything. Derived, never recorded, so it
-    /// follows every change of what it follows, undo included.
+    /// `values_of` gives another feature's working data the same way;
+    /// `document` the rest (where bodies sit). Answers whether it changed
+    /// anything. Derived, never recorded, so it follows every change of
+    /// what it follows, undo included.
     fn derive(
         &self,
         _node: &FeatureNode,
         _values: &mut serde_json::Value,
         _values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+        _document: &Document,
     ) -> bool {
         false
     }

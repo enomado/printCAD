@@ -372,8 +372,10 @@ pub fn register(context: &mut WorkbenchContext) {
         .read_only()
         .note(
             "A line's points are its start and end, an arc's its centre, start and end, a \
-             circle's and an ellipse's their centre; positions are as last solved. Each \
-             element also says whether it is `external`.",
+             circle's and an ellipse's their centre; positions are as last solved, with the \
+             values formulas give its dimensions (what builds, which \
+             `pc.doc.feature{id = s}.fields` may not yet be). Each element also says whether \
+             it is `external`.",
         )
         .note(
             "Ends and centres are listed again as elements of kind point. A spline, a \
@@ -457,13 +459,15 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .note(
             "A constraint that contradicts others is still added; `pc.sketch.status` names \
-             the conflict. `remove_redundant` takes away only older constraints the new one \
-             repeats, never one it contradicts.",
+             the conflict. While it stands the sketch does not solve, gives no profile, and \
+             what is built from it fails at `pc.doc.rebuild()` (\"the sketch does not solve: \
+             its constraints conflict\"). `remove_redundant` takes away only older \
+             constraints the new one repeats, never one it contradicts.",
         )
         .note(
-            "A kind that does not fit the items, or is no kind at all, is refused (\"the \
-             ... constraint does not fit these items\"), and so is a `value` for a kind \
-             that takes none.",
+            "A kind that does not fit the items is refused (\"the ... constraint does not \
+             fit these items\"), one that is no kind at all is refused with the list of \
+             kinds, and so is a `value` for a kind that takes none.",
         )
         .see_also("sketch.status")
         .see_also("sketch.set_value")
@@ -724,14 +728,27 @@ pub fn register(context: &mut WorkbenchContext) {
              `external`.",
         )
         .note("`from` must be a sketch other than this one, or a datum; anything else is refused.")
+        .note(
+            "The elements follow their source without this sketch being opened: when the \
+             other sketch or the datum moves (by hand or by a formula), `pc.sketch.geometry` \
+             reads them where it now is and the next `pc.doc.rebuild()` builds from that. A \
+             source curve that becomes another kind of curve, or is deleted, is caught up \
+             with when this sketch is next edited.",
+        )
+        .note(
+            "What the sketch already holds comes once: bringing the same sketch again adds \
+             only what is new in it, and is refused (\"... already in the sketch ...\") when \
+             nothing is.",
+        )
         .see_also("sketch.external_defining")
         .see_also("sketch.carbon_copy")
         .example(
-            "A circle from the sketch below, counted and padded",
+            "A circle from the sketch below, counted, padded and following its source",
             r#"
             local body = pc.doc.new_body{name = "Boss"}
             local base = pc.sketch.new{body = body, plane = "XY"}
-            pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+            local circle = pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
+            local radius = pc.sketch.constrain{sketch = base, kind = "radius", items = {circle}, value = 5}
             local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
             local made = pc.sketch.external_from{sketch = top, from = base, counts = true}
             assert(#made.elements == 2, "the circle and its centre")
@@ -740,6 +757,10 @@ pub fn register(context: &mut WorkbenchContext) {
             local m = pc.doc.measure{body = body}
             assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
             assert(math.abs(m.min[3] - 10) < 1e-6)
+            pc.sketch.set_value{sketch = base, constraint = radius[1], value = 6}
+            assert(#pc.doc.rebuild() == 0)
+            m = pc.doc.measure{body = body}
+            assert(math.abs(m.volume - math.pi * 36 * 3) < 0.01, "the copy follows: " .. m.volume)
             "#,
         ),
     );
@@ -758,7 +779,10 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .note(
             "Every item must be external geometry, or the call is refused (\"... is not \
-             external geometry\"); the elements `pc.sketch.geometry` marks `external` are.",
+             external geometry\"); the elements `pc.sketch.geometry` marks `external` are. \
+             The points at an external curve's ends and centre go with their curve, so the \
+             `elements` `sketch.external`, `sketch.external_from` and `sketch.intersection` \
+             return can be passed as they come.",
         )
         .note(
             "Counting takes an element out of construction; `on = false` makes it a guide \
@@ -773,14 +797,10 @@ pub fn register(context: &mut WorkbenchContext) {
             local base = pc.sketch.new{body = body, plane = "XY"}
             pc.sketch.circle{sketch = base, x = 0, y = 0, radius = 5}
             local top = pc.sketch.new{body = body, plane = "XY", offset = 10}
-            pc.sketch.external_from{sketch = top, from = base}
+            local made = pc.sketch.external_from{sketch = top, from = base}
             local pad = pc.design.pad{sketch = top, length = 3}
             assert(#pc.doc.rebuild() == 1, "a guide alone is no profile")
-            local curves = {}
-            for _, e in ipairs(pc.sketch.geometry{sketch = top}) do
-              if e.external then curves[#curves + 1] = e.id end
-            end
-            pc.sketch.external_defining{sketch = top, items = curves}
+            pc.sketch.external_defining{sketch = top, items = made.elements}
             assert(#pc.doc.rebuild() == 0)
             local m = pc.doc.measure{body = body}
             assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
@@ -1332,8 +1352,9 @@ pub fn register(context: &mut WorkbenchContext) {
              it still solves",
         )
         .note(
-            "`items` are constraint ids; an element's id among them is passed over without \
-             a word. Only the flags given change.",
+            "`items` are constraint ids; an element's id among them is refused. Only the \
+             flags given change, and `driving = false` is refused for a constraint that is \
+             not a dimension.",
         )
         .note(
             "A dimension that is not driving measures and conflicts with nothing; a \
@@ -1523,6 +1544,13 @@ pub fn register(context: &mut WorkbenchContext) {
             "It returns {elements, constraints}: the curves and the points at their ends, \
              the curves marked `external` by `pc.sketch.geometry`.",
         )
+        .note(
+            "A point names an edge only within a tenth of the body's diagonal of it; one \
+             farther from every edge is refused (\"no edge near ...\"). An edge the sketch \
+             already holds comes once: picked again, at any point along it, it is passed \
+             over, and a call that brings nothing new is refused (\"... already in the \
+             sketch ...\").",
+        )
         .see_also("sketch.intersection")
         .see_also("doc.edges")
         .see_also("sketch.external_defining")
@@ -1606,7 +1634,7 @@ pub fn register(context: &mut WorkbenchContext) {
         .note(
             "`kind` is the stored name (Coincident, Horizontal, Length, Diameter, Angle, \
              ...): \"distance\" on a line lists as Length. `value` is a dimension's, angles \
-             in degrees.",
+             in degrees, as its formula sets it when it has one.",
         )
         .note(
             "`items` are the element ids it ties. The origin and the axes show as fixed ids \
@@ -1679,7 +1707,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .note(
             "`solved` false with ids in `conflicting` means constraints contradict; every \
              constraint taking part is listed, not only the newest. `redundant` lists those \
-             that say again what others say; the sketch still solves.",
+             that say again what others say; the sketch still solves. While `solved` is \
+             false, what is built from the sketch fails at `pc.doc.rebuild()`.",
         )
         .see_also("sketch.constrain")
         .see_also("sketch.constraints")
@@ -1935,6 +1964,19 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     }
     let sketch_id = FeatureId(a.id("sketch")?);
     let mut feature = load(ctx, sketch_id)?;
+    // What the sketch reads as is what builds: its formulas' values in,
+    // solved.
+    if matches!(
+        id,
+        "sketch.geometry" | "sketch.constraints" | "sketch.status"
+    ) {
+        let evaluated = crate::stored_sketch(ctx.document, sketch_id).unwrap_or(feature);
+        return Ok(match id {
+            "sketch.geometry" => describe(&evaluated.sketch),
+            "sketch.constraints" => describe_constraints(&evaluated.sketch),
+            _ => status(&evaluated.sketch),
+        });
+    }
     match id {
         "sketch.mirror_sketch" => {
             return mirror_sketch(ctx.document, sketch_id).map(|id| json!(id.0.to_string()));
@@ -2010,6 +2052,19 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "sketch.external_defining" => {
             let items = ids(args.get("items"), "items", &feature.sketch)?;
+            // The points of an external curve go with it: the list
+            // `sketch.external` answers with is taken as it comes.
+            let on_external: std::collections::HashSet<Uuid> = feature
+                .sketch
+                .geometry
+                .iter()
+                .filter(|g| feature.sketch.external.contains_key(&g.id()))
+                .flat_map(Sketch::curve_point_ids)
+                .collect();
+            let items: Vec<Uuid> = items
+                .into_iter()
+                .filter(|i| feature.sketch.external.contains_key(i) || !on_external.contains(i))
+                .collect();
             if let Some(bad) = items
                 .iter()
                 .find(|i| !feature.sketch.external.contains_key(i))
@@ -2168,9 +2223,6 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let id = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, s, e, radius)));
             json!(id.to_string())
         }
-        "sketch.geometry" => return Ok(describe(sketch)),
-        "sketch.constraints" => return Ok(describe_constraints(sketch)),
-        "sketch.status" => return Ok(status(sketch)),
         "sketch.constrain" => {
             let kind = a.string("kind")?;
             let items = ids(args.get("items"), "items", sketch)?;
@@ -2397,6 +2449,21 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 active: a.opt_bool("active")?,
                 parked: a.opt_bool("parked")?,
             };
+            for id in &items {
+                let Some(c) = sketch.constraints.iter().find(|c| c.id == *id) else {
+                    return Err(CommandError::bad(
+                        "items",
+                        format!("has {id}, which is not a constraint"),
+                    ));
+                };
+                if flags.driving == Some(false) && crate::sketch::dimension_value(&c.kind).is_none()
+                {
+                    return Err(CommandError::bad(
+                        "driving",
+                        format!("cannot be false for {id}: only a dimension can be a reference"),
+                    ));
+                }
+            }
             set_constraints(sketch, &items, flags);
             Value::Null
         }
@@ -3259,10 +3326,19 @@ pub(crate) fn add_external(
     edges: &[crate::sketch::ExternalSource],
 ) -> Result<usize, String> {
     let mut added = 0;
+    let mut repeated = 0;
     let mut last_error = None;
     for source in edges {
         match crate::project_source(ctx, plane, source) {
             Ok(curves) => {
+                // An edge or element the sketch already holds comes once.
+                let held = crate::external::groups(sketch)
+                    .iter()
+                    .any(|(_, group)| crate::external::already_holds(sketch, group, &curves));
+                if held {
+                    repeated += 1;
+                    continue;
+                }
                 for curve in &curves {
                     added += crate::external::add(sketch, curve, *source);
                 }
@@ -3272,6 +3348,10 @@ pub(crate) fn add_external(
     }
     match (added, last_error) {
         (0, Some(why)) => Err(why),
+        (0, None) if repeated > 0 => Err(match repeated {
+            1 => "that is already in the sketch as external geometry".to_string(),
+            _ => "those are already in the sketch as external geometry".to_string(),
+        }),
         _ => Ok(added),
     }
 }
@@ -3545,6 +3625,15 @@ pub(crate) fn constrain(
     items: &[Uuid],
     value: Option<f64>,
 ) -> Result<Vec<String>, CommandError> {
+    if kind != "dimension" && !crate::constrain::TOOLS.contains(&kind) {
+        return Err(CommandError::bad(
+            "kind",
+            format!(
+                "has `{kind}`, which is no constraint; the kinds are dimension, {}",
+                crate::constrain::TOOLS.join(", ")
+            ),
+        ));
+    }
     let selected: std::collections::HashSet<Uuid> = items.iter().copied().collect();
     let shape = crate::constrain::SelectionShape::picked_in(sketch, &selected, items);
     let tool = if kind == "dimension" {
@@ -4448,5 +4537,221 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn registry() -> core_document::DocumentService {
+        let mut registry = core_document::DocumentService::default();
+        registry
+            .register_workbench(Box::new(crate::SketchWorkbench::default()))
+            .unwrap();
+        registry
+    }
+
+    fn feature_id(id: &Value) -> FeatureId {
+        FeatureId(Uuid::parse_str(id.as_str().unwrap()).unwrap())
+    }
+
+    /// The radius of the sketch's one circle, as `sketch.geometry` reads it.
+    fn listed_radius(doc: &mut Document, sketch: &Value) -> f64 {
+        let listed = call(doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["kind"] == "circle")
+            .and_then(|g| g["radius"].as_f64())
+            .unwrap()
+    }
+
+    /// A circle copied from another sketch takes the source's new radius
+    /// when the document is worked out, set by hand or by a formula, with
+    /// the copy never opened; its own stored data is the projection it was
+    /// made with.
+    #[test]
+    fn geometry_from_another_sketch_follows_it_without_the_sketch_being_opened() {
+        let registry = registry();
+        let mut doc = Document::new("t");
+        let base = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let circle = call(
+            &mut doc,
+            "sketch.circle",
+            json!({"sketch": base, "x": 0, "y": 0, "radius": 2}),
+        )
+        .unwrap();
+        let dim = call(
+            &mut doc,
+            "sketch.constrain",
+            json!({"sketch": base, "kind": "radius", "items": [circle], "value": 2}),
+        )
+        .unwrap()[0]
+            .clone();
+        let top = call(&mut doc, "sketch.new", json!({"offset": 10})).unwrap();
+        call(
+            &mut doc,
+            "sketch.external_from",
+            json!({"sketch": top, "from": base, "counts": true}),
+        )
+        .unwrap();
+        registry.evaluate(&mut doc);
+        assert!((listed_radius(&mut doc, &top) - 2.0).abs() < 1e-5);
+
+        call(
+            &mut doc,
+            "sketch.set_value",
+            json!({"sketch": base, "constraint": dim, "value": 3}),
+        )
+        .unwrap();
+        registry.evaluate(&mut doc);
+        assert!((listed_radius(&mut doc, &top) - 3.0).abs() < 1e-5);
+        let built = crate::stored_sketch(&doc, feature_id(&top)).unwrap();
+        let wires = crate::profile::extract_wires(&built.sketch).unwrap();
+        assert_eq!(wires.len(), 1, "the copy is the profile");
+
+        doc.set_feature_formula(
+            feature_id(&base),
+            dim.as_str().unwrap(),
+            Some("4 mm".into()),
+        )
+        .unwrap();
+        registry.evaluate(&mut doc);
+        assert!((listed_radius(&mut doc, &base) - 4.0).abs() < 1e-5);
+        assert!((listed_radius(&mut doc, &top) - 4.0).abs() < 1e-5);
+        let listed = call(&mut doc, "sketch.constraints", json!({"sketch": base})).unwrap();
+        assert!((listed[0]["value"].as_f64().unwrap() - 4.0).abs() < 1e-5);
+        // Derived: the copy's own data is as it was made.
+        assert!(
+            sketch_of(&doc, &top)
+                .geometry
+                .iter()
+                .any(|g| matches!(g, GeometryElement::Circle(c) if (c.radius - 2.0).abs() < 1e-5))
+        );
+    }
+
+    /// The `elements` an external call answers with go back to
+    /// `sketch.external_defining` as they come, its curves' end points with
+    /// them; anything else is still refused.
+    #[test]
+    fn external_elements_are_made_to_count_as_they_were_returned() {
+        let mut doc = Document::new("t");
+        let base = call(&mut doc, "sketch.new", json!({})).unwrap();
+        call(
+            &mut doc,
+            "sketch.rect",
+            json!({"sketch": base, "x": 0, "y": 0, "width": 4, "height": 4}),
+        )
+        .unwrap();
+        let top = call(&mut doc, "sketch.new", json!({"offset": 10})).unwrap();
+        let made = call(
+            &mut doc,
+            "sketch.external_from",
+            json!({"sketch": top, "from": base}),
+        )
+        .unwrap();
+        assert!(crate::profile::extract_wires(&sketch_of(&doc, &top)).is_err());
+        call(
+            &mut doc,
+            "sketch.external_defining",
+            json!({"sketch": top, "items": made["elements"]}),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::profile::extract_wires(&sketch_of(&doc, &top))
+                .unwrap()
+                .len(),
+            1
+        );
+        let own = call(
+            &mut doc,
+            "sketch.point",
+            json!({"sketch": top, "x": 20, "y": 20}),
+        )
+        .unwrap();
+        assert!(
+            call(
+                &mut doc,
+                "sketch.external_defining",
+                json!({"sketch": top, "items": [own]}),
+            )
+            .is_err()
+        );
+        // The same sketch again brings nothing twice.
+        let again = call(
+            &mut doc,
+            "sketch.external_from",
+            json!({"sketch": top, "from": base}),
+        );
+        assert!(again.is_err(), "{again:?}");
+    }
+
+    #[test]
+    fn constraint_kinds_and_flags_are_checked() {
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let line = call(
+            &mut doc,
+            "sketch.line",
+            json!({"sketch": s, "x1": 0, "y1": 0, "x2": 5, "y2": 1}),
+        )
+        .unwrap();
+        let unknown = call(
+            &mut doc,
+            "sketch.constrain",
+            json!({"sketch": s, "kind": "bogus", "items": [line]}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            unknown.contains("no constraint") && unknown.contains("horizontal"),
+            "{unknown}"
+        );
+        let flat = call(
+            &mut doc,
+            "sketch.constrain",
+            json!({"sketch": s, "kind": "horizontal", "items": [line]}),
+        )
+        .unwrap();
+        let set = |doc: &mut Document, args: Value| {
+            let mut args = args;
+            args["sketch"] = s.clone();
+            call(doc, "sketch.set_constraint", args)
+        };
+        assert!(set(&mut doc, json!({"items": [line], "active": false})).is_err());
+        assert!(set(&mut doc, json!({"items": flat, "driving": false})).is_err());
+        assert!(set(&mut doc, json!({"items": flat, "active": false})).is_ok());
+    }
+
+    /// Two lengths for one line: the sketch does not solve, says so, and
+    /// gives no profile to build from until one goes.
+    #[test]
+    fn a_sketch_whose_constraints_conflict_gives_no_profile() {
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let sides = call(
+            &mut doc,
+            "sketch.rect",
+            json!({"sketch": s, "x": 0, "y": 0, "width": 4, "height": 4}),
+        )
+        .unwrap();
+        let length = |doc: &mut Document, value: f64| {
+            call(
+                doc,
+                "sketch.constrain",
+                json!({"sketch": s, "kind": "distance", "items": [sides[0]], "value": value}),
+            )
+            .unwrap()
+        };
+        length(&mut doc, 4.0);
+        let second = length(&mut doc, 8.0);
+        let status = call(&mut doc, "sketch.status", json!({"sketch": s})).unwrap();
+        assert_eq!(status["solved"], false);
+        let why = crate::profile::extract_wires(&sketch_of(&doc, &s)).unwrap_err();
+        assert!(why.to_string().contains("does not solve"), "{why}");
+        call(
+            &mut doc,
+            "sketch.delete",
+            json!({"sketch": s, "items": second}),
+        )
+        .unwrap();
+        assert!(crate::profile::extract_wires(&sketch_of(&doc, &s)).is_ok());
     }
 }
