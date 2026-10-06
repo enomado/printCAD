@@ -117,7 +117,18 @@ cargo fmt --all                   # CI enforces --check
   input and pointer, the `Frame` a bench draws, declared panel `Widget`s
   and `PanelEvent`s, menus, requests, the `calls` a package may make. The
   WIT world is `bench_api/wit/workbench.wit`; its values cross as JSON of
-  these types, bulk data as lists.
+  these types, bulk data as lists. Published on crates.io with
+  `kernel_api` and the SDK as `printcad-bench-api`, `printcad-kernel-api`
+  (library names unchanged, dependents use the `[workspace.dependencies]`
+  entries) and `printcad-bench-sdk`, versioned by the contract (0.1.x is
+  `printcad:workbench@0.1`) and released by a tag `sdk-vX.Y.Z`
+  (`.github/workflows/sdk-publish.yml`). A patch release only adds
+  (`docs/PLUGINS.md` › Versions): the enums the host sends are
+  `#[non_exhaustive]` unless the `exhaustive` feature, which the workspace
+  turns on, is; package-filled structs derive `Default`; a variant a
+  package builds (`Widget`, `Request`, `SolidOp` and what it holds) gains
+  no field before 0.2. The SDK keeps its own `wit/` copy, which a
+  `wb_wasm` test holds equal to `bench_api`'s.
 - `workbenches/wb_wasm`: workbench packages (`docs/PLUGINS.md`, RFC 0001).
   One wasmtime engine (`engine.rs`: an epoch ticker that runs only while a
   call or job does, 25 ms for frame and input calls, 1 s otherwise; the

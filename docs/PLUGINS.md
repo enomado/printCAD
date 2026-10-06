@@ -69,9 +69,12 @@ its repository, so the feature's menu in the tree offers "Install
 ## Writing one
 
 A package is a Rust crate built as a `cdylib` for `wasm32-wasip2` against
-the SDK (`sdk/printcad-bench-sdk`). Other languages that build WebAssembly
-components can implement `crates/bench_api/wit/workbench.wit` directly;
-the values it carries are the `bench_api` types as JSON.
+the SDK, [`printcad-bench-sdk`](https://crates.io/crates/printcad-bench-sdk)
+on crates.io (its source is `sdk/printcad-bench-sdk`). Other languages
+that build WebAssembly components can implement
+`crates/bench_api/wit/workbench.wit` directly; the values it carries are
+the [`printcad-bench-api`](https://crates.io/crates/printcad-bench-api)
+types as JSON.
 
 ```toml
 # Cargo.toml
@@ -79,7 +82,17 @@ the values it carries are the `bench_api` types as JSON.
 crate-type = ["cdylib"]
 
 [dependencies]
-printcad-bench-sdk = { path = "…/sdk/printcad-bench-sdk" }
+printcad-bench-sdk = "0.1"
+```
+
+To build against a printCAD checkout instead, say while trying a change
+to the SDK, patch the three crates to its folders:
+
+```toml
+[patch.crates-io]
+printcad-bench-sdk = { path = "../printCAD/sdk/printcad-bench-sdk" }
+printcad-bench-api = { path = "../printCAD/crates/bench_api" }
+printcad-kernel-api = { path = "../printCAD/crates/kernel_api" }
 ```
 
 ```rust
@@ -115,6 +128,44 @@ bench!(Hello);
 ```
 
 Every method of `Bench` has a default; implement what the workbench offers.
+
+### Versions
+
+The SDK and the crates under it are versioned by the contract they speak:
+0.1.x is `printcad:workbench@0.1`, which the manifest's `api` names. A
+printCAD loads packages of its own contract and refuses others.
+
+A patch release (0.1.1, 0.1.2) only adds, so a package written against an
+earlier 0.1.x keeps building after `cargo update`, if it keeps to two
+habits:
+
+- **Match what the app sends with a wildcard arm.** `Event`,
+  `PanelEvent`, `MenuScope`, `PanelSlot`, `Button`, and the kernel's
+  `FaceSurface` and `ProfileSegment` are `#[non_exhaustive]`: a new kind
+  of event or curve comes in a patch release, and a `_ =>` arm leaves it
+  to the default. A package built with an older SDK passes over an event
+  it does not know.
+- **Fill the contract's structs with `..Default::default()`.** `Registration`,
+  `Tool`, `Command`, `Param`, `Parameter`, `FeatureInfo`, `Rebuild`,
+  `Task`, `Polyline`, `Label`, `Mesh`, `MenuItem` and the rest derive
+  `Default`, so a field a patch release adds takes its default. (Clippy's
+  `needless_update` lint flags a literal that names every field; the
+  examples allow it.)
+
+What a package builds as an enum variant with fields (`Widget::Number`,
+`Request::SaveFile`, `SolidOp::Sweep`, `Plan::Ops`) keeps its fields
+within a minor version: a new option comes as a new variant, or as a new
+struct that derives `Default`. A field added anywhere reads as its default
+when left out, so what an older package sends still reads.
+
+A package that uses something a patch release added needs a printCAD of
+at least that release. A new minor version (0.2) is a new contract: a
+package moves to it by changing its dependency and its manifest's `api`,
+and a printCAD of 0.2 does not load packages of 0.1.
+
+The SDK is published from the printCAD repository: a tag `sdk-vX.Y.Z`
+publishes `printcad-kernel-api`, `printcad-bench-api` and
+`printcad-bench-sdk`, all at X.Y.Z.
 
 ### The manifest
 

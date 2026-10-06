@@ -23,7 +23,7 @@ egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
 core_document = { path = "../../core_document" }
-kernel_api = { path = "../../kernel_api" }
+kernel_api = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 egui = { workspace = true, optional = true }

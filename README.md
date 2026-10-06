@@ -288,7 +288,7 @@ Preferences (Ctrl+,).
 | `app_shell` | The application: window, frame loop, UI and input |
 | `core_document` | Documents, feature tree, undo, file format |
 | `doc_server` | The document server and its client |
-| `kernel_api` | The geometry interface: meshes, profiles, solid operations |
+| `kernel_api` | The geometry interface: meshes, profiles, solid operations (on crates.io as `printcad-kernel-api`) |
 | `kernel_ogeom` | That interface implemented with ogeom |
 | `render_vk` | Vulkan renderer |
 | `settings` | User settings |
@@ -302,7 +302,7 @@ Preferences (Ctrl+,).
 | `workbenches/wb_wasm` | Workbench packages, run sandboxed |
 | `workbenches` | Registers the built-in workbenches and installed packages |
 | `workbenches/fixtures` | Ready-made scenes for tests and demos |
-| `bench_api` | What a workbench package and the app exchange |
+| `bench_api` | What a workbench package and the app exchange (on crates.io as `printcad-bench-api`) |
 | `local_ipc` | Local sockets and helpers the app's processes talk through |
 | `scripting` | The Lua engine scripts and the console run in |
 | `agents` | Agent Client Protocol client and MCP server core |

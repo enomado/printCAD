@@ -56,6 +56,17 @@ it. `docs/PLUGINS.md` is the guide for package authors.
   version in its data if it needs one. The contract is
   `printcad:workbench@0.1`; before 1.0 a package loads only against the
   same minor version, with no shims for older ones.
+- **Publication.** The SDK and the two crates under it are published on
+  crates.io as `printcad-bench-sdk`, `printcad-bench-api` and
+  `printcad-kernel-api` (libraries `bench_api` and `kernel_api`), each
+  versioned by the contract: 0.1.x speaks `printcad:workbench@0.1`. The
+  SDK carries its own copy of the WIT world, which a test keeps equal to
+  `bench_api`'s; a tag `sdk-v<version>` publishes all three. A patch
+  release only adds: the enums the host sends a package are
+  `#[non_exhaustive]` (lifted by the `exhaustive` feature the app builds
+  with), the structs a package fills derive `Default`, the variants a
+  package builds keep their fields, and a new field reads by default. A
+  kind of event an older SDK does not know passes its bench by unread.
 - **Busy work.** `Workbench::busy` keeps frames coming while a job runs;
   a finished job is told to the bench on its next frame as active.
 - **Budgets.** `frame`, `input` and the feature info, parameters and
