@@ -132,7 +132,7 @@ pub(crate) struct ToolMade {
 }
 
 /// Primitive shapes offered from the primitive tools' dropdowns.
-const PRIMITIVE_SHAPES: &[(&str, &str)] = &[
+pub(crate) const PRIMITIVE_SHAPES: &[(&str, &str)] = &[
     ("box", "Box"),
     ("cylinder", "Cylinder"),
     ("sphere", "Sphere"),
@@ -283,12 +283,14 @@ impl DesignWorkbench {
     }
 
     /// Build the default feature payload for a toolbar action, or explain why
-    /// it can't be created from the current selection.
+    /// it can't be created from the current selection (and, for a command,
+    /// its arguments).
     fn feature_for_tool(
         tool: &str,
         variant: Option<&str>,
         ctx: &WorkbenchRuntimeContext,
         body: BodyId,
+        given: Given,
     ) -> Result<(DesignFeature, &'static str), String> {
         let sketch = Self::selected_sketch(ctx);
         let primitive = |subtractive: bool| DesignFeature::Primitive {
@@ -300,8 +302,14 @@ impl DesignWorkbench {
             placement: kernel_api::Placement::default(),
             subtractive,
         };
-        let need_sketch =
-            |value: Option<FeatureId>| value.ok_or("Select a sketch in the tree first".to_string());
+        let need_sketch = |value: Option<FeatureId>| {
+            value.ok_or_else(|| {
+                given.say(
+                    "Select a sketch in the tree first",
+                    "It needs a sketch: give `sketch`, or select a sketch in the tree",
+                )
+            })
+        };
         let need_material = |ok: bool| {
             if ok {
                 Ok(())
@@ -339,11 +347,12 @@ impl DesignWorkbench {
             }
             match Self::selected_profile_face(ctx, body) {
                 Some(face) if has_solid => Ok((None, Some(face), None)),
-                _ => Err(
+                _ => Err(given.say(
                     "Select a sketch in the tree, a flat face of the solid, or a borrow of \
-                     faces, first"
-                        .into(),
-                ),
+                     faces, first",
+                    "It needs a profile: give `sketch`, a flat face of the solid as \
+                     `face_point` with `face_normal`, or `profile_borrowed`",
+                )),
             }
         };
 
@@ -457,20 +466,30 @@ impl DesignWorkbench {
                     need_material(has_solid)?;
                 }
                 let profile = need_sketch(sketch)?;
-                // The path is another sketch of the body, the latest made:
-                // a pipe along its own profile builds nothing.
-                let spine = ctx
-                    .document
-                    .feature_tree()
-                    .all_nodes()
-                    .filter(|(id, n)| {
-                        n.workbench_id.as_str() == "wb.sketch"
-                            && n.body == Some(body)
-                            && **id != profile
+                // The path is the one given, else another sketch of the
+                // body, the latest made: a pipe along its own profile
+                // builds nothing.
+                let spine = given
+                    .spine
+                    .or_else(|| {
+                        ctx.document
+                            .feature_tree()
+                            .all_nodes()
+                            .filter(|(id, n)| {
+                                n.workbench_id.as_str() == "wb.sketch"
+                                    && n.body == Some(body)
+                                    && **id != profile
+                            })
+                            .max_by_key(|(_, n)| n.seq)
+                            .map(|(id, _)| *id)
                     })
-                    .max_by_key(|(_, n)| n.seq)
-                    .map(|(id, _)| *id)
-                    .ok_or("A pipe needs a second sketch for its path; draw one first")?;
+                    .ok_or_else(|| {
+                        given.say(
+                            "A pipe needs a second sketch for its path; draw one first",
+                            "A pipe needs a path: give `spine`, a sketch, or draw a second \
+                             sketch in the profile's body",
+                        )
+                    })?;
                 (
                     DesignFeature::Pipe {
                         path_borrowed: Vec::new(),
@@ -725,7 +744,13 @@ impl DesignWorkbench {
                     .iter()
                     .find(|b| b.id != body && ctx.document.imported_brep_blob(b.id).is_some())
                     .map(|b| b.id)
-                    .ok_or("Build another body first; the clone copies its solid")?;
+                    .ok_or_else(|| {
+                        given.say(
+                            "Build another body first; the clone copies its solid",
+                            "A clone copies another body's solid: build one first \
+                             (`pc.doc.rebuild()`)",
+                        )
+                    })?;
                 (DesignFeature::Clone { source: other }, "Clone")
             }
             "design.scaled" => {
@@ -755,7 +780,13 @@ impl DesignWorkbench {
                     .rev()
                     .find(|b| b.id != body)
                     .map(|b| b.id)
-                    .ok_or("Create a second body to combine with first")?;
+                    .ok_or_else(|| {
+                        given.say(
+                            "Create a second body to combine with first",
+                            "A boolean needs a second body to combine with: make one and give \
+                             it as `tool_body`",
+                        )
+                    })?;
                 (
                     DesignFeature::BodyBoolean {
                         more_tools: Vec::new(),
@@ -898,7 +929,7 @@ impl DesignWorkbench {
             ctx.log_warn("Select a body (or one of its features) first");
             return InputResult::consumed();
         };
-        match self.create_feature(ctx, tool, body, |_| Ok(())) {
+        match self.create_feature(ctx, tool, body, Given::default(), |_| Ok(())) {
             Ok(made) => {
                 self.pending_task_from_tool = Some(ToolMade {
                     feature: made.id,
@@ -925,6 +956,7 @@ impl DesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         tool: &str,
         body: BodyId,
+        given: Given,
         edit: impl FnOnce(&mut DesignFeature) -> Result<(), String>,
     ) -> Result<CreatedFeature, String> {
         let mut given_base = None;
@@ -965,7 +997,7 @@ impl DesignWorkbench {
             body
         };
         let (mut feature, base) =
-            Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body)?;
+            Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body, given)?;
         feature.set_refine(self.options.refine_result);
         edit(&mut feature)?;
         let name = Self::next_feature_name(ctx, base);
@@ -990,6 +1022,23 @@ impl DesignWorkbench {
             hidden,
             base: given_base,
         })
+    }
+}
+
+/// What a feature command gives beside the selection a tool reads.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Given {
+    /// Run as a command: a refusal names the arguments to give rather
+    /// than what to select.
+    pub scripted: bool,
+    /// A pipe's path.
+    pub spine: Option<FeatureId>,
+}
+
+impl Given {
+    /// The refusal `ui` for the window, `script` for a command.
+    fn say(&self, ui: &str, script: &str) -> String {
+        if self.scripted { script } else { ui }.to_string()
     }
 }
 

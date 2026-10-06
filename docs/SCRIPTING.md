@@ -3172,7 +3172,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `sketch` is the profile. The path is `spine`, a sketch id; left out, it is the latest other sketch of the profile's body. The profile sits at either end of the path, and the pipe runs from there.
-- It is refused when the profile's body has no other sketch (a pipe needs a second sketch for its path).
+- `spine` may be a sketch of any body. Left out, it is refused when the profile's body has no other sketch.
 - A path's sharp corners are mitred (`corner = "Transformed"`); `orientation` sets how the profile turns along it.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.subtractive_pipe`, `pc.sketch.polyline`.
@@ -3207,7 +3207,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `sketch` is the profile. The path is `spine`, a sketch id; left out, it is the latest other sketch of the profile's body. The profile sits at either end of the path, and the pipe runs from there.
-- It is refused when the profile's body has no other sketch (a pipe needs a second sketch for its path).
+- `spine` may be a sketch of any body. Left out, it is refused when the profile's body has no other sketch.
 - A path's sharp corners are mitred (`corner = "Transformed"`); `orientation` sets how the profile turns along it.
 - It is refused in a body with no solid feature yet.
 
@@ -3311,7 +3311,7 @@ assert(math.abs(volume - (math.pi * 100 * 10 - cut)) < 1e-2, volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- It takes no sketch, so `body` is required. Left as it comes, a shape is about 10 mm across and placed at the body's origin: a box from 0 to 10 along each axis, a cylinder of radius 5 standing 10 tall on it.
+- It takes no sketch, so `body` is required. Left as it comes, a shape is about 10 mm across and placed at the body's origin: a box from 0 to 10 along each axis, a cylinder of radius 5 standing 10 tall on it. A `variant` other than the shapes listed is refused.
 - `kind` replaces the shape whole: `kind = {Cylinder = {radius = 3, height = 8, angle_deg = 360}}`, every field of it given, else it is refused (missing field). `pc.doc.feature{id = ...}` shows a shape's fields.
 - `placement = {origin = {x, y, z}, x_axis = {..}, z_axis = {..}}` places it in the body's frame; an `x_axis` along the `z_axis` fails at `pc.doc.rebuild()`.
 
@@ -3345,7 +3345,7 @@ assert(math.abs(m.max[3] - 11) < 1e-6, "the post stands on the box")
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- It takes no sketch, so `body` is required. Left as it comes, a shape is about 10 mm across and placed at the body's origin: a box from 0 to 10 along each axis, a cylinder of radius 5 standing 10 tall on it.
+- It takes no sketch, so `body` is required. Left as it comes, a shape is about 10 mm across and placed at the body's origin: a box from 0 to 10 along each axis, a cylinder of radius 5 standing 10 tall on it. A `variant` other than the shapes listed is refused.
 - `kind` replaces the shape whole: `kind = {Cylinder = {radius = 3, height = 8, angle_deg = 360}}`, every field of it given, else it is refused (missing field). `pc.doc.feature{id = ...}` shows a shape's fields.
 - `placement = {origin = {x, y, z}, x_axis = {..}, z_axis = {..}}` places it in the body's frame; an `x_axis` along the `z_axis` fails at `pc.doc.rebuild()`.
 - It is refused in a body with no solid feature yet.

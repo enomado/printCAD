@@ -376,8 +376,8 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                      either end of the path, and the pipe runs from there.",
                 )
                 .note(
-                    "It is refused when the profile's body has no other sketch (a pipe \
-                     needs a second sketch for its path).",
+                    "`spine` may be a sketch of any body. Left out, it is refused when the \
+                     profile's body has no other sketch.",
                 )
                 .note(
                     "A path's sharp corners are mitred (`corner = \"Transformed\"`); \
@@ -481,7 +481,8 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 .note(
                     "It takes no sketch, so `body` is required. Left as it comes, a shape \
                      is about 10 mm across and placed at the body's origin: a box from 0 to \
-                     10 along each axis, a cylinder of radius 5 standing 10 tall on it.",
+                     10 along each axis, a cylinder of radius 5 standing 10 tall on it. \
+                     A `variant` other than the shapes listed is refused.",
                 )
                 .note(
                     "`kind` replaces the shape whole: `kind = {Cylinder = {radius = 3, \
@@ -1443,6 +1444,13 @@ pub fn run(
         ));
     }
     let tool = match a.opt_string("variant")? {
+        Some(variant) if !crate::PRIMITIVE_SHAPES.iter().any(|(v, _)| *v == variant) => {
+            let names: Vec<&str> = crate::PRIMITIVE_SHAPES.iter().map(|(v, _)| *v).collect();
+            return Err(CommandError::bad(
+                "variant",
+                format!("is not a shape: give one of {}", names.join(", ")),
+            ));
+        }
         Some(variant) => format!("{id}:{variant}"),
         None => id.to_string(),
     };
@@ -1458,7 +1466,16 @@ pub fn run(
         list.insert(0, json!(sketch.0.to_string()));
     }
     let made = bench
-        .create_feature(ctx, &tool, body, |feature| apply_fields(feature, &fields))
+        .create_feature(
+            ctx,
+            &tool,
+            body,
+            crate::Given {
+                scripted: true,
+                spine: a.opt_id("spine").ok().flatten().map(FeatureId),
+            },
+            |feature| apply_fields(feature, &fields),
+        )
         .map_err(CommandError::failed)?;
     if let Some(name) = a.opt_string("name")? {
         ctx.document.rename_feature(made.id, name);
@@ -2035,6 +2052,7 @@ fn default_feature(
         core_document::tool_variant(tool),
         ctx,
         body,
+        crate::Given::default(),
     );
     ctx.active_document_object = saved.0;
     ctx.selected_face = saved.1;
@@ -2246,6 +2264,72 @@ mod tests {
             )
             .unwrap();
         (body, sketch)
+    }
+
+    /// A pipe takes the path it is given, from any body; given none it
+    /// needs a second sketch in the profile's body, and says so in the
+    /// arguments' terms.
+    #[test]
+    fn a_pipe_takes_a_spine_from_another_body() {
+        let mut doc = Document::new("t");
+        let (_, profile) = sketch_in(&mut doc);
+        let (_, path) = sketch_in(&mut doc);
+        let mut bench = DesignWorkbench::default();
+        let id = |f: FeatureId| json!(f.0.to_string());
+        let err = call(
+            &mut bench,
+            &mut doc,
+            "design.pipe",
+            json!({"sketch": id(profile)}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("`spine`"), "{err}");
+        let made = call(
+            &mut bench,
+            &mut doc,
+            "design.pipe",
+            json!({"sketch": id(profile), "spine": id(path)}),
+        )
+        .unwrap();
+        assert_eq!(fields(&doc, &made)["Pipe"]["spine"], id(path));
+    }
+
+    /// A shape the primitive tools do not offer is refused, naming the
+    /// ones they do.
+    #[test]
+    fn an_unknown_primitive_variant_is_refused() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut bench = DesignWorkbench::default();
+        let err = call(
+            &mut bench,
+            &mut doc,
+            "design.primitive",
+            json!({"body": body.0.to_string(), "variant": "blob"}),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("variant") && err.to_string().contains("cylinder"),
+            "{err}"
+        );
+        assert!(doc.feature_tree().all_nodes().next().is_none());
+    }
+
+    /// A command missing its sketch is told which argument to give, not
+    /// what to select in the window.
+    #[test]
+    fn a_command_refusal_names_the_argument() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut bench = DesignWorkbench::default();
+        let err = call(
+            &mut bench,
+            &mut doc,
+            "design.revolve",
+            json!({"body": body.0.to_string()}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("give `sketch`"), "{err}");
     }
 
     /// A loft's sketch is its first section: given with more sections it
