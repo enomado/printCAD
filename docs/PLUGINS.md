@@ -7,10 +7,12 @@ Preferences page. A package is a WebAssembly component, so one file runs
 on every system printCAD runs on, and it runs sandboxed: it reaches its own
 folder and nothing else unless the user allows more.
 
-The design is [RFC 0001](rfcs/0001-wasm-workbenches.md). Two complete
-examples sit under `sdk/examples`: `gear`, a spur gear workbench, and
-`cam`, which works out pocket toolpaths from a sketch's outline in a job,
-draws them over the model and writes them as G-code. A repository to start
+The design is [RFC 0001](rfcs/0001-wasm-workbenches.md). A complete
+example sits under `sdk/examples/gear`: a spur gear workbench. A larger
+one is the CAM package,
+[PrintCAD-cam-wb](https://github.com/gilbertorconde/PrintCAD-cam-wb), which
+works out pocket toolpaths from a sketch's outline in a job, draws them
+over the model and writes them as G-code. A repository to start
 a package from, with CI and releases on tags already set up, is
 [PrintCAD-example-wb](https://github.com/gilbertorconde/PrintCAD-example-wb).
 
@@ -248,7 +250,7 @@ may be links, text fields or check boxes, each change told by row and
 column), groups, rows of
 widgets side by side, a hint on any widget, progress, separators and
 diagrams. A table's columns marked `editable` take typing, each cell
-left coming back as `PanelEvent::Cell` (the CAM example's tool table is
+left coming back as `PanelEvent::Cell` (the CAM package's tool table is
 one). A number bound
 to a feature's parameter (`bind`) takes formulas like any field of the
 app's own. Changes come back as `panel_event`; OK and Cancel as
@@ -284,7 +286,7 @@ asks again after an event, a document or selection change, or
 **Profiles.** `host::profile(feature)` answers a feature's closed loops
 (a sketch's) where they stand in the world: the plane, then the loops,
 holes inside their outlines, as lines, arcs, circles, ellipses and
-splines. The CAM example reads a pocket's outline this way.
+splines. The CAM package reads a pocket's outline this way.
 
 **Input.** `input` gets clicks, key presses, tool activations and actions,
 with what is under the cursor and what is selected (`Pointer`: the ray,
@@ -303,7 +305,7 @@ menu (`MenuScope`); a pick runs `menu_command` with the entry's id.
 `Bench::job` in an instance of its own away from the window. It reports
 with `host::progress`, stops when `host::cancelled`, and a `Progress`
 widget naming the job shows how far it is. Its result comes back as
-`Event::JobFinished`. The CAM example works out every toolpath this
+`Event::JobFinished`. The CAM package works out every toolpath this
 way and stops it when its task is cancelled. A job allowed `helper` may run a program from the
 package's `helpers/<os>-<arch>/` folder with `host::helper`, for work
 that needs every core.

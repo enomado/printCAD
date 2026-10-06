@@ -150,8 +150,10 @@ download checked against GitHub's sha256 digest, `source.json` beside the
 package, `check`/`update` refusing a different package id; network behind
 the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   own for wasm32-wasip2 (excluded from the root one): the guest SDK
-  (`Bench` trait, `host` calls, `bench!`), `examples/gear` and
-  `tests/rogue` (misbehaves on request); `wb_wasm/tests/packages.rs`
+  (`Bench` trait, `host` calls, `bench!`), `examples/gear`,
+  `tests/rogue` (misbehaves on request) and `tests/probe` (a sketch's
+  profile, a cancelled job, a table cell, a formula, the save dialog:
+  what the gear leaves out); `wb_wasm/tests/packages.rs`
   builds them with cargo and runs them through the host.
 - `kernel_api`: pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,

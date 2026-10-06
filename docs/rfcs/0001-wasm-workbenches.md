@@ -92,11 +92,15 @@ it. `docs/PLUGINS.md` is the guide for package authors.
   registry indexes listing packages from their authors' repositories,
   each release with its sha256, installed and updated as a GitHub
   install is. The user keeps the list of stores.
-- **Examples.** The SDK's examples are the Gear bench
-  (`sdk/examples/gear`, which runs a job) and the CAM prototype
-  (`sdk/examples/cam`); `sdk/tests/rogue` misbehaves on request for the
-  host's tests, and exercises helpers.
-- **CAM prototype.** A pocket operation is a feature of its own kind on
+- **Examples.** The SDK's example is the Gear bench
+  (`sdk/examples/gear`, which runs a job); `sdk/tests/rogue` misbehaves
+  on request for the host's tests, and exercises helpers, and
+  `sdk/tests/probe` reaches what the Gear bench leaves out (a sketch's
+  profile, a job stopped by its task's Escape, an editable table cell, a
+  file for the save dialog).
+- **CAM prototype.** A package of its own repository,
+  [PrintCAD-cam-wb](https://github.com/gilbertorconde/PrintCAD-cam-wb).
+  A pocket operation is a feature of its own kind on
   no body, building no solid: the outline (a sketch's closed loops, or
   loops a command types), the stock's top and depth, and the tool's
   numbers, copied from a tool table on the bench's Preferences page so
