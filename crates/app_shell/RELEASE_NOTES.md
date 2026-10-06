@@ -4,6 +4,32 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.5.0
+
+### Surfaces
+- A Surface workbench: extruded, revolved, planar, filled, ruled, lofted, swept, offset and blend surfaces, from sketch curves (open or closed) and from picked edges.
+- Sew joins a body's surfaces, across a gap you set if they do not quite meet, and a shell that closes becomes a solid.
+- Surface fillet, Extend, Split, Trim by plane, Thicken and Mirror work on the surfaces you have.
+- A filling takes any number of sides and meets the surfaces around it touching, tangent or curvature continuous.
+- Check continuity labels how a body's faces meet across each shared edge.
+- Create sketch works in a surface body, and a tool stays dimmed until it has what it builds from.
+- Surface bodies export to STEP.
+
+### Selection
+- Ctrl+click picks several faces of a body, and edges with them; the status bar counts what is picked.
+- Offset, Move and Delete faces, Thickness, fillets and chamfers by faces, Draft, Appearance and Surface texture take every picked face.
+
+### Sketcher
+- A closed sketch shades its regions outside edit mode too.
+
+### Assistant
+- The agent's replies show as formatted text, with a copy button on each message and code block.
+- The chat header jumps between your own messages, and Up recalls the last one you sent.
+
+### Workbench packages
+- A double click on a package's feature opens it in its package.
+- A package can remove a body it made, so cancelling a new part leaves no empty body behind.
+
 ## 0.4.0
 
 ### Workbench packages
