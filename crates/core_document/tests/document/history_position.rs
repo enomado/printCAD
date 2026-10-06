@@ -199,3 +199,31 @@ fn removing_a_bare_body_undoes_and_a_used_one_is_a_barrier() {
         "a body with a feature on it cannot come back"
     );
 }
+
+#[test]
+fn a_move_refused_partway_leaves_the_history_as_it_was_and_a_whole_move_undoes_whole() {
+    let mut doc = Document::new("t");
+    let mut journal = OpJournal::new(50);
+    let body = doc.create_body(None);
+    let a = add(&mut doc, body, "a");
+    let b = add(&mut doc, body, "b");
+    let c = add(&mut doc, body, "c");
+    let d = add(&mut doc, body, "d");
+    doc.set_feature_dependencies(d, vec![b]);
+    journal.note(&mut doc);
+
+    // To the front, `d` would pass `c` and then `b`, which it uses.
+    assert!(doc.move_feature_after(d, None).is_err());
+    assert_eq!(history(&doc, body), [a, b, c, d], "nothing moved");
+
+    // As far as it may go: right after `b`.
+    doc.move_feature_after(d, Some(b)).unwrap();
+    journal.note(&mut doc);
+    assert_eq!(history(&doc, body), [a, b, d, c]);
+    // Three places on, in one step to undo.
+    doc.move_feature_after(a, Some(c)).unwrap();
+    journal.note(&mut doc);
+    assert_eq!(history(&doc, body), [b, d, c, a]);
+    journal.undo(&mut doc).expect("the second move");
+    assert_eq!(history(&doc, body), [a, b, d, c]);
+}

@@ -529,7 +529,7 @@ assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
 
 Notes:
 
-- It refuses to carry a feature past one it is built from or one built from it ("depend on each other and keep their order"), and two features of different bodies ("not in one body"). Moving a feature after itself does nothing.
+- It refuses to carry a feature past one it is built from or one built from it ("depend on each other and keep their order"), and two features of different bodies ("not in one body"). The whole move is checked before anything moves: a refused one leaves the history as it was. Moving a feature after itself does nothing.
 - Whether the feature still builds in its new place is told by `pc.doc.rebuild()`, not here.
 
 See also `pc.doc.move`.

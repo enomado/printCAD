@@ -2382,31 +2382,45 @@ impl Document {
 
     /// Move a feature along its body's history, a step at a time as
     /// [`Self::try_move_feature_in_history`] goes, until it sits right
-    /// after `after`, or first for `None`. Stops at the step refused, with
-    /// the steps before it taken.
+    /// after `after`, or first for `None`. The whole move is checked
+    /// first: a refused one changes nothing.
     pub fn move_feature_after(
         &mut self,
         feature: FeatureId,
         after: Option<FeatureId>,
     ) -> Result<(), MoveRefused> {
-        let steps = self.body_history_of(feature).len();
-        for _ in 0..=steps {
-            let order = self.body_history_of(feature);
-            let Some(at) = order.iter().position(|f| *f == feature) else {
-                return Err(MoveRefused::NotFound);
-            };
-            let want = match after {
-                None => 0,
-                Some(after) => match order.iter().position(|f| *f == after) {
-                    Some(target) if target < at => target + 1,
-                    Some(target) => target,
-                    None => return Err(MoveRefused::NotFound),
-                },
-            };
-            if at == want {
-                return Ok(());
+        let order = self.body_history_of(feature);
+        let Some(at) = order.iter().position(|f| *f == feature) else {
+            return Err(MoveRefused::NotFound);
+        };
+        let want = match after {
+            None => 0,
+            Some(after) => match order.iter().position(|f| *f == after) {
+                Some(target) if target < at => target + 1,
+                Some(target) => target,
+                None => return Err(MoveRefused::NotFound),
+            },
+        };
+        // Every feature it passes, nearest first, must not use it (going
+        // later) nor be used by it (going earlier).
+        let passed: Vec<FeatureId> = if want < at {
+            order[want..at].iter().rev().copied().collect()
+        } else {
+            order[at + 1..=want].to_vec()
+        };
+        let uses =
+            |user: FeatureId, used: FeatureId| self.feature_tree.dependencies(user).contains(&used);
+        if let Some(neighbour) = passed.iter().copied().find(|other| {
+            if want < at {
+                uses(feature, *other)
+            } else {
+                uses(*other, feature)
             }
-            self.try_move_feature_in_history(feature, at > want)?;
+        }) {
+            return Err(MoveRefused::Dependency { neighbour });
+        }
+        for _ in &passed {
+            self.try_move_feature_in_history(feature, want < at)?;
         }
         Ok(())
     }
