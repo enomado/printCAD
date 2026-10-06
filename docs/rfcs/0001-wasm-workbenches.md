@@ -1,6 +1,6 @@
 # RFC 0001: WebAssembly workbenches
 
-- Status: built (milestones 1 to 4, without the CAM prototype, the
+- Status: built (milestones 1 to 4, the CAM prototype included, the
   contract still at 0.1); milestone 0 in part, see "As built"
 - Date: 2026-09-25
 - Scope: `core_document` (workbench seam), a new `wb_wasm` crate, `ui_kit`,
@@ -80,9 +80,30 @@ it. `docs/PLUGINS.md` is the guide for package authors.
   registry indexes listing packages from their authors' repositories,
   each release with its sha256, installed and updated as a GitHub
   install is. The user keeps the list of stores.
-- **Examples.** The SDK's example is the Gear bench (`sdk/examples/gear`,
-  which runs a job); `sdk/tests/rogue` misbehaves on request for the host's
-  tests, and exercises helpers. No CAM prototype was built in tree.
+- **Examples.** The SDK's examples are the Gear bench
+  (`sdk/examples/gear`, which runs a job) and the CAM prototype
+  (`sdk/examples/cam`); `sdk/tests/rogue` misbehaves on request for the
+  host's tests, and exercises helpers.
+- **CAM prototype.** A pocket operation is a feature of its own kind on
+  no body, building no solid: the outline (a sketch's closed loops, or
+  loops a command types), the stock's top and depth, and the tool's
+  numbers, copied from a tool table on the bench's Preferences page so
+  formulas drive them. A job works out the toolpath (rows across the
+  outline cut where the tool's whole disc stays inside, islands
+  included, joined row to row where the step stays inside, repeated at
+  each depth), with progress and Stop; the view draws it, and the task
+  saves it as G-code through the save dialog. Commands make an operation,
+  read its toolpath and write its G-code. Offset (contour-parallel)
+  passes and a finishing pass along the walls are not built.
+- **Profiles.** A host query the design did not name, `profile`, answers
+  a feature's closed loops placed in world space, so a package reads a
+  sketch's outline without knowing how sketches are stored. The host
+  answers from a function the app names at start
+  (`wb_wasm::set_profile_source`, the sketcher's own extraction).
+- **Panel widgets.** The CAM panels needed one addition: a table's
+  columns may be editable, each cell typed in coming back as
+  `PanelEvent::Cell` (the tool table). The operation list is the existing
+  `List`.
 - **Milestone 0.** The declared panels (`core_document::panel`), runtime
   icons (`ui_kit::icon::register`), world-space polylines and jobs exist
   and are exercised by packages. The built-in benches keep their egui
