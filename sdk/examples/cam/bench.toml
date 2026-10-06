@@ -1,0 +1,9 @@
+id = "example.cam"
+name = "CAM"
+version = "0.1.0"
+api = "printcad:workbench@0.1"
+description = "Pocket toolpaths from a sketch's outline, written as G-code"
+feature_kinds = ["example.cam.pocket"]
+
+[capabilities]
+save_dialog = true

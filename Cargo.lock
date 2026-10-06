@@ -5438,6 +5438,7 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
+ "wb_sketch",
 ]
 
 [[package]]

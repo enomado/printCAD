@@ -1,5 +1,6 @@
-//! Real packages through the host: the Gear example and a package that
-//! misbehaves on request, both built from `sdk/` for wasm32-wasip2.
+//! Real packages through the host: the Gear and CAM examples and a
+//! package that misbehaves on request, all built from `sdk/` for
+//! wasm32-wasip2.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -24,6 +25,8 @@ fn guests() -> &'static Path {
                 "wasm32-wasip2",
                 "-p",
                 "gear",
+                "-p",
+                "cam",
                 "-p",
                 "rogue",
             ])
@@ -158,20 +161,35 @@ impl scripting::Host for Scripted<'_> {
 /// each example runs, from an empty document, as it says.
 #[test]
 fn a_package_s_command_examples_reach_the_host_and_run() {
-    let package = installed("examples/gear", "gear.wasm", "gear-examples");
-    let mut registry = registry_with(&package, Capabilities::default());
-    let (_, spec) = registry.command("example.gear.make").unwrap();
-    assert!(!spec.notes.is_empty(), "the package's notes");
-    let examples = spec.examples.clone();
-    assert!(!examples.is_empty(), "the package's examples");
-    for example in examples {
-        let mut host = Scripted {
-            registry: &mut registry,
-            document: Document::new("example"),
-        };
-        let out =
-            scripting::ScriptEngine::new().run_script(&example.script, &example.title, &mut host);
-        assert_eq!(out.error, None, "example.gear.make, {}", example.title);
+    let cam = [
+        "example.cam.pocket",
+        "example.cam.toolpath",
+        "example.cam.gcode",
+    ];
+    for (source, component, commands) in [
+        ("examples/gear", "gear.wasm", &["example.gear.make"][..]),
+        ("examples/cam", "cam.wasm", &cam[..]),
+    ] {
+        let package = installed(source, component, &format!("{component}-examples"));
+        let mut registry = registry_with(&package, Capabilities::default());
+        for command in commands {
+            let (_, spec) = registry.command(command).unwrap();
+            assert!(!spec.notes.is_empty(), "{command}'s notes");
+            let examples = spec.examples.clone();
+            assert!(!examples.is_empty(), "{command}'s examples");
+            for example in examples {
+                let mut host = Scripted {
+                    registry: &mut registry,
+                    document: Document::new("example"),
+                };
+                let out = scripting::ScriptEngine::new().run_script(
+                    &example.script,
+                    &example.title,
+                    &mut host,
+                );
+                assert_eq!(out.error, None, "{command}, {}", example.title);
+            }
+        }
     }
 }
 
@@ -251,6 +269,325 @@ fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
         bench.task(&ctx).map(|t| t.title),
         Some("Gear".into()),
         "a double click opens the gear"
+    );
+}
+
+/// The moves of a G-code program: whether rapid, and where the tool is
+/// after each line that moves it.
+fn moves(program: &str) -> Vec<(bool, [f64; 3])> {
+    let mut at = [f64::NAN; 3];
+    let mut out = Vec::new();
+    for line in program.lines() {
+        let code = line.split('(').next().unwrap_or("");
+        let mut rapid = None;
+        let mut moved = false;
+        for word in code.split_whitespace() {
+            let (letter, value) = word.split_at(1);
+            let Ok(v) = value.parse::<f64>() else {
+                continue;
+            };
+            match letter {
+                "G" if v == 0.0 || v == 1.0 => rapid = Some(v == 0.0),
+                "X" | "Y" | "Z" => {
+                    at["XYZ".find(letter).unwrap()] = v;
+                    moved = true;
+                }
+                _ => {}
+            }
+        }
+        if let (Some(rapid), true) = (rapid, moved) {
+            out.push((rapid, at));
+        }
+    }
+    out
+}
+
+/// Wait out the CAM bench's jobs, then let it hear how they ended, as its
+/// next frame would; what it logged.
+fn finish_jobs(registry: &mut DocumentService, document: &mut Document) -> Vec<String> {
+    let bench = registry
+        .workbench_mut(&WorkbenchId::new("example.cam"))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while bench.busy() {
+        assert!(Instant::now() < deadline, "the job ends");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut ctx =
+        WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    bench.on_frame(0.016, &mut ctx);
+    ctx.drain_logs().into_iter().map(|l| l.message).collect()
+}
+
+fn feature_of(made: &Value) -> core_document::FeatureId {
+    core_document::FeatureId(made["feature"].as_str().unwrap().parse().unwrap())
+}
+
+/// A square sketch, `side` across from its corner at the origin, on a body
+/// placed at `at`.
+fn square_sketch(document: &mut Document, side: f32, at: [f32; 3]) -> core_document::FeatureId {
+    use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
+    let body = document.create_body(Some("Stock".into()));
+    document.set_body_placement(
+        body,
+        core_document::BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::from_array(at)),
+    );
+    let mut sketch = Sketch::new("Outline");
+    let corners: Vec<_> = [[0.0, 0.0], [side, 0.0], [side, side], [0.0, side]]
+        .into_iter()
+        .map(|[x, y]| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))))
+        .collect();
+    for i in 0..4 {
+        sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )));
+    }
+    let plane = sketch.plane;
+    document
+        .add_feature_in_body(
+            wb_sketch::SketchFeature::new(sketch, plane),
+            "Outline".into(),
+            Some(body),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_cam_package_works_out_a_pocket_in_a_job_and_writes_its_g_code() {
+    wb_wasm::set_profile_source(wb_sketch::profile::closed_profile);
+    let package = installed("examples/cam", "cam.wasm", "cam");
+    assert_eq!(package.manifest.id, "example.cam");
+    let mut registry = registry_with(
+        &package,
+        Capabilities {
+            save_dialog: true,
+            ..Default::default()
+        },
+    );
+    let id = WorkbenchId::new("example.cam");
+    let tools = registry.tools_for(&id).unwrap();
+    assert_eq!(tools[0].id, "example.cam.new");
+    assert!(ui_kit::icon::exists("example.cam/pocket"));
+
+    // A 40 mm square sketched on a body standing at (100, 0, 10).
+    let mut document = Document::new("cam");
+    let sketch = square_sketch(&mut document, 40.0, [100.0, 0.0, 10.0]);
+    let (radius, stepover, step_down) = (3.0, 2.4, 2.0);
+    let made = run(
+        &mut registry,
+        &mut document,
+        "example.cam",
+        "example.cam.pocket",
+        json!({
+            "sketch": sketch.0.to_string(),
+            "depth": 5.0,
+            "tool_diameter": 2.0 * radius,
+            "stepover": stepover,
+            "step_down": step_down,
+        }),
+    )
+    .expect("makes a pocket");
+    let feature = feature_of(&made);
+    let node = document.get_feature_meta(feature).unwrap().clone();
+    assert_eq!(node.workbench_id.as_str(), "example.cam.pocket");
+    assert_eq!(node.body, None, "an operation sits on no body");
+    assert_eq!(node.data["top"], json!(10.0), "the sketch's height");
+    let info = registry.feature_info(&node).unwrap();
+    assert!(!info.builds_solid);
+    assert_eq!(registry.parameters(&node).len(), 9);
+    let toolpath = |registry: &mut DocumentService, document: &mut Document| {
+        run(
+            registry,
+            document,
+            "example.cam",
+            "example.cam.toolpath",
+            json!({"id": feature.0.to_string()}),
+        )
+        .unwrap()
+    };
+    assert_eq!(toolpath(&mut registry, &mut document)["state"], "none");
+
+    // Opening it starts the job, away from the window.
+    {
+        let mut ctx = WorkbenchRuntimeContext::new(
+            &mut document,
+            [0.0, 0.0, 100.0],
+            [0.0; 3],
+            (0, 0, 800, 600),
+        );
+        let bench = registry.workbench_mut(&id).unwrap();
+        bench.edit_feature(&mut ctx, feature);
+        assert_eq!(bench.task(&ctx).map(|t| t.title), Some("Pocket".into()));
+    }
+    finish_jobs(&mut registry, &mut document);
+    let path = toolpath(&mut registry, &mut document);
+    assert_eq!(path["state"], "ready", "{path}");
+    let levels: Vec<f64> = serde_json::from_value(path["levels"].clone()).unwrap();
+    assert_eq!(levels.len(), 3, "5 mm in passes of at most 2");
+    assert!(
+        (levels[2] - 5.0).abs() < 1e-9,
+        "down to the floor: {levels:?}"
+    );
+    let runs: Vec<Vec<[f64; 2]>> = serde_json::from_value(path["runs"].clone()).unwrap();
+    let points: Vec<[f64; 2]> = runs.into_iter().flatten().collect();
+    // Every point the tool's centre reaches keeps the tool inside the
+    // square: the square less the tool's radius.
+    let (low, high) = ([100.0 + radius, radius], [140.0 - radius, 40.0 - radius]);
+    for p in &points {
+        for axis in 0..2 {
+            assert!(
+                p[axis] >= low[axis] - 1e-6 && p[axis] <= high[axis] + 1e-6,
+                "{p:?} leaves the square less the tool"
+            );
+        }
+    }
+    // And it reaches every side of it, in rows no further apart than the
+    // stepover.
+    let reach = |axis: usize, f: fn(f64, f64) -> f64, from: f64| {
+        points.iter().map(|p| p[axis]).fold(from, f)
+    };
+    assert!(reach(0, f64::min, f64::MAX) - low[0] < 1e-3);
+    assert!(high[0] - reach(0, f64::max, f64::MIN) < 1e-3);
+    assert!(reach(1, f64::min, f64::MAX) - low[1] < 1e-3);
+    assert!(high[1] - reach(1, f64::max, f64::MIN) < 1e-3);
+    let mut rows: Vec<f64> = points.iter().map(|p| p[1]).collect();
+    rows.sort_by(f64::total_cmp);
+    rows.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    assert!(rows.windows(2).all(|w| w[1] - w[0] <= stepover + 1e-9));
+
+    // The G-code: millimetres, cuts inside the square less the tool at
+    // the passes' depths, rapids only above the stock.
+    let program = run(
+        &mut registry,
+        &mut document,
+        "example.cam",
+        "example.cam.gcode",
+        json!({"id": feature.0.to_string()}),
+    )
+    .unwrap();
+    let program = program.as_str().unwrap();
+    assert!(program.contains("G21"), "millimetres");
+    assert!(program.contains("M3") && program.contains("M30"));
+    let (top, safe) = (10.0, 15.0);
+    let mut depths = Vec::new();
+    for (rapid, [x, y, z]) in moves(program) {
+        if rapid {
+            assert!(
+                (z - safe).abs() < 1e-9,
+                "a rapid at Z{z}, not the clearance"
+            );
+            continue;
+        }
+        assert!(z < top, "a feed move cuts");
+        assert!(x >= low[0] - 1e-3 && x <= high[0] + 1e-3, "X{x}");
+        assert!(y >= low[1] - 1e-3 && y <= high[1] + 1e-3, "Y{y}");
+        if !depths.contains(&z) {
+            depths.push(z);
+        }
+    }
+    depths.sort_by(f64::total_cmp);
+    assert_eq!(depths.len(), 3, "{depths:?}");
+    assert_eq!(depths[0], 5.0, "the floor");
+    assert!(top - depths[2] <= step_down + 1e-3);
+    assert!(depths.windows(2).all(|w| w[1] - w[0] <= step_down + 1e-3));
+}
+
+#[test]
+fn a_pocket_job_stops_when_its_task_is_cancelled() {
+    let package = installed("examples/cam", "cam.wasm", "cam-cancel");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let id = WorkbenchId::new("example.cam");
+    let mut document = Document::new("cam");
+    // A round pocket of many edges in very fine rows: long work.
+    let circle: Vec<[f64; 2]> = (0..4000)
+        .map(|i| {
+            let a = std::f64::consts::TAU * i as f64 / 4000.0;
+            [1000.0 * a.cos(), 1000.0 * a.sin()]
+        })
+        .collect();
+    let made = run(
+        &mut registry,
+        &mut document,
+        "example.cam",
+        "example.cam.pocket",
+        json!({"outline": [circle], "depth": 1.0, "tool_diameter": 6.0, "stepover": 0.0101}),
+    )
+    .unwrap();
+    let feature = feature_of(&made);
+    let bench = registry.workbench_mut(&id).unwrap();
+    let mut ctx =
+        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    bench.edit_feature(&mut ctx, feature);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(bench.busy(), "still working");
+    let escape = core_document::WorkbenchInputEvent::KeyPress {
+        key: core_document::runtime::KeyCode::Escape,
+    };
+    bench.on_input(&escape, None, &mut ctx);
+    assert!(bench.task(&ctx).is_none(), "Escape closed the task");
+    drop(ctx);
+    let stopped = Instant::now();
+    let logs = finish_jobs(&mut registry, &mut document);
+    assert!(
+        stopped.elapsed() < Duration::from_secs(5),
+        "it stopped at once"
+    );
+    assert!(logs.iter().any(|l| l.contains("stopped")), "{logs:?}");
+    let path = run(
+        &mut registry,
+        &mut document,
+        "example.cam",
+        "example.cam.toolpath",
+        json!({"id": feature.0.to_string()}),
+    )
+    .unwrap();
+    assert_eq!(path["state"], "stopped");
+}
+
+#[test]
+fn a_formula_drives_a_pocket_s_tool() {
+    let package = installed("examples/cam", "cam.wasm", "cam-formula");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("cam");
+    let square = json!([[[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]]]);
+    let made = run(
+        &mut registry,
+        &mut document,
+        "example.cam",
+        "example.cam.pocket",
+        json!({"outline": square, "depth": 3.0, "tool_diameter": 6.0, "stepover": 2.0}),
+    )
+    .unwrap();
+    let feature = feature_of(&made);
+    let nearest = |registry: &mut DocumentService, document: &mut Document| {
+        let program = run(
+            registry,
+            document,
+            "example.cam",
+            "example.cam.gcode",
+            json!({"id": feature.0.to_string()}),
+        )
+        .unwrap();
+        moves(program.as_str().unwrap())
+            .into_iter()
+            .filter(|(rapid, _)| !rapid)
+            .map(|(_, p)| p[0].min(p[1]).min(40.0 - p[0]).min(40.0 - p[1]))
+            .fold(f64::MAX, f64::min)
+    };
+    assert!((nearest(&mut registry, &mut document) - 3.0).abs() < 1e-3);
+
+    document
+        .set_feature_formula(feature, "/tool_diameter", Some("2 * 5 mm".into()))
+        .unwrap();
+    registry.evaluate(&mut document);
+    assert_eq!(
+        document.feature_values(feature).unwrap()["tool_diameter"],
+        json!(10.0)
+    );
+    assert!(
+        (nearest(&mut registry, &mut document) - 5.0).abs() < 1e-3,
+        "a 10 mm tool keeps 5 mm from the walls"
     );
 }
 
