@@ -12,7 +12,7 @@
 //! is widened by [`SYNONYMS`], the words users say for what the commands
 //! call otherwise.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 /// What an entry is.
@@ -308,6 +308,9 @@ const B: f32 = 0.75;
 /// One entry's words, weighed.
 struct Bag {
     counts: HashMap<String, f32>,
+    /// The words outside the notes, which are what rarity counts: a word
+    /// many notes mention stays as telling as the entries' own make it.
+    own: HashSet<String>,
     length: f32,
 }
 
@@ -315,6 +318,7 @@ impl Bag {
     fn of(entry: &Entry) -> Self {
         let mut bag = Bag {
             counts: HashMap::new(),
+            own: HashSet::new(),
             length: 0.0,
         };
         bag.add(&entry.id, ID_WEIGHT);
@@ -333,7 +337,8 @@ impl Bag {
 
     fn add(&mut self, text: &str, weight: f32) {
         for w in words(text) {
-            *self.counts.entry(w).or_default() += weight;
+            *self.counts.entry(w.clone()).or_default() += weight;
+            self.own.insert(w);
             self.length += weight;
         }
     }
@@ -400,7 +405,7 @@ impl Catalog {
         let bags: Vec<Bag> = entries.iter().map(Bag::of).collect();
         let mut spread: HashMap<String, usize> = HashMap::new();
         for bag in &bags {
-            for word in bag.counts.keys() {
+            for word in &bag.own {
                 *spread.entry(word.clone()).or_default() += 1;
             }
         }
@@ -696,6 +701,26 @@ mod tests {
             .first()
             .map(|h| h.entry.id.clone())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn notes_naming_a_command_do_not_make_its_name_common() {
+        let with = |note: &str| {
+            let mut entries = vec![
+                Entry::command("design.pocket", "Cut a sketch into the body"),
+                Entry::command("design.groove", "Cut a sketch turned about an axis"),
+            ];
+            for n in 0..10 {
+                let mut other = Entry::command(format!("design.other{n}"), "Something else");
+                other.notes.push(note.into());
+                entries.push(other);
+            }
+            Catalog::new(entries)
+        };
+        let plain = with("Its sketch goes in its body.");
+        let noted = with("Its sketch goes in the pocket's body.");
+        assert_eq!(plain.rarity("pocket"), noted.rarity("pocket"));
+        assert_eq!(first(&noted, "pocket"), "design.pocket");
     }
 
     #[test]
