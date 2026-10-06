@@ -201,6 +201,7 @@ impl SurfaceWorkbench {
                     .selected_face
                     .filter(|_| ctx.selected_body_id == Some(body.0)),
                 face_origin: core_document::FaceOrigin::Elsewhere,
+                generator: None,
             },
         });
     }

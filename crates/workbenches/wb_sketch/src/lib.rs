@@ -203,6 +203,15 @@ fn coincident_with(sketch: &Sketch, mut points: HashSet<Uuid>) -> HashSet<Uuid> 
     }
 }
 
+/// What a new sketch stands on besides its plane, and what makes it.
+#[derive(Default)]
+struct NewSketchOn {
+    support: Option<crate::feature::DatumSupport>,
+    face: Option<crate::feature::FaceSupport>,
+    attached: Option<crate::feature::AttachedSupport>,
+    made_by: Option<generator::Generator>,
+}
+
 /// A "create sketch" request waiting for the user to pick a plane.
 struct PendingCreation {
     body: Option<BodyId>,
@@ -212,6 +221,8 @@ struct PendingCreation {
     face: Option<core_document::FaceRef>,
     /// Where `face` comes from: whether a sketch on it follows it.
     face_origin: core_document::FaceOrigin,
+    /// The generator the sketch is made by, if any.
+    generator: Option<generator::Generator>,
 }
 
 /// In-progress box selection (select mode, started by pressing on empty
@@ -934,14 +945,16 @@ impl SketchWorkbench {
             self.session_start = ctx.document.get_feature_data(feature_id).cloned();
             self.clear_interaction_state();
 
+            // A generated sketch is centred on where its generator stands.
             if let Some(sketch_feature) = self.get_active_sketch(ctx) {
                 let plane = sketch_feature.plane;
+                let centre = sketch_feature.generator.is_some().then_some(plane.origin);
                 ctx.request(HostRequest::OrientCamera(
                     core_document::CameraOrientRequest {
                         plane_origin: plane.origin,
                         plane_normal: plane.normal,
                         plane_up: plane.y_axis,
-                        centre: None,
+                        centre,
                     },
                 ));
             }
@@ -953,6 +966,27 @@ impl SketchWorkbench {
             .get_feature_meta(feature_id)
             .map(|meta| meta.workbench_id.as_str() == "wb.sketch")
             .unwrap_or(false)
+    }
+
+    /// `base` when no feature has that name, else `base_n` one past the
+    /// highest `n` in use: a generated sketch's name.
+    pub(crate) fn next_generated_name(document: &core_document::Document, base: &str) -> String {
+        let mut highest = None::<u32>;
+        for (_, node) in document.feature_tree().all_nodes() {
+            let n = if node.name == base {
+                Some(0)
+            } else {
+                node.name
+                    .strip_prefix(base)
+                    .and_then(|rest| rest.strip_prefix('_'))
+                    .and_then(|n| n.parse::<u32>().ok())
+            };
+            highest = highest.max(n);
+        }
+        match highest {
+            None => base.to_string(),
+            Some(n) => format!("{base}_{}", n + 1),
+        }
     }
 
     pub(crate) fn next_sketch_name(document: &core_document::Document) -> String {
@@ -1062,6 +1096,9 @@ impl SketchWorkbench {
                 .face
                 .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()));
             self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin);
+            if let Some(pending) = &mut self.pending_creation {
+                pending.generator = request.generator.and_then(generator::Generator::named);
+            }
         }
     }
 
@@ -1077,6 +1114,7 @@ impl SketchWorkbench {
             body,
             face,
             face_origin,
+            generator: None,
         });
     }
 
@@ -1085,17 +1123,32 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         body: Option<BodyId>,
         plane: SketchPlane,
-        support: Option<crate::feature::DatumSupport>,
-        face: Option<crate::feature::FaceSupport>,
-        attached: Option<crate::feature::AttachedSupport>,
+        on: NewSketchOn,
     ) {
-        let sketch_name = Self::next_sketch_name(ctx.document);
+        let NewSketchOn {
+            support,
+            face,
+            attached,
+            made_by,
+        } = on;
+        let sketch_name = match &made_by {
+            Some(made_by) => Self::next_generated_name(ctx.document, made_by.base_name()),
+            None => Self::next_sketch_name(ctx.document),
+        };
         let mut sketch = Sketch::new(sketch_name.clone());
         sketch.plane = plane;
         let mut sketch_feature = SketchFeature::new(sketch, plane);
         sketch_feature.support = support.clone();
         sketch_feature.face = face;
         sketch_feature.attached = attached;
+        let kind = made_by.as_ref().map(generator::Generator::kind);
+        if let Some(made_by) = made_by {
+            sketch_feature.generator = Some(made_by);
+            if let Err(why) = generator::regenerate(&mut sketch_feature) {
+                ctx.log_error(format!("Failed to make {sketch_name}: {why}"));
+                return;
+            }
+        }
 
         match ctx
             .document
@@ -1123,6 +1176,9 @@ impl SketchWorkbench {
                 if let Some(body) = body {
                     args["body"] = serde_json::json!(body.0.to_string());
                 }
+                if let Some(kind) = kind {
+                    args["generator"] = serde_json::json!(kind);
+                }
                 if let Some(attached) = attached {
                     args["attachment"] = serde_json::json!(attached.attachment);
                     args["attachment_offset"] = serde_json::json!(attached.offset);
@@ -1138,8 +1194,13 @@ impl SketchWorkbench {
                 ctx.active_document_object = Some(feature_id);
                 // The view turns to the plane where the body has it, onto
                 // the face the sketch was placed on when it was.
+                // A generated sketch is centred on its origin, where the
+                // generator stands.
                 let placement = sketch_placement(ctx.document, feature_id);
-                let centre = face.as_ref().map(|f| placement.point(f.point));
+                let centre = match kind {
+                    Some(_) => Some(placement.point(plane.origin)),
+                    None => face.as_ref().map(|f| placement.point(f.point)),
+                };
                 let plane = placed_plane(&plane, &placement);
                 ctx.request(HostRequest::OrientCamera(
                     core_document::CameraOrientRequest {
@@ -2568,7 +2629,12 @@ impl Workbench for SketchWorkbench {
         match (scope, id) {
             (MenuScope::StartPage, "sketch.start_blank") => {
                 let body = ctx.selected_body_id.map(BodyId);
-                self.create_sketch_on_plane(ctx, body, SketchPlane::default(), None, None, None);
+                self.create_sketch_on_plane(
+                    ctx,
+                    body,
+                    SketchPlane::default(),
+                    NewSketchOn::default(),
+                );
                 true
             }
             (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
@@ -6653,9 +6719,10 @@ mod face_view {
             &mut ctx,
             Some(BodyId(body.0)),
             plane,
-            None,
-            Some(support),
-            None,
+            NewSketchOn {
+                face: Some(support),
+                ..Default::default()
+            },
         );
         let orient = ctx
             .take_requests()
@@ -6667,6 +6734,54 @@ mod face_view {
             .expect("the view is turned");
         assert_eq!(orient.plane_normal, plane.normal);
         assert_eq!(orient.centre, Some(clicked), "on the face clicked");
+    }
+
+    /// A generator's sketch on a turned body: it is made by the generator,
+    /// recorded as `sketch.new` naming it, and the view turns to the plane
+    /// where the body has it, centred on where the generator stands.
+    #[test]
+    fn a_generated_sketch_turns_the_view_to_where_its_body_has_it() {
+        let mut doc = core_document::Document::new("t");
+        let body = doc.create_body(None);
+        let turn = glam::Quat::from_rotation_x(30f32.to_radians());
+        let mut placement = doc.body_placement(body);
+        placement.rotation = turn.to_array();
+        placement.translation = [5.0, 0.0, 0.0];
+        doc.set_body_placement(body, placement);
+        let plane = SketchPlane::from_frame([1.0, 2.0, 10.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+        let mut wb = SketchWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        wb.create_sketch_on_plane(
+            &mut ctx,
+            Some(body),
+            plane,
+            NewSketchOn {
+                made_by: generator::Generator::named("sprocket"),
+                ..Default::default()
+            },
+        );
+        let outcome = core_document::HookOutcome::take(&mut ctx);
+        let orient = outcome
+            .requests
+            .into_iter()
+            .find_map(|r| match r {
+                HostRequest::OrientCamera(o) => Some(o),
+                _ => None,
+            })
+            .expect("the view is turned");
+        let recorded = outcome.recorded;
+        assert_eq!(recorded[0].id, "sketch.new");
+        assert_eq!(recorded[0].args["generator"], "sprocket");
+        let normal = turn * glam::Vec3::Z;
+        assert!(glam::Vec3::from_array(orient.plane_normal).distance(normal) < 1e-5);
+        let centre = turn * glam::Vec3::new(1.0, 2.0, 10.0) + glam::Vec3::new(5.0, 0.0, 0.0);
+        let seen = glam::Vec3::from_array(orient.centre.expect("centred"));
+        assert!(seen.distance(centre) < 1e-4, "{seen} is not {centre}");
+        let id = wb.active_sketch_id.expect("the sketch is open");
+        let made = stored_sketch(&doc, id).unwrap();
+        assert!(made.generator.is_some(), "made by the sprocket generator");
+        assert!(!made.sketch.geometry.is_empty(), "with its outline");
+        assert_eq!(doc.get_feature_meta(id).unwrap().name, "Sprocket");
     }
 }
 

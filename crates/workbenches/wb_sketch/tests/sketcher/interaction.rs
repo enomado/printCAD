@@ -352,6 +352,7 @@ fn cross_workbench_sketch_request_is_consumed() {
         body,
         face: None,
         face_origin: core_document::FaceOrigin::Elsewhere,
+        generator: None,
     });
     h.wb.on_input(
         &WorkbenchInputEvent::KeyPress { key: KeyCode::A },

@@ -309,6 +309,7 @@ impl SketchWorkbench {
         let body = pending.body;
         let face = pending.face;
         let face_origin = pending.face_origin;
+        let made_by = pending.generator.clone();
         type Choice = (
             SketchPlane,
             Option<crate::feature::DatumSupport>,
@@ -326,11 +327,11 @@ impl SketchWorkbench {
                         .color(TEXT1),
                 );
             });
-            ui.label(
-                RichText::new("Choose the plane to sketch on.")
-                    .font(sans(FONT_SM))
-                    .color(TEXT2),
-            );
+            let ask = match &made_by {
+                Some(made_by) => format!("Choose the plane for the {}.", made_by.base_name()),
+                None => "Choose the plane to sketch on.".to_string(),
+            };
+            ui.label(RichText::new(ask).font(sans(FONT_SM)).color(TEXT2));
             ui.add_space(SPACE_1);
             if let Some(face) = face
                 && secondary_button(ui, "Selected face")
@@ -341,7 +342,11 @@ impl SketchWorkbench {
             {
                 // On the face itself, not the drawn mesh the click met.
                 let face = face.on_its_plane();
-                let plane = SketchPlane::from_face(face.point, face.normal);
+                let mut plane = SketchPlane::from_face(face.point, face.normal);
+                // A generator stands where the face was clicked.
+                if made_by.is_some() {
+                    plane = SketchPlane::from_frame(face.point, plane.normal, plane.x_axis);
+                }
                 // A face of the sketch's own body, or one it borrows, is
                 // followed.
                 let follows = body.and_then(|_| {
@@ -455,7 +460,17 @@ impl SketchWorkbench {
         }
         if let Some((plane, support, face)) = chosen {
             self.pending_creation = None;
-            self.create_sketch_on_plane(ctx, body, plane, support, face, None);
+            self.create_sketch_on_plane(
+                ctx,
+                body,
+                plane,
+                crate::NewSketchOn {
+                    support,
+                    face,
+                    attached: None,
+                    made_by: made_by.clone(),
+                },
+            );
         }
         if let (Some(attachment), Some(on)) = (by_mode, body) {
             match crate::commands::settle_attached(ctx, on, attachment, Default::default()) {
@@ -465,9 +480,11 @@ impl SketchWorkbench {
                         ctx,
                         body,
                         attached.plane(),
-                        None,
-                        None,
-                        Some(attached),
+                        crate::NewSketchOn {
+                            attached: Some(attached),
+                            made_by,
+                            ..Default::default()
+                        },
                     );
                 }
                 Err(why) => ctx.log_warn(format!("Cannot attach the sketch there: {why}")),

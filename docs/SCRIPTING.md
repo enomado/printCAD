@@ -1584,6 +1584,7 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
 - `origin` (list, optional): With normal: where the plane's origin sits, {x, y, z}
 - `x_axis` (list, optional): With normal: the sketch's X direction, {x, y, z}
+- `generator` (string, optional): gear, sprocket or shaft: the sketch is that generator's, at its default numbers, centred on the plane's origin
 - Returns the sketch's id
 
 Notes:
@@ -1591,6 +1592,7 @@ Notes:
 - Without `body` the sketch goes in the selected body, else in a new one: in a script two sketches made without `body` land in two bodies, and a pocket or a hole from the second is refused for want of material. Give `body` from `pc.doc.feature{id = ...}.body` or `pc.doc.new_body`.
 - `body` takes any body, a surface body too: that is how a sketch starts in a surface body, as the Surface bench's Create sketch does.
 - XY faces +Z, YZ faces +X and XZ faces -Y, so a pad from an XZ sketch grows toward -Y and `offset` moves an XZ sketch toward -Y. The sketch's x and y run along the plane's two letters (on XZ, y is world Z). Lower case names are taken too.
+- With `generator` it is named after it (Sprocket, Sprocket_1, ...) and `sketch.generator` sets its numbers, as `design.sprocket` and its kin do on a base plane or a picked face.
 
 See also `pc.doc.new_body`, `pc.sketch.rect`, `pc.design.datum`.
 

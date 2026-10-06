@@ -24,6 +24,12 @@ pub fn register(context: &mut WorkbenchContext) {
             "sketch.new",
             "Make an empty sketch on a base plane",
         ))
+        .optional(
+            "generator",
+            ParamKind::String,
+            "gear, sprocket or shaft: the sketch is that generator's, at its default \
+             numbers, centred on the plane's origin",
+        )
         .returns("the sketch's id")
         .note(
             "Without `body` the sketch goes in the selected body, else in a new one: in a \
@@ -40,6 +46,11 @@ pub fn register(context: &mut WorkbenchContext) {
              toward -Y and `offset` moves an XZ sketch toward -Y. The sketch's x and y run \
              along the plane's two letters (on XZ, y is world Z). Lower case names are \
              taken too.",
+        )
+        .note(
+            "With `generator` it is named after it (Sprocket, Sprocket_1, ...) and \
+             `sketch.generator` sets its numbers, as `design.sprocket` and its kin do on a \
+             base plane or a picked face.",
         )
         .see_also("doc.new_body")
         .see_also("sketch.rect")
@@ -1949,11 +1960,20 @@ fn placing(spec: CommandSpec) -> CommandSpec {
 pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
     if id == "sketch.new" {
-        let name = match a.opt_string("name")? {
-            Some(name) => name.to_string(),
-            None => crate::SketchWorkbench::next_sketch_name(ctx.document),
+        let made_by = match a.opt_string("generator")? {
+            Some(kind) => Some(crate::generator::Generator::named(kind).ok_or_else(|| {
+                CommandError::bad("generator", "must be gear, sprocket or shaft")
+            })?),
+            None => None,
         };
-        let id = add_sketch(&a, ctx, Sketch::new(name))?;
+        let name = match (a.opt_string("name")?, &made_by) {
+            (Some(name), _) => name.to_string(),
+            (None, Some(made_by)) => {
+                crate::SketchWorkbench::next_generated_name(ctx.document, made_by.base_name())
+            }
+            (None, None) => crate::SketchWorkbench::next_sketch_name(ctx.document),
+        };
+        let id = add_sketch(&a, ctx, Sketch::new(name), made_by)?;
         return Ok(json!(id.0.to_string()));
     }
     if id == "sketch.import_dxf" {
@@ -2611,7 +2631,7 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
                 .unwrap_or_else(|| crate::SketchWorkbench::next_sketch_name(ctx.document));
             let mut sketch = Sketch::new(name);
             sketch.images.push(image.clone());
-            let id = add_sketch(a, ctx, sketch)?;
+            let id = add_sketch(a, ctx, sketch, None)?;
             Ok(answer(id))
         }
     }
@@ -2655,7 +2675,7 @@ fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         ));
     }
     crate::solver::solve(&mut sketch);
-    let id = add_sketch(a, ctx, sketch)?;
+    let id = add_sketch(a, ctx, sketch, None)?;
     let mut parts: Vec<String> = [
         (added.lines, "lines"),
         (added.arcs, "arcs"),
@@ -2687,6 +2707,7 @@ fn add_sketch(
     a: &Args,
     ctx: &mut WorkbenchRuntimeContext,
     mut sketch: Sketch,
+    made_by: Option<crate::generator::Generator>,
 ) -> Result<FeatureId, CommandError> {
     let mut plane = match a.opt_string("plane")?.unwrap_or("XY") {
         p if p.eq_ignore_ascii_case("XY") => SketchPlane::xy(),
@@ -2748,6 +2769,10 @@ fn add_sketch(
     let mut feature = SketchFeature::new(sketch, plane);
     feature.support = support;
     feature.attached = attached;
+    if let Some(made_by) = made_by {
+        feature.generator = Some(made_by);
+        crate::generator::regenerate(&mut feature).map_err(CommandError::failed)?;
+    }
     ctx.document
         .add_feature_in_body(feature, name, Some(body))
         .map_err(|e| CommandError::failed(e.to_string()))
@@ -3901,6 +3926,30 @@ mod tests {
         let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
         assert_eq!(feature.support, None);
         assert!(doc.feature_tree().dependencies(id).is_empty());
+    }
+
+    #[test]
+    fn a_new_sketch_can_be_a_generators() {
+        let mut doc = Document::new("t");
+        let made = call(
+            &mut doc,
+            "sketch.new",
+            json!({"plane": "XZ", "generator": "sprocket"}),
+        )
+        .unwrap();
+        let id = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
+        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        assert!(matches!(
+            feature.generator,
+            Some(crate::generator::Generator::Sprocket(_))
+        ));
+        assert!(!feature.sketch.geometry.is_empty());
+        assert_eq!(feature.plane.normal, SketchPlane::xz().normal);
+        assert_eq!(doc.get_feature_meta(id).unwrap().name, "Sprocket");
+        let again = call(&mut doc, "sketch.new", json!({"generator": "sprocket"})).unwrap();
+        let again = FeatureId(uuid::Uuid::parse_str(again.as_str().unwrap()).unwrap());
+        assert_eq!(doc.get_feature_meta(again).unwrap().name, "Sprocket_1");
+        assert!(call(&mut doc, "sketch.new", json!({"generator": "cam"})).is_err());
     }
 
     #[test]

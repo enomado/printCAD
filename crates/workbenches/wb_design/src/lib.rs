@@ -163,6 +163,49 @@ impl DesignWorkbench {
     /// The body a new feature goes in: the selected feature's, else the
     /// selected body. A linked copy takes its shape from its source and
     /// takes no features.
+    /// Hand off to the sketch workbench: it opens its plane picker for the
+    /// target body (offering the clicked face when the selection landed on
+    /// solid geometry), and finishing the sketch returns here (the host
+    /// tracks the return bench). With `generator` the sketch it makes is
+    /// that generator's.
+    /// A borrow selected in the tree offers its first flat face, which a
+    /// sketch placed on it follows as the borrow does; a face clicked on the
+    /// body's own solid is followed too, one of another body's is not.
+    pub(crate) fn start_sketch(
+        ctx: &mut WorkbenchRuntimeContext,
+        generator: Option<&'static str>,
+    ) -> InputResult {
+        let Some(body) = Self::target_body(ctx) else {
+            ctx.log_warn("Select a body (or one of its features) first");
+            return InputResult::consumed();
+        };
+        let lent = ctx.active_document_object.and_then(|id| {
+            borrow::flat_face_in_world(ctx.document, id)
+                .map(|(face, index)| (face, core_document::FaceOrigin::Lent { borrow: id, index }))
+        });
+        let (face, face_origin) = match lent {
+            Some((face, origin)) => (Some(face), origin),
+            None => (
+                ctx.selected_face,
+                if ctx.selected_body_id == Some(body.0) {
+                    core_document::FaceOrigin::OwnSolid
+                } else {
+                    core_document::FaceOrigin::Elsewhere
+                },
+            ),
+        };
+        ctx.request(HostRequest::StartOn {
+            workbench: WorkbenchId::from("wb.sketch"),
+            attach: core_document::SketchAttachRequest {
+                body: body.0,
+                face,
+                face_origin,
+                generator,
+            },
+        });
+        InputResult::consumed()
+    }
+
     fn target_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
         let body = match ctx
             .active_document_object
@@ -1836,45 +1879,7 @@ impl Workbench for DesignWorkbench {
                 InputResult::consumed()
             }
             Some("design.generator") => generators::insert(ctx, active_tool.unwrap_or_default()),
-            Some("design.new_sketch") => {
-                let Some(body) = Self::target_body(ctx) else {
-                    ctx.log_warn("Select a body (or one of its features) first");
-                    return InputResult::consumed();
-                };
-                // Hand off to the sketch workbench: it opens its plane picker
-                // for this body (offering the clicked face when the selection
-                // landed on solid geometry), and finishing the sketch returns
-                // here (the host tracks the return bench).
-                // A borrow selected in the tree offers its first flat face,
-                // which a sketch placed on it follows as the borrow does; a
-                // face clicked on the body's own solid is followed too, one
-                // of another body's is not.
-                let lent = ctx.active_document_object.and_then(|id| {
-                    borrow::flat_face_in_world(ctx.document, id).map(|(face, index)| {
-                        (face, core_document::FaceOrigin::Lent { borrow: id, index })
-                    })
-                });
-                let (face, face_origin) = match lent {
-                    Some((face, origin)) => (Some(face), origin),
-                    None => (
-                        ctx.selected_face,
-                        if ctx.selected_body_id == Some(body.0) {
-                            core_document::FaceOrigin::OwnSolid
-                        } else {
-                            core_document::FaceOrigin::Elsewhere
-                        },
-                    ),
-                };
-                ctx.request(HostRequest::StartOn {
-                    workbench: WorkbenchId::from("wb.sketch"),
-                    attach: core_document::SketchAttachRequest {
-                        body: body.0,
-                        face,
-                        face_origin,
-                    },
-                });
-                InputResult::consumed()
-            }
+            Some("design.new_sketch") => Self::start_sketch(ctx, None),
             Some(tool) if tool.starts_with("design.") => {
                 let full = active_tool.unwrap_or(tool);
                 self.insert_feature(ctx, full)

@@ -2,16 +2,16 @@
 //! each a sketch made from a few numbers (`wb_sketch::generator`), ready
 //! for a Pad (the gear, the sprocket) or a Revolution (the shaft).
 //!
-//! The tool puts the sketch in the selected body, on the picked face
-//! centred where it was picked, else on a base plane (the shaft stands on
-//! XZ, so it turns about Z), and opens it, where its panel sets the
-//! numbers. `design.gear`, `design.sprocket` and `design.shaft` make one from a
-//! script.
+//! The tool opens the sketcher's plane picker for the selected body, as a
+//! new sketch does, the picked face offered first and the generator centred
+//! where it was picked; the sketch is made on the plane chosen and opened,
+//! where its panel sets the numbers. `design.gear`, `design.sprocket` and
+//! `design.shaft` make one from a script, on a picked face or a base plane
+//! (the shaft stands on XZ, so it turns about Z).
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, HostRequest,
-    InputResult, ParamKind, ToolDescriptor, ToolVariant, WorkbenchContext, WorkbenchId,
-    WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, InputResult,
+    ParamKind, ToolDescriptor, ToolVariant, WorkbenchContext, WorkbenchRuntimeContext,
 };
 use serde_json::{Map, Value, json};
 use wb_sketch::generator::{Generator, new_sketch};
@@ -215,49 +215,15 @@ fn add(
         .map_err(|e| format!("Failed to create {name}: {e}"))
 }
 
-/// The toolbar's path: make the generator `tool` names in the selected
-/// body and open it for its numbers.
+/// The toolbar's path: the sketcher's plane picker, as a new sketch's,
+/// offering the selected face first; the generator `tool` names makes the
+/// sketch on the plane chosen, and the sketcher opens it for its numbers.
 pub(crate) fn insert(ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResult {
     let variant = core_document::tool_variant(tool).unwrap_or("gear");
-    let Some((_, _, _, command)) = GENERATORS.iter().find(|(id, ..)| *id == variant) else {
-        return InputResult::consumed();
-    };
     let Some(generator) = Generator::named(variant) else {
         return InputResult::consumed();
     };
-    let Some(body) = DesignWorkbench::target_body(ctx) else {
-        ctx.log_warn("Select a body (or one of its features) first");
-        return InputResult::consumed();
-    };
-    let face = ctx.selected_face_in(body);
-    let (plane, mut args) = match face {
-        Some(face) => (
-            face_plane(face.point, face.normal),
-            json!({
-                "face_point": face.point,
-                "face_normal": face.normal,
-            }),
-        ),
-        None => {
-            let (plane, name) = base_plane(&generator);
-            (plane, json!({ "plane": name }))
-        }
-    };
-    let label = generator.label();
-    match add(ctx, Some(body), plane, generator, None) {
-        Ok(id) => {
-            if let Value::Object(map) = &mut args {
-                map.insert("body".into(), json!(body.0.to_string()));
-            }
-            ctx.record(*command, object(args), json!(id.0.to_string()));
-            ctx.log_info(format!("Created {label}: set its numbers in the panel"));
-            // The sketcher opens it: its panel holds the numbers.
-            ctx.active_document_object = Some(id);
-            ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.sketch")));
-        }
-        Err(why) => ctx.log_warn(why),
-    }
-    InputResult::consumed()
+    DesignWorkbench::start_sketch(ctx, Some(generator.kind()))
 }
 
 /// Run `design.gear`, `design.sprocket` or `design.shaft`.
@@ -309,13 +275,6 @@ pub(crate) fn command(
     Ok(json!(id.0.to_string()))
 }
 
-fn object(value: Value) -> Map<String, Value> {
-    match value {
-        Value::Object(map) => map,
-        _ => Map::new(),
-    }
-}
-
 /// `{x, y, z}` or `[x, y, z]`.
 fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
     let bad = || CommandError::bad(name, "must be {x, y, z}");
@@ -338,7 +297,40 @@ mod tests {
 
     fn run(doc: &mut Document, id: &str, args: Value) -> CommandResult {
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-        command(id, &object(args), &mut ctx)
+        let Value::Object(args) = args else {
+            panic!("arguments are an object")
+        };
+        command(id, &args, &mut ctx)
+    }
+
+    /// The tool asks the sketcher for its plane picker, the clicked face
+    /// offered and followed, the generator carried along; nothing is made
+    /// until a plane is chosen.
+    #[test]
+    fn the_tool_opens_the_plane_picker_for_its_generator() {
+        let mut doc = Document::new("g");
+        let body = doc.create_body(None);
+        let face = core_document::FaceRef {
+            point: [1.0, 2.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            surface: None,
+            name: 0,
+        };
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.selected_body_id = Some(body.0);
+        ctx.selected_face = Some(face);
+        insert(&mut ctx, "design.generator:sprocket");
+        let requests = ctx.take_requests();
+        let [core_document::HostRequest::StartOn { workbench, attach }] = requests.as_slice()
+        else {
+            panic!("one request to start a sketch: {requests:?}")
+        };
+        assert_eq!(workbench.as_str(), "wb.sketch");
+        assert_eq!(attach.body, body.0);
+        assert_eq!(attach.face, Some(face));
+        assert_eq!(attach.face_origin, core_document::FaceOrigin::OwnSolid);
+        assert_eq!(attach.generator, Some("sprocket"));
+        assert_eq!(doc.feature_tree().all_nodes().count(), 0);
     }
 
     #[test]

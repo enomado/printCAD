@@ -262,6 +262,9 @@ pub struct SketchAttachRequest {
     /// Where `face` comes from, which decides whether a sketch placed on
     /// it follows it.
     pub face_origin: FaceOrigin,
+    /// The generator the new sketch is made by, by its kind (`gear`,
+    /// `sprocket`, `shaft`); a blank sketch when `None`.
+    pub generator: Option<&'static str>,
 }
 
 /// Where a face offered for a new sketch comes from.
