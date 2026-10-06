@@ -169,6 +169,7 @@ fn run_jobs(
                         serde_json::to_string_pretty(&answer)
                             .unwrap_or_else(|_| answer.to_string()),
                     ),
+                    returned: Some(answer),
                     ..RunOutput::default()
                 },
                 Err(err) => RunOutput {

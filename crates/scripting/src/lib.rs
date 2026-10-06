@@ -38,6 +38,10 @@ pub struct RunOutput {
     pub printed: Vec<String>,
     /// The value of a console line that is an expression, shown as text.
     pub value: Option<String>,
+    /// What the run's chunk returned, as JSON: tables become objects or
+    /// lists, several values a list. `None` when it returned nothing or
+    /// nil.
+    pub returned: Option<serde_json::Value>,
     pub error: Option<String>,
 }
 
@@ -172,13 +176,14 @@ impl ScriptEngine {
     }
 
     /// Run one console line. An expression answers its value; anything
-    /// else runs as a statement. Globals stay set for the next line.
+    /// else runs as a statement, answering what it `return`s. Globals stay
+    /// set for the next line.
     pub fn eval_line(&mut self, line: &str, host: &mut dyn Host) -> RunOutput {
         let expression = format!("return {line}");
         if self.lua.load(&expression).into_function().is_ok() {
             self.run(&expression, "console", host, true)
         } else {
-            self.run(line, "console", host, false)
+            self.run(line, "console", host, true)
         }
     }
 
@@ -214,30 +219,101 @@ impl ScriptEngine {
                 })?;
             lua.globals().set("__pc_call", call)?;
             let values: MultiValue = lua.load(source).set_name(name).eval()?;
-            if !show || values.iter().all(|v| v.is_nil()) {
-                return Ok(None);
+            if values.iter().all(|v| v.is_nil()) {
+                return Ok((None, None));
+            }
+            let returned = Some(returned_json(lua, &values));
+            if !show {
+                return Ok((None, returned));
             }
             let show: mlua::Function = lua.globals().get("show")?;
             let mut parts = Vec::new();
             for value in values {
                 parts.push(show.call::<String>(value)?);
             }
-            Ok(Some(parts.join("\t")))
+            Ok((Some(parts.join("\t")), returned))
         });
         let _ = self.lua.globals().set("__pc_call", mlua::Nil);
         let printed = std::mem::take(&mut *self.printed.borrow_mut());
         match result {
-            Ok(value) => RunOutput {
+            Ok((value, returned)) => RunOutput {
                 printed,
                 value,
+                returned,
                 error: None,
             },
             Err(error) => RunOutput {
                 printed,
-                value: None,
                 error: Some(error_text(&error)),
+                ..RunOutput::default()
             },
         }
+    }
+}
+
+/// The values a chunk returned as JSON: one value as itself, several as a
+/// list. Ids are strings in Lua and stay strings.
+fn returned_json(lua: &Lua, values: &MultiValue) -> serde_json::Value {
+    match values.len() {
+        1 => lua_json(lua, &values[0], 0),
+        _ => serde_json::Value::Array(values.iter().map(|v| lua_json(lua, v, 0)).collect()),
+    }
+}
+
+/// How deep a returned table may nest before the rest is written as text.
+const RETURN_DEPTH: usize = 32;
+
+/// A Lua value as JSON. A table whose keys are 1 to n (or one made with
+/// `array`) is a list, any other an object, its keys written as text.
+/// What JSON cannot hold (a function, a number that is not finite, a table
+/// nested past [`RETURN_DEPTH`], as one that holds itself is) is written
+/// as Lua's `tostring` of it, or null for a number.
+fn lua_json(lua: &Lua, value: &mlua::Value, depth: usize) -> serde_json::Value {
+    use serde_json::Value as J;
+    match value {
+        mlua::Value::Nil => J::Null,
+        mlua::Value::LightUserData(u) if u.0.is_null() => J::Null,
+        mlua::Value::Boolean(b) => J::Bool(*b),
+        mlua::Value::Integer(i) => J::from(*i),
+        mlua::Value::Number(n) => serde_json::Number::from_f64(*n).map_or(J::Null, J::Number),
+        mlua::Value::String(s) => J::String(s.to_string_lossy()),
+        mlua::Value::Table(table) if depth < RETURN_DEPTH => {
+            let len = table.raw_len();
+            let pairs: Vec<(mlua::Value, mlua::Value)> =
+                table.pairs().filter_map(Result::ok).collect();
+            let listed = table
+                .metatable()
+                .is_some_and(|m| m == lua.array_metatable());
+            if listed || (len > 0 && pairs.len() == len) {
+                J::Array(
+                    (1..=len)
+                        .map(|i| {
+                            lua_json(
+                                lua,
+                                &table.raw_get(i).unwrap_or(mlua::Value::Nil),
+                                depth + 1,
+                            )
+                        })
+                        .collect(),
+                )
+            } else if pairs.is_empty() {
+                J::Array(Vec::new())
+            } else {
+                J::Object(
+                    pairs
+                        .iter()
+                        .map(|(k, v)| {
+                            let key = match k {
+                                mlua::Value::String(s) => s.to_string_lossy(),
+                                other => other.to_string().unwrap_or_default(),
+                            };
+                            (key, lua_json(lua, v, depth + 1))
+                        })
+                        .collect(),
+                )
+            }
+        }
+        other => J::String(other.to_string().unwrap_or_default()),
     }
 }
 
@@ -465,6 +541,51 @@ mod tests {
             out.printed,
             ["pc.design.pad{sketch, length?, items?}  Pad a sketch"]
         );
+    }
+
+    #[test]
+    fn a_script_returns_its_value_as_json() {
+        let mut engine = ScriptEngine::new();
+        let mut host = Recorder::default();
+        let mut returned = |source: &str| {
+            let out = engine.run_script(source, "test", &mut host);
+            assert_eq!(out.error, None, "{source}");
+            assert_eq!(out.value, None, "a script shows nothing itself");
+            out.returned
+        };
+        assert_eq!(
+            returned(
+                r#"local id = pc.design.pad{sketch = "s-1"}
+                   return {id = id, sizes = {10, 2.5}, ok = true}"#
+            ),
+            Some(json!({"id": "pad-1", "sizes": [10, 2.5], "ok": true}))
+        );
+        assert_eq!(returned("return 6 * 7"), Some(json!(42)));
+        assert_eq!(returned("return 'pad-1'"), Some(json!("pad-1")));
+        assert_eq!(returned("return 1, 'two'"), Some(json!([1, "two"])));
+        assert_eq!(returned("local x = 1"), None);
+        assert_eq!(returned("return nil"), None);
+        assert_eq!(returned("return {}"), Some(json!([])));
+        assert_eq!(
+            returned("return {1, 2, x = 3}"),
+            Some(json!({"1": 1, "2": 2, "x": 3})),
+            "a table with names keeps them"
+        );
+        // What JSON cannot hold is named rather than lost.
+        let function = returned("return print").unwrap();
+        assert!(function.as_str().unwrap().starts_with("function"));
+        assert_eq!(returned("return 0/0"), Some(json!(null)));
+        let looped = returned("local t = {}; t.t = t; return t").unwrap();
+        assert!(looped.to_string().contains("table: "), "a loop ends");
+    }
+
+    #[test]
+    fn a_console_statement_shows_what_it_returns() {
+        let mut engine = ScriptEngine::new();
+        let mut host = Recorder::default();
+        let out = engine.eval_line("local x = 20; return x + 1", &mut host);
+        assert_eq!(out.value.as_deref(), Some("21"));
+        assert_eq!(out.returned, Some(json!(21)));
     }
 
     #[test]
