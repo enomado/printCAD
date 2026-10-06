@@ -45,7 +45,8 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 ## Working with commands
 
 - `help()` lists every command; `help("sketch")` those starting with
-  `sketch`. `show(value)` gives a table as readable text, for `print`.
+  `sketch`. `show(value)` gives a table as readable text, for `print`;
+  it prints nothing itself: `print(show(t))`.
 - Ids of bodies, features, sketch elements and constraints are strings.
   Commands that make something answer its id.
 - An empty `{}` in a command's arguments is the empty list. `array()`
@@ -89,8 +90,9 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 
   Points and directions are where the body sits; for a body with a
   placement of its own, a feature's picks are in the body's frame.
-- A script's `return` is its answer: the console shows it, and an AI
-  agent's `lua` gets it back as JSON (tables as objects or lists).
+- A script's `return` is its answer: the console shows it, the command
+  line prints it after what the script printed, and an AI agent's `lua`
+  gets it back as JSON (tables as objects or lists).
 - Scripts run on a thread of their own, so the window stays live while
   one runs. The status bar and the console show it with a Stop button.
   Lines and scripts started meanwhile wait their turn. On the command line

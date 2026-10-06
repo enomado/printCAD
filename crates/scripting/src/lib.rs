@@ -192,6 +192,12 @@ impl ScriptEngine {
         self.run(source, name, host, false)
     }
 
+    /// Run a whole script, what it returns answered as `value` too, shown
+    /// as text the way a console line's value is.
+    pub fn run_script_shown(&mut self, source: &str, name: &str, host: &mut dyn Host) -> RunOutput {
+        self.run(source, name, host, true)
+    }
+
     fn run(&mut self, source: &str, name: &str, host: &mut dyn Host, show: bool) -> RunOutput {
         self.printed.borrow_mut().clear();
         self.started.set(Instant::now());
@@ -553,6 +559,18 @@ mod tests {
         let shown = bodies.value.unwrap();
         assert!(shown.contains("name = \"Body\""), "{shown}");
         assert!(!shown.contains("parent"), "null becomes nil: {shown}");
+    }
+
+    #[test]
+    fn a_script_run_shown_answers_what_it_returns_as_text() {
+        let mut engine = ScriptEngine::new();
+        let mut host = Recorder::default();
+        let out = engine.run_script_shown("return {a = 1}", "t", &mut host);
+        assert_eq!(out.value.as_deref(), Some("{\n  a = 1\n}"));
+        // A script that returns nothing answers nothing, and `show` alone
+        // prints nothing.
+        let out = engine.run_script_shown("local t = {a = 1}\nshow(t)", "t", &mut host);
+        assert_eq!((out.value, out.printed.len()), (None, 0));
     }
 
     #[test]

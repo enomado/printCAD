@@ -102,9 +102,16 @@ pub fn run(invocation: &Invocation, registry: DocumentService) -> Result<bool> {
         eprintln!("{name}: its arguments could not be set: {why}");
         return Ok(false);
     }
-    let out = engine.run_script(&source, &name, &mut host);
+    let out = engine.run_script_shown(&source, &name, &mut host);
     for line in &out.printed {
         println!("{line}");
+    }
+    // What the script returns is its answer, shown as the console shows
+    // it; text (`return show(t)`) as it is.
+    match (&out.returned, &out.value) {
+        (Some(Value::String(text)), _) => println!("{text}"),
+        (_, Some(value)) => println!("{value}"),
+        _ => {}
     }
     if let Some(error) = &out.error {
         eprintln!("{name}: {error}");
