@@ -197,6 +197,21 @@ impl Bench for Gears {
                 ],
                 returns: "{body, feature}".into(),
                 read_only: false,
+                notes: vec![
+                    "It always makes a new body; it does not add a gear to an existing one."
+                        .into(),
+                    "It refuses fewer than 6 teeth, and a bore that reaches the teeth's roots."
+                        .into(),
+                ],
+                examples: vec![Example {
+                    title: "A 20-tooth gear".into(),
+                    script: "local made = pc.example.gear.make{teeth = 20, module = 2}\n\
+                             assert(made.body and made.feature, \"a body and its gear\")\n\
+                             assert(not pcall(pc.example.gear.make, {teeth = 4, module = 2}), \
+                             \"too few teeth\")\n"
+                        .into(),
+                }],
+                see_also: Vec::new(),
             }],
             length_keys: vec!["module".into(), "thickness".into(), "bore".into()],
             ..Default::default()

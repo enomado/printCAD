@@ -208,6 +208,26 @@ pub struct Command {
     /// It changes nothing, so an agent may run it without asking.
     #[serde(default)]
     pub read_only: bool,
+    /// What a caller must know beyond the arguments: what it refuses, does
+    /// silently, or is easily mistaken for.
+    #[serde(default)]
+    pub notes: Vec<String>,
+    /// Working uses, each a Lua script run from an empty document.
+    #[serde(default)]
+    pub examples: Vec<Example>,
+    /// Other commands that do the related thing, by id.
+    #[serde(default)]
+    pub see_also: Vec<String>,
+}
+
+/// A working use of a command.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Example {
+    /// What it shows, one line.
+    pub title: String,
+    /// A Lua script, run from an empty document, ending in `assert`s on
+    /// what it made.
+    pub script: String,
 }
 
 // --------------------------------------------------------------- document

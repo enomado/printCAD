@@ -37,8 +37,8 @@ use uuid::Uuid;
 
 pub use asset::{AssetReference, AssetType};
 pub use command::{
-    AgentAccess, Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec,
-    Recorded,
+    AgentAccess, Args, CommandArgs, CommandError, CommandResult, CommandSpec, Example, ParamKind,
+    ParamSpec, Recorded,
 };
 pub use components::{Component, ComponentId};
 pub use configurations::{CONFIGURATIONS_KIND, Configuration, Configurations};

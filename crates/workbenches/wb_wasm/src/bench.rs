@@ -443,6 +443,16 @@ impl Workbench for WasmWorkbench {
                 spec.returns = command.returns.clone();
             }
             spec.read_only = command.read_only;
+            spec.notes = command.notes.clone();
+            spec.examples = command
+                .examples
+                .iter()
+                .map(|e| core_document::Example {
+                    title: e.title.clone(),
+                    script: e.script.clone(),
+                })
+                .collect();
+            spec.see_also = command.see_also.clone();
             spec.params = command
                 .params
                 .iter()

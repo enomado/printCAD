@@ -120,6 +120,61 @@ fn volume(ops: &[kernel_api::SolidOp]) -> f64 {
         .expect("a closed solid")
 }
 
+/// The registry's commands, run from a script against one document.
+struct Scripted<'a> {
+    registry: &'a mut DocumentService,
+    document: Document,
+}
+
+impl scripting::Host for Scripted<'_> {
+    fn commands(&self) -> Vec<core_document::CommandSpec> {
+        self.registry
+            .commands()
+            .into_iter()
+            .map(|(_, c)| c.clone())
+            .collect()
+    }
+
+    fn call(&mut self, id: &str, args: core_document::CommandArgs) -> core_document::CommandResult {
+        let (bench, spec) = self
+            .registry
+            .command(id)
+            .ok_or_else(|| core_document::CommandError::Unknown(id.to_string()))?;
+        spec.check(&args)?;
+        let mut ctx = WorkbenchRuntimeContext::new(
+            &mut self.document,
+            [0.0, 0.0, 100.0],
+            [0.0; 3],
+            (0, 0, 800, 600),
+        );
+        self.registry
+            .workbench_mut(&bench)
+            .unwrap()
+            .run_command(id, &args, &mut ctx)
+    }
+}
+
+/// A package's commands carry their notes and examples to the host, and
+/// each example runs, from an empty document, as it says.
+#[test]
+fn a_package_s_command_examples_reach_the_host_and_run() {
+    let package = installed("examples/gear", "gear.wasm", "gear-examples");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let (_, spec) = registry.command("example.gear.make").unwrap();
+    assert!(!spec.notes.is_empty(), "the package's notes");
+    let examples = spec.examples.clone();
+    assert!(!examples.is_empty(), "the package's examples");
+    for example in examples {
+        let mut host = Scripted {
+            registry: &mut registry,
+            document: Document::new("example"),
+        };
+        let out =
+            scripting::ScriptEngine::new().run_script(&example.script, &example.title, &mut host);
+        assert_eq!(out.error, None, "example.gear.make, {}", example.title);
+    }
+}
+
 #[test]
 fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
     let package = installed("examples/gear", "gear.wasm", "gear");

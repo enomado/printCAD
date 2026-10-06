@@ -32,4 +32,5 @@ sha2.workspace = true
 
 [dev-dependencies]
 kernel_ogeom = { path = "../../kernel_ogeom" }
+scripting = { path = "../../scripting" }
 sha2.workspace = true

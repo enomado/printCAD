@@ -5425,6 +5425,7 @@ dependencies = [
  "kernel_api",
  "kernel_ogeom",
  "local_ipc",
+ "scripting",
  "serde",
  "serde_json",
  "sha2 0.11.0",

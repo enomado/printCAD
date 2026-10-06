@@ -86,6 +86,24 @@ pub struct CommandSpec {
     pub read_only: bool,
     /// What an AI agent may do with it, whatever the user allowed.
     pub agent: AgentAccess,
+    /// What a caller must know beyond the arguments: what it refuses, does
+    /// silently, or is easily mistaken for; one sentence or two each.
+    pub notes: Vec<String>,
+    /// Working uses, each a Lua script run from an empty document; the
+    /// test suite runs every one.
+    pub examples: Vec<Example>,
+    /// Other commands that do the related thing, by id.
+    pub see_also: Vec<String>,
+}
+
+/// A working use of a command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Example {
+    /// What it shows, one line.
+    pub title: String,
+    /// A Lua script, run as a script file is, from an empty document; it
+    /// ends in `assert`s on what it made.
+    pub script: String,
 }
 
 /// What an AI agent may do with a command: the agent runs inside the
@@ -129,7 +147,33 @@ impl CommandSpec {
             extra_args: None,
             read_only: false,
             agent: AgentAccess::AsAllowed,
+            notes: Vec::new(),
+            examples: Vec::new(),
+            see_also: Vec::new(),
         }
+    }
+
+    /// Something a caller must know beyond the arguments.
+    pub fn note(mut self, note: &str) -> Self {
+        self.notes.push(note.to_string());
+        self
+    }
+
+    /// A working use: `script` is Lua, run from an empty document, ending
+    /// in `assert`s on what it made. The indentation its lines share and
+    /// the blank lines around it are taken off.
+    pub fn example(mut self, title: &str, script: &str) -> Self {
+        self.examples.push(Example {
+            title: title.to_string(),
+            script: dedent(script),
+        });
+        self
+    }
+
+    /// Another command that does the related thing.
+    pub fn see_also(mut self, id: &str) -> Self {
+        self.see_also.push(id.to_string());
+        self
     }
 
     /// Say that it only reads.
@@ -243,8 +287,41 @@ impl CommandSpec {
         if let Some(extra) = &self.extra_args {
             out["extra_args"] = Value::String(extra.clone());
         }
+        if !self.notes.is_empty() {
+            out["notes"] = serde_json::json!(self.notes);
+        }
+        if !self.examples.is_empty() {
+            out["examples"] = self
+                .examples
+                .iter()
+                .map(|e| serde_json::json!({"title": e.title, "script": e.script}))
+                .collect();
+        }
+        if !self.see_also.is_empty() {
+            out["see_also"] = serde_json::json!(self.see_also);
+        }
         out
     }
+}
+
+/// `text` without the blank lines around it and the indentation its other
+/// lines share.
+fn dedent(text: &str) -> String {
+    let lines: Vec<&str> = text.trim_matches('\n').lines().collect();
+    let indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let mut out: Vec<&str> = lines
+        .iter()
+        .map(|l| l.get(indent..).unwrap_or("").trim_end())
+        .collect();
+    while out.last().is_some_and(|l| l.is_empty()) {
+        out.pop();
+    }
+    out.join("\n") + "\n"
 }
 
 /// A command the user ran through the UI rather than a script: what it
@@ -373,6 +450,23 @@ mod tests {
         );
         let open = spec.extra_args("Any field");
         assert!(open.check(&args(json!({"length": 1, "colour": 2}))).is_ok());
+    }
+
+    #[test]
+    fn an_example_keeps_its_script_without_the_source_s_indentation() {
+        let spec = CommandSpec::new("t.cmd", "Test").example(
+            "Two lines",
+            "
+            local a = 1
+            if a then
+              assert(a == 1)
+            end
+            ",
+        );
+        assert_eq!(
+            spec.examples[0].script,
+            "local a = 1\nif a then\n  assert(a == 1)\nend\n"
+        );
     }
 
     #[test]
