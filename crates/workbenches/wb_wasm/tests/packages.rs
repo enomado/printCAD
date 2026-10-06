@@ -157,6 +157,50 @@ impl scripting::Host for Scripted<'_> {
     }
 }
 
+/// The SDK carries its own copy of the WIT world, so its published crate
+/// builds alone. To bring it in step with the host's:
+/// `cp crates/bench_api/wit/workbench.wit sdk/printcad-bench-sdk/wit/`.
+#[test]
+fn the_sdk_s_wit_world_is_the_host_s() {
+    let copy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../sdk/printcad-bench-sdk/wit/workbench.wit");
+    let copy = std::fs::read_to_string(copy).expect("the SDK's WIT file");
+    assert!(
+        copy == bench_api::WIT,
+        "sdk/printcad-bench-sdk/wit/workbench.wit is not crates/bench_api/wit/workbench.wit; \
+         copy it over: cp crates/bench_api/wit/workbench.wit sdk/printcad-bench-sdk/wit/"
+    );
+}
+
+/// The three published crates are versioned by the contract they speak:
+/// 0.1.x is `printcad:workbench@0.1`.
+#[test]
+fn the_published_crates_are_versioned_by_the_contract() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let manifest = |path: &str| -> toml::Table {
+        toml::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
+    };
+    let contract = |version: &str| version.split('.').take(2).collect::<Vec<_>>().join(".");
+    for path in [
+        "crates/kernel_api/Cargo.toml",
+        "crates/bench_api/Cargo.toml",
+        "sdk/printcad-bench-sdk/Cargo.toml",
+    ] {
+        let package = &manifest(path)["package"];
+        let version = package["version"].as_str().unwrap();
+        assert_eq!(contract(version), bench_api::API_VERSION, "{path}");
+    }
+    let sdk = manifest("sdk/printcad-bench-sdk/Cargo.toml");
+    let wanted = sdk["dependencies"]["bench_api"]["version"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        wanted,
+        bench_api::API_VERSION,
+        "the SDK's bench_api requirement"
+    );
+}
+
 /// A package's commands carry their notes and examples to the host, and
 /// each example runs, from an empty document, as it says.
 #[test]

@@ -1,13 +1,28 @@
 [package]
-name = "bench_api"
+name = "printcad-bench-api"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "The data a WebAssembly workbench and printCAD exchange"
+description = "The data a printCAD workbench package and the app exchange, and the WIT world that carries it"
+repository = "https://github.com/gilbertorconde/printCAD"
+homepage = "https://github.com/gilbertorconde/printCAD"
+documentation = "https://docs.rs/printcad-bench-api"
+readme = "README.md"
+keywords = ["cad", "printcad", "plugin", "wasm", "wit"]
+categories = ["api-bindings", "wasm"]
+include = ["src/**/*.rs", "wit/*.wit", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[lib]
+name = "bench_api"
+
+[features]
+# For printCAD itself: the enums it sends a package match without a
+# wildcard arm. A package leaves it off.
+exhaustive = ["kernel_api/exhaustive"]
 
 # Kept to what builds for wasm32-wasip2: guests depend on it.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-kernel_api = { path = "../kernel_api" }
+kernel_api = { package = "printcad-kernel-api", path = "../kernel_api", version = "0.1" }

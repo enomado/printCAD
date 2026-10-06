@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-kernel_api = { path = "../kernel_api" }
+kernel_api.workspace = true
 glam.workspace = true
 serde.workspace = true
 uuid.workspace = true

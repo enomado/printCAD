@@ -3,10 +3,18 @@ name = "printcad-bench-sdk"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Write printCAD workbenches as WebAssembly components"
+repository = "https://github.com/gilbertorconde/printCAD"
+homepage = "https://github.com/gilbertorconde/printCAD"
+documentation = "https://docs.rs/printcad-bench-sdk"
+readme = "README.md"
+keywords = ["cad", "printcad", "plugin", "wasm", "sdk"]
+categories = ["wasm", "api-bindings"]
+include = ["src/**/*.rs", "wit/*.wit", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
-bench_api = { path = "../../crates/bench_api" }
+bench_api = { package = "printcad-bench-api", path = "../../crates/bench_api", version = "0.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wit-bindgen = "0.62"

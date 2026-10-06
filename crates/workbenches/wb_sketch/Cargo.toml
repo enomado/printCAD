@@ -17,7 +17,7 @@ glam.workspace = true
 uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-kernel_api = { path = "../../kernel_api" }
+kernel_api.workspace = true
 ttf-parser = "0.25"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 

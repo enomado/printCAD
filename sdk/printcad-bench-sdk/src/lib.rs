@@ -2,9 +2,14 @@
 //!
 //! Implement [`Bench`] on a type and name it with [`bench!`]; build the
 //! crate as a `cdylib` for `wasm32-wasip2`. The data the bench and the
-//! app exchange is [`api`] (the `bench_api` crate); what the app offers
+//! app exchange is [`api`] (the `printcad-bench-api` crate); what the app offers
 //! is [`host`]. `docs/PLUGINS.md` in the printCAD repository walks
 //! through a package.
+//!
+//! The SDK's 0.1.x speaks the contract `printcad:workbench@0.1`, and a
+//! patch release only adds: match the app's events with a wildcard arm
+//! and fill the contract's structs with `..Default::default()`, and a
+//! package keeps building on every later 0.1.x.
 //!
 //! ```ignore
 //! use printcad_bench_sdk::{Bench, api::*, bench};
@@ -30,7 +35,7 @@ use api::*;
 pub mod bindings {
     wit_bindgen::generate!({
         world: "workbench",
-        path: "../../crates/bench_api/wit",
+        path: "wit",
         pub_export_macro: true,
         export_macro_name: "export_workbench",
         default_bindings_module: "printcad_bench_sdk::bindings",
@@ -292,9 +297,13 @@ pub mod adapter {
         })
     }
 
+    /// A value the app sent. A kind of event or menu this build of the SDK
+    /// does not know comes from a newer app within the same contract, and
+    /// passes the bench by unread.
     fn read<T: serde::de::DeserializeOwned>(json: &str) -> Option<T> {
         match serde_json::from_str(json) {
             Ok(value) => Some(value),
+            Err(e) if e.to_string().starts_with("unknown variant") => None,
             Err(e) => {
                 host::error(&format!("the app sent what this bench cannot read: {e}"));
                 None

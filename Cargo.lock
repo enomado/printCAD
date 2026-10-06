@@ -131,10 +131,10 @@ dependencies = [
  "egui-winit",
  "gif",
  "glam 0.33.7",
- "kernel_api",
  "kernel_ogeom",
  "local_ipc",
  "png",
+ "printcad-kernel-api",
  "render_vk",
  "resvg",
  "rfd",
@@ -271,15 +271,6 @@ name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
-
-[[package]]
-name = "bench_api"
-version = "0.1.0"
-dependencies = [
- "kernel_api",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "bench_fixtures"
@@ -676,11 +667,11 @@ name = "core_document"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
- "bench_api",
  "egui",
  "flate2",
  "glam 0.33.7",
- "kernel_api",
+ "printcad-bench-api",
+ "printcad-kernel-api",
  "serde",
  "serde_json",
  "surface_texture",
@@ -2035,23 +2026,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "kernel_api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "kernel_ogeom"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "core_document",
- "kernel_api",
  "ogeom",
+ "printcad-kernel-api",
  "scripting",
  "serde_json",
  "thiserror 2.0.20",
@@ -3247,6 +3228,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
+name = "printcad-bench-api"
+version = "0.1.0"
+dependencies = [
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "printcad-kernel-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3509,7 +3509,7 @@ dependencies = [
  "egui",
  "egui-ash-renderer",
  "glam 0.33.7",
- "kernel_api",
+ "printcad-kernel-api",
  "raw-window-handle",
  "rayon",
  "shaderc",
@@ -3844,7 +3844,7 @@ version = "0.1.0"
 dependencies = [
  "axes",
  "directories",
- "kernel_api",
+ "printcad-kernel-api",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -4124,7 +4124,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.7",
  "image",
- "kernel_api",
+ "printcad-kernel-api",
  "serde",
  "uuid",
 ]
@@ -5356,11 +5356,11 @@ dependencies = [
 name = "wb_assembly"
 version = "0.1.0"
 dependencies = [
- "bench_api",
  "core_document",
  "egui",
  "glam 0.33.7",
- "kernel_api",
+ "printcad-bench-api",
+ "printcad-kernel-api",
  "serde",
  "serde_json",
  "ui_kit",
@@ -5374,7 +5374,7 @@ dependencies = [
  "core_document",
  "egui",
  "glam 0.33.7",
- "kernel_api",
+ "printcad-kernel-api",
  "serde",
  "serde_json",
  "settings",
@@ -5392,7 +5392,7 @@ dependencies = [
  "egui",
  "glam 0.33.7",
  "image",
- "kernel_api",
+ "printcad-kernel-api",
  "scripting",
  "serde",
  "serde_json",
@@ -5407,7 +5407,7 @@ version = "0.1.0"
 dependencies = [
  "core_document",
  "egui",
- "kernel_api",
+ "printcad-kernel-api",
  "serde",
  "serde_json",
  "ui_kit",
@@ -5419,14 +5419,14 @@ dependencies = [
 name = "wb_wasm"
 version = "0.1.0"
 dependencies = [
- "bench_api",
  "core_document",
  "egui",
  "flate2",
  "glam 0.33.7",
- "kernel_api",
  "kernel_ogeom",
  "local_ipc",
+ "printcad-bench-api",
+ "printcad-kernel-api",
  "scripting",
  "serde",
  "serde_json",

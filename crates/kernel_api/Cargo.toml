@@ -1,9 +1,24 @@
 [package]
-name = "kernel_api"
+name = "printcad-kernel-api"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "printCAD's geometry interface: meshes, profiles and solid operations as plain data"
+repository = "https://github.com/gilbertorconde/printCAD"
+homepage = "https://github.com/gilbertorconde/printCAD"
+readme = "README.md"
+keywords = ["cad", "printcad", "geometry", "b-rep", "wasm"]
+categories = ["data-structures", "graphics", "wasm"]
+include = ["src/**/*.rs", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[lib]
+name = "kernel_api"
+
+[features]
+# For printCAD itself: the enums it sends a package match without a
+# wildcard arm. A package leaves it off.
+exhaustive = []
 
 [dependencies]
 anyhow.workspace = true

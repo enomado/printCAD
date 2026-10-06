@@ -13,8 +13,8 @@ egui = ["core_document/egui", "dep:egui"]
 [dependencies]
 local_ipc = { path = "../../local_ipc" }
 core_document = { path = "../../core_document" }
-kernel_api = { path = "../../kernel_api" }
-bench_api = { path = "../../bench_api" }
+kernel_api.workspace = true
+bench_api.workspace = true
 ui_kit = { path = "../../ui_kit" }
 serde = { workspace = true }
 serde_json = { workspace = true }

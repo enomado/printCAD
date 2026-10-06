@@ -5,6 +5,11 @@
 //! formulas, world-space drawing, a job with progress, a menu entry and a
 //! settings page.
 
+// Every literal of the contract's structs ends in `..Default::default()`,
+// even one naming every field, so a field a later 0.1.x adds leaves the
+// package building.
+#![allow(clippy::needless_update)]
+
 use printcad_bench_sdk::api::kernel_api::{
     BooleanOp, ExtrudeTermination, Profile, ProfilePlane, ProfileSegment, ProfileWire, SweepKind,
 };
@@ -175,28 +180,29 @@ impl Bench for Gears {
                         kind: ParamKind::Integer,
                         required: true,
                         doc: "how many teeth".into(),
+                        ..Default::default()
                     },
                     Param {
                         name: "module".into(),
                         kind: ParamKind::Number,
                         required: true,
                         doc: "pitch diameter per tooth, mm".into(),
+                        ..Default::default()
                     },
                     Param {
                         name: "thickness".into(),
                         kind: ParamKind::Number,
-                        required: false,
                         doc: "mm, 8 when left out".into(),
+                        ..Default::default()
                     },
                     Param {
                         name: "bore".into(),
                         kind: ParamKind::Number,
-                        required: false,
                         doc: "hole diameter, mm, 5 when left out".into(),
+                        ..Default::default()
                     },
                 ],
                 returns: "{body, feature}".into(),
-                read_only: false,
                 notes: vec![
                     "It always makes a new body; it does not add a gear to an existing one.".into(),
                     "It refuses fewer than 6 teeth, and a bore that reaches the teeth's roots."
@@ -209,8 +215,9 @@ impl Bench for Gears {
                              assert(not pcall(pc.example.gear.make, {teeth = 4, module = 2}), \
                              \"too few teeth\")\n"
                         .into(),
+                    ..Default::default()
                 }],
-                see_also: Vec::new(),
+                ..Default::default()
             }],
             length_keys: vec!["module".into(), "thickness".into(), "bore".into()],
             ..Default::default()
@@ -227,6 +234,7 @@ impl Bench for Gears {
             kind_label: label,
             family_label: "Gear".into(),
             builds_solid: true,
+            ..Default::default()
         }
     }
 
@@ -237,8 +245,7 @@ impl Bench for Gears {
             label: label.into(),
             dim,
             pointer: format!("/{key}"),
-            scale: 1.0,
-            integer: false,
+            ..Default::default()
         };
         vec![
             Parameter {
@@ -266,6 +273,7 @@ impl Bench for Gears {
                                 feature: Some(node.id.clone()),
                                 message: "The gear's data does not read.".into(),
                             },
+                            ..Default::default()
                         };
                     };
                     if let Some(problem) = gear.problem() {
@@ -275,6 +283,7 @@ impl Bench for Gears {
                                 feature: Some(node.id.clone()),
                                 message: problem,
                             },
+                            ..Default::default()
                         };
                     }
                     let outline = gear.outline();
@@ -296,12 +305,7 @@ impl Bench for Gears {
                     }
                     ops.push(SolidOp::Sweep {
                         profile: Profile {
-                            plane: ProfilePlane {
-                                origin: [0.0; 3],
-                                x_axis: [1.0, 0.0, 0.0],
-                                y_axis: [0.0, 1.0, 0.0],
-                                normal: [0.0, 0.0, 1.0],
-                            },
+                            plane: ProfilePlane::default(),
                             wires,
                         },
                         kind: SweepKind::Extrude {
@@ -330,6 +334,7 @@ impl Bench for Gears {
                 Rebuild {
                     body: history.body,
                     plan,
+                    ..Default::default()
                 }
             })
             .collect()
@@ -426,23 +431,24 @@ impl Bench for Gears {
                 })
                 .collect(),
             color: [0.31, 0.64, 0.9],
-            width: 1.5,
             dashed: true,
             closed: true,
+            ..Default::default()
         });
         frame.labels.push(Label {
             at: world(0.0, 0.0, top),
             text: format!("z {} · m {}", gear.teeth, gear.module),
             color: [0.9, 0.92, 0.94],
-            size: 12.0,
             pill: true,
             mono: true,
+            ..Default::default()
         });
         frame.hud.tool = Some(ToolHint {
             icon: "gear".into(),
             name: "Gear".into(),
             prompt: "Set its teeth and module in the panel".into(),
             keys: vec![("Esc".into(), "cancel".into())],
+            ..Default::default()
         });
         frame.status.selection = Some(format!(
             "Gear: {} teeth, pitch diameter {:.2} mm",
@@ -454,11 +460,13 @@ impl Bench for Gears {
             title: "Gear".into(),
             icon: "gear".into(),
             confirmable: true,
+            ..Default::default()
         });
         let bind = |key: &str| {
             Some(Bind {
                 feature: id.clone(),
                 key: format!("/{key}"),
+                ..Default::default()
             })
         };
         let number =
@@ -623,9 +631,7 @@ impl Bench for Gears {
             id: id.into(),
             label: label.into(),
             icon: Some("gear".into()),
-            hint: None,
-            enabled: true,
-            separator_before: false,
+            ..Default::default()
         };
         match scope {
             MenuScope::StartPage => vec![MenuItem {

@@ -1,3 +1,15 @@
+//! printCAD's geometry interface: meshes, profiles and solid operations
+//! as plain data, with no geometry code. The app's kernel adapter answers
+//! it, and workbench packages build their solids as [`SolidOp`] plans
+//! through `printcad-bench-api`.
+//!
+//! Versions follow `printcad-bench-api`'s: 0.1.x speaks the workbench
+//! contract `printcad:workbench@0.1`, and a patch release only adds.
+//! [`FaceSurface`] and [`ProfileSegment`], which the app sends a package,
+//! are `#[non_exhaustive]` unless the `exhaustive` feature (printCAD's
+//! own) is on; [`SolidOp`] and the enums inside it keep their variants'
+//! fields within a minor version.
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
@@ -171,6 +183,7 @@ pub struct TriMesh {
 }
 
 /// The kind and placement of a kernel face's surface, in the mesh's frame.
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum FaceSurface {
     /// A plane through `origin`, with the face's outward `normal`.
@@ -619,6 +632,7 @@ pub struct ImportWarningKind {
 /// One segment of a closed 2D profile wire, in sketch-plane coordinates
 /// (millimetres). Arcs are encoded as three on-curve points so consumers
 /// never have to agree on a winding convention.
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProfileSegment {
     Line {
@@ -740,6 +754,18 @@ pub struct ProfilePlane {
     pub normal: [f64; 3],
 }
 
+/// The XY plane through the origin.
+impl Default for ProfilePlane {
+    fn default() -> Self {
+        Self {
+            origin: [0.0; 3],
+            x_axis: [1.0, 0.0, 0.0],
+            y_axis: [0.0, 1.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        }
+    }
+}
+
 /// How an extrusion combines with the body's existing solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BooleanOp {
@@ -755,7 +781,7 @@ pub enum BooleanOp {
 
 /// A set of closed wires on one plane. The largest-area wire is the outer
 /// boundary, the rest become holes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub plane: ProfilePlane,
     pub wires: Vec<ProfileWire>,
@@ -1083,7 +1109,7 @@ pub enum EdgeSelection {
 /// names of the two faces it runs between. A rebuild finds the edge
 /// between faces of those names, the point choosing among several; without
 /// names, the nearest edge. A zero direction leaves the way open.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct EdgeProbe {
     pub point: [f64; 3],
     pub direction: [f64; 3],
@@ -1131,6 +1157,10 @@ pub enum BoolKind {
 /// One step in a body's build history. Shape-producing steps (`Sweep`,
 /// `Loft`, `Pipe`, `Primitive`) carry a [`BooleanOp`]; the remaining steps
 /// modify or combine the running solid directly.
+///
+/// A package builds these, so a variant keeps its fields for as long as
+/// the contract's minor version holds: a new option comes as a new
+/// variant, or as a new struct that derives `Default`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SolidOp {
     /// Start the chain from a snapshot of another solid, in the native
@@ -1700,7 +1730,7 @@ pub struct MedialRegion {
 /// A rebuild finds the face by its name, the point choosing among the
 /// pieces of a face that split; without a name (or when no face bears it
 /// any more), the face nearest the point.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct FaceProbe {
     pub point: [f64; 3],
     pub normal: [f64; 3],

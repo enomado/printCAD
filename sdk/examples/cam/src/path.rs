@@ -385,6 +385,9 @@ fn flatten(segment: &ProfileSegment) -> Result<Vec<P>, String> {
                 "This example follows lines, arcs, circles and ellipses, not splines.".into(),
             );
         }
+        _ => {
+            return Err("The outline holds a kind of curve this example does not follow.".into());
+        }
     })
 }
 

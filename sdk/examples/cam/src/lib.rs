@@ -8,6 +8,11 @@
 //! tool it was given, so formulas drive them and the file never depends
 //! on the machine it is opened on.
 
+// Every literal of the contract's structs ends in `..Default::default()`,
+// even one naming every field, so a field a later 0.1.x adds leaves the
+// package building.
+#![allow(clippy::needless_update)]
+
 mod gcode;
 mod path;
 
@@ -385,6 +390,7 @@ impl Cam {
             Some(Bind {
                 feature: id.to_string(),
                 key: format!("/{key}"),
+                ..Default::default()
             })
         };
         let number =
@@ -410,6 +416,7 @@ impl Cam {
                 detail: Pocket::from(&n.data)
                     .map(|p| format!("Ø{} · {} mm", p.tool_diameter, p.depth)),
                 icon: Some("pocket".into()),
+                ..Default::default()
             })
             .collect();
         let sketch_name = pocket
@@ -639,6 +646,7 @@ impl Bench for Cam {
             kind,
             required,
             doc: doc.into(),
+            ..Default::default()
         };
         let id_only = || vec![param("id", ParamKind::Id, true, "the pocket operation")];
         Registration {
@@ -676,7 +684,6 @@ impl Bench for Cam {
                         param("name", ParamKind::String, false, "the operation's name"),
                     ],
                     returns: "{feature}".into(),
-                    read_only: false,
                     notes: vec![
                         "The outline must lie square to Z: the tool comes down from above.".into(),
                         "The operation builds no solid and sits on no body; its toolpath is \
@@ -693,8 +700,10 @@ impl Bench for Cam {
                                  assert(not pcall(pc.example.cam.pocket, {depth = 3}), \
                                  \"an outline is needed\")\n"
                             .into(),
+                        ..Default::default()
                     }],
                     see_also: vec![GCODE.into(), TOOLPATH.into()],
+                    ..Default::default()
                 },
                 Command {
                     id: TOOLPATH.into(),
@@ -720,8 +729,10 @@ impl Bench for Cam {
                                  local path = pc.example.cam.toolpath{id = op.feature}\n\
                                  assert(path.state == \"ready\" and path.passes == 2, \"two passes\")\n"
                             .into(),
+                        ..Default::default()
                     }],
                     see_also: vec![GCODE.into()],
+                    ..Default::default()
                 },
                 Command {
                     id: GCODE.into(),
@@ -746,8 +757,10 @@ impl Bench for Cam {
                                  assert(program:find(\"G21\"), \"millimetres\")\n\
                                  assert(program:find(\"Z%-3%.000\"), \"down to the floor\")\n"
                             .into(),
+                        ..Default::default()
                     }],
                     see_also: vec![POCKET.into()],
+                    ..Default::default()
                 },
             ],
             length_keys: [
@@ -773,7 +786,7 @@ impl Bench for Cam {
             icon: "pocket".into(),
             kind_label: label,
             family_label: "CAM".into(),
-            builds_solid: false,
+            ..Default::default()
         }
     }
 
@@ -784,8 +797,7 @@ impl Bench for Cam {
             label: label.into(),
             dim,
             pointer: format!("/{key}"),
-            scale: 1.0,
-            integer: false,
+            ..Default::default()
         };
         vec![
             p("top", "Stock top", Dim::Length),
@@ -946,9 +958,9 @@ impl Bench for Cam {
                     frame.lines.push(Polyline {
                         points: l.iter().map(|p| at(*p, pocket.top)).collect(),
                         color: OUTLINE,
-                        width: 1.5,
                         dashed: true,
                         closed: true,
+                        ..Default::default()
                     });
                 }
             }
@@ -971,8 +983,7 @@ impl Bench for Cam {
                     points: run.iter().map(|p| at(*p, floor)).collect(),
                     color,
                     width: if mine { 1.5 } else { 1.0 },
-                    dashed: false,
-                    closed: false,
+                    ..Default::default()
                 });
             }
         }
@@ -984,6 +995,7 @@ impl Bench for Cam {
             name: name.clone(),
             prompt: "Set the tool and the depths in the panel".into(),
             keys: vec![("Esc".into(), "cancel".into())],
+            ..Default::default()
         });
         if let Some(Computed {
             state: State::Ready(path),
@@ -1001,6 +1013,7 @@ impl Bench for Cam {
             title: "Pocket".into(),
             icon: "pocket".into(),
             confirmable: true,
+            ..Default::default()
         });
         frame.panel = self.task_panel(&id, &name, &pocket);
         frame
@@ -1118,9 +1131,7 @@ impl Bench for Cam {
                     id: "example.cam.edit".into(),
                     label: "Edit pocket".into(),
                     icon: Some("pocket".into()),
-                    hint: None,
-                    enabled: true,
-                    separator_before: false,
+                    ..Default::default()
                 }]
             }
             _ => Vec::new(),

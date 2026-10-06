@@ -5,6 +5,32 @@
 //! (`wb_wasm`) and by the guest SDK. Ids (features, bodies) travel as
 //! UUID strings, lengths in millimetres, angles in degrees unless a field
 //! says otherwise, and every position is in world space.
+//!
+//! # Versions
+//!
+//! The crate's major and minor version are the contract's: 0.1.x speaks
+//! `printcad:workbench@0.1`. A patch release only adds, so a package
+//! written against an earlier 0.1.x keeps building and running:
+//!
+//! - Enums the host sends and a package matches on ([`Event`],
+//!   [`PanelEvent`], [`MenuScope`], [`PanelSlot`], [`Button`]) are
+//!   `#[non_exhaustive]`, as are `kernel_api`'s `FaceSurface` and
+//!   `ProfileSegment`: a match on them needs a wildcard arm, so a new
+//!   variant does not break it. (The `exhaustive` feature lifts this for
+//!   printCAD itself, which makes every variant it sends; a package leaves
+//!   it off.)
+//! - Structs a package fills in derive `Default`; fill them with
+//!   `..Default::default()` and a new field does not break the literal.
+//! - Struct-like variants a package builds ([`Widget`], [`Request`],
+//!   [`Cell`], [`DiagramShape`], [`MarkKind`], [`Plan`], and `kernel_api`'s
+//!   `SolidOp` and the enums inside it) never gain a field within a minor
+//!   version: a new option comes as a new variant, or as a new struct that
+//!   derives `Default`.
+//! - A field added to a struct carries `#[serde(default)]`, so what an
+//!   earlier package sends still reads.
+//!
+//! A new minor version (0.2) is a new contract, which a host of 0.1 does
+//! not load.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,6 +40,10 @@ pub use kernel_api::{self, SolidOp, TriMesh};
 /// The version of this contract, as a package's manifest names it in
 /// `api`. A host loads packages of its own major version.
 pub const API_VERSION: &str = "0.1";
+
+/// The component interface: the WIT world `workbench` of package
+/// `printcad:workbench`, whose values cross as JSON of this crate's types.
+pub const WIT: &str = include_str!("../wit/workbench.wit");
 
 /// Whether a package built against `api` runs on this host.
 pub fn api_compatible(api: &str) -> bool {
@@ -58,6 +88,21 @@ pub struct Manifest {
 
 fn default_memory_mb() -> u32 {
     1024
+}
+
+impl Default for Manifest {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            version: String::new(),
+            api: format!("printcad:workbench@{API_VERSION}"),
+            description: String::new(),
+            feature_kinds: Vec::new(),
+            capabilities: Capabilities::default(),
+            memory_mb: default_memory_mb(),
+        }
+    }
 }
 
 /// What a package asks to reach beyond itself. The user grants each.
@@ -147,7 +192,7 @@ pub enum ToolBehavior {
     Action,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tool {
     pub id: String,
     pub label: String,
@@ -169,6 +214,21 @@ pub struct Tool {
 
 fn one() -> u8 {
     1
+}
+
+impl Default for Tool {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            icon: String::new(),
+            behavior: ToolBehavior::default(),
+            group: None,
+            row: one(),
+            category: None,
+            shortcuts: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -298,6 +358,20 @@ fn unit_scale() -> f64 {
     1.0
 }
 
+impl Default for Parameter {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            name: None,
+            label: String::new(),
+            dim: Dim::default(),
+            pointer: String::new(),
+            scale: unit_scale(),
+            integer: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Dim {
@@ -308,7 +382,7 @@ pub enum Dim {
 }
 
 /// How a feature shows in the tree, the property panel and the hover card.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FeatureInfo {
     pub icon: String,
     pub kind_label: String,
@@ -335,13 +409,18 @@ pub struct BodyHistory {
 }
 
 /// One body's plan.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rebuild {
     pub body: String,
     pub plan: Plan,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// What a [`Rebuild`] asks of the kernel.
+///
+/// A package builds these, so a variant keeps its fields for as long as
+/// the contract's minor version holds: a new option comes as a new
+/// variant, or as a new struct that derives `Default`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Plan {
     /// Build these ops; `op_features[i]` is the feature op `i` is for.
@@ -350,6 +429,7 @@ pub enum Plan {
         op_features: Vec<String>,
     },
     /// Nothing to build: the body's solid goes.
+    #[default]
     Empty,
     /// The plan could not be made; the message goes on `feature`.
     Error {
@@ -418,6 +498,7 @@ pub struct EdgeRef {
     pub length: f32,
 }
 
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Button {
@@ -427,6 +508,7 @@ pub enum Button {
     Other,
 }
 
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -544,7 +626,7 @@ pub struct Status {
     pub mode: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     pub title: String,
     #[serde(default)]
@@ -575,19 +657,42 @@ fn one_px() -> f32 {
     1.5
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl Default for Polyline {
+    fn default() -> Self {
+        Self {
+            points: Vec::new(),
+            color: [1.0; 3],
+            width: one_px(),
+            dashed: false,
+            closed: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Mark {
     pub at: [f32; 3],
     pub color: Rgb,
     pub kind: MarkKind,
 }
 
+/// What a [`Mark`] draws.
+///
+/// A package builds these, so a variant keeps its fields for as long as
+/// the contract's minor version holds: a new option comes as a new
+/// variant, or as a new struct that derives `Default`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MarkKind {
     Dot { radius: f32 },
     Cross { size: f32 },
     Icon { name: String, size: f32 },
+}
+
+impl Default for MarkKind {
+    fn default() -> Self {
+        MarkKind::Dot { radius: 4.0 }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -606,6 +711,19 @@ pub struct Label {
 
 fn label_size() -> f32 {
     12.0
+}
+
+impl Default for Label {
+    fn default() -> Self {
+        Self {
+            at: [0.0; 3],
+            text: String::new(),
+            color: [1.0; 3],
+            size: label_size(),
+            pill: false,
+            mono: false,
+        }
+    }
 }
 
 /// A mesh drawn in the scene, never picked.
@@ -627,10 +745,27 @@ fn opaque() -> f32 {
     1.0
 }
 
+impl Default for Mesh {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            indices: Vec::new(),
+            color: [1.0; 3],
+            wireframe: false,
+            opacity: opaque(),
+            on_top: false,
+        }
+    }
+}
+
 // ------------------------------------------------------------------ panel
 
 /// One element of a declared panel. The host draws it with the app's
 /// widgets and sends back a [`PanelEvent`] when the user changes it.
+///
+/// A package builds these, so a variant keeps its fields for as long as
+/// the contract's minor version holds: a new option comes as a new
+/// variant, or as a new struct that derives `Default`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Widget {
@@ -805,6 +940,10 @@ pub enum Widget {
 }
 
 /// A cell of a [`Widget::Sheet`].
+///
+/// A package builds these, so a variant keeps its fields for as long as
+/// the contract's minor version holds: a new option comes as a new
+/// variant, or as a new struct that derives `Default`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Cell {
@@ -847,6 +986,10 @@ pub enum DiagramStroke {
 }
 
 /// A shape of a [`Widget::Diagram`], in its coordinates.
+///
+/// A package builds these, so a variant keeps its fields for as long as
+/// the contract's minor version holds: a new option comes as a new
+/// variant, or as a new struct that derives `Default`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DiagramShape {
@@ -882,7 +1025,7 @@ pub enum DiagramShape {
 /// drawn as a dimension line `offset` away from them (to the left of the
 /// way from `from` to `to`; negative for the right), its ends led out to
 /// the points, with `text` on it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Dimension {
     pub from: [f32; 2],
     pub to: [f32; 2],
@@ -896,7 +1039,7 @@ pub struct Dimension {
 
 /// A note of a [`Widget::Diagram`] pointing at a feature of it: a dot at
 /// `anchor`, a leader to `at`, and `text` there.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Callout {
     pub anchor: [f32; 2],
     pub at: [f32; 2],
@@ -935,13 +1078,13 @@ pub enum ButtonStyle {
 }
 
 /// A number field's parameter: feature `feature`'s parameter `key`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bind {
     pub feature: String,
     pub key: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ListItem {
     pub label: String,
     #[serde(default)]
@@ -951,6 +1094,7 @@ pub struct ListItem {
 }
 
 /// Which declared panel an event came from.
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PanelSlot {
@@ -959,6 +1103,7 @@ pub enum PanelSlot {
 }
 
 /// What the user did to a panel widget, by the widget's id.
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PanelEvent {
@@ -1030,6 +1175,7 @@ impl PanelEvent {
 
 // ------------------------------------------------------------------- menus
 
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "id", rename_all = "snake_case")]
 pub enum MenuScope {
@@ -1054,9 +1200,26 @@ pub struct MenuItem {
     pub separator_before: bool,
 }
 
+impl Default for MenuItem {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            icon: None,
+            hint: None,
+            enabled: yes(),
+            separator_before: false,
+        }
+    }
+}
+
 // --------------------------------------------------------------- requests
 
 /// Something a bench asks the host to do once its call returns.
+///
+/// A package builds these, so a variant keeps its fields for as long as
+/// the contract's minor version holds: a new option comes as a new
+/// variant, or as a new struct that derives `Default`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
@@ -1131,6 +1294,22 @@ mod tests {
         assert!(api_compatible("0.1.4"));
         assert!(!api_compatible("printcad:workbench@0.2"));
         assert!(!api_compatible("1.0"));
+    }
+
+    /// `major.minor` of a version such as `0.1.4`.
+    fn contract(version: &str) -> String {
+        version.split('.').take(2).collect::<Vec<_>>().join(".")
+    }
+
+    #[test]
+    fn the_crate_the_wit_package_and_the_contract_share_a_version() {
+        let declared = WIT
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("package printcad:workbench@"))
+            .and_then(|rest| rest.strip_suffix(';'))
+            .expect("the WIT file names its package");
+        assert_eq!(contract(declared), API_VERSION);
+        assert_eq!(contract(env!("CARGO_PKG_VERSION")), API_VERSION);
     }
 
     #[test]
@@ -1240,6 +1419,49 @@ mod tests {
             r#"{"type":"cell_text","id":"parts","row":2,"column":5,"value":"ACME"}"#
         );
         assert_eq!(event.id(), "parts");
+    }
+
+    #[test]
+    fn a_struct_left_to_its_defaults_reads_as_its_fields_left_out() {
+        fn read<T: serde::de::DeserializeOwned>(json: &str) -> T {
+            serde_json::from_str(json).unwrap()
+        }
+        assert_eq!(read::<Tool>(r#"{"id":"","label":""}"#), Tool::default());
+        assert_eq!(
+            read::<Parameter>(r#"{"key":"","label":"","pointer":""}"#),
+            Parameter::default()
+        );
+        assert_eq!(
+            read::<MenuItem>(r#"{"id":"","label":""}"#),
+            MenuItem::default()
+        );
+        assert_eq!(
+            read::<Label>(r#"{"at":[0,0,0],"text":"","color":[1,1,1]}"#),
+            Label::default()
+        );
+        assert_eq!(
+            read::<Mesh>(r#"{"positions":[],"indices":[],"color":[1,1,1]}"#),
+            Mesh::default()
+        );
+        assert_eq!(
+            read::<Polyline>(r#"{"points":[],"color":[1,1,1]}"#),
+            Polyline::default()
+        );
+        assert_eq!(
+            read::<Manifest>(r#"{"id":"","name":"","version":"","api":"printcad:workbench@0.1"}"#),
+            Manifest::default()
+        );
+    }
+
+    /// The SDK passes over what it reads this way: a kind of event a newer
+    /// app sends within the same contract.
+    #[test]
+    fn an_event_of_a_kind_not_known_yet_reads_as_an_unknown_variant() {
+        let input = r#"{"event":{"type":"gesture","scale":2},"pointer":{}}"#;
+        let error = serde_json::from_str::<Input>(input).unwrap_err();
+        assert!(error.to_string().starts_with("unknown variant"), "{error}");
+        let error = serde_json::from_str::<PanelEvent>(r#"{"type":"drag","id":"x"}"#).unwrap_err();
+        assert!(error.to_string().starts_with("unknown variant"), "{error}");
     }
 
     #[test]
