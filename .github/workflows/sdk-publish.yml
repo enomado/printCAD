@@ -1,0 +1,87 @@
+name: SDK publish
+
+# A tag `sdk-vX.Y.Z` publishes the workbench SDK on crates.io:
+# printcad-kernel-api, then printcad-bench-api, then printcad-bench-sdk,
+# all at X.Y.Z, which must be the version each Cargo.toml names. A crate
+# already on crates.io at that version is left alone, so running the
+# workflow again finishes a publish that stopped part-way. `cargo publish`
+# waits until each crate is in the index before the next needs it.
+
+on:
+  push:
+    tags: ["sdk-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The SDK tag to publish, as sdk-vX.Y.Z"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-publish
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: The tag names the three crates' version
+        run: |
+          version="${TAG#sdk-v}"
+          for manifest in crates/kernel_api/Cargo.toml crates/bench_api/Cargo.toml \
+                          sdk/printcad-bench-sdk/Cargo.toml; do
+            found=$(sed -n 's/^version = "\(.*\)"/\1/p' "$manifest" | head -1)
+            echo "$manifest: $found"
+            test "$found" = "$version" || { echo "$TAG does not match $manifest ($found)"; exit 1; }
+          done
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: The SDK's WIT world is the host's
+        run: cmp crates/bench_api/wit/workbench.wit sdk/printcad-bench-sdk/wit/workbench.wit
+
+      - name: Tests
+        run: cargo test -p printcad-kernel-api -p printcad-bench-api
+
+      - name: Dry runs
+        run: |
+          cargo publish --dry-run -p printcad-kernel-api -p printcad-bench-api
+          # The SDK's dependency may not be on crates.io yet: the dry run
+          # reads it from the checkout.
+          cd sdk
+          cargo publish --dry-run -p printcad-bench-sdk \
+            --config 'patch.crates-io.printcad-bench-api.path="../crates/bench_api"' \
+            --config 'patch.crates-io.printcad-kernel-api.path="../crates/kernel_api"'
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          # Whether crate $1 is on crates.io at $VERSION, from the sparse index.
+          published() {
+            curl -sf "https://index.crates.io/${1:0:2}/${1:2:2}/$1" \
+              | grep -q "\"vers\":\"$VERSION\""
+          }
+          for crate in printcad-kernel-api printcad-bench-api printcad-bench-sdk; do
+            if published "$crate"; then
+              echo "$crate $VERSION is on crates.io already"
+              continue
+            fi
+            if [ "$crate" = printcad-bench-sdk ]; then
+              (cd sdk && cargo publish -p "$crate")
+            else
+              cargo publish -p "$crate"
+            fi
+          done
