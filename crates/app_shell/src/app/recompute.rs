@@ -5,6 +5,7 @@
 //! each plan to the kernel worker. Responses are folded back into the
 //! document by `drain_kernel_responses`.
 
+use core_document::{FeatureId, RebuildJob};
 use kernel_api::TessellationSettings;
 
 use crate::PrintCadApp;
@@ -29,6 +30,21 @@ impl PrintCadApp {
         for job in self.registry.rebuild_jobs(&mut self.session.document) {
             let body_id = job.body;
             self.session.document.clear_body_feature_errors(body_id);
+            let job = match job.plan {
+                Ok(mut plan) => {
+                    if let Some(error) = plan.failed.take() {
+                        self.plan_failed(&error, &std::mem::take(&mut plan.unbuilt));
+                    }
+                    RebuildJob {
+                        body: body_id,
+                        plan: Ok(plan),
+                    }
+                }
+                plan => RebuildJob {
+                    body: body_id,
+                    plan,
+                },
+            };
             match job.plan {
                 Ok(plan) if plan.ops.is_empty() => {
                     self.session.coarse.remove(&body_id.0);
@@ -83,20 +99,55 @@ impl PrintCadApp {
                         None => self.submit_build(body_id.0, build),
                     }
                 }
-                Err(err) => {
-                    let name = err
-                        .feature
-                        .and_then(|f| self.session.document.get_feature_meta(f))
-                        .map(|n| format!("`{}`: ", n.name))
-                        .unwrap_or_default();
-                    if let Some(feature) = err.feature {
-                        self.session
-                            .document
-                            .set_feature_error(feature, Some(err.message.clone()));
-                    }
-                    app_log::warn(format!("Recompute skipped: {name}{err}"));
-                }
+                Err(err) => self.plan_failed(&err, &[]),
             }
+        }
+    }
+
+    /// A feature that could not be planned: the error on it, and on each
+    /// feature after it a word that it was not built.
+    fn plan_failed(&mut self, err: &core_document::BuildError, unbuilt: &[FeatureId]) {
+        let name = err
+            .feature
+            .and_then(|f| self.session.document.get_feature_meta(f))
+            .map(|n| format!("`{}`: ", n.name))
+            .unwrap_or_default();
+        if let Some(feature) = err.feature {
+            self.session
+                .document
+                .set_feature_error(feature, Some(err.message.clone()));
+            self.mark_unbuilt(feature, unbuilt.iter().copied());
+        }
+        app_log::warn(format!("Recompute skipped: {name}{err}"));
+    }
+
+    /// Features left out of a build because `failed`, before them, fails.
+    pub(crate) fn mark_unbuilt(
+        &mut self,
+        failed: FeatureId,
+        unbuilt: impl IntoIterator<Item = FeatureId>,
+    ) {
+        mark_unbuilt(&mut self.session.document, failed, unbuilt);
+    }
+}
+
+/// Mark the features left out of a build because `failed`, before them,
+/// fails.
+pub(crate) fn mark_unbuilt(
+    document: &mut core_document::Document,
+    failed: FeatureId,
+    unbuilt: impl IntoIterator<Item = FeatureId>,
+) {
+    let name = document
+        .get_feature_meta(failed)
+        .map(|n| n.name.clone())
+        .unwrap_or_default();
+    for feature in unbuilt {
+        if feature != failed {
+            document.set_feature_error(
+                feature,
+                Some(format!("not built: `{name}` before it fails")),
+            );
         }
     }
 }

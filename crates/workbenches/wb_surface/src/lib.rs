@@ -67,6 +67,8 @@ struct Task {
 pub const CHECK_TOOL: &str = "surface.check";
 /// The tool that starts a sketch in a surface body.
 pub const SKETCH_TOOL: &str = "surface.new_sketch";
+/// Changes fields of a surface step.
+pub const SET_COMMAND: &str = "surface.set";
 
 /// Below this crease the faces count as meeting tangent (degrees).
 const TANGENT_DEG: f64 = 0.5;
@@ -205,6 +207,15 @@ impl SurfaceWorkbench {
     /// Measure how the selected body's faces meet and show it.
     fn check(&mut self, ctx: &mut WorkbenchRuntimeContext) -> Result<(), String> {
         let body = Self::selected_body(ctx).ok_or("Select a body to check")?;
+        self.check_body(ctx, body)
+    }
+
+    /// Measure how `body`'s faces meet and show it.
+    fn check_body(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        body: BodyId,
+    ) -> Result<(), String> {
         let brep = ctx
             .document
             .imported_brep_blob(body)
@@ -434,11 +445,103 @@ impl SurfaceWorkbench {
         panel_free::take_selection(&mut feature, &curves, &[]);
         let mut data = feature.to_json();
         merge_fields(&mut data, args)?;
-        let feature = SurfaceFeature::from_json(&data)
-            .map_err(|e| CommandError::failed(format!("the fields do not make a surface: {e}")))?;
+        let feature = SurfaceFeature::from_json(&data).map_err(|e| {
+            let e = e.to_string();
+            let hint = if e.contains("unit variant") {
+                "; a `Custom` direction, axis or plane takes its numbers, as \
+                 direction = {Custom = {0, 0, 1}}"
+            } else {
+                ""
+            };
+            CommandError::failed(format!("the fields do not make a surface: {e}{hint}"))
+        })?;
+        if let Some(missing) = feature.missing() {
+            return Err(CommandError::failed(format!("it needs {missing}")));
+        }
         let (made, _) = self.add(ctx, body, feature).map_err(CommandError::failed)?;
         Ok(json!(made.0.to_string()))
     }
+}
+
+impl SurfaceWorkbench {
+    /// `surface.check`: the body's joins, shown in the view as the tool
+    /// shows them.
+    fn check_by_command(
+        &mut self,
+        args: &CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> CommandResult {
+        let raw = core_document::command::Args(args).id("body")?;
+        let body = body_of(ctx.document, raw)?;
+        self.check_body(ctx, body).map_err(CommandError::failed)?;
+        let joins = self
+            .check
+            .as_ref()
+            .map(|c| c.joins.as_slice())
+            .unwrap_or_default();
+        Ok(Value::Array(
+            joins
+                .iter()
+                .map(|(at, j)| json!({"point": at, "gap": j.gap, "angle_deg": j.angle_deg}))
+                .collect(),
+        ))
+    }
+}
+
+/// A body named by its id, or by a feature in it.
+fn body_of(document: &Document, raw: uuid::Uuid) -> Result<BodyId, CommandError> {
+    if document.bodies().iter().any(|b| b.id == BodyId(raw)) {
+        return Ok(BodyId(raw));
+    }
+    document
+        .get_feature_meta(FeatureId(raw))
+        .and_then(|n| n.body)
+        .ok_or_else(|| CommandError::bad("body", "is neither a body nor a feature in one"))
+}
+
+/// `surface.set`: named fields merged into a step, `sketches` replacing its
+/// curves, recorded as one edit.
+fn set_by_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let id = FeatureId(core_document::command::Args(args).id("feature")?);
+    let node = ctx
+        .document
+        .get_feature_meta(id)
+        .ok_or_else(|| CommandError::bad("feature", "is not in this document"))?;
+    if node.workbench_id.as_str() != KIND {
+        return Err(CommandError::bad("feature", "is not a surface step"));
+    }
+    let mut feature = ctx
+        .document
+        .get_feature_data(id)
+        .and_then(|data| SurfaceFeature::from_json(data).ok())
+        .ok_or_else(|| CommandError::failed("the step's data does not read"))?;
+    if let Some(list) = args.get("sketches").and_then(Value::as_array) {
+        let mut curves = Vec::new();
+        for item in list {
+            let raw = item
+                .as_str()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .ok_or_else(|| CommandError::bad("sketches", "must list sketch ids"))?;
+            curves.push(CurveRef::Sketch(FeatureId(raw)));
+        }
+        feature.clear_curves();
+        panel_free::take_selection(&mut feature, &curves, &[]);
+    }
+    let mut fields = args.clone();
+    fields.remove("feature");
+    fields.remove("sketches");
+    let mut data = feature.to_json();
+    merge_fields(&mut data, &fields)?;
+    let feature = SurfaceFeature::from_json(&data)
+        .map_err(|e| CommandError::failed(format!("the fields do not make a surface: {e}")))?;
+    if let Some(missing) = feature.missing() {
+        return Err(CommandError::failed(format!("it needs {missing}")));
+    }
+    ctx.document
+        .update_feature_data(id, feature.to_json())
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.mark_feature_dirty(id);
+    Ok(Value::Null)
 }
 
 /// What a selection gives a step, shared by the tools and the commands.
@@ -599,6 +702,24 @@ impl Workbench for SurfaceWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(CHECK_TOOL, "Check continuity", Some("analysis"))
                 .icon("surface-continuity"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                CHECK_TOOL,
+                "Measure how a body's faces meet at each shared edge",
+            )
+            .param("body", ParamKind::Id, "The body, or a feature in it")
+            .returns("a list of {point, gap, angle_deg}, one per shared edge; the view labels them")
+            .read_only(),
+        );
+        context.register_command(
+            CommandSpec::new(SET_COMMAND, "Change fields of a surface step")
+                .param("feature", ParamKind::Id, "The surface step to change")
+                .extra_args(
+                    "The fields to change, by name (`length`, `continuity`, `plane`, \
+                     `sketches`…)",
+                )
+                .returns("nothing"),
         );
     }
 
@@ -832,7 +953,11 @@ impl Workbench for SurfaceWorkbench {
         args: &CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
-        self.create_by_command(id, args, ctx)
+        match id {
+            CHECK_TOOL => self.check_by_command(args, ctx),
+            SET_COMMAND => set_by_command(args, ctx),
+            _ => self.create_by_command(id, args, ctx),
+        }
     }
 
     fn has_settings(&self) -> bool {
@@ -866,7 +991,7 @@ impl Workbench for SurfaceWorkbench {
 }
 
 fn command_spec(kind: &feature::Kind) -> CommandSpec {
-    let spec = CommandSpec::new(kind.tool, format!("Make a {}", kind.label.to_lowercase()))
+    let spec = CommandSpec::new(kind.tool, kind.summary)
         .optional(
             "body",
             ParamKind::Id,

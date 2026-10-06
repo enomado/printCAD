@@ -58,7 +58,7 @@ given.
 | Sew | Joins the body's surfaces where their edges meet, or come within a gap you set. A shell that closes becomes a solid. |
 | Surface fillet | Rounds picked edges where two faces of a surface meet. |
 | Extend surface | Grows faces past picked edges: on their own surface (G2), straight on tangent (G1), or straight on (G0). |
-| Split surface | Cuts picked faces along curves projected onto them. |
+| Split surface | Cuts picked faces along curves: a sketch lands on the face as seen square to its plane, and must cross the face from edge to edge. |
 | Trim by plane | Keeps what of the body lies on one side of a plane. |
 | Thicken | Gives each of the body's sheets a thickness, one way or half each way: a solid apiece. |
 | Mirror | Adds the body's reflection in the YZ, XZ or XY plane, moved by an offset. |
@@ -72,6 +72,27 @@ view: G1 for a tangent join, the crease angle, or the gap where the faces
 are apart; the task lists them from the sharpest crease down. Close puts
 the labels away.
 
+## When a step fails
+
+The body shows its history up to the step that fails, the error is on
+that step, and the steps after it say they were not built. Fix or
+suppress the failing step and the rest build again.
+
+## Waiting on the geometry kernel
+
+These fail with the kernel's reason for now:
+
+- A sweep along a line that runs into a tangent arc (ogeom-rs#120).
+- Filling some loops that rise out of their plane: two semicircles in
+  crossing planes (ogeom-rs#121), a saddle of four lines (ogeom-rs#122).
+- A tangent filling that caps a tube, whose wall stands square to the
+  hole (ogeom-rs#123).
+- Thicken across faces meeting at a crease, such as two walls at a
+  corner (ogeom-rs#124); thicken them before joining, or sew and use
+  Design's Thickness.
+
+A sewn box's measurements are close rather than exact (ogeom-rs#125).
+
 ## Scripting
 
 Every tool that builds has a command: `pc.surface.extrude`,
@@ -81,7 +102,14 @@ Every tool that builds has a command: `pc.surface.extrude`,
 `pc.surface.fillet`, `pc.surface.extend`, `pc.surface.split`,
 `pc.surface.trim`, `pc.surface.thicken` and `pc.surface.mirror`. They
 take `sketches` (a list, in order), `body` (a body, or any feature in it)
-and any field of the step by name.
+and any field of the step by name. A step missing what it builds from
+is refused, naming the field.
+
+`pc.surface.set{feature = id, length = 8}` changes a step after it is
+made, its curves too (`sketches`); `pc.surface.check{body = id}` returns
+how the body's faces meet at each shared edge (`point`, `gap`,
+`angle_deg`) and labels them in the view; `pc.sketch.new{body = id}`
+starts a sketch in a surface body, as Create sketch does.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}

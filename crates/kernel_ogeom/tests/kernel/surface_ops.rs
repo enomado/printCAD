@@ -197,6 +197,40 @@ fn six_sheets_closing_a_box_sew_into_a_solid() {
     ])
     .unwrap();
     assert_eq!(census(&result), (6, 1));
+    let measured = OgeomKernel::new()
+        .physical_properties(&result.brep_blob)
+        .unwrap();
+    let volume = measured.volume_mm3.expect("a solid has a volume");
+    assert!((volume - 500.0).abs() < 1e-3, "{volume}");
+}
+
+/// The same six sheets left unsewn are surfaces: they have an area and
+/// no volume, though their faces close a space.
+#[test]
+fn unsewn_sheets_have_no_volume() {
+    let base = square_loop(0.0, 10.0);
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![base.clone()],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        },
+        SurfaceOp::PlanarFill { curves: vec![base] },
+        SurfaceOp::PlanarFill {
+            curves: vec![square_loop(5.0, 10.0)],
+        },
+    ])
+    .unwrap();
+    let measured = OgeomKernel::new()
+        .physical_properties(&result.brep_blob)
+        .unwrap();
+    assert_eq!(measured.volume_mm3, None);
+    assert!(
+        (measured.area_mm2 - 400.0).abs() < 1e-3,
+        "{}",
+        measured.area_mm2
+    );
 }
 
 #[test]
@@ -606,6 +640,58 @@ fn a_sheet_trims_by_a_plane() {
     assert!((bounds(&result).1[0] - 5.0).abs() < 1e-3);
 }
 
+/// A plane with the whole sheet on its far side keeps nothing, and says so
+/// on the trim.
+#[test]
+fn a_trim_that_keeps_nothing_says_so() {
+    let error = build(vec![
+        SurfaceOp::PlanarFill {
+            curves: vec![square_loop(0.0, 10.0)],
+        },
+        SurfaceOp::TrimByPlane {
+            origin: [20.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+        },
+    ])
+    .unwrap_err();
+    assert_eq!(error.op_index, 1);
+    assert!(
+        error.message.contains("leaves nothing"),
+        "{}",
+        error.message
+    );
+}
+
+/// Two sheets meeting along an edge they do not share round only once
+/// sewn; before, the fillet says to sew them.
+#[test]
+fn a_fillet_between_unsewn_sheets_asks_for_a_sew() {
+    let wall = |a: [f64; 2], b: [f64; 2]| SurfaceOp::Extrude {
+        curves: vec![sketch(xy(0.0), vec![line(a, b)])],
+        direction: [0.0, 0.0, 1.0],
+        length: 5.0,
+        symmetric: false,
+    };
+    let error = build(vec![
+        wall([0.0, 0.0], [10.0, 0.0]),
+        wall([10.0, 0.0], [10.0, 10.0]),
+        SurfaceOp::Fillet {
+            edges: vec![kernel_api::EdgeProbe {
+                point: [10.0, 0.0, 2.5],
+                direction: [0.0, 0.0, 1.0],
+                faces: [0, 0],
+            }],
+            radius: 2.0,
+        },
+    ])
+    .unwrap_err();
+    assert!(
+        error.message.contains("Sew them first"),
+        "{}",
+        error.message
+    );
+}
+
 #[test]
 fn a_face_splits_along_a_curve() {
     let result = build(vec![
@@ -643,6 +729,41 @@ fn a_face_extends_past_its_edge() {
     ])
     .unwrap();
     assert!((bounds(&result).1[0] - 15.0).abs() < 1e-3);
+}
+
+/// An extruded line and arc, a sheet of two faces, extended past both top
+/// edges: each face grows and the two stay one sheet.
+#[test]
+fn an_extruded_sheet_extends_past_its_top_edges() {
+    let top = |point: [f64; 3], direction: [f64; 3]| kernel_api::EdgeProbe {
+        point,
+        direction,
+        faces: [0, 0],
+    };
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![open_chain(0.0)],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        },
+        SurfaceOp::Extend {
+            edges: vec![
+                top([5.0, 0.0, 5.0], [1.0, 0.0, 0.0]),
+                top([15.0, 5.0, 5.0], [0.0, 1.0, 0.0]),
+            ],
+            length: 3.0,
+            continuity: Continuity::G1,
+        },
+    ])
+    .unwrap();
+    assert!(
+        (bounds(&result).1[2] - 8.0).abs() < 1e-3,
+        "{:?}",
+        bounds(&result)
+    );
+    assert_eq!(census(&result), (2, 0), "still two faces");
+    assert_eq!(shells(&result), 1, "the faces still share their edge");
 }
 
 #[test]
@@ -799,4 +920,190 @@ fn a_sewn_floor_meets_its_walls_with_no_gap() {
         "four corners and four floor edges: {joins:?}"
     );
     assert!(joins.iter().all(|j| j.gap < 1e-6), "{joins:?}");
+}
+
+/// A line in its own vertical plane, from `a` to `b`.
+fn line_3d(a: [f64; 3], b: [f64; 3]) -> CurveSource {
+    let x = [b[0] - a[0], b[1] - a[1], 0.0];
+    let len = (x[0] * x[0] + x[1] * x[1]).sqrt();
+    let x = [x[0] / len, x[1] / len, 0.0];
+    sketch(
+        plane([a[0], a[1], 0.0], x, [0.0, 0.0, 1.0]),
+        vec![line([0.0, a[2]], [len, b[2]])],
+    )
+}
+
+/// A path of a line and an arc tangent to it sweeps a profile along both.
+#[test]
+#[ignore = "kernel: a sweep along a line into a tangent arc misses its 1e-6 skin target (ogeom-rs#120)"]
+fn a_sweep_follows_a_line_into_a_tangent_arc() {
+    let half = std::f64::consts::FRAC_1_SQRT_2 * 5.0;
+    let path = sketch(
+        xy(0.0),
+        vec![
+            line([0.0, 0.0], [10.0, 0.0]),
+            arc([10.0, 0.0], [10.0 + half, 5.0 - half], [15.0, 5.0]),
+        ],
+    );
+    let profile = sketch(
+        plane([0.0; 3], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+        vec![line([-1.0, 0.0], [1.0, 0.0])],
+    );
+    build(vec![SurfaceOp::Sweep {
+        profile: vec![profile],
+        path: vec![path],
+        frame: Default::default(),
+    }])
+    .unwrap();
+}
+
+/// Two semicircles in crossing planes, sharing their ends, close a hole.
+#[test]
+#[ignore = "kernel: the fill misses its tolerance by 0.054 on two semicircles in crossing planes (ogeom-rs#121)"]
+fn two_semicircles_in_crossing_planes_fill() {
+    let up = sketch(
+        plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        vec![arc([-10.0, 0.0], [0.0, 10.0], [10.0, 0.0])],
+    );
+    let down = sketch(xy(0.0), vec![arc([10.0, 0.0], [0.0, -10.0], [-10.0, 0.0])]);
+    build(vec![SurfaceOp::Fill {
+        boundary: vec![up, down],
+        continuity: Continuity::G0,
+    }])
+    .unwrap();
+}
+
+/// Four lines rising and falling around a diamond fill: seen along
+/// (0, 1, -1) the loop is simple.
+#[test]
+#[ignore = "kernel: the fill projects the loop on a plane it crosses itself in (ogeom-rs#122)"]
+fn a_four_line_saddle_fills() {
+    let p = [
+        [-10.0, 0.0, 0.0],
+        [0.0, 0.0, 10.0],
+        [10.0, 0.0, 0.0],
+        [0.0, -10.0, 0.0],
+    ];
+    build(vec![SurfaceOp::Fill {
+        boundary: (0..4).map(|i| line_3d(p[i], p[(i + 1) % 4])).collect(),
+        continuity: Continuity::G0,
+    }])
+    .unwrap();
+}
+
+/// A tube's rim filled tangent to its wall: a dome rising off the rim.
+#[test]
+#[ignore = "kernel: a tangent fill refuses supports square to the boundary's plane (ogeom-rs#123)"]
+fn a_tangent_cap_closes_a_tube() {
+    let circle = sketch(
+        xy(0.0),
+        vec![
+            arc([5.0, 0.0], [0.0, 5.0], [-5.0, 0.0]),
+            arc([-5.0, 0.0], [0.0, -5.0], [5.0, 0.0]),
+        ],
+    );
+    let rim = |x: f64, y: f64, dx: f64, dy: f64| {
+        CurveSource::Edge(kernel_api::EdgeProbe {
+            point: [x, y, 10.0],
+            direction: [dx, dy, 0.0],
+            faces: [0, 0],
+        })
+    };
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![circle],
+            direction: [0.0, 0.0, 1.0],
+            length: 10.0,
+            symmetric: false,
+        },
+        SurfaceOp::Fill {
+            boundary: vec![rim(0.0, 5.0, -1.0, 0.0), rim(0.0, -5.0, 1.0, 0.0)],
+            continuity: Continuity::G1,
+        },
+    ])
+    .unwrap();
+    assert!(bounds(&result).1[2] > 10.5);
+}
+
+/// A sketch line seen square to its plane crosses a half cylinder from
+/// its bottom edge to its top: the face splits along the curve it lands
+/// on.
+#[test]
+fn a_curved_face_splits_along_a_sketch_seen_square_to_it() {
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![sketch(
+                xy(0.0),
+                vec![arc([5.0, 0.0], [0.0, 5.0], [-5.0, 0.0])],
+            )],
+            direction: [0.0, 0.0, 1.0],
+            length: 10.0,
+            symmetric: false,
+        },
+        SurfaceOp::Split {
+            faces: vec![kernel_api::FaceProbe {
+                point: [0.0, 5.0, 5.0],
+                normal: [0.0, 1.0, 0.0],
+                name: 0,
+            }],
+            curves: vec![sketch(
+                plane([0.0, 10.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+                vec![line([-4.0, -1.0], [4.0, 11.0])],
+            )],
+        },
+    ])
+    .unwrap();
+    assert_eq!(census(&result), (2, 0));
+}
+
+/// Two walls meeting at a right angle thicken into one solid.
+#[test]
+#[ignore = "kernel: thickening a sheet refuses faces meeting at a crease (ogeom-rs#124)"]
+fn a_folded_sheet_thickens() {
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![sketch(
+                xy(0.0),
+                vec![
+                    line([0.0, 0.0], [10.0, 0.0]),
+                    line([10.0, 0.0], [10.0, 10.0]),
+                ],
+            )],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        },
+        SurfaceOp::Thicken {
+            thickness: 1.0,
+            both_sides: false,
+        },
+    ])
+    .unwrap();
+    assert_eq!(census(&result).1, 1);
+}
+
+/// A box sewn from planar sheets measures exactly, as every face is a
+/// rectangle on a plane.
+#[test]
+#[ignore = "kernel: a sewn box measures through a tessellation (ogeom-rs#125)"]
+fn a_sewn_box_measures_exactly() {
+    let base = square_loop(0.0, 10.0);
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![base.clone()],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        },
+        SurfaceOp::PlanarFill { curves: vec![base] },
+        SurfaceOp::PlanarFill {
+            curves: vec![square_loop(5.0, 10.0)],
+        },
+        SurfaceOp::Sew { gap: 0.0 },
+    ])
+    .unwrap();
+    let m = OgeomKernel::new()
+        .physical_properties(&result.brep_blob)
+        .unwrap();
+    assert!(!m.approximate, "{m:?}");
 }

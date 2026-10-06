@@ -36,7 +36,10 @@ pub struct EdgePick {
 pub struct FacePick {
     pub point: [f32; 3],
     pub normal: [f32; 3],
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "kernel_api::naming::name_from_number_or_text"
+    )]
     pub name: TopoName,
 }
 
@@ -180,6 +183,8 @@ pub enum SurfaceFeature {
 pub struct Kind {
     pub tool: &'static str,
     pub label: &'static str,
+    /// What the step's command does, in a line.
+    pub summary: &'static str,
     pub icon: &'static str,
     /// What the tool does once the kernel can: `None` when it builds now.
     pub waits: Option<&'static str>,
@@ -189,96 +194,112 @@ pub const KINDS: &[Kind] = &[
     Kind {
         tool: "surface.extrude",
         label: "Extruded surface",
+        summary: "Extrude curves into a surface",
         icon: "surface-extrude",
         waits: None,
     },
     Kind {
         tool: "surface.revolve",
         label: "Revolved surface",
+        summary: "Revolve curves about an axis into a surface",
         icon: "surface-revolve",
         waits: None,
     },
     Kind {
         tool: "surface.planar",
         label: "Planar surface",
+        summary: "Fill closed flat loops with a planar surface",
         icon: "surface-planar",
         waits: None,
     },
     Kind {
         tool: "surface.fill",
         label: "Filling",
+        summary: "Fill the hole curves close with a surface",
         icon: "surface-fill",
         waits: None,
     },
     Kind {
         tool: "surface.ruled",
         label: "Ruled surface",
+        summary: "Span two curves with straight lines",
         icon: "surface-ruled",
         waits: None,
     },
     Kind {
         tool: "surface.loft",
         label: "Lofted surface",
+        summary: "Loft a surface through sections in order",
         icon: "surface-loft",
         waits: None,
     },
     Kind {
         tool: "surface.sweep",
         label: "Swept surface",
+        summary: "Sweep a profile along a path into a surface",
         icon: "surface-sweep",
         waits: None,
     },
     Kind {
         tool: "surface.offset",
         label: "Offset surface",
+        summary: "Copy faces at a distance along their normals",
         icon: "surface-offset",
         waits: None,
     },
     Kind {
         tool: "surface.extend",
         label: "Extend surface",
+        summary: "Extend faces past picked edges",
         icon: "surface-extend",
         waits: None,
     },
     Kind {
         tool: "surface.blend",
         label: "Blend surface",
+        summary: "Bridge two edges with a surface",
         icon: "surface-blend",
         waits: None,
     },
     Kind {
         tool: "surface.split",
         label: "Split surface",
+        summary: "Split faces along curves",
         icon: "surface-split",
         waits: None,
     },
     Kind {
         tool: "surface.sew",
         label: "Sew",
+        summary: "Sew the body's surfaces together",
         icon: "surface-sew",
         waits: None,
     },
     Kind {
         tool: "surface.fillet",
         label: "Surface fillet",
+        summary: "Round edges where two faces of a surface meet",
         icon: "surface-fillet",
         waits: None,
     },
     Kind {
         tool: "surface.thicken",
         label: "Thicken",
+        summary: "Thicken the body's surfaces into solids",
         icon: "surface-thicken",
         waits: None,
     },
     Kind {
         tool: "surface.trim",
         label: "Trim by plane",
+        summary: "Keep what of the body lies on one side of a plane",
         icon: "surface-trim",
         waits: None,
     },
     Kind {
         tool: "surface.mirror",
         label: "Mirror",
+        summary: "Add the body's reflection in a plane",
         icon: "surface-mirror",
         waits: None,
     },
@@ -432,6 +453,71 @@ impl SurfaceFeature {
                 | SurfaceFeature::Loft { .. }
                 | SurfaceFeature::Sweep { .. }
         )
+    }
+
+    /// Take out the curves the step is built from, for new ones to go in.
+    pub fn clear_curves(&mut self) {
+        match self {
+            Self::Extrude { curves, .. }
+            | Self::Revolve { curves, .. }
+            | Self::PlanarFill { curves }
+            | Self::Split { curves, .. } => curves.clear(),
+            Self::Fill { boundary, .. } => boundary.clear(),
+            Self::Loft { sections, .. } => sections.clear(),
+            Self::Ruled { first, second } => {
+                *first = None;
+                *second = None;
+            }
+            Self::Sweep { profile, path } => {
+                profile.clear();
+                path.clear();
+            }
+            Self::Offset { .. }
+            | Self::Extend { .. }
+            | Self::Blend { .. }
+            | Self::Sew { .. }
+            | Self::Fillet { .. }
+            | Self::Thicken { .. }
+            | Self::Trim { .. }
+            | Self::Mirror { .. } => {}
+        }
+    }
+
+    /// What the step still needs picked before it can build, in the words
+    /// of the command field that gives it.
+    pub fn missing(&self) -> Option<&'static str> {
+        match self {
+            Self::Extrude { curves, .. }
+            | Self::Revolve { curves, .. }
+            | Self::PlanarFill { curves } => curves
+                .is_empty()
+                .then_some("`sketches`: the curves to build from"),
+            Self::Fill { boundary, .. } => boundary
+                .is_empty()
+                .then_some("`sketches` or `boundary`: the curves that close the hole"),
+            Self::Ruled { first, second } => (first.is_none() || second.is_none())
+                .then_some("`sketches`: two curves, the first and the second"),
+            Self::Loft { sections, .. } => {
+                (sections.len() < 2).then_some("`sketches`: two sections or more, in order")
+            }
+            Self::Sweep { profile, path } => (profile.is_empty() || path.is_empty())
+                .then_some("`sketches`: the profile, then the path"),
+            Self::Offset { faces, .. } => {
+                faces.is_empty().then_some("`faces`: the faces to offset")
+            }
+            Self::Split { faces, curves } => (faces.is_empty() || curves.is_empty()).then_some(
+                "`faces` and `sketches`: the faces to split and the curves to split them along",
+            ),
+            Self::Extend { edges, .. } => edges
+                .is_empty()
+                .then_some("`edges`: the edges to extend past"),
+            Self::Fillet { edges, .. } => edges.is_empty().then_some("`edges`: the edges to round"),
+            Self::Blend { first, second, .. } => (first.is_none() || second.is_none())
+                .then_some("`first` and `second`: the two edges to bridge"),
+            Self::Sew { .. } | Self::Thicken { .. } | Self::Trim { .. } | Self::Mirror { .. } => {
+                None
+            }
+        }
     }
 
     /// Whether the step adds a sheet of its own, rather than working on

@@ -47,6 +47,25 @@ pub fn child(parent: TopoName, part: &[u8]) -> TopoName {
     }
 }
 
+/// Reads a name written as a number or as a string of its digits: a
+/// script's numbers are doubles, which cannot hold every name, so names
+/// reach scripts as strings and come back as them.
+pub fn name_from_number_or_text<'de, D>(deserializer: D) -> Result<TopoName, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Number(u64),
+        Text(String),
+    }
+    match <Written as serde::Deserialize>::deserialize(deserializer)? {
+        Written::Number(n) => Ok(n),
+        Written::Text(t) => t.trim().parse().map_err(serde::de::Error::custom),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

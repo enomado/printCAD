@@ -14,6 +14,11 @@ pub struct BuildPlan {
     /// Questions about the solid, each asked where its feature stands in
     /// the history (a datum on a face finding the face again).
     pub probes: Vec<PlanProbe>,
+    /// The feature the plan stops at, which could not be planned: the ops
+    /// are the history before it, which the body shows.
+    pub failed: Option<BuildError>,
+    /// The features after a failure, left out of the build.
+    pub unbuilt: Vec<FeatureId>,
 }
 
 /// One question a feature asks of its body's solid during a build.

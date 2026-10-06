@@ -50,7 +50,9 @@ Not yet filed:
 
 ## Surfaces
 
-What the Surface workbench needed of the kernel, all in ogeom 0.9.0.
+What the Surface workbench needs of the kernel; each open case fails with
+the kernel's reason, and a test marked `#[ignore]` in
+`kernel_ogeom/tests/kernel/surface_ops.rs` passes once it lands.
 
 - [x] Sew, sew across a gap, trim and split sheets, N-sided and tangent
   fills, surface lofts and sweeps, blend, thicken and offset, extend, STEP
@@ -59,6 +61,13 @@ What the Surface workbench needed of the kernel, all in ogeom 0.9.0.
   fill sides of separate surfaces meeting at a point, ruled surfaces and
   lofts between different piece counts, offsets of free-form faces
   (ogeom-rs#116 to #119, ogeom 0.9.0).
+
+- [ ] Sweeps along a line into a tangent arc (ogeom-rs#120).
+- [ ] Fills of loops rising out of their plane: two semicircles
+  (ogeom-rs#121), a four-line saddle (ogeom-rs#122).
+- [ ] A tangent cap on a tube (ogeom-rs#123).
+- [ ] Thickening a sheet across a crease (ogeom-rs#124).
+- [ ] Exact measurement of a sewn box (ogeom-rs#125).
 
 And in printCAD:
 

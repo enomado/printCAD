@@ -230,7 +230,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         CommandSpec::new("doc.faces", "The faces of a body's solid, where it sits")
             .param("body", ParamKind::Id, "")
             .returns(
-                "a list of {index, kind, point, area, normal?, axis?, radius?}: \
+                "a list of {index, kind, point, area, normal?, axis?, radius?, name?}: \
                  point lies on the face, normal is a flat face's outward one, \
                  axis a turned face's {point, direction}",
             )
@@ -2365,9 +2365,10 @@ fn faces_of(mesh: &kernel_api::TriMesh) -> Value {
             if let Some((p, d)) = surface.axis() {
                 out["axis"] = json!({"point": p, "direction": d});
             }
-            // What a rebuild finds the face by, where it has a name.
+            // What a rebuild finds the face by, where it has a name: a
+            // string, since a script's numbers cannot hold every name.
             if let Some(name) = mesh.face_names.get(f).filter(|n| **n != 0) {
-                out["name"] = json!(name);
+                out["name"] = json!(name.to_string());
             }
             Some(out)
         })

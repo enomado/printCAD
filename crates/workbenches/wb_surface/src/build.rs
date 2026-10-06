@@ -75,7 +75,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
             }
             RebuildJob {
                 body,
-                plan: body_plan(document, body),
+                plan: plan_until_failure(document, body),
             }
         })
         .collect()
@@ -104,8 +104,19 @@ pub fn invalidate_all(document: &mut Document) {
 }
 
 /// The body's surface history as the kernel's steps, up to its tip, the
-/// suppressed left out.
+/// suppressed left out; an error when any step cannot be planned.
 pub fn body_plan(document: &Document, body: BodyId) -> Result<BuildPlan, BuildError> {
+    let mut plan = plan_until_failure(document, body)?;
+    match plan.failed.take() {
+        Some(error) => Err(error),
+        None => Ok(plan),
+    }
+}
+
+/// The body's surface history as the kernel's steps, stopping at the first
+/// one that cannot be planned: the plan is the history before it, which
+/// the body shows, with the error and the steps left after it.
+pub fn plan_until_failure(document: &Document, body: BodyId) -> Result<BuildPlan, BuildError> {
     let tip_seq = document
         .bodies()
         .iter()
@@ -113,11 +124,8 @@ pub fn body_plan(document: &Document, body: BodyId) -> Result<BuildPlan, BuildEr
         .and_then(|b| b.tip)
         .and_then(|tip| document.get_feature_meta(tip))
         .map(|n| n.seq);
-    let mut plan = BuildPlan {
-        ops: Vec::new(),
-        op_features: Vec::new(),
-        probes: Vec::new(),
-    };
+    let mut plan = BuildPlan::default();
+    let mut any = false;
     for (id, feature) in surface_features_of_body(document, body) {
         let Some(node) = document.get_feature_meta(id) else {
             continue;
@@ -125,20 +133,30 @@ pub fn body_plan(document: &Document, body: BodyId) -> Result<BuildPlan, BuildEr
         if tip_seq.is_some_and(|tip| node.seq > tip) || node.suppressed {
             continue;
         }
-        let fail = |message: String| BuildError {
-            feature: Some(id),
-            message,
-        };
-        if plan.ops.is_empty() && !feature.constructs() {
-            return Err(fail(
-                "works on the body's surfaces; make one first (an extrusion, a fill…)".into(),
-            ));
+        any = true;
+        if plan.failed.is_some() {
+            plan.unbuilt.push(id);
+            continue;
         }
-        let op = op_of(document, body, &feature).map_err(fail)?;
-        plan.ops.push(SolidOp::Surface(op));
-        plan.op_features.push(id);
+        let step = if plan.ops.is_empty() && !feature.constructs() {
+            Err("works on the body's surfaces; make one first (an extrusion, a fill…)".into())
+        } else {
+            op_of(document, body, &feature)
+        };
+        match step {
+            Ok(op) => {
+                plan.ops.push(SolidOp::Surface(op));
+                plan.op_features.push(id);
+            }
+            Err(message) => {
+                plan.failed = Some(BuildError {
+                    feature: Some(id),
+                    message,
+                })
+            }
+        }
     }
-    if plan.ops.is_empty() {
+    if !any {
         return Err(BuildError {
             feature: None,
             message: "the body has no surface to build".into(),

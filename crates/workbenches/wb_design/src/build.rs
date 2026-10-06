@@ -132,7 +132,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
             for (feature, seen) in borrow_inputs(document, body) {
                 document.note_built_against(feature, seen);
             }
-            let plan = body_build_ops(document, body).map(|mut plan| {
+            let plan = body_plan(document, body).map(|mut plan| {
                 plan.probes = datum_probes(document, body, &plan);
                 plan
             });
@@ -292,10 +292,15 @@ fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> 
 
 /// Each Boolean of `body` with what its tools are now, all of them in one
 /// sum: a Boolean with several tools is out of date when any of them is.
+/// A tool that takes this body as a tool in turn follows nothing: the
+/// Boolean is refused, and the two would rebuild each other forever.
 fn boolean_inputs(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
     use std::hash::{Hash, Hasher};
     let mut out: Vec<(FeatureId, std::collections::hash_map::DefaultHasher)> = Vec::new();
     for (feature, tool) in boolean_tools(document, body) {
+        if tools_reach(document, tool, body) {
+            continue;
+        }
         let inputs = tool_inputs(document, body, tool);
         match out.iter_mut().find(|(f, _)| *f == feature) {
             Some((_, hasher)) => inputs.hash(hasher),
@@ -490,8 +495,19 @@ fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
 
 /// Convert a body's feature history into a kernel solid-op chain. Returns an
 /// empty plan when the body has no part features (the caller should clear
-/// its solid).
+/// its solid), and an error when any feature cannot be planned.
 pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, BuildError> {
+    let mut plan = body_plan(document, body)?;
+    match plan.failed.take() {
+        Some(error) => Err(error),
+        None => Ok(plan),
+    }
+}
+
+/// The body's history as a kernel chain, stopping at the first feature that
+/// cannot be planned: the plan is the history before it, which the body
+/// shows, with the error and the features left after it.
+pub fn body_plan(document: &Document, body: BodyId) -> Result<BuildPlan, BuildError> {
     let features = design_features_of_body(document, body);
     // A body whose shape came from an import has no history to rebuild
     // from: running the features alone would replace the imported solid
@@ -507,7 +523,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
     let mut plan = BuildPlan {
         ops: Vec::with_capacity(features.len()),
         op_features: Vec::with_capacity(features.len()),
-        probes: Vec::new(),
+        ..BuildPlan::default()
     };
     // Chain indices of each feature's ops, for pattern `originals` lookups.
     let mut feature_ops: std::collections::HashMap<FeatureId, Vec<usize>> =
@@ -542,624 +558,648 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
         {
             continue;
         }
-        // The error sits on its feature, which names it wherever it shows.
-        let fail = |message: String| BuildError {
-            feature: Some(feature_id),
-            message,
-        };
-
-        if (feature.is_subtractive() || feature.is_modifier()) && plan.ops.is_empty() {
-            return Err(fail(
-                "needs existing material; add a Pad or another additive feature first".into(),
-            ));
+        if plan.failed.is_some() {
+            plan.unbuilt.push(feature_id);
+            continue;
         }
-        let additive_boolean = if plan.ops.is_empty() {
-            BooleanOp::NewSolid
-        } else {
-            BooleanOp::Fuse
-        };
-        let shape_boolean = |subtractive: bool| {
-            if subtractive {
-                BooleanOp::Cut
-            } else {
-                additive_boolean
-            }
-        };
-
-        let start_index = plan.ops.len();
-        match &feature {
-            DesignFeature::Pad { profile_face, .. }
-            | DesignFeature::Pocket { profile_face, .. } => {
-                if profile_face.is_some() && plan.ops.is_empty() {
-                    return Err(fail(
-                        "extruding a face needs a solid to take it from; add a feature first"
-                            .into(),
-                    ));
-                }
-                let boolean = if matches!(feature, DesignFeature::Pocket { .. }) {
-                    BooleanOp::Cut
-                } else {
-                    additive_boolean
-                };
-                plan.ops
-                    .extend(extrude_op(document, &feature, boolean).map_err(&fail)?);
-            }
-            DesignFeature::Revolution {
-                sketch,
-                angle_deg,
-                axis,
-                reversed,
-                midplane,
-                second_angle_deg,
-                mode,
-                up_to_face,
-                ..
-            }
-            | DesignFeature::Groove {
-                sketch,
-                angle_deg,
-                axis,
-                reversed,
-                midplane,
-                second_angle_deg,
-                mode,
-                up_to_face,
-                ..
-            } => {
-                if *mode != RevolveMode::Angle && plan.ops.is_empty() {
-                    return Err(fail(
-                        "stopping on a face needs existing material; add a feature first".into(),
-                    ));
-                }
-                let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
-                let profile = profile_of(&sketch_feature).map_err(&fail)?;
-                let axis_2d = axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
-                let termination = match (mode, up_to_face) {
-                    (RevolveMode::Angle, _) => RevolveTermination::Angle,
-                    (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
-                    (RevolveMode::ToLast, _) => RevolveTermination::ToLast,
-                    (RevolveMode::UpToFace, Some(pick)) => {
-                        RevolveTermination::UpToFace(face_probe(pick))
-                    }
-                    (RevolveMode::UpToFace, None) => {
-                        return Err(fail("pick a target face for the up-to-face mode".into()));
-                    }
-                };
-                let kind = revolve_kind(
-                    axis_2d,
-                    *angle_deg,
-                    *reversed,
-                    *midplane,
-                    *second_angle_deg,
-                    termination,
-                )
-                .map_err(&fail)?;
-                let op = if matches!(feature, DesignFeature::Groove { .. }) {
-                    BooleanOp::Cut
-                } else {
-                    additive_boolean
-                };
-                plan.ops.push(SolidOp::Sweep { profile, kind, op });
-            }
-            DesignFeature::Loft {
-                refine: _,
-                sections,
-                ruled,
-                closed,
-                subtractive,
-            } => {
-                if sections.len() < 2 {
-                    return Err(fail("a loft needs at least two sections".into()));
-                }
-                let mut through = Vec::with_capacity(sections.len());
-                for section in sections {
-                    through.push(loft_section(document, section).map_err(&fail)?);
-                }
-                // Profiles alone go as the plain loft, which names its faces
-                // after the first section's curves.
-                let profiles: Option<Vec<Profile>> = through
-                    .iter()
-                    .map(|s| match s {
-                        kernel_api::LoftSection::Profile(p) => Some(p.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                plan.ops.push(match profiles {
-                    Some(sections) => SolidOp::Loft {
-                        sections,
-                        ruled: *ruled,
-                        closed: *closed,
-                        op: shape_boolean(*subtractive),
-                    },
-                    None => SolidOp::LoftThrough {
-                        sections: through,
-                        ruled: *ruled,
-                        closed: *closed,
-                        op: shape_boolean(*subtractive),
-                    },
-                });
-            }
-            DesignFeature::Pipe {
-                refine: _,
-                profile,
-                spine,
-                orientation,
-                corner,
-                sections,
-                subtractive,
-                profile_face,
-                path_edges,
-                path_borrowed,
-            } => {
-                let frame = pipe_frame(document, orientation).map_err(&fail)?;
-                let corner = match corner {
-                    PipeCorner::Transformed => kernel_api::PipeCorner::Transformed,
-                    PipeCorner::Right => kernel_api::PipeCorner::Right,
-                    PipeCorner::Round => kernel_api::PipeCorner::Round,
-                };
-                let mut through = Vec::with_capacity(sections.len());
-                for section in sections {
-                    through.push(
-                        loft_section(document, &crate::feature::LoftSection::Feature(*section))
-                            .map_err(&fail)?,
-                    );
-                }
-                let plain = profile_face.is_none()
-                    && path_edges.is_empty()
-                    && path_borrowed.is_empty()
-                    && through
-                        .iter()
-                        .all(|s| matches!(s, kernel_api::LoftSection::Profile(_)));
-                if plain {
-                    let profile = sketch_profile(document, *profile).map_err(&fail)?;
-                    let spine =
-                        sketch_spine(document, *spine, profile_anchor(&profile)).map_err(&fail)?;
-                    plan.ops.push(SolidOp::Pipe {
-                        profile,
-                        spine,
-                        frame,
-                        corner,
-                        sections: through
-                            .into_iter()
-                            .filter_map(|s| match s {
-                                kernel_api::LoftSection::Profile(p) => Some(p),
-                                _ => None,
-                            })
-                            .collect(),
-                        op: shape_boolean(*subtractive),
-                    });
-                } else {
-                    let section = match profile_face {
-                        Some(pick) => kernel_api::LoftSection::Face(face_probe(pick)),
-                        None => kernel_api::LoftSection::Profile(
-                            sketch_profile(document, *profile).map_err(&fail)?,
-                        ),
-                    };
-                    let path = if !path_edges.is_empty() {
-                        kernel_api::PipePath::Edges(path_edges.iter().map(edge_probe_of).collect())
-                    } else if !path_borrowed.is_empty() {
-                        crate::borrow::kernel_edges(document, path_borrowed).map_err(&fail)?
-                    } else {
-                        let anchor = match &section {
-                            kernel_api::LoftSection::Profile(p) => profile_anchor(p),
-                            _ => None,
-                        };
-                        kernel_api::PipePath::Profile(
-                            sketch_spine(document, *spine, anchor).map_err(&fail)?,
-                        )
-                    };
-                    plan.ops.push(SolidOp::PipeThrough {
-                        profile: section,
-                        path,
-                        frame,
-                        corner,
-                        sections: through,
-                        op: shape_boolean(*subtractive),
-                    });
-                }
-            }
-            DesignFeature::Helix {
-                refine: _,
-                sketch,
-                axis,
-                mode,
-                pitch,
-                height,
-                turns,
-                left_handed,
-                cone_angle_deg,
-                reversed,
-                subtractive,
-                growth,
-                keep_inside,
-            } => {
-                let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
-                let profile = profile_of(&sketch_feature).map_err(&fail)?;
-                let extent =
-                    helix_extent(*mode, *pitch, *height, *turns, *growth).map_err(&fail)?;
-                let kind = if *axis == RevolveAxis::SketchNormal {
-                    SweepKind::HelixNormal {
-                        axis_origin: [0.0, 0.0],
-                        pitch: extent.pitch,
-                        height: extent.height,
-                        left_handed: *left_handed,
-                        cone_angle_deg: *cone_angle_deg as f64,
-                        reversed: *reversed,
-                        turns: extent.turns,
-                        growth: extent.growth,
-                    }
-                } else {
-                    let (axis_origin, axis_dir) =
-                        axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
-                    SweepKind::Helix {
-                        axis_origin,
-                        axis_dir,
-                        pitch: extent.pitch,
-                        height: extent.height,
-                        left_handed: *left_handed,
-                        cone_angle_deg: *cone_angle_deg as f64,
-                        reversed: *reversed,
-                        turns: extent.turns,
-                        growth: extent.growth,
-                    }
-                };
-                plan.ops.push(SolidOp::Sweep {
-                    profile,
-                    kind,
-                    op: if *subtractive && *keep_inside {
-                        BooleanOp::Common
-                    } else {
-                        shape_boolean(*subtractive)
-                    },
-                });
-            }
-            DesignFeature::Primitive {
-                refine: _,
-                kind,
-                placement,
-                subtractive,
-                attached,
-            } => {
-                plan.ops.push(SolidOp::Primitive {
-                    kind: *kind,
-                    placement: attached.as_ref().map_or(*placement, |a| a.placement()),
-                    op: shape_boolean(*subtractive),
-                });
-            }
-            DesignFeature::Hole { .. } => {
-                let hole_ops = hole_ops(document, &feature).map_err(&fail)?;
-                plan.ops.extend(hole_ops);
-            }
-            DesignFeature::Fillet {
-                radius,
-                edges,
-                follow_tangent,
-            } => {
-                if *radius <= 0.0 {
-                    return Err(fail("fillet radius must be positive".into()));
-                }
-                plan.ops.push(SolidOp::Fillet {
-                    radius: *radius as f64,
-                    edges: edge_selection(edges),
-                    follow_tangent: *follow_tangent,
-                });
-            }
-            DesignFeature::Chamfer {
-                size,
-                mode,
-                size2,
-                angle_deg,
-                flip,
-                edges,
-                follow_tangent,
-            } => {
-                if *size <= 0.0 {
-                    return Err(fail("chamfer size must be positive".into()));
-                }
-                let spec = match mode {
-                    crate::feature::ChamferMode::EqualDistance => {
-                        kernel_api::ChamferSpec::EqualDistance {
-                            distance: *size as f64,
-                        }
-                    }
-                    crate::feature::ChamferMode::TwoDistances => {
-                        kernel_api::ChamferSpec::TwoDistances {
-                            distance1: *size as f64,
-                            distance2: *size2 as f64,
-                        }
-                    }
-                    crate::feature::ChamferMode::DistanceAngle => {
-                        kernel_api::ChamferSpec::DistanceAngle {
-                            distance: *size as f64,
-                            angle_deg: *angle_deg as f64,
-                        }
-                    }
-                };
-                plan.ops.push(SolidOp::Chamfer {
-                    spec,
-                    flip: *flip,
-                    edges: edge_selection(edges),
-                    follow_tangent: *follow_tangent,
-                });
-            }
-            DesignFeature::Draft {
-                angle_deg,
-                neutral,
-                faces,
-                reversed,
-                neutral_plane,
-                pull,
-            } => {
-                if faces.is_empty() {
-                    return Err(fail(
-                        "no faces to tilt: pick them in the Draft's panel, or set its faces, \
-                         each {point, normal} in the body's own frame"
-                            .into(),
-                    ));
-                }
-                let (neutral_point, neutral_normal) = match neutral_plane {
-                    Some(target) => target_plane(document, target).map_err(&fail)?,
-                    None => face_pick_plane(neutral),
-                };
-                // The pull: along an edge or datum line when one is given,
-                // else along the neutral plane's normal; reversed turns it.
-                let along = match pull {
-                    Some(crate::feature::PullRef::Edge(edge)) => {
-                        Some(edge.direction.map(f64::from))
-                    }
-                    Some(crate::feature::PullRef::Datum(datum)) => {
-                        Some(datum_direction(document, *datum).map_err(&fail)?)
-                    }
-                    None => None,
-                };
-                let pull = match (along, *reversed) {
-                    (Some(d), false) => Some(d),
-                    (Some(d), true) => Some([-d[0], -d[1], -d[2]]),
-                    (None, true) => {
-                        Some([-neutral_normal[0], -neutral_normal[1], -neutral_normal[2]])
-                    }
-                    (None, false) => None,
-                };
-                plan.ops.push(SolidOp::Draft {
-                    angle_deg: *angle_deg as f64,
-                    neutral_point,
-                    neutral_normal,
-                    pull_dir: pull,
-                    faces: face_points(faces),
-                    face_names: face_names(faces),
-                });
-            }
-            DesignFeature::OffsetFaces { faces, distance } => {
-                if faces.is_empty() {
-                    return Err(fail("select at least one face to offset".into()));
-                }
-                plan.ops.push(SolidOp::OffsetFaces {
-                    faces: face_points(faces),
-                    face_names: face_names(faces),
-                    distance: f64::from(*distance),
-                });
-            }
-            DesignFeature::MoveFaces {
-                faces,
-                translation,
-                angle_deg,
-                axis_point,
-                axis_dir,
-            } => {
-                if faces.is_empty() {
-                    return Err(fail("select at least one face to move".into()));
-                }
-                let mut transform = mat_translation(translation.map(f64::from));
-                if angle_deg.abs() > 1e-6 {
-                    let turn = mat_rotation(
-                        axis_point.map(f64::from),
-                        axis_dir.map(f64::from),
-                        f64::from(*angle_deg),
-                    )
-                    .map_err(&fail)?;
-                    transform = mat_mul(&transform, &turn);
-                }
-                plan.ops.push(SolidOp::MoveFaces {
-                    faces: face_points(faces),
-                    face_names: face_names(faces),
-                    transform,
-                });
-            }
-            DesignFeature::DeleteFaces { faces } => {
-                if faces.is_empty() {
-                    return Err(fail("select at least one face to delete".into()));
-                }
-                plan.ops.push(SolidOp::RemoveFaces {
-                    faces: face_points(faces),
-                    face_names: face_names(faces),
-                });
-            }
-            DesignFeature::Thickness {
-                value,
-                faces,
-                inward,
-                join,
-                both_sides,
-            } => {
-                if faces.is_empty() {
-                    return Err(fail("select at least one face to open".into()));
-                }
-                plan.ops.push(SolidOp::Thickness {
-                    value: *value as f64,
-                    open_faces: face_points(faces),
-                    open_face_names: face_names(faces),
-                    inward: *inward,
-                    join: *join,
-                    both_sides: *both_sides,
-                });
-            }
-            DesignFeature::Mirrored {
-                originals,
-                plane,
-                refine: _,
-            } => {
-                let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let (point, normal) = mirror_plane(document, plane).map_err(&fail)?;
-                plan.ops.push(SolidOp::Transform {
-                    transforms: vec![mat_mirror(point, normal)],
-                    originals,
-                });
-            }
-            DesignFeature::LinearPattern {
-                refine: _,
-                originals,
-                axis,
-                length,
-                occurrences,
-                spacing_mode,
-                reversed,
-                spacings,
-            } => {
-                let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let axis = pattern_axis(document, axis).map_err(&fail)?;
-                let transforms = linear_transforms(
-                    axis,
-                    *length,
-                    *occurrences,
-                    *spacing_mode,
-                    *reversed,
-                    spacings,
-                )
-                .map_err(&fail)?;
-                if !transforms.is_empty() {
-                    plan.ops.push(SolidOp::Transform {
-                        transforms,
-                        originals,
-                    });
-                }
-            }
-            DesignFeature::PolarPattern {
-                refine: _,
-                originals,
-                axis,
-                angle_deg,
-                occurrences,
-                reversed,
-                step_mode,
-                angles,
-            } => {
-                let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let axis = pattern_axis(document, axis).map_err(&fail)?;
-                let transforms = polar_transforms(
-                    axis,
-                    *angle_deg,
-                    *occurrences,
-                    *reversed,
-                    *step_mode,
-                    angles,
-                )
-                .map_err(&fail)?;
-                if !transforms.is_empty() {
-                    plan.ops.push(SolidOp::Transform {
-                        transforms,
-                        originals,
-                    });
-                }
-            }
-            DesignFeature::MultiTransform {
-                originals,
-                steps,
-                refine: _,
-            } => {
-                let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
-                let transforms = multi_transforms(document, steps).map_err(&fail)?;
-                if !transforms.is_empty() {
-                    plan.ops.push(SolidOp::Transform {
-                        transforms,
-                        originals,
-                    });
-                }
-            }
-            // Lent geometry builds nothing; the features that take it do.
-            DesignFeature::Borrow { .. } => {}
-            DesignFeature::Base {} => {
-                if !plan.ops.is_empty() {
-                    return Err(fail(
-                        "the base shape can only be a body's first feature".into(),
-                    ));
-                }
-                let brep = document
-                    .base_brep_blob(body)
-                    .ok_or_else(|| fail("this body has no base shape".into()))?
-                    .to_vec();
-                plan.ops.push(SolidOp::Shape { brep });
-            }
-            DesignFeature::Clone { source } => {
-                if !plan.ops.is_empty() {
-                    return Err(fail("a clone can only be a body's first feature".into()));
-                }
-                let brep = document
-                    .imported_brep_blob(*source)
-                    .ok_or_else(|| {
-                        fail("the source body has no built solid yet (build it first)".into())
-                    })?
-                    .to_vec();
-                plan.ops.push(SolidOp::Shape { brep });
-            }
-            DesignFeature::BodyBoolean {
-                tool_body,
-                kind,
-                more_tools,
-                refine: _,
-            } => {
-                for tool_body in std::iter::once(tool_body).chain(more_tools) {
-                    if *tool_body == body {
-                        return Err(fail(
-                            "a body cannot be its own tool; pick another body".into(),
-                        ));
-                    }
-                    if tools_reach(document, *tool_body, body) {
-                        return Err(fail(
-                            "the tool body takes this body as a tool in turn; one of the two \
-                         has to go"
-                                .into(),
-                        ));
-                    }
-                    if !document.bodies().iter().any(|b| b.id == *tool_body) {
-                        return Err(fail(
-                            "the tool body is not in this document; pick another body".into(),
-                        ));
-                    }
-                    let tool_brep = document
-                        .imported_brep_blob(*tool_body)
-                        .ok_or_else(|| {
-                            fail("the tool body has no built solid yet (build it first)".into())
-                        })?
-                        .to_vec();
-                    // The tool's shape is in its own body's frame; it meets this
-                    // body's where the two bodies sit.
-                    let relative = document
-                        .body_placement(body)
-                        .inverse()
-                        .after(&document.body_placement(*tool_body));
-                    plan.ops.push(SolidOp::Boolean {
-                        tool_brep,
-                        kind: *kind,
-                        tool_transform: (!relative.is_identity()).then(|| relative.rows()),
-                    });
-                }
-            }
-        }
-
-        let indices: Vec<usize> = (start_index..plan.ops.len()).collect();
-        for _ in &indices {
-            plan.op_features.push(feature_id);
-        }
-        feature_ops.insert(feature_id, indices);
-        // A refine follows the feature's own ops and is not one of them: a
-        // pattern re-running this feature's tool re-runs the tool alone.
-        if feature.refine() && plan.ops.len() > start_index {
-            plan.ops.push(SolidOp::Refine);
-            plan.op_features.push(feature_id);
+        let kept = (plan.ops.len(), plan.op_features.len(), plan.probes.len());
+        if let Err(error) = plan_feature(
+            document,
+            body,
+            &mut plan,
+            &mut feature_ops,
+            feature_id,
+            &feature,
+        ) {
+            plan.ops.truncate(kept.0);
+            plan.op_features.truncate(kept.1);
+            plan.probes.truncate(kept.2);
+            plan.failed = Some(error);
         }
     }
 
     Ok(plan)
+}
+
+/// One feature's ops, added to the plan; on an error the plan may hold
+/// part of them, which the caller takes back out.
+fn plan_feature(
+    document: &Document,
+    body: BodyId,
+    plan: &mut BuildPlan,
+    feature_ops: &mut std::collections::HashMap<FeatureId, Vec<usize>>,
+    feature_id: FeatureId,
+    feature: &DesignFeature,
+) -> Result<(), BuildError> {
+    // The error sits on its feature, which names it wherever it shows.
+    let fail = |message: String| BuildError {
+        feature: Some(feature_id),
+        message,
+    };
+
+    if (feature.is_subtractive() || feature.is_modifier()) && plan.ops.is_empty() {
+        return Err(fail(
+            "needs existing material; add a Pad or another additive feature first".into(),
+        ));
+    }
+    let additive_boolean = if plan.ops.is_empty() {
+        BooleanOp::NewSolid
+    } else {
+        BooleanOp::Fuse
+    };
+    let shape_boolean = |subtractive: bool| {
+        if subtractive {
+            BooleanOp::Cut
+        } else {
+            additive_boolean
+        }
+    };
+
+    let start_index = plan.ops.len();
+    match &feature {
+        DesignFeature::Pad { profile_face, .. } | DesignFeature::Pocket { profile_face, .. } => {
+            if profile_face.is_some() && plan.ops.is_empty() {
+                return Err(fail(
+                    "extruding a face needs a solid to take it from; add a feature first".into(),
+                ));
+            }
+            let boolean = if matches!(feature, DesignFeature::Pocket { .. }) {
+                BooleanOp::Cut
+            } else {
+                additive_boolean
+            };
+            plan.ops
+                .extend(extrude_op(document, feature, boolean).map_err(&fail)?);
+        }
+        DesignFeature::Revolution {
+            sketch,
+            angle_deg,
+            axis,
+            reversed,
+            midplane,
+            second_angle_deg,
+            mode,
+            up_to_face,
+            ..
+        }
+        | DesignFeature::Groove {
+            sketch,
+            angle_deg,
+            axis,
+            reversed,
+            midplane,
+            second_angle_deg,
+            mode,
+            up_to_face,
+            ..
+        } => {
+            if *mode != RevolveMode::Angle && plan.ops.is_empty() {
+                return Err(fail(
+                    "stopping on a face needs existing material; add a feature first".into(),
+                ));
+            }
+            let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
+            let profile = profile_of(&sketch_feature).map_err(&fail)?;
+            let axis_2d = axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
+            let termination = match (mode, up_to_face) {
+                (RevolveMode::Angle, _) => RevolveTermination::Angle,
+                (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
+                (RevolveMode::ToLast, _) => RevolveTermination::ToLast,
+                (RevolveMode::UpToFace, Some(pick)) => {
+                    RevolveTermination::UpToFace(face_probe(pick))
+                }
+                (RevolveMode::UpToFace, None) => {
+                    return Err(fail("pick a target face for the up-to-face mode".into()));
+                }
+            };
+            let kind = revolve_kind(
+                axis_2d,
+                *angle_deg,
+                *reversed,
+                *midplane,
+                *second_angle_deg,
+                termination,
+            )
+            .map_err(&fail)?;
+            let op = if matches!(feature, DesignFeature::Groove { .. }) {
+                BooleanOp::Cut
+            } else {
+                additive_boolean
+            };
+            plan.ops.push(SolidOp::Sweep { profile, kind, op });
+        }
+        DesignFeature::Loft {
+            refine: _,
+            sections,
+            ruled,
+            closed,
+            subtractive,
+        } => {
+            if sections.len() < 2 {
+                return Err(fail("a loft needs at least two sections".into()));
+            }
+            let mut through = Vec::with_capacity(sections.len());
+            for section in sections {
+                through.push(loft_section(document, section).map_err(&fail)?);
+            }
+            // Profiles alone go as the plain loft, which names its faces
+            // after the first section's curves.
+            let profiles: Option<Vec<Profile>> = through
+                .iter()
+                .map(|s| match s {
+                    kernel_api::LoftSection::Profile(p) => Some(p.clone()),
+                    _ => None,
+                })
+                .collect();
+            plan.ops.push(match profiles {
+                Some(sections) => SolidOp::Loft {
+                    sections,
+                    ruled: *ruled,
+                    closed: *closed,
+                    op: shape_boolean(*subtractive),
+                },
+                None => SolidOp::LoftThrough {
+                    sections: through,
+                    ruled: *ruled,
+                    closed: *closed,
+                    op: shape_boolean(*subtractive),
+                },
+            });
+        }
+        DesignFeature::Pipe {
+            refine: _,
+            profile,
+            spine,
+            orientation,
+            corner,
+            sections,
+            subtractive,
+            profile_face,
+            path_edges,
+            path_borrowed,
+        } => {
+            let frame = pipe_frame(document, orientation).map_err(&fail)?;
+            let corner = match corner {
+                PipeCorner::Transformed => kernel_api::PipeCorner::Transformed,
+                PipeCorner::Right => kernel_api::PipeCorner::Right,
+                PipeCorner::Round => kernel_api::PipeCorner::Round,
+            };
+            let mut through = Vec::with_capacity(sections.len());
+            for section in sections {
+                through.push(
+                    loft_section(document, &crate::feature::LoftSection::Feature(*section))
+                        .map_err(&fail)?,
+                );
+            }
+            let plain = profile_face.is_none()
+                && path_edges.is_empty()
+                && path_borrowed.is_empty()
+                && through
+                    .iter()
+                    .all(|s| matches!(s, kernel_api::LoftSection::Profile(_)));
+            if plain {
+                let profile = sketch_profile(document, *profile).map_err(&fail)?;
+                let spine =
+                    sketch_spine(document, *spine, profile_anchor(&profile)).map_err(&fail)?;
+                plan.ops.push(SolidOp::Pipe {
+                    profile,
+                    spine,
+                    frame,
+                    corner,
+                    sections: through
+                        .into_iter()
+                        .filter_map(|s| match s {
+                            kernel_api::LoftSection::Profile(p) => Some(p),
+                            _ => None,
+                        })
+                        .collect(),
+                    op: shape_boolean(*subtractive),
+                });
+            } else {
+                let section = match profile_face {
+                    Some(pick) => kernel_api::LoftSection::Face(face_probe(pick)),
+                    None => kernel_api::LoftSection::Profile(
+                        sketch_profile(document, *profile).map_err(&fail)?,
+                    ),
+                };
+                let path = if !path_edges.is_empty() {
+                    kernel_api::PipePath::Edges(path_edges.iter().map(edge_probe_of).collect())
+                } else if !path_borrowed.is_empty() {
+                    crate::borrow::kernel_edges(document, path_borrowed).map_err(&fail)?
+                } else {
+                    let anchor = match &section {
+                        kernel_api::LoftSection::Profile(p) => profile_anchor(p),
+                        _ => None,
+                    };
+                    kernel_api::PipePath::Profile(
+                        sketch_spine(document, *spine, anchor).map_err(&fail)?,
+                    )
+                };
+                plan.ops.push(SolidOp::PipeThrough {
+                    profile: section,
+                    path,
+                    frame,
+                    corner,
+                    sections: through,
+                    op: shape_boolean(*subtractive),
+                });
+            }
+        }
+        DesignFeature::Helix {
+            refine: _,
+            sketch,
+            axis,
+            mode,
+            pitch,
+            height,
+            turns,
+            left_handed,
+            cone_angle_deg,
+            reversed,
+            subtractive,
+            growth,
+            keep_inside,
+        } => {
+            let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
+            let profile = profile_of(&sketch_feature).map_err(&fail)?;
+            let extent = helix_extent(*mode, *pitch, *height, *turns, *growth).map_err(&fail)?;
+            let kind = if *axis == RevolveAxis::SketchNormal {
+                SweepKind::HelixNormal {
+                    axis_origin: [0.0, 0.0],
+                    pitch: extent.pitch,
+                    height: extent.height,
+                    left_handed: *left_handed,
+                    cone_angle_deg: *cone_angle_deg as f64,
+                    reversed: *reversed,
+                    turns: extent.turns,
+                    growth: extent.growth,
+                }
+            } else {
+                let (axis_origin, axis_dir) =
+                    axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
+                SweepKind::Helix {
+                    axis_origin,
+                    axis_dir,
+                    pitch: extent.pitch,
+                    height: extent.height,
+                    left_handed: *left_handed,
+                    cone_angle_deg: *cone_angle_deg as f64,
+                    reversed: *reversed,
+                    turns: extent.turns,
+                    growth: extent.growth,
+                }
+            };
+            plan.ops.push(SolidOp::Sweep {
+                profile,
+                kind,
+                op: if *subtractive && *keep_inside {
+                    BooleanOp::Common
+                } else {
+                    shape_boolean(*subtractive)
+                },
+            });
+        }
+        DesignFeature::Primitive {
+            refine: _,
+            kind,
+            placement,
+            subtractive,
+            attached,
+        } => {
+            plan.ops.push(SolidOp::Primitive {
+                kind: *kind,
+                placement: attached.as_ref().map_or(*placement, |a| a.placement()),
+                op: shape_boolean(*subtractive),
+            });
+        }
+        DesignFeature::Hole { .. } => {
+            let hole_ops = hole_ops(document, feature).map_err(&fail)?;
+            plan.ops.extend(hole_ops);
+        }
+        DesignFeature::Fillet {
+            radius,
+            edges,
+            follow_tangent,
+        } => {
+            if *radius <= 0.0 {
+                return Err(fail("fillet radius must be positive".into()));
+            }
+            plan.ops.push(SolidOp::Fillet {
+                radius: *radius as f64,
+                edges: edge_selection(edges),
+                follow_tangent: *follow_tangent,
+            });
+        }
+        DesignFeature::Chamfer {
+            size,
+            mode,
+            size2,
+            angle_deg,
+            flip,
+            edges,
+            follow_tangent,
+        } => {
+            if *size <= 0.0 {
+                return Err(fail("chamfer size must be positive".into()));
+            }
+            let spec = match mode {
+                crate::feature::ChamferMode::EqualDistance => {
+                    kernel_api::ChamferSpec::EqualDistance {
+                        distance: *size as f64,
+                    }
+                }
+                crate::feature::ChamferMode::TwoDistances => {
+                    kernel_api::ChamferSpec::TwoDistances {
+                        distance1: *size as f64,
+                        distance2: *size2 as f64,
+                    }
+                }
+                crate::feature::ChamferMode::DistanceAngle => {
+                    kernel_api::ChamferSpec::DistanceAngle {
+                        distance: *size as f64,
+                        angle_deg: *angle_deg as f64,
+                    }
+                }
+            };
+            plan.ops.push(SolidOp::Chamfer {
+                spec,
+                flip: *flip,
+                edges: edge_selection(edges),
+                follow_tangent: *follow_tangent,
+            });
+        }
+        DesignFeature::Draft {
+            angle_deg,
+            neutral,
+            faces,
+            reversed,
+            neutral_plane,
+            pull,
+        } => {
+            if faces.is_empty() {
+                return Err(fail(
+                    "no faces to tilt: pick them in the Draft's panel, or set its faces, \
+                     each {point, normal} in the body's own frame"
+                        .into(),
+                ));
+            }
+            let (neutral_point, neutral_normal) = match neutral_plane {
+                Some(target) => target_plane(document, target).map_err(&fail)?,
+                None => face_pick_plane(neutral),
+            };
+            // The pull: along an edge or datum line when one is given,
+            // else along the neutral plane's normal; reversed turns it.
+            let along = match pull {
+                Some(crate::feature::PullRef::Edge(edge)) => Some(edge.direction.map(f64::from)),
+                Some(crate::feature::PullRef::Datum(datum)) => {
+                    Some(datum_direction(document, *datum).map_err(&fail)?)
+                }
+                None => None,
+            };
+            let pull = match (along, *reversed) {
+                (Some(d), false) => Some(d),
+                (Some(d), true) => Some([-d[0], -d[1], -d[2]]),
+                (None, true) => Some([-neutral_normal[0], -neutral_normal[1], -neutral_normal[2]]),
+                (None, false) => None,
+            };
+            plan.ops.push(SolidOp::Draft {
+                angle_deg: *angle_deg as f64,
+                neutral_point,
+                neutral_normal,
+                pull_dir: pull,
+                faces: face_points(faces),
+                face_names: face_names(faces),
+            });
+        }
+        DesignFeature::OffsetFaces { faces, distance } => {
+            if faces.is_empty() {
+                return Err(fail("select at least one face to offset".into()));
+            }
+            plan.ops.push(SolidOp::OffsetFaces {
+                faces: face_points(faces),
+                face_names: face_names(faces),
+                distance: f64::from(*distance),
+            });
+        }
+        DesignFeature::MoveFaces {
+            faces,
+            translation,
+            angle_deg,
+            axis_point,
+            axis_dir,
+        } => {
+            if faces.is_empty() {
+                return Err(fail("select at least one face to move".into()));
+            }
+            let mut transform = mat_translation(translation.map(f64::from));
+            if angle_deg.abs() > 1e-6 {
+                let turn = mat_rotation(
+                    axis_point.map(f64::from),
+                    axis_dir.map(f64::from),
+                    f64::from(*angle_deg),
+                )
+                .map_err(&fail)?;
+                transform = mat_mul(&transform, &turn);
+            }
+            plan.ops.push(SolidOp::MoveFaces {
+                faces: face_points(faces),
+                face_names: face_names(faces),
+                transform,
+            });
+        }
+        DesignFeature::DeleteFaces { faces } => {
+            if faces.is_empty() {
+                return Err(fail("select at least one face to delete".into()));
+            }
+            plan.ops.push(SolidOp::RemoveFaces {
+                faces: face_points(faces),
+                face_names: face_names(faces),
+            });
+        }
+        DesignFeature::Thickness {
+            value,
+            faces,
+            inward,
+            join,
+            both_sides,
+        } => {
+            if faces.is_empty() {
+                return Err(fail("select at least one face to open".into()));
+            }
+            plan.ops.push(SolidOp::Thickness {
+                value: *value as f64,
+                open_faces: face_points(faces),
+                open_face_names: face_names(faces),
+                inward: *inward,
+                join: *join,
+                both_sides: *both_sides,
+            });
+        }
+        DesignFeature::Mirrored {
+            originals,
+            plane,
+            refine: _,
+        } => {
+            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let (point, normal) = mirror_plane(document, plane).map_err(&fail)?;
+            plan.ops.push(SolidOp::Transform {
+                transforms: vec![mat_mirror(point, normal)],
+                originals,
+            });
+        }
+        DesignFeature::LinearPattern {
+            refine: _,
+            originals,
+            axis,
+            length,
+            occurrences,
+            spacing_mode,
+            reversed,
+            spacings,
+        } => {
+            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let axis = pattern_axis(document, axis).map_err(&fail)?;
+            let transforms = linear_transforms(
+                axis,
+                *length,
+                *occurrences,
+                *spacing_mode,
+                *reversed,
+                spacings,
+            )
+            .map_err(&fail)?;
+            if !transforms.is_empty() {
+                plan.ops.push(SolidOp::Transform {
+                    transforms,
+                    originals,
+                });
+            }
+        }
+        DesignFeature::PolarPattern {
+            refine: _,
+            originals,
+            axis,
+            angle_deg,
+            occurrences,
+            reversed,
+            step_mode,
+            angles,
+        } => {
+            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let axis = pattern_axis(document, axis).map_err(&fail)?;
+            let transforms = polar_transforms(
+                axis,
+                *angle_deg,
+                *occurrences,
+                *reversed,
+                *step_mode,
+                angles,
+            )
+            .map_err(&fail)?;
+            if !transforms.is_empty() {
+                plan.ops.push(SolidOp::Transform {
+                    transforms,
+                    originals,
+                });
+            }
+        }
+        DesignFeature::MultiTransform {
+            originals,
+            steps,
+            refine: _,
+        } => {
+            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let transforms = multi_transforms(document, steps).map_err(&fail)?;
+            if !transforms.is_empty() {
+                plan.ops.push(SolidOp::Transform {
+                    transforms,
+                    originals,
+                });
+            }
+        }
+        // Lent geometry builds nothing; the features that take it do.
+        DesignFeature::Borrow { .. } => {}
+        DesignFeature::Base {} => {
+            if !plan.ops.is_empty() {
+                return Err(fail(
+                    "the base shape can only be a body's first feature".into(),
+                ));
+            }
+            let brep = document
+                .base_brep_blob(body)
+                .ok_or_else(|| fail("this body has no base shape".into()))?
+                .to_vec();
+            plan.ops.push(SolidOp::Shape { brep });
+        }
+        DesignFeature::Clone { source } => {
+            if !plan.ops.is_empty() {
+                return Err(fail("a clone can only be a body's first feature".into()));
+            }
+            let brep = document
+                .imported_brep_blob(*source)
+                .ok_or_else(|| {
+                    fail("the source body has no built solid yet (build it first)".into())
+                })?
+                .to_vec();
+            plan.ops.push(SolidOp::Shape { brep });
+        }
+        DesignFeature::BodyBoolean {
+            tool_body,
+            kind,
+            more_tools,
+            refine: _,
+        } => {
+            for tool_body in std::iter::once(tool_body).chain(more_tools) {
+                if *tool_body == body {
+                    return Err(fail(
+                        "a body cannot be its own tool; pick another body".into(),
+                    ));
+                }
+                if tools_reach(document, *tool_body, body) {
+                    return Err(fail(
+                        "the tool body takes this body as a tool in turn; one of the two \
+                     has to go"
+                            .into(),
+                    ));
+                }
+                if !document.bodies().iter().any(|b| b.id == *tool_body) {
+                    return Err(fail(
+                        "the tool body is not in this document; pick another body".into(),
+                    ));
+                }
+                let tool_brep = document
+                    .imported_brep_blob(*tool_body)
+                    .ok_or_else(|| {
+                        fail("the tool body has no built solid yet (build it first)".into())
+                    })?
+                    .to_vec();
+                // The tool's shape is in its own body's frame; it meets this
+                // body's where the two bodies sit.
+                let relative = document
+                    .body_placement(body)
+                    .inverse()
+                    .after(&document.body_placement(*tool_body));
+                plan.ops.push(SolidOp::Boolean {
+                    tool_brep,
+                    kind: *kind,
+                    tool_transform: (!relative.is_identity()).then(|| relative.rows()),
+                });
+            }
+        }
+    }
+
+    let indices: Vec<usize> = (start_index..plan.ops.len()).collect();
+    for _ in &indices {
+        plan.op_features.push(feature_id);
+    }
+    feature_ops.insert(feature_id, indices);
+    // A refine follows the feature's own ops and is not one of them: a
+    // pattern re-running this feature's tool re-runs the tool alone.
+    if feature.refine() && plan.ops.len() > start_index {
+        plan.ops.push(SolidOp::Refine);
+        plan.op_features.push(feature_id);
+    }
+    Ok(())
 }
 
 /// Resolve pattern `originals` (feature ids) into chain op indices. An empty
@@ -3275,6 +3315,16 @@ mod tests {
         doc.update_feature_data(id, pattern(0).to_json()).unwrap();
         let error = body_build_ops(&doc, body).unwrap_err();
         assert!(error.message.contains("at least 1"), "{}", error.message);
+
+        // Rebuilding, the plan stops at the pattern: the pad before it
+        // builds, and a pad after it is left out.
+        let later = doc
+            .add_feature_in_body(pad(sketch_id, 9.0), "Pad 2".into(), Some(body))
+            .unwrap();
+        let plan = body_plan(&doc, body).unwrap();
+        assert_eq!(plan.ops.len(), before, "the pad before the pattern");
+        assert_eq!(plan.failed.map(|e| e.feature), Some(Some(id)));
+        assert_eq!(plan.unbuilt, vec![later]);
     }
 
     /// A refined feature is followed by a Refine op that answers to it,

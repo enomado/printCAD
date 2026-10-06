@@ -196,13 +196,34 @@ pub fn measure_blob(brep_blob: &[u8]) -> KernelResult<PhysicalProperties> {
     let deflection = Deflection::default();
     let area = surface_properties(&model, &root, deflection, tol)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("measuring the area failed: {e}")))?;
-    let volume = volume_properties(&model, &root, deflection, tol).ok();
-    let centre = volume.as_ref().map_or(area.centre, |v| v.centre);
-    let approximate = area.deflection > 0.0 || volume.as_ref().is_some_and(|v| v.deflection > 0.0);
+    // Volume is the solids': surfaces beside them, or alone, enclose none,
+    // even where their faces happen to close a space.
+    let solids = ogeom::topo::explore_unique(&model, &root, ShapeType::Solid).unwrap_or_default();
+    let mut volume: Option<(f64, [f64; 3], bool)> = None;
+    for solid in &solids {
+        let Ok(v) = volume_properties(&model, solid, deflection, tol) else {
+            continue;
+        };
+        let (mass, moment, rough) = volume.unwrap_or((0.0, [0.0; 3], false));
+        volume = Some((
+            mass + v.mass,
+            [
+                moment[0] + v.centre.x * v.mass,
+                moment[1] + v.centre.y * v.mass,
+                moment[2] + v.centre.z * v.mass,
+            ],
+            rough || v.deflection > 0.0,
+        ));
+    }
+    let centre = match volume {
+        Some((mass, moment, _)) if mass > 0.0 => moment.map(|m| m / mass),
+        _ => [area.centre.x, area.centre.y, area.centre.z],
+    };
+    let approximate = area.deflection > 0.0 || volume.is_some_and(|(_, _, rough)| rough);
     Ok(PhysicalProperties {
-        volume_mm3: volume.map(|v| v.mass),
+        volume_mm3: volume.map(|(mass, _, _)| mass),
         area_mm2: area.mass,
-        centre_mm: [centre.x, centre.y, centre.z],
+        centre_mm: centre,
         approximate,
     })
 }

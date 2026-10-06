@@ -202,7 +202,11 @@ pub struct FacePick {
     /// The face's name when it was picked, which a rebuild finds it by
     /// (`kernel_api::naming`); zero when the pick had none, and the point
     /// finds it.
-    #[serde(default, skip_serializing_if = "is_unnamed")]
+    #[serde(
+        default,
+        skip_serializing_if = "is_unnamed",
+        deserialize_with = "kernel_api::naming::name_from_number_or_text"
+    )]
     pub name: kernel_api::TopoName,
 }
 

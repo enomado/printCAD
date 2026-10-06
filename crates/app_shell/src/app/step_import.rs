@@ -187,6 +187,7 @@ impl PrintCadApp {
                     result,
                     elapsed,
                     probes,
+                    failed,
                     ..
                 } => {
                     let bid = BodyId(body_id);
@@ -217,17 +218,31 @@ impl PrintCadApp {
                         self.session.face_highlight = None;
                         self.session.last_face_hit = None;
                     }
-                    app_log::info(format!(
-                        "Rebuilt `{}` in {:.0}ms",
-                        self.session
-                            .document
-                            .bodies()
-                            .iter()
-                            .find(|b| b.id == bid)
-                            .map(|b| b.name.as_str())
-                            .unwrap_or("body"),
-                        elapsed.as_secs_f64() * 1000.0
-                    ));
+                    let name = self.body_name(bid);
+                    match failed {
+                        Some(failed) => {
+                            self.drop_failed_preview(bid);
+                            self.session.coarse.remove(&body_id);
+                            if let Some(feature) = failed.feature {
+                                let feature = core_document::FeatureId(feature);
+                                self.session
+                                    .document
+                                    .set_feature_error(feature, Some(failed.error.clone()));
+                                self.mark_unbuilt(
+                                    feature,
+                                    failed.unbuilt.into_iter().map(core_document::FeatureId),
+                                );
+                            }
+                            app_log::error(format!(
+                                "Rebuild of `{name}` failed: {}; it shows the history before",
+                                failed.error
+                            ));
+                        }
+                        None => app_log::info(format!(
+                            "Rebuilt `{name}` in {:.0}ms",
+                            elapsed.as_secs_f64() * 1000.0
+                        )),
+                    }
                 }
                 KernelResponse::ShapeRepaired {
                     body_id,
@@ -305,6 +320,8 @@ impl PrintCadApp {
                     body_id,
                     failed_feature,
                     error,
+                    unbuilt,
+                    nothing_built,
                 } => {
                     let name = self
                         .session
@@ -325,12 +342,24 @@ impl PrintCadApp {
                     // Built again finely, it would fail the same way.
                     self.session.coarse.remove(&body_id);
                     // Pin the failure on the culprit feature; the panel and
-                    // tree surface it. Downstream keeps the last good solid.
+                    // tree surface it, and the features after it say they
+                    // were left out.
                     if let Some(feature) = failed_feature {
-                        self.session.document.set_feature_error(
-                            core_document::FeatureId(feature),
-                            Some(error.clone()),
+                        let feature = core_document::FeatureId(feature);
+                        self.session
+                            .document
+                            .set_feature_error(feature, Some(error.clone()));
+                        self.mark_unbuilt(
+                            feature,
+                            unbuilt.into_iter().map(core_document::FeatureId),
                         );
+                    }
+                    // The first feature failed: nothing of the history
+                    // builds, and a shape left from before would be stale.
+                    let bid = BodyId(body_id);
+                    if nothing_built && !self.session.document.body_solid_is_imported(bid) {
+                        self.session.previews.remove(&bid);
+                        self.session.document.remove_imported_geometry(bid);
                     }
                     app_log::error(format!("Rebuild of `{name}` failed: {error}"));
                 }

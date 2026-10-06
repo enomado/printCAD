@@ -738,7 +738,7 @@ impl Workbench for WasmWorkbench {
                             Ok(op_features) if op_features.len() == ops.len() => Ok(BuildPlan {
                                 ops,
                                 op_features,
-                                probes: Vec::new(),
+                                ..BuildPlan::default()
                             }),
                             Ok(_) => Err(BuildError {
                                 feature: None,

@@ -381,7 +381,11 @@ impl PrintCadApp {
                     "id": b.id.0.to_string(),
                     "name": b.name,
                     "hidden": b.hidden,
-                    "has_solid": document.imported_geometry(b.id).is_some(),
+                    // Whether the body has a shape built, solid or surfaces
+                    // (doc.measure gives a volume for solids only), and
+                    // whether it is a mesh taking no features.
+                    "built": document.imported_geometry(b.id).is_some(),
+                    "mesh": document.is_mesh_body(b.id),
                 })
             })
             .collect();

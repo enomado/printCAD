@@ -508,12 +508,19 @@ fn trim(
     let n = direction(normal, "the trimming plane")?;
     let at = point(origin);
     let keep = at + Vector::from(n);
-    super::sweep::trim_with_halfspace(model, base, at, n, keep).map_err(|e| {
+    let kept = super::sweep::trim_with_halfspace(model, base, at, n, keep).map_err(|e| {
         e.replace(
             "trimming the sweep at the target plane",
             "trimming the body",
         )
-    })
+    })?;
+    let left = explore_unique(model, &kept, ShapeType::Face).map_or(0, |f| f.len());
+    if left == 0 {
+        return Err(
+            "the plane leaves nothing of the body on the side kept; flip it or move it".into(),
+        );
+    }
+    Ok(kept)
 }
 
 /// Picked faces split along curves projected onto them along their normals.
@@ -527,18 +534,36 @@ fn split(
         return Err("pick the faces to split".into());
     }
     let cuts = edges_of(model, Some(base), curves)?;
+    // Sketches drawn on one plane land on the face as seen square to it,
+    // as a drawing projected onto it; anything else goes to the nearest
+    // point of the face.
+    let normals: Vec<[f64; 3]> = curves
+        .iter()
+        .filter_map(|c| match c {
+            CurveSource::Sketch { plane, .. } => Some(plane.normal),
+            CurveSource::Edge(_) => None,
+        })
+        .collect();
+    let one_plane = normals.len() == curves.len()
+        && normals.windows(2).all(|w| {
+            let cross = [
+                w[0][1] * w[1][2] - w[0][2] * w[1][1],
+                w[0][2] * w[1][0] - w[0][0] * w[1][2],
+                w[0][0] * w[1][1] - w[0][1] * w[1][0],
+            ];
+            cross.iter().all(|c| c.abs() < 1e-9)
+        });
+    let projection = match normals.first() {
+        Some(normal) if one_plane => {
+            ogeom::heal::Projection::Along(direction(*normal, "the sketch's plane")?)
+        }
+        _ => ogeom::heal::Projection::AlongNormals,
+    };
     let mut shape = base.clone();
     for pick in faces {
         let face = picked_face(model, &shape, pick)?;
-        let built = ogeom::heal::split_face(
-            model,
-            &shape,
-            &face,
-            &cuts,
-            ogeom::heal::Projection::AlongNormals,
-            tol(),
-        )
-        .map_err(|e| format!("splitting a face failed: {e}"))?;
+        let built = ogeom::heal::split_face(model, &shape, &face, &cuts, projection, tol())
+            .map_err(|e| format!("splitting a face failed: {e}"))?;
         crate::naming::record(&built.history);
         shape = built.shape;
     }
@@ -564,18 +589,67 @@ fn extend(
             continuity: kernel_continuity(other),
         },
     };
-    let mut shape = base.clone();
+    // The body's sheets, each as its faces: a picked edge's face is
+    // extended on its own (the kernel extends a face) and its sheet sewn
+    // back together once every edge is done.
+    let mut sheets: Vec<(Shape, Vec<Shape>, bool)> = Vec::new();
+    for sheet in sheets_of(model, base) {
+        let faces = explore_unique(model, &sheet, ShapeType::Face)
+            .map_err(|e| format!("reading a sheet's faces failed: {e}"))?;
+        sheets.push((sheet, faces, false));
+    }
     for probe in edges {
-        let edge = super::dressup::picked_edges(model, &shape, std::slice::from_ref(probe))?
+        let current: Vec<Shape> = sheets.iter().flat_map(|(_, f, _)| f.clone()).collect();
+        let all = model
+            .add_compound(&current)
+            .map_err(|e| format!("gathering the faces failed: {e}"))?;
+        let edge = super::dressup::picked_edges(model, &all, std::slice::from_ref(probe))?
             .into_iter()
             .next()
             .ok_or_else(|| "a picked edge is no longer in the body".to_string())?;
-        let built = extend_face(model, &shape, &edge, length, mode, tol())
+        let holding = |model: &Model, face: &Shape| {
+            explore_unique(model, face, ShapeType::Edge)
+                .is_ok_and(|edges| edges.iter().any(|e| e.is_same(&edge)))
+        };
+        let (sheet, at) = sheets
+            .iter()
+            .enumerate()
+            .find_map(|(s, (_, faces, _))| {
+                faces
+                    .iter()
+                    .position(|f| holding(model, f))
+                    .map(|at| (s, at))
+            })
+            .ok_or("the picked edge is on a solid; Extend works on surfaces")?;
+        let face = sheets[sheet].1[at].clone();
+        let built = extend_face(model, &face, &edge, length, mode, tol())
             .map_err(|e| format!("extending a face failed: {e}"))?;
         crate::naming::record(&built.history);
-        shape = built.shape;
+        sheets[sheet].1[at] = built.shape;
+        sheets[sheet].2 = true;
     }
-    Ok(shape)
+    let mut pieces = Vec::new();
+    for (sheet, faces, changed) in sheets {
+        if !changed {
+            pieces.push(sheet);
+        } else if faces.len() == 1 {
+            pieces.extend(faces);
+        } else {
+            let sewn = sew(model, &faces, tol())
+                .map_err(|e| format!("joining the extended faces failed: {e}"))?;
+            crate::naming::record(&sewn.history);
+            pieces.extend(sewn.shells);
+        }
+    }
+    for piece in pieces_of(model, base) {
+        if !matches!(
+            model.kind_of(&piece),
+            Ok(ShapeType::Face | ShapeType::Shell | ShapeType::Compound)
+        ) {
+            pieces.push(piece);
+        }
+    }
+    one_or_compound(model, pieces)
 }
 
 /// A round of `radius` along picked edges where two faces of a sheet meet.
@@ -601,8 +675,19 @@ fn fillet(
             pieces.push(sheet);
             continue;
         }
-        let built = ogeom::fillet::fillet_sheet_edges(model, &sheet, &own, radius, tol())
-            .map_err(|e| format!("rounding the edges failed: {e}"))?;
+        let built =
+            ogeom::fillet::fillet_sheet_edges(model, &sheet, &own, radius, tol()).map_err(|e| {
+                let e = e.to_string();
+                // A round needs a face of the sheet on each side; an edge
+                // with one is where separate surfaces meet, or a free edge.
+                if e.contains("one face of the sheet only") || e.contains("got a Face") {
+                    "the edge has a face on one side only; where two surfaces meet there, Sew \
+                     them first so they share it"
+                        .to_string()
+                } else {
+                    format!("rounding the edges failed: {e}")
+                }
+            })?;
         crate::naming::record(&built.history);
         pieces.push(built.shape);
     }

@@ -605,7 +605,9 @@ fn bodies_that_borrow_from_each_other_settle_and_say_so() {
     doc.mark_feature_dirty(post);
     let jobs = wb_design::rebuild_jobs(&mut doc);
     let job = jobs.iter().find(|job| job.body == b).expect("B rebuilds");
-    let error = job.plan.as_ref().unwrap_err();
+    let plan = job.plan.as_ref().expect("B builds what comes before");
+    let error = plan.failed.as_ref().expect("the post is refused");
+    assert_eq!(error.feature, Some(post));
     assert!(error.message.contains("in turn"), "{}", error.message);
     assert!(
         wb_design::rebuild_jobs(&mut doc).is_empty(),

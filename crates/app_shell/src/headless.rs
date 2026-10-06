@@ -340,48 +340,71 @@ impl Headless {
             for job in jobs {
                 let body = job.body;
                 self.document.clear_body_feature_errors(body);
-                match job.plan {
-                    Ok(plan) if plan.ops.is_empty() => {
-                        if !self.document.body_solid_is_imported(body) {
-                            self.document.remove_imported_geometry(body);
-                        }
-                    }
-                    Ok(plan) => {
-                        let asked: Vec<kernel_api::ChainProbe> =
-                            plan.probes.iter().map(|p| p.probe).collect();
-                        let tags: Vec<kernel_api::TopoName> = plan
-                            .op_features
-                            .iter()
-                            .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
-                            .collect();
-                        match kernel.execute_solid_chain_named(
-                            &plan.ops,
-                            &tags,
-                            &TessellationSettings::default(),
-                            None,
-                            &asked,
-                        ) {
-                            Ok(result) => {
-                                self.document
-                                    .store_probe_answers(&plan.probes, &result.probes);
-                                crate::app::recompute::store_built_solid(
-                                    &mut self.document,
-                                    body,
-                                    result,
-                                );
-                            }
-                            Err(err) => {
-                                if let Some(feature) = plan.op_features.get(err.op_index) {
-                                    self.document
-                                        .set_feature_error(*feature, Some(err.message.clone()));
-                                }
-                            }
-                        }
-                    }
+                let mut plan = match job.plan {
+                    Ok(plan) => plan,
                     Err(err) => {
                         if let Some(feature) = err.feature {
                             self.document
                                 .set_feature_error(feature, Some(err.message.clone()));
+                        }
+                        continue;
+                    }
+                };
+                if let Some(err) = plan.failed.take()
+                    && let Some(feature) = err.feature
+                {
+                    self.document.set_feature_error(feature, Some(err.message));
+                    let unbuilt = std::mem::take(&mut plan.unbuilt);
+                    crate::app::recompute::mark_unbuilt(&mut self.document, feature, unbuilt);
+                }
+                // A step that fails leaves the body the history before it.
+                loop {
+                    if plan.ops.is_empty() {
+                        if !self.document.body_solid_is_imported(body) {
+                            self.document.remove_imported_geometry(body);
+                        }
+                        break;
+                    }
+                    let asked: Vec<kernel_api::ChainProbe> =
+                        plan.probes.iter().map(|p| p.probe).collect();
+                    let tags: Vec<kernel_api::TopoName> = plan
+                        .op_features
+                        .iter()
+                        .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+                        .collect();
+                    match kernel.execute_solid_chain_named(
+                        &plan.ops,
+                        &tags,
+                        &TessellationSettings::default(),
+                        None,
+                        &asked,
+                    ) {
+                        Ok(result) => {
+                            self.document
+                                .store_probe_answers(&plan.probes, &result.probes);
+                            crate::app::recompute::store_built_solid(
+                                &mut self.document,
+                                body,
+                                result,
+                            );
+                            break;
+                        }
+                        Err(err) => {
+                            let Some(feature) = plan.op_features.get(err.op_index).copied() else {
+                                break;
+                            };
+                            self.document
+                                .set_feature_error(feature, Some(err.message.clone()));
+                            let start = plan
+                                .op_features
+                                .iter()
+                                .position(|f| *f == feature)
+                                .unwrap_or(0);
+                            let after = plan.op_features[start..].to_vec();
+                            crate::app::recompute::mark_unbuilt(&mut self.document, feature, after);
+                            plan.ops.truncate(start);
+                            plan.op_features.truncate(start);
+                            plan.probes.retain(|p| p.probe.after_op <= start);
                         }
                     }
                 }
