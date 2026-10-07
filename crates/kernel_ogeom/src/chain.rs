@@ -800,6 +800,7 @@ pub fn execute_cached(
             }
             _ => None,
         };
+        let naming_started = std::time::Instant::now();
         names = match solid_op {
             SolidOp::Shape { .. } => tool_names_fresh(&model, &next, tag),
             _ => {
@@ -813,9 +814,10 @@ pub fn execute_cached(
         current = Some(next);
         tracing::debug!(
             target: "printcad.chain",
-            "op {index} {}: {:.1} ms",
+            "op {index} {}: {:.1} ms, naming {:.1} ms",
             progress::op_label(solid_op),
-            op_started.elapsed().as_secs_f64() * 1000.0
+            op_started.elapsed().as_secs_f64() * 1000.0,
+            naming_started.elapsed().as_secs_f64() * 1000.0
         );
         if let Some((at, tail)) = edit
             && at == index

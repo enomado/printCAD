@@ -50,18 +50,24 @@ Not yet filed:
 
 The rebuild skips the history an edit did not change; the operations
 themselves still cost what the whole solid holds, not what an edit
-touches. The kernel work, in order of payoff:
+touches. The kernel work, in order of payoff (`rebuild_bench`'s holed plates: one
+hole added to a 582-face plate costs 1.6 s, of which the boolean 0.18 s,
+meshing 0.5 s and the snapshot 0.7 s):
 
-- [ ] **A. Local boolean** (L). Faces whose box misses the tool's and that
+- [ ] **A. Local boolean** (L, ogeom-rs#134). Faces whose box misses the tool's and that
   no section crosses pass through as they are, not split, classified or
   rebuilt; a connected region of them is classified once, by one probe;
   only the region near the tool is sewn again; a face tree replaces the
   all-pairs box test.
-- [ ] **D. Fillets in one pass** (M). All of a fillet's blends applied in
+- [ ] **D. Fillets in one pass** (M, ogeom-rs#135). All of a fillet's blends applied in
   one boolean, or by replacing faces locally, not one whole-solid boolean
   per edge piece.
-- [ ] **E. Face bounds in the model** (S). Each face's box kept in the
+- [ ] **E. Face bounds in the model** (S, ogeom-rs#136). Each face's box kept in the
   model, read by the booleans, `tight_bounds` and printCAD alike.
+- [ ] **F. Snapshots of what the solid reaches** (S, ogeom-rs#137). The
+  native text carries every provenance entry the model ever made: 39 MB
+  and 0.7 s for a 582-face plate, written after every rebuild and saved
+  in the document.
 
 And in printCAD, as each lands:
 

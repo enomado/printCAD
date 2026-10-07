@@ -17,7 +17,9 @@
 //! body's base, a boss beside it whose height is edited: the history is short,
 //! the solid large and curved, so meshing is most of a build. Then a pocket
 //! cut down through that part's middle and widened: a small edit the
-//! boolean must still make against the whole solid.
+//! boolean must still make against the whole solid. Last, plates with a
+//! growing grid of holes, one more added at a corner: what a small edit
+//! costs as the solid grows.
 
 use core_document::{
     CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, FeatureId,
@@ -215,6 +217,78 @@ fn main() {
     build(&mut host, &mut cache, "deeper, the same hole", &detail);
 
     imported_part(&detail, before);
+    holed_plate(&detail, before);
+}
+
+/// A plate with a grid of holes, one more hole added at a corner: the edit
+/// touches a few faces of a solid that holds hundreds.
+fn holed_plate(detail: &TessellationSettings, before: bool) {
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let hole = |x: f64, y: f64| SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 1.5,
+            height: 20.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            origin: [x, y, -5.0],
+            ..Placement::default()
+        },
+        op: BooleanOp::Cut,
+    };
+    println!();
+    for n in [8usize, 16, 24] {
+        let size = 10.0 * n as f64 + 10.0;
+        let mut ops = vec![SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: size,
+                width: size,
+                height: 10.0,
+            },
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        }];
+        for i in 0..n {
+            for j in 0..n {
+                ops.push(hole(10.0 + 10.0 * i as f64, 10.0 + 10.0 * j as f64));
+            }
+        }
+        let tags: Vec<u64> = (1..=ops.len() as u64 + 1).collect();
+        let mut cache = ChainCache::default();
+        let built = OgeomKernel::new()
+            .execute_solid_chain_cached(
+                &ops,
+                &tags[..ops.len()],
+                detail,
+                None,
+                &[],
+                Some(&mut cache),
+            )
+            .unwrap();
+        let mut faces = built.mesh.faces.clone();
+        faces.sort_unstable();
+        faces.dedup();
+        ops.push(hole(5.0, 5.0));
+        let started = std::time::Instant::now();
+        OgeomKernel::new()
+            .execute_solid_chain_cached(
+                &ops,
+                &tags,
+                detail,
+                None,
+                &[],
+                (!before).then_some(&mut cache),
+            )
+            .unwrap();
+        println!(
+            "{:<31} {:>4} ops, {:>3} kept  {:>8.1} ms  {} bytes of snapshot",
+            format!("{} faces, a corner hole added", faces.len()),
+            ops.len(),
+            cache.resumed(),
+            started.elapsed().as_secs_f64() * 1000.0,
+            built.brep_blob.len()
+        );
+    }
 }
 
 /// An imported part as the base, a boss beside it, edited.
