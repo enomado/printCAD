@@ -195,6 +195,7 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.move_after",
     "doc.recompute",
     "doc.measure",
+    "doc.print_layout",
     "doc.picture",
 ];
 
@@ -221,6 +222,11 @@ fn file_commands() -> Vec<CommandSpec> {
                 "tolerance",
                 ParamKind::Number,
                 "The mesh formats' distance to the true surface, mm (0.01)",
+            )
+            .optional(
+                "layout",
+                ParamKind::Bool,
+                "The print layout (doc.print_layout) rather than the bodies where they sit",
             )
             .returns("{path, written, skipped, triangles}"),
     ]
@@ -319,17 +325,35 @@ impl Headless {
                 self.file = Some(path);
                 Ok(Value::Null)
             }
+            "doc.print_layout" => {
+                self.rebuild();
+                crate::app::scripts::print_layout_command(
+                    &args,
+                    &self.document,
+                    &self.registry,
+                    &settings::PrintingSettings::default(),
+                )
+            }
             "file.export" => {
                 let path = PathBuf::from(a.string("path")?);
                 let format = crate::app::scripts::export_format(a.opt_string("format")?, &path)?;
                 let bodies = crate::app::scripts::body_list(args.get("bodies"))?;
                 self.rebuild();
+                let layout = (a.opt_bool("layout")? == Some(true)).then(|| {
+                    use crate::app::print_layout::{LayoutSettings, lay_out, parts_to_print};
+                    lay_out(
+                        &self.document,
+                        &parts_to_print(&self.document, &self.registry),
+                        &LayoutSettings::of(&settings::PrintingSettings::default()),
+                    )
+                });
                 let (path, exported) = crate::app::export::export_document(
                     &self.document,
                     path,
                     format,
                     bodies,
                     a.opt_number("tolerance")?.map(|t| t as f32),
+                    layout.as_ref(),
                 )
                 .map_err(CommandError::failed)?;
                 Ok(json!({
@@ -898,6 +922,7 @@ mod tests {
             "stl",
             0.05,
             "nil",
+            false,
         );
         let check = r#"
             assert(pc.config.list().active == "Small", "the active one is back")

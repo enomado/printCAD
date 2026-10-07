@@ -72,8 +72,16 @@ pub fn draw_export_modal(
                             .collect();
                         select_field(ui, "export_format", &mut draft.format, &options, 260.0);
                     });
-                    check_row(ui, &mut draft.selected_only, "Selected body only")
-                        .on_hover_text("Otherwise every visible body");
+                    check_row(ui, &mut draft.layout, "Laid out for printing").on_hover_text(
+                        "Each part flat on the bed, as many as the parts list prints, as File › \
+                         Print layout shows it",
+                    );
+                    if draft.layout {
+                        draft.selected_only = false;
+                    } else {
+                        check_row(ui, &mut draft.selected_only, "Selected body only")
+                            .on_hover_text("Otherwise every visible body");
+                    }
                     if draft.format.is_mesh() {
                         check_row(ui, &mut draft.textures, "Surface textures")
                             .on_hover_text("Press the bodies' surface textures into the mesh");

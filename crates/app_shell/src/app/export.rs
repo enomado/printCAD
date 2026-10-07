@@ -25,6 +25,9 @@ pub(crate) struct ExportDraft {
     pub every_configuration: bool,
     /// Bodies' surface textures pressed into the mesh formats.
     pub textures: bool,
+    /// The print layout rather than the bodies where they sit: each part
+    /// flat on the bed, as many as the parts list prints.
+    pub layout: bool,
 }
 
 impl Default for ExportDraft {
@@ -34,6 +37,7 @@ impl Default for ExportDraft {
             selected_only: false,
             every_configuration: false,
             textures: true,
+            layout: false,
             // A print resolves far finer than a screen: a hundredth of a
             // millimetre off the true surface and a few degrees per facet.
             detail: TessellationSettings {
@@ -176,7 +180,7 @@ impl PrintCadApp {
     /// step.
     fn export_every_configuration(&mut self, path: &Path, draft: &ExportDraft) {
         let base = path.with_extension("");
-        let bodies = if draft.selected_only {
+        let bodies = if draft.selected_only && !draft.layout {
             match self.session.selected_body {
                 Some(body) => format!("{{\"{body}\"}}"),
                 None => {
@@ -192,6 +196,7 @@ impl PrintCadApp {
             draft.format.extension(),
             draft.detail.chord_tolerance,
             &bodies,
+            draft.layout,
         );
         self.submit_script(
             scripting::Job::Script {
@@ -204,9 +209,11 @@ impl PrintCadApp {
 
     /// Hand every visible body to the slicer: written to a file of the
     /// slicer's format in the temporary folder, then opened with the
-    /// slicer command from Preferences.
-    pub(crate) fn send_to_slicer(&mut self) {
+    /// slicer command from Preferences. Laid out for printing when
+    /// `laid_out`, or when Preferences say so.
+    pub(crate) fn send_to_slicer(&mut self, laid_out: bool) {
         let printing = &self.user_settings.printing;
+        let layout = laid_out || printing.slicer_layout;
         let draft = ExportDraft {
             format: match printing.slicer_format {
                 settings::SlicerFormat::ThreeMf => ExportFormat::ThreeMf,
@@ -217,6 +224,7 @@ impl PrintCadApp {
             every_configuration: false,
             // What goes to the slicer is what gets printed.
             textures: true,
+            layout,
         };
         if self.export_bodies(&draft).is_empty() {
             app_log::warn("Nothing to send: no visible body has geometry");
@@ -324,9 +332,15 @@ impl PrintCadApp {
     }
 
     /// The bodies the draft asks for: the selected one, or every visible
-    /// body with geometry that is made, in the document's body order.
+    /// body with geometry that is made, in the document's body order; or
+    /// the print layout's copies.
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
         let document = &self.session.document;
+        let textured = draft.textures && draft.format.is_mesh();
+        if draft.layout {
+            let layout = self.current_print_layout();
+            return layout_bodies(document, &layout, textured);
+        }
         let selected = self.session.selected_body;
         // What a bench says is not made (a bought part) stays out of an
         // export of everything.
@@ -340,29 +354,93 @@ impl PrintCadApp {
                     document.imported_body_effective_visible(id) && !not_made.contains(&id)
                 }
             },
-            draft.textures && draft.format.is_mesh(),
+            textured,
         )
+    }
+
+    /// The print layout as it stands: the one shown, when it is up to
+    /// date, else made now.
+    pub(crate) fn current_print_layout(&self) -> crate::app::print_layout::Layout {
+        use crate::app::print_layout::{LayoutSettings, lay_out, layout_key, parts_to_print};
+        let document = &self.session.document;
+        let parts = parts_to_print(document, &self.registry);
+        let settings = LayoutSettings::of(&self.user_settings.printing);
+        let key = layout_key(document, &parts, &settings);
+        match &self.session.print_layout {
+            Some(shown) if shown.key == key => shown.layout.clone(),
+            _ => lay_out(document, &parts, &settings),
+        }
     }
 }
 
+/// The copies of a print layout, each its body's shape where the layout
+/// puts it, named as the layout names them.
+fn layout_bodies(
+    document: &core_document::Document,
+    layout: &crate::app::print_layout::Layout,
+    textured: bool,
+) -> Vec<OwnedBody> {
+    let mut pictures = crate::app::textures::Pictures::new();
+    layout
+        .pieces
+        .iter()
+        .filter_map(|piece| {
+            let pressing = textured
+                .then(|| crate::app::textures::Pressing::of(document, piece.body, &mut pictures))
+                .flatten();
+            let brep = document.imported_brep_blob_arc(piece.body);
+            let (local, _) = document.local_geometry(piece.body)?;
+            if local.indices.is_empty() {
+                return None;
+            }
+            Some(match brep {
+                Some(brep) => OwnedBody {
+                    name: piece.name.clone(),
+                    brep: Some(brep),
+                    transform: Some(piece.placement.rows()),
+                    mesh: local,
+                    pressing,
+                },
+                // A mesh body has only its triangles: pressed in its own
+                // frame, then moved to the bed.
+                None => {
+                    let pressed = match &pressing {
+                        Some(pressing) => pressing.apply(&local, surface_texture::Detail::EXPORT),
+                        None => (*local).clone(),
+                    };
+                    OwnedBody {
+                        name: piece.name.clone(),
+                        brep: None,
+                        transform: None,
+                        mesh: Arc::new(piece.placement.mesh(&pressed)),
+                        pressing: None,
+                    }
+                }
+            })
+        })
+        .collect()
+}
+
 /// The script that writes every configuration: `base-<name>.<ext>` each,
-/// `bodies` a Lua list of body ids or `nil` for every visible body.
+/// `bodies` a Lua list of body ids or `nil` for every visible body, or
+/// the print layout when `layout`.
 pub(crate) fn every_configuration_script(
     base: &str,
     ext: &str,
     tolerance: f32,
     bodies: &str,
+    layout: bool,
 ) -> String {
     format!(
         r#"-- Export every configuration
-local base, ext, tolerance, bodies = {base:?}, {ext:?}, {tolerance}, {bodies}
+local base, ext, tolerance, bodies, layout = {base:?}, {ext:?}, {tolerance}, {bodies}, {layout}
 local table = pc.config.list()
 local was = table.active
 for _, row in ipairs(table.rows) do
   pc.config.activate{{name = row.name}}
   pc.doc.rebuild()
   local file = base .. "-" .. row.name:gsub("[^%w%-_. ]", "-") .. "." .. ext
-  pc.file.export{{path = file, tolerance = tolerance, bodies = bodies}}
+  pc.file.export{{path = file, tolerance = tolerance, bodies = bodies, layout = layout}}
   print("Wrote " .. file)
 end
 pc.config.activate{{name = was}}
@@ -458,23 +536,28 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
     Ok(program)
 }
 
-/// Write `bodies` of `document` (every visible one when `None`) to `path`
-/// now, on this thread: what a script's export does.
+/// Write `bodies` of `document` (every visible one when `None`), or the
+/// copies of `layout` when given, to `path` now, on this thread: what a
+/// script's export does.
 pub(crate) fn export_document(
     document: &core_document::Document,
     path: PathBuf,
     format: ExportFormat,
     bodies: Option<Vec<core_document::BodyId>>,
     tolerance: Option<f32>,
+    layout: Option<&crate::app::print_layout::Layout>,
 ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
-    let owned = bodies_to_export(
-        document,
-        |id| match &bodies {
-            Some(list) => list.contains(&id),
-            None => document.imported_body_effective_visible(id),
-        },
-        format.is_mesh(),
-    );
+    let owned = match layout {
+        Some(layout) => layout_bodies(document, layout, format.is_mesh()),
+        None => bodies_to_export(
+            document,
+            |id| match &bodies {
+                Some(list) => list.contains(&id),
+                None => document.imported_body_effective_visible(id),
+            },
+            format.is_mesh(),
+        ),
+    };
     if owned.is_empty() {
         return Err("there is nothing to export".to_string());
     }
@@ -613,12 +696,14 @@ mod tests {
             ExportFormat::Stl,
             None,
             None,
+            None,
         )
         .unwrap();
         let (textured_path, textured) = export_document(
             &textured_box(true),
             dir.join(format!("textured-{}.stl", uuid::Uuid::new_v4())),
             ExportFormat::Stl,
+            None,
             None,
             None,
         )
@@ -636,6 +721,62 @@ mod tests {
         assert!(
             textured_top > 10.3 && textured_top <= 10.5 + 1e-3,
             "{textured_top}"
+        );
+    }
+
+    /// An export of the print layout writes every copy where the layout
+    /// puts it: three boxes side by side on the bed, the model untouched.
+    #[test]
+    fn a_layout_export_writes_each_copy_on_the_bed() {
+        use crate::app::print_layout::{LayoutSettings, lay_out};
+        let mut doc = textured_box(false);
+        let body = doc.bodies()[0].id;
+        doc.set_body_placement(
+            body,
+            core_document::BodyPlacement::new(
+                glam::Quat::IDENTITY,
+                glam::Vec3::new(500.0, 0.0, 40.0),
+            ),
+        );
+        let parts = [core_document::PrintPart {
+            name: "Box".into(),
+            bodies: vec![body],
+            count: 3,
+        }];
+        let settings = LayoutSettings {
+            bed_mm: [100.0, 100.0, 100.0],
+            origin_center: false,
+            gap_mm: 4.0,
+        };
+        let layout = lay_out(&doc, &parts, &settings);
+        let path = std::env::temp_dir().join(format!("layout-{}.stl", uuid::Uuid::new_v4()));
+        let (path, exported) =
+            export_document(&doc, path, ExportFormat::Stl, None, None, Some(&layout)).unwrap();
+        let _ = std::fs::remove_file(path);
+        assert_eq!(exported.written, 3);
+        let bytes = &exported.bytes;
+        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for t in 0..count {
+            for v in 0..3 {
+                let at = 84 + t * 50 + 12 + v * 12;
+                for k in 0..3 {
+                    let c =
+                        f32::from_le_bytes(bytes[at + k * 4..at + k * 4 + 4].try_into().unwrap());
+                    lo[k] = lo[k].min(c);
+                    hi[k] = hi[k].max(c);
+                }
+            }
+        }
+        // Three 10 mm boxes 4 mm apart, 2 mm in from the bed's corner.
+        assert!(
+            (lo[0] - 2.0).abs() < 1e-3 && (hi[0] - 40.0).abs() < 1e-3,
+            "{lo:?} {hi:?}"
+        );
+        assert!(lo[2].abs() < 1e-3 && (hi[2] - 10.0).abs() < 1e-3);
+        assert!(
+            doc.body_placement(body).offset().x > 499.0,
+            "the body stays put"
         );
     }
 

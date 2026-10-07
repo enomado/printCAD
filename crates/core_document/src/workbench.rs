@@ -605,6 +605,15 @@ impl FeatureInfo {
     }
 }
 
+/// One part of a print: the bodies of one shape (the first the one whose
+/// shape is printed), its name, and how many of it to print.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrintPart {
+    pub name: String,
+    pub bodies: Vec<BodyId>,
+    pub count: u32,
+}
+
 /// Trait implemented by all workbench plugins.
 ///
 /// Workbenches declare their tools via `configure`, and can optionally
@@ -944,6 +953,18 @@ pub trait Workbench: Send {
     /// (`WorkbenchDescriptor::bought_kinds`).
     fn not_printed(&self, _document: &Document, _bought_kinds: &[WorkbenchId]) -> Vec<BodyId> {
         Vec::new()
+    }
+
+    /// The parts to print and how many of each, for a print layout: each
+    /// part the bodies of one shape, the first the one printed. `None`
+    /// from a bench that keeps no parts list; the first bench to answer
+    /// is the one the host lays out.
+    fn print_parts(
+        &self,
+        _document: &Document,
+        _bought_kinds: &[WorkbenchId],
+    ) -> Option<Vec<PrintPart>> {
+        None
     }
 
     /// Bodies to draw faded while this bench is active: what it asks the

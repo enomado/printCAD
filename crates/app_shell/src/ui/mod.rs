@@ -92,6 +92,8 @@ pub struct UiFrameOutput {
     pub task_open: bool,
     /// The tree row under the pointer.
     pub tree_hovered: Option<TreeItemId>,
+    /// The Print layout task is open after this frame.
+    pub print_layout_open: bool,
 }
 
 pub struct UiLayer {
@@ -155,6 +157,7 @@ impl UiLayer {
             OpenTask::Texture(body, face) => {
                 host_tasks::HostTask::Texture(texture_task::TextureTask::open(document, body, face))
             }
+            OpenTask::PrintLayout => host_tasks::HostTask::PrintLayout,
         };
         self.host_task = Some((tab.into(), task));
     }
@@ -375,6 +378,7 @@ impl UiLayer {
             chats,
             approvals,
             assistant_attention,
+            print_layout,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -545,6 +549,9 @@ impl UiLayer {
             if menu.toggle_assistant {
                 self.assistant.toggle();
             }
+            if menu.print_layout {
+                locals.push(MenuLocal::Task(OpenTask::PrintLayout));
+            }
 
             if menu.check_updates {
                 self.preferences
@@ -694,6 +701,9 @@ impl UiLayer {
                 );
                 if palette.toggle_console {
                     self.console.toggle();
+                }
+                if palette.print_layout {
+                    locals.push(MenuLocal::Task(OpenTask::PrintLayout));
                 }
                 if palette.show_preferences {
                     let (group, tab) = (self.preferences.group, self.preferences.tab);
@@ -881,6 +891,8 @@ impl UiLayer {
                     host_task: self.host_task.as_mut().map(|(_, t)| t),
                     picked_faces: &picked_faces,
                     custom_colors: &settings.rendering.custom_colors,
+                    printing: &settings.printing,
+                    print_layout,
                 },
             );
             apply_writeback(&task_result.writeback, &mut commands, &mut tree_selection);
@@ -1124,6 +1136,10 @@ impl UiLayer {
             commands,
             task_open,
             tree_hovered,
+            print_layout_open: matches!(
+                self.host_task,
+                Some((_, host_tasks::HostTask::PrintLayout))
+            ),
         }
     }
 }

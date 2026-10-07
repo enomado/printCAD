@@ -39,6 +39,8 @@ pub struct PaletteResult {
     /// Switch to this workbench, then activate the tool.
     pub activate_tool: Option<(ActiveWorkbench, String)>,
     pub toggle_console: bool,
+    /// The Print layout task.
+    pub print_layout: bool,
 }
 
 /// A shell action the palette can run.
@@ -55,6 +57,7 @@ enum ShellAction {
     Projection(ProjectionMode),
     Console,
     Quit,
+    PrintLayout,
 }
 
 struct ShellEntry {
@@ -113,6 +116,12 @@ const SHELL: &[ShellEntry] = &[
         icon: "workbench-print",
         binding: Some("file.send_to_slicer"),
         action: ShellAction::File(FileCommand::SendToSlicer),
+    },
+    ShellEntry {
+        label: "Print layout…",
+        icon: "workbench-print",
+        binding: Some("file.print_layout"),
+        action: ShellAction::PrintLayout,
     },
     ShellEntry {
         label: "Start page",
@@ -340,6 +349,7 @@ fn run(entry: &Entry, commands: &mut Vec<UiCommand>, result: &mut PaletteResult)
             ShellAction::Projection(mode) => commands.push(UiCommand::SetProjection(*mode)),
             ShellAction::Console => result.toggle_console = true,
             ShellAction::Quit => commands.push(UiCommand::Quit),
+            ShellAction::PrintLayout => result.print_layout = true,
         },
         EntryKind::Tool { bench, id } => {
             result.activate_tool = Some((ActiveWorkbench(bench.clone()), id.clone()));

@@ -40,6 +40,8 @@ pub struct TaskPanelInputs<'a> {
     /// The faces selected in the view: each its body and index.
     pub picked_faces: &'a [(core_document::BodyId, u32)],
     pub custom_colors: &'a [[f32; 3]],
+    pub printing: &'a settings::PrintingSettings,
+    pub print_layout: Option<&'a crate::app::print_layout::Layout>,
 }
 
 pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPanelResult {
@@ -53,6 +55,8 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         host_task,
         picked_faces,
         custom_colors,
+        printing,
+        print_layout,
     } = inputs;
     let mut result = TaskPanelResult::default();
     let request = keyboard_request(ui);
@@ -64,13 +68,16 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         };
         result.open = true;
         let title = host_task.title(document);
-        panel(ui, &title, true, request, |ui, request| {
+        let confirmable = host_task.confirmable();
+        panel(ui, &title, confirmable, request, |ui, request| {
             result.host_end = host_task.show(
                 ui,
                 super::host_tasks::HostTaskInputs {
                     document,
                     picked_faces,
                     custom_colors,
+                    printing,
+                    print_layout,
                 },
                 request.accept,
                 request.cancel,

@@ -51,6 +51,8 @@ pub struct MenuBarResult {
     pub open_palette: bool,
     pub toggle_console: bool,
     pub toggle_assistant: bool,
+    /// File › Print layout: its task in the right panel.
+    pub print_layout: bool,
 }
 
 fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> bool {
@@ -227,6 +229,14 @@ pub fn draw_menu_bar(
                                 have_document,
                             ) {
                                 commands.push(UiCommand::File(FileCommand::SendToSlicer));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Print layout…",
+                                key("file.print_layout"),
+                                have_document,
+                            ) {
+                                result.print_layout = true;
                             }
                             ui.separator();
                             if let Some(active) = inputs.active_tab

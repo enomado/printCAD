@@ -1,7 +1,8 @@
 # Printing
 
 What printCAD offers for the step from a model to a printer: the parts
-list's printing columns, and nut traps for captive nuts.
+list's printing columns, nut traps for captive nuts, and the print
+layout that lays every part flat on the bed for export or the slicer.
 The bed itself (its size, where its origin is, whether it is drawn) and
 the slicer command are set in Preferences › Printing.
 
@@ -80,3 +81,46 @@ From a script, `nut_trap` is a field of `design.hole`: `nut_trap = true`
 for the usual pocket at the mouth, or a table, `{side = "Bottom",
 clearance = 0.4, depth = 3, across_flats = 7, turn_deg = 30, standard =
 "Din934"}`, each field left out taking its usual value.
+
+## Print layout
+
+File › Print layout… (also in the command palette) lays every part to
+print on the bed, as many copies as the parts list's Print column asks
+for, and shows them there in the view while its task is open. Nothing
+moves: the model is back where it was when the task closes, and the
+layout is only where export and the slicer put the copies.
+
+- **Which parts, how many**: each part of the parts list with a count to
+  print above none and at least one visible body. A document whose
+  benches keep no parts list prints every visible body that is not
+  bought, once.
+- **How a part lies**: on its largest flat face that the whole part
+  stands on, no point of it below that face's plane; among faces within
+  a hundredth of that area, the one leaving the part lowest. A part with
+  no such face (a sphere) keeps the up of its own frame. It is then
+  turned about the vertical to the smallest rectangle around its
+  footprint, the rectangle's longer side along X.
+- **How copies pack**: in rows along X, the deepest footprints first,
+  each row as deep as its first copy, the **Gap** (5 mm unless set)
+  between copies and half of it from the bed's edges. A copy that fits
+  only turned a quarter goes turned. What one bed cannot hold starts
+  another plate, drawn beside the first along X.
+- **What does not fit**: a part wider or deeper than the bed goes on a
+  plate of its own, and one taller than the build height is named too,
+  as is a part not built yet, which is left out.
+
+The bed is the one in Preferences › Printing (its width, depth, build
+height and whether its origin is the centre).
+
+The task's **Send to slicer** writes the layout in the slicer's format
+and opens it in the slicer; **Export…** opens the export dialog set to
+**Laid out for printing**, which the dialog offers at any time. **Send to
+slicer sends the layout** (or Preferences › Printing › Send the print
+layout) makes File › Send to slicer (Ctrl+P) send the layout always. With
+several plates, the file holds them all, side by side.
+
+From a script, `pc.doc.print_layout{}` answers where each copy goes
+(its body, name, plate, bounds on the bed and the transform from the
+body's own frame), with `bed = {x, y, z}` and `gap` to lay out for
+another printer; `pc.file.export{path = ..., layout = true}` writes the
+layout and `pc.file.send_to_slicer{layout = true}` sends it.

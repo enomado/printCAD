@@ -1309,7 +1309,8 @@ fn search_results(
     }
 }
 
-/// The printer's build volume: what the print-bed overlay draws.
+/// The printer's build volume (what the print-bed overlay draws and the
+/// print layout fills), the slicer and the layout's gap.
 fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
     let printing = &mut state.draft.printing;
     let [x, y, z] = &mut printing.bed_mm;
@@ -1360,6 +1361,24 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
                     (SlicerFormat::Stl, "STL: triangles only"),
                 ],
             ),
+            PrefRow::toggle("Send the print layout", &mut printing.slicer_layout).hint(
+                "Each part flat on the bed, as many as the parts list prints, rather than the \
+                 bodies where they sit",
+            ),
+        ],
+        filter,
+    );
+    pref_group(
+        ui,
+        "Print layout",
+        vec![
+            PrefRow::qty(
+                "Gap between parts",
+                QtyField::mm(&mut printing.layout_gap_mm)
+                    .range(0.0..=50.0)
+                    .speed(0.5),
+            )
+            .hint("Half of it is kept from the bed's edges"),
         ],
         filter,
     );

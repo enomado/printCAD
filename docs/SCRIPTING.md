@@ -926,6 +926,36 @@ assert(math.abs(m.max[3] - 10) < 1e-6 and math.abs(m.min[1] + 5) < 1e-6)
 assert(math.abs(m.centre[3] - 5) < 1e-6)
 ```
 
+`pc.doc.print_layout`: Where the print layout puts each copy: every part flat on its resting face, as many as the parts list prints, packed on the bed.
+
+- `bed` (any, optional): {x, y, z}: the bed's width, depth and build height, mm; Preferences › Printing's when left out
+- `gap` (number, optional): Between copies, mm; Preferences › Printing's (5) when left out
+- Returns {plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, transform}}, too_big, too_tall, unbuilt}
+
+Notes:
+
+- Nothing moves: the layout is where export (`file.export{layout = true}`) and the slicer put the copies. `transform` is the rigid row-major 4×4 matrix from the body's own frame to the bed; `min` and `max` are the copy's bounds there.
+- A part rests on its largest flat face that has the whole part on one side; among faces of nearly that area, the one leaving it lowest. Parts too wide for the bed go on a plate of their own and are named in `too_big`; plates after the first lie beside it along X.
+
+See also `pc.asm.parts`, `pc.asm.part`, `pc.file.export`.
+
+Example: Three posts laid down on the bed.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 20}
+local post = pc.doc.feature{id = pc.design.pad{sketch = s, length = 60}}.body
+assert(#pc.doc.rebuild() == 0)
+pc.asm.part{body = post, print = 3}
+local layout = pc.doc.print_layout{bed = {x = 200, y = 200, z = 200}, gap = 5}
+assert(layout.plates == 1 and #layout.pieces == 3)
+for _, p in ipairs(layout.pieces) do
+  assert(math.abs(p.min[3]) < 1e-3, "on the bed")
+  assert(math.abs(p.max[3] - 10) < 1e-3, "lying on a 20 × 60 side")
+  assert(p.min[1] >= 2.5 - 1e-3 and p.max[1] <= 197.5 + 1e-3)
+end
+```
+
 `pc.doc.picture`: Write a PNG of the bodies, the same for the same arguments whatever the user's camera (except view "current").
 
 - `path` (string): Where to write the PNG
@@ -1495,9 +1525,14 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 - `format` (string, optional): step, step_nurbs (every surface a spline), stl or 3mf; from the path's extension when left out
 - `bodies` (list, optional): The bodies to write; every visible one when left out
 - `tolerance` (number, optional): The mesh formats' distance to the true surface, mm (0.01)
+- `layout` (boolean, optional): The print layout (doc.print_layout) rather than the bodies where they sit
 - Returns {path, written, skipped, triangles}
 
 `pc.file.send_to_slicer`: Send to slicer.
+
+- `layout` (boolean, optional): The print layout rather than the bodies where they sit; Preferences › Printing says when left out
+
+`pc.file.print_layout`: Print layout.
 
 ### edit
 

@@ -194,6 +194,10 @@ pub(crate) struct DocumentSession {
         core_document::BodyId,
         (u64, std::sync::Arc<kernel_api::TriMesh>),
     >,
+    /// The Print layout task is open: the scene shows the layout.
+    pub print_layout_shown: bool,
+    /// The print layout shown while its task is open.
+    pub print_layout: Option<crate::app::print_layout::ShownLayout>,
     /// Each textured body as drawn: its textures pressed into its mesh,
     /// made on a thread of its own.
     pub textured: std::collections::HashMap<core_document::BodyId, crate::app::textures::Preview>,
@@ -283,6 +287,8 @@ impl DocumentSession {
             hovered_edge: None,
             hovered_face: None,
             face_colored: Default::default(),
+            print_layout_shown: false,
+            print_layout: None,
             textured: Default::default(),
             textured_rx: None,
             textured_tx: None,

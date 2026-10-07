@@ -39,6 +39,10 @@ pub enum FileCommand {
     Export,
     /// Every visible body written for the slicer and opened in it.
     SendToSlicer,
+    /// The export dialog, set to write the print layout.
+    ExportLaidOut,
+    /// The print layout written for the slicer and opened in it.
+    SendLaidOutToSlicer,
     /// The view as drawn, saved as a PNG picture where the user picks.
     SavePicture,
     /// Pick a Lua script and run it.
@@ -73,6 +77,10 @@ pub enum UiCommand {
     SetDrawStyle(settings::DrawStyle),
     /// The print bed drawn around the model, or not.
     TogglePrintBed,
+    /// The gap the print layout leaves between parts, mm.
+    SetLayoutGap(f32),
+    /// Send to slicer sends the print layout, or the bodies where they sit.
+    SetSlicerLayout(bool),
     /// The annotations imported files carry drawn over the scene, or not.
     ToggleAnnotations,
     /// Arm the measure tool, or put it away.

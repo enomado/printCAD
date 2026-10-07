@@ -40,7 +40,7 @@ fn hash_trimesh(mesh: &kernel_api::TriMesh) -> u64 {
 
 /// The build volume as a line body: a box of the bed's width and depth,
 /// standing on Z, with the origin at the bed's corner or centre.
-fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh {
+pub(crate) fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh {
     let [w, d, h] = printing.bed_mm;
     let (x0, y0) = if printing.origin_center {
         (-w / 2.0, -d / 2.0)
@@ -512,10 +512,10 @@ impl PrintCadApp {
             }
         }
 
-        // Dev/bench hook: `PRINTCAD_BENCH_TASK=appearance|placement|history`
-        // opens that task of the application's on the first body (its first
-        // feature, for history) once it has geometry, as its menu entry
-        // would, so a capture shows the task panel.
+        // Dev/bench hook: `PRINTCAD_BENCH_TASK=appearance|placement|history|
+        // texture|print_layout` opens that task of the application's on the
+        // first body (its first feature, for history) once it has geometry,
+        // as its menu entry would, so a capture shows the task panel.
         if !self.bench_task_fired
             && let Ok(which) = std::env::var("PRINTCAD_BENCH_TASK")
             && let Some(body) = self.session.document.bodies().first().map(|b| b.id)
@@ -535,6 +535,7 @@ impl PrintCadApp {
                 "placement" => Some(ui::OpenTask::Placement(body)),
                 "history" => first.map(ui::OpenTask::History),
                 "texture" => Some(ui::OpenTask::Texture(body, None)),
+                "print_layout" => Some(ui::OpenTask::PrintLayout),
                 _ => Some(ui::OpenTask::Appearance(body, None)),
             };
             if let Some(open) = open {
@@ -890,6 +891,7 @@ impl PrintCadApp {
                         chats: &self.chats,
                         approvals: &self.approvals,
                         assistant_attention: std::mem::take(&mut self.assistant_attention),
+                        print_layout: self.session.print_layout.as_ref().map(|s| &s.layout),
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
@@ -906,6 +908,7 @@ impl PrintCadApp {
                 self.session.active_tool = ui_result.active_tool;
                 self.session.active_workbench = ui_result.active_workbench;
                 self.session.task_open = ui_result.task_open;
+                self.session.print_layout_shown = ui_result.print_layout_open;
                 self.session.tree_hovered = ui_result.tree_hovered;
 
                 // The window title follows the document and its dirty state.
@@ -1218,6 +1221,7 @@ impl PrintCadApp {
             .update(dt_secs, &self.user_settings.camera);
 
         self.drive_texture_previews();
+        self.drive_print_layout();
 
         // Imported geometry (e.g. STEP files) becomes regular renderable bodies.
         // The body id from the document is reused so picking/selection stays
@@ -1335,6 +1339,37 @@ impl PrintCadApp {
                 }
             })
             .collect();
+        // While the Print layout task is open the scene is the layout: the
+        // copies on the bed, drawn but not picked, the bodies left where
+        // they are.
+        if let Some(shown) = &self.session.print_layout {
+            let document = &self.session.document;
+            imported_meshes = shown
+                .layout
+                .pieces
+                .iter()
+                .zip(&shown.preview)
+                .map(|(piece, (id, mesh))| BodySubmission {
+                    id: *id,
+                    revision: shown.key,
+                    mesh: Arc::clone(mesh),
+                    color: document
+                        .bodies()
+                        .iter()
+                        .find(|b| b.id == piece.body)
+                        .and_then(|b| b.display)
+                        .unwrap_or_default()
+                        .color,
+                    opacity: 1.0,
+                    highlight: HighlightState::None,
+                    is_wireframe: wireframe,
+                    pickable: false,
+                    on_top: false,
+                    edge_color: None,
+                    front_only: false,
+                })
+                .collect();
+        }
 
         let wb_id = self.session.active_workbench.0.clone();
 
@@ -1695,8 +1730,23 @@ impl PrintCadApp {
             }
         }
 
-        // The printer's build volume, as twelve lines around the model.
-        if self.user_settings.printing.show_bed {
+        // The print layout's plates, each the build volume's outline.
+        if let Some(shown) = &self.session.print_layout {
+            all_meshes.push(BodySubmission {
+                id: self.print_bed_id,
+                revision: shown.key,
+                mesh: Arc::clone(&shown.beds),
+                color: [0.45, 0.52, 0.6],
+                opacity: 1.0,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+                pickable: false,
+                on_top: false,
+                edge_color: None,
+                front_only: false,
+            });
+        } else if self.user_settings.printing.show_bed {
+            // The printer's build volume, as twelve lines around the model.
             let printing = &self.user_settings.printing;
             let revision = {
                 use std::hash::{Hash, Hasher};
@@ -1800,6 +1850,14 @@ impl PrintCadApp {
             lo = lo.min(Vec3::from_array(a));
             hi = hi.max(Vec3::from_array(b));
         };
+        if let Some(shown) = &self.session.print_layout {
+            for mesh in std::iter::once(&shown.beds).chain(shown.preview.iter().map(|(_, m)| m)) {
+                if let Some(bounds) = mesh.bounds() {
+                    add(bounds);
+                }
+            }
+            return (lo.x <= hi.x).then_some((lo, hi));
+        }
         let document = &self.session.document;
         for (body, geometry) in document.imported_geometries() {
             if document.imported_body_effective_visible(*body)

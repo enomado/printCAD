@@ -26,6 +26,7 @@ version first.
 ### Printing
 - The parts list says how many of each part to print (one per body unless you set another count), the volume of a piece and the filament it takes in the material you print in (PLA, PETG, ABS, ASA, TPU, Nylon, PC or a density of your own), and adds up the whole print. asm.print_material sets the material, asm.part a count.
 - A hole takes a nut trap: a hexagonal pocket for a captive nut at its mouth or where it ends, sized from the ISO 4032 or DIN 934 nut of its metric thread with a clearance, or of a size of your own, turned as you like. design.hole takes it as nut_trap.
+- File › Print layout lays every part flat on the bed, on its largest face it can stand on, as many copies as the parts list prints, packed in rows with a gap, extra plates beside the bed; the view shows the layout while the task is open and the model stays where it is. Export and Send to slicer write the layout when asked (Laid out for printing, Preferences › Printing › Send the print layout). doc.print_layout answers it to a script, file.export and file.send_to_slicer take layout = true.
 
 ### AI assistant
 - doc.faces and doc.edges give a moved body's faces and edges in its own frame too (frame = "body"), as features take them.

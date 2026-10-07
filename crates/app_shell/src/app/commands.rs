@@ -91,7 +91,23 @@ impl PrintCadApp {
             match command {
                 UiCommand::File(FileCommand::New) => intents.new_document = true,
                 UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
-                UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(),
+                UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(false),
+                UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true),
+                UiCommand::File(FileCommand::ExportLaidOut) => {
+                    self.open_export_dialog();
+                    if let Some(draft) = &mut self.session.export_pending {
+                        draft.layout = true;
+                        draft.selected_only = false;
+                    }
+                }
+                UiCommand::SetLayoutGap(gap) => {
+                    self.user_settings.printing.layout_gap_mm = gap.max(0.0);
+                    intents.persist_settings = true;
+                }
+                UiCommand::SetSlicerLayout(on) => {
+                    self.user_settings.printing.slicer_layout = on;
+                    intents.persist_settings = true;
+                }
                 UiCommand::File(FileCommand::SavePicture) => {
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.renderer.request_capture();

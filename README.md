@@ -31,7 +31,10 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
 - **Import:** STEP and IGES as solids, with the dimensions, tolerances,
   datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
   as meshes that convert to solids, their round faces found on request.
-- **Export:** STEP, STL and 3MF, or straight to your slicer.
+- **Export:** STEP, STL and 3MF, or straight to your slicer, the bodies
+  where they sit or laid out for printing: each part flat on the bed, as
+  many as the parts list prints. Nut traps for captive nuts, and the
+  filament each part takes; see [docs/PRINTING.md](docs/PRINTING.md).
 - **Documents:** `.prtcad` files, one tab each, with undo and redo.
 - **View:** GPU picking of faces and edges, a clipping plane, a measure
   tool, body and face colours, and 6-DoF mouse support.
@@ -328,7 +331,7 @@ More detail in [docs](docs/):
 ## Roadmap
 
 Everything still open (what the workbenches lack, what waits on the
-kernel, faster kernel operations, the printing features) is in
+kernel, faster kernel operations) is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## License

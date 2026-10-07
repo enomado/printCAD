@@ -1,8 +1,10 @@
 //! The application's own tasks in the right panel, beside the benches':
 //! a body's placement, its appearance (colour, faces, see-through,
-//! material) and a feature's place in its body's history. Edits apply to
-//! the document as they are made, so the view shows them; OK keeps them as
-//! one undo step, Cancel puts back what was there when the task opened.
+//! material), a feature's place in its body's history, and the print
+//! layout. Edits apply to the document as they are made, so the view
+//! shows them; OK keeps them as one undo step, Cancel puts back what was
+//! there when the task opened. The print layout edits nothing: the view
+//! shows the layout while it is open, and Close puts the model back.
 
 use core_document::{
     BodyDisplay, BodyId, BodyPlacement, Document, FaceColor, FeatureId, Material, Recorded,
@@ -62,6 +64,8 @@ pub enum HostTask {
     Appearance(AppearanceTask),
     History(HistoryTask),
     Texture(super::texture_task::TextureTask),
+    /// Every part laid flat on the bed, for export or the slicer.
+    PrintLayout,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +116,9 @@ pub struct HostTaskInputs<'a> {
     /// and index.
     pub picked_faces: &'a [(BodyId, u32)],
     pub custom_colors: &'a [[f32; 3]],
+    pub printing: &'a settings::PrintingSettings,
+    /// The print layout the view shows, once made.
+    pub print_layout: Option<&'a crate::app::print_layout::Layout>,
 }
 
 fn call(id: &str, args: Value) -> Recorded {
@@ -258,6 +265,7 @@ impl HostTask {
             Self::Placement(t) => format!("Placement · {}", body_name(document, t.body)),
             Self::Appearance(t) => format!("Appearance · {}", body_name(document, t.body)),
             Self::Texture(t) => format!("Surface texture · {}", body_name(document, t.body())),
+            Self::PrintLayout => "Print layout".to_string(),
             Self::History(t) => format!(
                 "Move · {}",
                 document
@@ -277,6 +285,7 @@ impl HostTask {
             }
             Self::History(t) => document.get_feature_meta(t.feature).is_some(),
             Self::Texture(t) => document.bodies().iter().any(|b| b.id == t.body()),
+            Self::PrintLayout => true,
         }
     }
 
@@ -301,8 +310,110 @@ impl HostTask {
                 cancel,
                 commands,
             ),
+            Self::PrintLayout => print_layout(ui, &inputs, accept || cancel, commands),
         }
     }
+
+    /// Whether the task has OK and Cancel, rather than Close alone.
+    pub fn confirmable(&self) -> bool {
+        !matches!(self, Self::PrintLayout)
+    }
+}
+
+/// The print layout's panel: how many copies on how many plates, what
+/// does not fit, the gap, and export or the slicer with the layout.
+fn print_layout(
+    ui: &mut Ui,
+    inputs: &HostTaskInputs<'_>,
+    close: bool,
+    commands: &mut Vec<UiCommand>,
+) -> Option<HostTaskEnd> {
+    use ui_kit::widgets::{Note, check_row, note_card, primary_button};
+    if close {
+        return Some(HostTaskEnd::Cancelled);
+    }
+    let Some(layout) = inputs.print_layout else {
+        note(ui, "Laying out…");
+        return None;
+    };
+    if layout.pieces.is_empty() {
+        note_card(
+            ui,
+            Note::Info,
+            Some("Nothing to print"),
+            "No visible part has a count to print and a shape.",
+        );
+    } else {
+        let s = |n: usize| if n == 1 { "" } else { "s" };
+        let pieces = layout.pieces.len();
+        ui.label(
+            RichText::new(format!(
+                "{pieces} piece{} on {} plate{}",
+                s(pieces),
+                layout.plates,
+                s(layout.plates)
+            ))
+            .font(sans_semibold(FONT_MD))
+            .color(TEXT1),
+        );
+        if layout.plates > 1 {
+            for plate in 0..layout.plates {
+                let on = layout.pieces.iter().filter(|p| p.plate == plate).count();
+                note(ui, &format!("Plate {}: {on} piece{}", plate + 1, s(on)));
+            }
+        }
+    }
+    let warn = |ui: &mut Ui, title: &str, names: &[String]| {
+        if !names.is_empty() {
+            note_card(ui, Note::Warning, Some(title), &names.join(", "));
+        }
+    };
+    warn(
+        ui,
+        "Wider than the bed, each on a plate of its own",
+        &layout.too_big,
+    );
+    warn(ui, "Taller than the build height", &layout.too_tall);
+    warn(ui, "Not built yet, left out", &layout.unbuilt);
+
+    heading(ui, "Spacing");
+    let mut gap = inputs.printing.layout_gap_mm;
+    let changed = ui
+        .horizontal(|ui| {
+            ui.label(RichText::new("Gap").font(sans(FONT_SM)).color(TEXT2));
+            QtyField::mm(&mut gap).range(0.0..=50.0).show(ui)
+        })
+        .inner;
+    if changed {
+        commands.push(UiCommand::SetLayoutGap(gap));
+    }
+    let mut laid_out = inputs.printing.slicer_layout;
+    if check_row(ui, &mut laid_out, "Send to slicer sends the layout")
+        .on_hover_text(
+            "File › Send to slicer writes this layout rather than the bodies where they sit",
+        )
+        .changed()
+    {
+        commands.push(UiCommand::SetSlicerLayout(laid_out));
+    }
+    ui.add_space(SPACE_2);
+    note(
+        ui,
+        "Each part rests on its largest flat face with nothing below it, turned to its \
+         smallest footprint. How many of each comes from the parts list's Print column, \
+         every visible body once without one. The model stays where it is.",
+    );
+    ui.add_space(SPACE_3);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_2;
+        if primary_button(ui, "Send to slicer").clicked() {
+            commands.push(UiCommand::File(super::FileCommand::SendLaidOutToSlicer));
+        }
+        if secondary_button(ui, "Export…").clicked() {
+            commands.push(UiCommand::File(super::FileCommand::ExportLaidOut));
+        }
+    });
+    None
 }
 
 impl PlacementTask {
@@ -420,6 +531,7 @@ impl AppearanceTask {
             document,
             picked_faces,
             custom_colors,
+            ..
         } = inputs;
         let body = self.body;
         if cancel {
@@ -792,6 +904,8 @@ mod tests {
                     document: doc,
                     picked_faces: &[],
                     custom_colors: &[],
+                    printing: &settings::PrintingSettings::default(),
+                    print_layout: None,
                 },
                 accept,
                 cancel,
@@ -815,6 +929,8 @@ mod tests {
                     document: &mut doc,
                     picked_faces: &picks,
                     custom_colors: &[],
+                    printing: &settings::PrintingSettings::default(),
+                    print_layout: None,
                 },
                 false,
                 false,
@@ -925,5 +1041,22 @@ mod tests {
             Some(HostTaskEnd::Cancelled)
         ));
         assert_eq!(doc.body_history_of(ids[0]), ids);
+    }
+
+    /// The print layout edits nothing: it closes with Close alone, and
+    /// leaves the document as it was.
+    #[test]
+    fn the_print_layout_closes_without_a_change() {
+        let mut doc = Document::new("t");
+        doc.create_body(None);
+        let seq = doc.mutation_seq();
+        let mut task = HostTask::PrintLayout;
+        assert!(!task.confirmable());
+        assert!(show(&mut task, &mut doc, false, false).is_none());
+        assert!(matches!(
+            show(&mut task, &mut doc, true, false),
+            Some(HostTaskEnd::Cancelled)
+        ));
+        assert_eq!(doc.mutation_seq(), seq);
     }
 }

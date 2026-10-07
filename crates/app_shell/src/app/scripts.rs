@@ -919,6 +919,58 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             assert(math.abs(m.centre[3] - 5) < 1e-6)
             "#,
         ),
+        CommandSpec::new(
+            "doc.print_layout",
+            "Where the print layout puts each copy: every part flat on its resting face, \
+             as many as the parts list prints, packed on the bed",
+        )
+        .optional(
+            "bed",
+            ParamKind::Any,
+            "{x, y, z}: the bed's width, depth and build height, mm; Preferences › Printing's \
+             when left out",
+        )
+        .optional(
+            "gap",
+            ParamKind::Number,
+            "Between copies, mm; Preferences › Printing's (5) when left out",
+        )
+        .returns(
+            "{plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, \
+             transform}}, too_big, too_tall, unbuilt}",
+        )
+        .read_only()
+        .note(
+            "Nothing moves: the layout is where export (`file.export{layout = true}`) and \
+             the slicer put the copies. `transform` is the rigid row-major 4×4 matrix from \
+             the body's own frame to the bed; `min` and `max` are the copy's bounds there.",
+        )
+        .note(
+            "A part rests on its largest flat face that has the whole part on one side; \
+             among faces of nearly that area, the one leaving it lowest. Parts too wide for \
+             the bed go on a plate of their own and are named in `too_big`; plates after the \
+             first lie beside it along X.",
+        )
+        .see_also("asm.parts")
+        .see_also("asm.part")
+        .see_also("file.export")
+        .example(
+            "Three posts laid down on the bed",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 20}
+            local post = pc.doc.feature{id = pc.design.pad{sketch = s, length = 60}}.body
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.part{body = post, print = 3}
+            local layout = pc.doc.print_layout{bed = {x = 200, y = 200, z = 200}, gap = 5}
+            assert(layout.plates == 1 and #layout.pieces == 3)
+            for _, p in ipairs(layout.pieces) do
+              assert(math.abs(p.min[3]) < 1e-3, "on the bed")
+              assert(math.abs(p.max[3] - 10) < 1e-3, "lying on a 20 × 60 side")
+              assert(p.min[1] >= 2.5 - 1e-3 and p.max[1] <= 197.5 + 1e-3)
+            end
+            "#,
+        ),
         crate::proof::with_arguments(
             CommandSpec::new(
                 "doc.picture",
@@ -1675,7 +1727,18 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
                 ParamKind::Number,
                 "The mesh formats' distance to the true surface, mm (0.01)",
             )
+            .optional(
+                "layout",
+                ParamKind::Bool,
+                "The print layout (doc.print_layout) rather than the bodies where they sit",
+            )
             .returns("{path, written, skipped, triangles}"),
+        SendToSlicer => spec.optional(
+            "layout",
+            ParamKind::Bool,
+            "The print layout rather than the bodies where they sit; Preferences › Printing \
+             says when left out",
+        ),
         _ => spec,
     }
 }
@@ -1813,6 +1876,15 @@ impl PrintCadApp {
             spec.check(&args)?;
             if Args(&args).has("path") {
                 return self.run_file_command(action, &args);
+            }
+            if let (keymap::HostAction::SendToSlicer, Some(layout)) =
+                (action, Args(&args).opt_bool("layout")?)
+            {
+                let was = self.user_settings.printing.slicer_layout;
+                self.user_settings.printing.slicer_layout = layout;
+                self.send_to_slicer(false);
+                self.user_settings.printing.slicer_layout = was;
+                return Ok(Value::Null);
             }
             return self.run_key_command(action, event_loop);
         }
@@ -1972,12 +2044,15 @@ impl PrintCadApp {
                 let format = export_format(a.opt_string("format")?, &path)?;
                 let bodies = body_list(args.get("bodies"))?;
                 let tolerance = a.opt_number("tolerance")?.map(|t| t as f32);
+                let layout =
+                    (a.opt_bool("layout")? == Some(true)).then(|| self.current_print_layout());
                 let (path, exported) = crate::app::export::export_document(
                     &self.session.document,
                     path,
                     format,
                     bodies,
                     tolerance,
+                    layout.as_ref(),
                 )
                 .map_err(CommandError::failed)?;
                 Ok(json!({
@@ -2369,6 +2444,12 @@ impl PrintCadApp {
         let a = Args(args);
         match id {
             "doc.picture" => picture_command(args, |request| self.picture(request)),
+            "doc.print_layout" => print_layout_command(
+                args,
+                &self.session.document,
+                &self.registry,
+                &self.user_settings.printing,
+            ),
             "doc.selection" => Ok(json!({
                 "item": self.session.tree_selection.and_then(item_id).map(|u| u.to_string()),
                 "body": self.session.active_body_id.map(|b| b.0.to_string()),
@@ -2707,6 +2788,62 @@ pub(crate) fn picture_command(
 /// The commands every host of a document answers the same way, with or
 /// without a window: reading it, naming and adding bodies, and measuring.
 /// `None` for any other command.
+/// `doc.print_layout`: the layout of `document`'s parts on the bed the
+/// arguments give, else on `printing`'s.
+pub(crate) fn print_layout_command(
+    args: &CommandArgs,
+    document: &core_document::Document,
+    registry: &core_document::DocumentService,
+    printing: &settings::PrintingSettings,
+) -> CommandResult {
+    use crate::app::print_layout::{LayoutSettings, lay_out, parts_to_print, piece_mesh};
+    let a = Args(args);
+    let mut settings = LayoutSettings::of(printing);
+    if let Some(gap) = a.opt_number("gap")? {
+        if gap < 0.0 {
+            return Err(CommandError::bad("gap", "must not be negative"));
+        }
+        settings.gap_mm = gap as f32;
+    }
+    if let Some(bed) = args.get("bed") {
+        let size = |key: &str, at: usize| {
+            bed.get(key)
+                .or_else(|| bed.get(at))
+                .and_then(Value::as_f64)
+                .filter(|v| *v > 0.0)
+                .ok_or_else(|| CommandError::bad("bed", "is {x, y, z}, each above 0"))
+        };
+        settings.bed_mm = [
+            size("x", 0)? as f32,
+            size("y", 1)? as f32,
+            size("z", 2)? as f32,
+        ];
+    }
+    let layout = lay_out(document, &parts_to_print(document, registry), &settings);
+    let pieces: Vec<Value> = layout
+        .pieces
+        .iter()
+        .map(|piece| {
+            let bounds = piece_mesh(document, piece).and_then(|m| m.bounds());
+            json!({
+                "body": piece.body.0.to_string(),
+                "name": piece.name,
+                "plate": piece.plate + 1,
+                "min": bounds.map(|b| b.0),
+                "max": bounds.map(|b| b.1),
+                "transform": piece.placement.rows(),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "plates": layout.plates,
+        "pieces": pieces,
+        "too_big": layout.too_big,
+        "too_tall": layout.too_tall,
+        "unbuilt": layout.unbuilt,
+    }))
+}
+
 pub(crate) fn document_command(
     id: &str,
     args: &CommandArgs,

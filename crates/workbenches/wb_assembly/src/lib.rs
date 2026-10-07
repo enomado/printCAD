@@ -2139,6 +2139,23 @@ impl Workbench for AssemblyWorkbench {
         parts::bought_bodies(document, bought_kinds)
     }
 
+    fn print_parts(
+        &self,
+        document: &core_document::Document,
+        bought_kinds: &[core_document::WorkbenchId],
+    ) -> Option<Vec<core_document::PrintPart>> {
+        Some(
+            parts::parts_list(document, bought_kinds)
+                .into_iter()
+                .map(|part| core_document::PrintPart {
+                    name: part.name,
+                    bodies: part.bodies,
+                    count: part.print,
+                })
+                .collect(),
+        )
+    }
+
     fn menu_items(
         &self,
         scope: &core_document::MenuScope,

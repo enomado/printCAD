@@ -139,6 +139,8 @@ pub struct UiFrameInputs<'a> {
     pub approvals: &'a [crate::app::mcp::Approval],
     /// An agent needs the user: the assistant panel opens.
     pub assistant_attention: bool,
+    /// The print layout the view shows, while its task is open.
+    pub print_layout: Option<&'a crate::app::print_layout::Layout>,
 }
 
 /// A body's measure as the property panel shows it.

@@ -35,6 +35,8 @@ pub enum OpenTask {
     /// The patterns pressed into the body's faces, with the face the menu
     /// was opened on, if any.
     Texture(BodyId, Option<u32>),
+    /// Every part laid flat on the bed, for export or the slicer.
+    PrintLayout,
 }
 
 /// A body as a script names it: its id, with its name beside.

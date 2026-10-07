@@ -599,6 +599,14 @@ impl DocumentService {
             .collect()
     }
 
+    /// The parts to print and how many of each, from the first bench that
+    /// keeps a parts list.
+    pub fn print_parts(&self, document: &Document) -> Option<Vec<crate::PrintPart>> {
+        let bought = self.bought_kinds();
+        self.benches()
+            .find_map(|wb| wb.print_parts(document, &bought))
+    }
+
     /// The features every bench links to `body` from other bodies.
     pub fn linked_features(&self, document: &Document, body: BodyId) -> Vec<FeatureId> {
         self.benches()

@@ -62,11 +62,3 @@ And in printCAD, as each lands:
 Each goes to the kernel's repository as an issue with its API, a repro, the
 bench numbers and an acceptance test (the time follows the touched region,
 the result the same as now).
-
-## Printing
-
-Features that matter only for printing, for once the modelling is
-complete.
-
-- [ ] **Print layout** (M). Each part of the parts list laid flat on its
-  best face and copies packed on the bed, for export or the slicer.

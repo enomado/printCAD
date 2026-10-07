@@ -227,6 +227,12 @@ pub struct PrintingSettings {
     pub slicer_command: String,
     /// The format a model goes to the slicer in.
     pub slicer_format: SlicerFormat,
+    /// Send to slicer sends the print layout: each part flat on the bed,
+    /// as many as the parts list prints, rather than the bodies where
+    /// they sit.
+    pub slicer_layout: bool,
+    /// The gap the print layout leaves between parts, mm.
+    pub layout_gap_mm: f32,
 }
 
 /// A mesh format a slicer reads.
@@ -247,6 +253,8 @@ impl Default for PrintingSettings {
             show_bed: false,
             slicer_command: String::new(),
             slicer_format: SlicerFormat::default(),
+            slicer_layout: false,
+            layout_gap_mm: 5.0,
         }
     }
 }
