@@ -11,6 +11,7 @@ version first.
 - Fillet between surfaces rounds between two faces that share no edge, lofts follow guide curves, and a sweep can ride two rails.
 - Edges picked on other bodies, solids too, are curves a surface builds from, following those bodies as they change and move.
 - A face picked gives its edges at once to the surface tools that take curves or edges.
+- A swept surface runs from the end of its path the profile sits by, rather than on past the path's far end when the path was drawn toward the profile.
 
 ### Sketcher
 - An ellipse showing its foci drags through a circle: a minor radius pulled past the major makes it the major, the foci sliding through the centre onto the new axis.

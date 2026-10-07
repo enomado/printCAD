@@ -1456,3 +1456,40 @@ fn an_edge_of_another_body_extrudes_where_that_body_sits() {
     assert!((hi[0] - 10.0).abs() < 1e-6);
     assert!(wall([5.0, 40.0, 0.0]).is_err(), "no edge there");
 }
+
+/// A profile sitting at the far end of its path sweeps back along it: the
+/// path runs from the end the profile is at, whichever way it was drawn.
+#[test]
+fn a_sweep_starts_at_the_end_of_the_path_its_profile_sits_by() {
+    let side = plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let up = sketch(side, vec![line([0.0, 0.0], [0.0, 20.0])]);
+    let down = sketch(side, vec![line([0.0, 20.0], [0.0, 0.0])]);
+    let bend = sketch(side, vec![arc([0.0, 0.0], [5.0, 10.0], [0.0, 20.0])]);
+    let bend_back = sketch(side, vec![arc([0.0, 20.0], [5.0, 10.0], [0.0, 0.0])]);
+    let profile = |z: f64| {
+        sketch(
+            plane([0.0, 0.0, z], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]),
+            vec![line([-2.0, 0.0], [2.0, 0.0])],
+        )
+    };
+    for (name, path) in [
+        ("up", &up),
+        ("down", &down),
+        ("bend", &bend),
+        ("bend back", &bend_back),
+    ] {
+        for z in [0.0, 20.0] {
+            let result = build(vec![SurfaceOp::Sweep {
+                profile: vec![profile(z)],
+                path: vec![path.clone()],
+                frame: Default::default(),
+            }])
+            .unwrap();
+            let (lo, hi) = bounds(&result);
+            assert!(
+                lo[2].abs() < 1e-3 && (hi[2] - 20.0).abs() < 1e-3,
+                "{name}, profile at z = {z}: {lo:?} {hi:?}"
+            );
+        }
+    }
+}

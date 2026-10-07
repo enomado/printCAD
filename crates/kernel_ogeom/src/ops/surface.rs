@@ -505,7 +505,8 @@ fn fillet_between(
 }
 
 /// Each profile curve swept along the path, turning about it as `frame`
-/// says.
+/// says. An open path runs from the end nearer the profile, wherever the
+/// path was drawn from.
 fn sweep(
     model: &mut Model,
     base: Option<&Shape>,
@@ -513,9 +514,11 @@ fn sweep(
     path: &[CurveSource],
     frame: &PipeFrame,
 ) -> Result<Shape, String> {
+    let profiles = shapes_of(model, base, profile)?;
     let path_edges = edges_of(model, base, path)?;
     let ordered = ogeom::algo::order_edges(model, &path_edges, tol())
         .map_err(|e| format!("the path does not run end to end: {e}"))?;
+    let ordered = from_end_nearest(model, ordered, &profiles)?;
     let spine = make_wire(model, &ordered, tol())
         .map_err(|e| format!("the path is not one chain: {e}"))?
         .shape;
@@ -529,12 +532,56 @@ fn sweep(
         PipeFrame::RotationMinimizing | PipeFrame::Auxiliary { .. } => PipeLaw::RotationMinimizing,
     };
     let mut sheets = Vec::new();
-    for curve in shapes_of(model, base, profile)? {
+    for curve in profiles {
         let built = make_sweep_surface(model, &curve, &spine, &law, tol())
             .map_err(|e| format!("sweeping the profile failed: {e}"))?;
         sheets.push(built.shape);
     }
     one_or_compound(model, sheets)
+}
+
+/// A chain of edges walked end to end, turned round when its last end is
+/// nearer the profiles than its first: the sweep starts where the profile
+/// sits. A closed chain is kept as it is.
+fn from_end_nearest(
+    model: &Model,
+    edges: Vec<Shape>,
+    profiles: &[Shape],
+) -> Result<Vec<Shape>, String> {
+    let ends = |edge: &Shape| {
+        ogeom::algo::edge_vertices(model, edge)
+            .map_err(|e| format!("reading the path's ends failed: {e}"))
+    };
+    let (Some(first), Some(last)) = (edges.first(), edges.last()) else {
+        return Ok(edges);
+    };
+    let (Some((start, _)), Some((_, end))) = (ends(first)?, ends(last)?) else {
+        return Ok(edges);
+    };
+    if start.is_same(&end) {
+        return Ok(edges);
+    }
+    let nearest = |vertex: &Shape| {
+        profiles
+            .iter()
+            .filter_map(|p| {
+                ogeom::algo::distance_between_shapes(
+                    model,
+                    vertex,
+                    p,
+                    ogeom::intersect::ExtremaOptions::default(),
+                    tol(),
+                )
+                .ok()
+                .map(|d| d.distance)
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    if nearest(&end) < nearest(&start) {
+        Ok(edges.into_iter().rev().map(|e| e.reversed()).collect())
+    } else {
+        Ok(edges)
+    }
 }
 
 /// The face of `base` a pick names: by name, else the nearest.
