@@ -242,6 +242,23 @@ fn extrude(
         };
         let built = make_prism(model, &start, vector, tol())
             .map_err(|e| format!("extruding a curve failed: {e}"))?;
+        // A curve extruded along itself (a line along its own direction)
+        // sweeps no surface at all.
+        let area = ogeom::algo::surface_properties(
+            model,
+            &built.shape,
+            ogeom::mesh::Deflection::default(),
+            tol(),
+        )
+        .map_err(|e| format!("measuring the extruded surface failed: {e}"))?
+        .mass;
+        if area <= tol().confusion() * length {
+            return Err(
+                "a curve runs along the extrusion's direction, so it sweeps out no surface; \
+                 extrude it another way"
+                    .into(),
+            );
+        }
         sheets.push(built.shape);
     }
     one_or_compound(model, sheets)

@@ -1527,3 +1527,29 @@ fn a_padded_block_has_no_gaps() {
         assert!((join.angle_deg - 90.0).abs() < 1e-6, "{join:?}");
     }
 }
+
+/// A line extruded across itself is a rectangle; extruded along itself it
+/// sweeps nothing, and the step says so rather than leave the body empty.
+#[test]
+fn a_line_extruded_along_itself_is_refused() {
+    let line_along_x = sketch(xy(0.0), vec![line([0.0, 0.0], [10.0, 0.0])]);
+    let extrude = |direction: [f64; 3]| {
+        build(vec![SurfaceOp::Extrude {
+            curves: vec![line_along_x.clone()],
+            direction,
+            length: 5.0,
+            symmetric: false,
+        }])
+    };
+    for across in [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
+        let result = extrude(across).unwrap();
+        let area = OgeomKernel::new()
+            .physical_properties(&result.brep_blob)
+            .unwrap()
+            .area_mm2;
+        assert!((area - 50.0).abs() < 1e-6, "{across:?}: {area}");
+    }
+    let along = extrude([1.0, 0.0, 0.0]).unwrap_err();
+    assert_eq!(along.op_index, 0);
+    assert!(along.message.contains("sweeps out no surface"), "{along}");
+}

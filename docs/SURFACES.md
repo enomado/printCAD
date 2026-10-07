@@ -48,7 +48,7 @@ takes it out.
 
 | Tool | What it makes |
 | --- | --- |
-| Extruded surface | Each curve swept straight: square to its sketch, or along X, Y or Z; one way, reversed, or half each way. |
+| Extruded surface | Each curve swept straight: square to its sketch, or along X, Y or Z; one way, reversed, or half each way. A curve running along the direction sweeps nothing, and the step says so. |
 | Revolved surface | Each curve turned about an axis: the sketch's vertical or horizontal axis, or X, Y or Z. |
 | Planar surface | The flat face closed loops bound, a loop inside another a hole; or the face picked edges closing a flat loop bound. |
 | Filling | The surface curves meeting end to end bound, three or more. A side picked on a surface meets that surface touching (G0), tangent (G1) or curvature continuous (G2); a sketch's curve is touched. |
