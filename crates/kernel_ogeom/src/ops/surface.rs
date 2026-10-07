@@ -4,7 +4,8 @@
 //!
 //! A body built from surface steps holds a compound of its sheets (and of
 //! the solids sewing or thickening makes). Curves come from sketches (open
-//! chains as well as loops) or from edges of the body's own shape. Every
+//! chains as well as loops), from edges of the body's own shape, or from
+//! edges of another body's, carried to where that body sits. Every
 //! sheet a step makes is bounded by edges, so the steps after it can pick
 //! them and a sew can join it to its neighbours; a fill is bounded by the
 //! very edges it was given.
@@ -173,6 +174,24 @@ fn shapes_of(
                     .next()
                     .ok_or_else(|| "a picked edge is no longer in the body".to_string())
             }
+            CurveSource::BodyEdge {
+                brep,
+                edge,
+                transform,
+            } => {
+                let other = crate::chain::absorb_shape(model, brep)?;
+                let found =
+                    super::dressup::picked_edges(model, &other, std::slice::from_ref(edge))?
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| {
+                            "a picked edge is no longer in the body it was picked on".to_string()
+                        })?;
+                match transform {
+                    Some(matrix) => super::pattern::moved(model, &found, matrix),
+                    None => Ok(found),
+                }
+            }
         })
         .collect()
 }
@@ -261,7 +280,7 @@ fn planar_fill(
         .iter()
         .filter_map(|c| match c {
             CurveSource::Sketch { plane, wire } => Some((plane, wire)),
-            CurveSource::Edge(_) => None,
+            CurveSource::Edge(_) | CurveSource::BodyEdge { .. } => None,
         })
         .collect();
     if sketched.len() == curves.len()
@@ -661,7 +680,7 @@ fn split(
         .iter()
         .filter_map(|c| match c {
             CurveSource::Sketch { plane, .. } => Some(plane.normal),
-            CurveSource::Edge(_) => None,
+            CurveSource::Edge(_) | CurveSource::BodyEdge { .. } => None,
         })
         .collect();
     let one_plane = normals.len() == curves.len()

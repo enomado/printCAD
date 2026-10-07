@@ -1,20 +1,25 @@
 //! The Surface workbench's features, as the document keeps them: what each
 //! step is built from (sketches by id, edges and faces of the body as picks
-//! in its own frame) and its settings.
+//! in its own frame, edges of other bodies as picks in theirs) and its
+//! settings.
 
-use core_document::{DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId};
+use core_document::{
+    BodyId, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
+};
 use kernel_api::{Continuity, TopoName};
 use serde::{Deserialize, Serialize};
 
 /// The kind every surface feature carries.
 pub const KIND: &str = "wb.surface";
 
-/// A curve a step is built from: every chain of a sketch, or an edge of
-/// the body.
+/// A curve a step is built from: every chain of a sketch, an edge of the
+/// body, or an edge of another body, picked in that body's frame and
+/// carried to where it sits.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum CurveRef {
     Sketch(FeatureId),
     Edge(EdgePick),
+    BodyEdge { body: BodyId, edge: EdgePick },
 }
 
 /// An edge of the body, as a point beside it and the way it runs there, in
@@ -477,6 +482,19 @@ impl SurfaceFeature {
                 .collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// The other bodies whose edges the step reads.
+    pub fn edge_bodies(&self) -> Vec<BodyId> {
+        let mut out = Vec::new();
+        for curve in self.curves() {
+            if let CurveRef::BodyEdge { body, .. } = curve
+                && !out.contains(&body)
+            {
+                out.push(body);
+            }
+        }
+        out
     }
 
     /// The sketches the step reads.

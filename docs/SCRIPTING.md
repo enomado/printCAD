@@ -4305,7 +4305,7 @@ assert(math.abs(m.max[3] - 60) < 1e-6, "the shaft keeps its length")
 - `direction` (any, optional): SketchNormal (the default), X, Y, Z or {Custom = {x, y, z}}
 - `symmetric` (boolean, optional): Half each way
 - `reversed` (boolean, optional): The other way
-- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
 - Returns The new feature's id
 
 Notes:
@@ -4314,6 +4314,7 @@ Notes:
 - An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
 - `length` is 10 mm when left out. `direction` is SketchNormal (square to the first sketch), X, Y, Z or {Custom = {x, y, z}}; "Custom" without its numbers is refused with the form it takes. `symmetric = true` runs half each way, `reversed = true` the other way.
 - Built from edges (`curves`) it needs a direction of its own: SketchNormal fails at rebuild ("the direction follows a sketch's plane").
+- An edge of another body (`BodyEdge`, the edge as `pc.doc.edges{body = id}` lists it) is taken where that body sits, and the step builds again when that body changes or moves.
 
 See also `pc.sketch.new`, `pc.surface.check`.
 
@@ -4329,6 +4330,17 @@ assert(#pc.doc.faces{body = body} == 2, "a face per line")
 local m = pc.doc.measure{body = body}
 assert(math.abs(m.area - 100) < 1e-6 and m.volume == nil, "a sheet, open")
 assert(math.abs(m.max[3] - 5) < 1e-6)
+
+-- A wall standing on the top edge of the first, in a body of its own.
+local top
+for _, e in ipairs(pc.doc.edges{body = body}) do
+  if math.abs(e.point[3] - 5) < 1e-6 and math.abs(e.point[2]) < 1e-6 then top = e end
+end
+local on = pc.surface.extrude{direction = "Z", length = 2, curves = {
+  {BodyEdge = {body = body, edge = {point = top.point, direction = top.direction}}}}}
+assert(#pc.doc.rebuild() == 0)
+local other = pc.doc.measure{body = pc.doc.feature{id = on}.body}
+assert(math.abs(other.min[3] - 5) < 1e-6 and math.abs(other.max[3] - 7) < 1e-6)
 ```
 
 `pc.surface.revolve`: Revolve curves about an axis into a surface.
@@ -4338,7 +4350,7 @@ assert(math.abs(m.max[3] - 5) < 1e-6)
 - `sketches` (list, optional): The sketches it is built from: every chain of each, open or closed
 - `angle_deg` (number, optional): Degrees (360)
 - `axis` (any, optional): SketchVertical (the default), SketchHorizontal, X, Y, Z or {Custom = {origin = {x, y, z}, direction = {x, y, z}}}
-- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
 - Returns The new feature's id
 
 Notes:
@@ -4367,7 +4379,7 @@ assert(math.abs(m.min[1] + 5) < 1e-6 and math.abs(m.max[3] - 10) < 1e-6)
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches whose closed loops it fills
-- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
 - Returns The new feature's id
 
 Notes:
@@ -4398,7 +4410,7 @@ assert(math.abs(area - (200 - math.pi * 4)) < 1e-3, area)
 - `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): The sketches whose curves close the hole, end to end
 - `continuity` (string, optional): G0 (the default), G1 or G2: how it meets the faces of edges in `boundary`
-- `boundary` (list, optional): In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
+- `boundary` (list, optional): In place of `sketches`: each {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
 - Returns The new feature's id
 
 Notes:
@@ -4427,8 +4439,8 @@ assert(math.abs(m.min[3] - 20) < 1e-6 and math.abs(m.max[3] - 20) < 1e-6)
 - `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
 - `name` (string, optional): Its name in the tree
 - `sketches` (list, optional): Two sketches: the first curve, then the second
-- `first` (any, optional): {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
-- `second` (any, optional): {Sketch = id}, or {Edge = {point, direction}} for an edge of the body
+- `first` (any, optional): {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
+- `second` (any, optional): {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
 - Returns The new feature's id
 
 Notes:

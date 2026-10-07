@@ -22,8 +22,11 @@ A step is built from curves:
 - **Sketches.** Every chain of a sketch's curves counts, open or closed.
   An open chain runs from one loose end to the other. A point where three
   curves meet is refused, since no single chain passes it.
-- **Edges.** Edges of the body's own surfaces, picked in the view (Ctrl
-  adds to the pick). A fill can close the gap between surfaces this way.
+- **Edges.** Edges picked in the view (Ctrl adds to the pick): of the
+  body's own surfaces, where a fill can close the gap between surfaces,
+  or of any other body, a Design solid too, taken where that body sits.
+  A step on another body's edge builds again when that body changes or
+  moves. Two bodies may not each read the other's edges.
 
 A sketch a new step reads is hidden, the surface standing in for it
 (Preferences › Surface turns this off).

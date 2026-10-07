@@ -1380,6 +1380,16 @@ pub enum CurveSource {
     /// An edge of the body's own shape as it stands where the step comes,
     /// found as a fillet's picked edges are.
     Edge(EdgeProbe),
+    /// An edge of another body's shape: `brep` is that body's snapshot,
+    /// `edge` finds the edge in its own frame, and `transform` (a rigid
+    /// row-major 4×4 matrix) carries it to where it sits in this chain's
+    /// frame, when the two bodies are placed differently.
+    BodyEdge {
+        brep: Vec<u8>,
+        edge: EdgeProbe,
+        #[serde(default)]
+        transform: Option<Box<[[f64; 4]; 4]>>,
+    },
 }
 
 /// How a surface meets the faces beside it across a shared edge.

@@ -156,8 +156,9 @@ impl SurfaceWorkbench {
             && document.bodies().iter().any(|b| b.id == body)
     }
 
-    /// What the selection gives a new step: the selected sketch, and the
-    /// edges and face picked on `body`, in its frame.
+    /// What the selection gives a new step: the selected sketch, the edges
+    /// picked (on `body` in its frame, on another body in that body's),
+    /// and the faces picked on `body`, in its frame.
     fn picked(ctx: &WorkbenchRuntimeContext, body: BodyId) -> (Vec<CurveRef>, Vec<FacePick>) {
         let mut curves = Vec::new();
         if let Some(id) = ctx.active_document_object
@@ -168,13 +169,23 @@ impl SurfaceWorkbench {
         {
             curves.push(CurveRef::Sketch(id));
         }
-        for edge in ctx.selected_edges_in(body) {
-            curves.push(CurveRef::Edge(EdgePick {
-                point: edge.point,
-                direction: edge.direction,
-                faces: edge.faces,
-                length: edge.length_mm,
-            }));
+        for edge in &ctx.selected_edges {
+            let on = BodyId(edge.body);
+            let local = edge.moved(&ctx.document.body_placement(on).inverse());
+            let pick = EdgePick {
+                point: local.point,
+                direction: local.direction,
+                faces: local.faces,
+                length: local.length_mm,
+            };
+            curves.push(if on == body {
+                CurveRef::Edge(pick)
+            } else {
+                CurveRef::BodyEdge {
+                    body: on,
+                    edge: pick,
+                }
+            });
         }
         let faces = ctx
             .selected_faces_in(body)
@@ -199,17 +210,13 @@ impl SurfaceWorkbench {
     }
 
     /// Whether the selection gives a step a curve to start from: a sketch
-    /// in the tree, or edges picked on a body that takes surfaces.
+    /// in the tree, or edges picked on any body.
     fn has_curves(ctx: &WorkbenchRuntimeContext) -> bool {
         let sketch = ctx
             .active_document_object
             .and_then(|id| ctx.document.get_feature_meta(id))
             .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
-        sketch
-            || ctx
-                .selected_edges
-                .iter()
-                .any(|e| Self::takes_surfaces(ctx.document, BodyId(e.body)))
+        sketch || !ctx.selected_edges.is_empty()
     }
 
     /// Open the sketcher on a surface body: the selected one when it takes
@@ -469,7 +476,7 @@ impl SurfaceWorkbench {
                 .iter()
                 .find_map(|c| match c {
                     CurveRef::Sketch(id) => ctx.document.get_feature_meta(*id).and_then(|n| n.body),
-                    CurveRef::Edge(_) => None,
+                    CurveRef::Edge(_) | CurveRef::BodyEdge { .. } => None,
                 })
                 .filter(|b| Self::takes_surfaces(ctx.document, *b))
                 .unwrap_or_else(|| ctx.document.create_body(Some("Surface".to_string()))),
@@ -699,7 +706,7 @@ mod panel_free {
                 .iter()
                 .filter_map(|c| match c {
                     CurveRef::Edge(e) => Some(*e),
-                    CurveRef::Sketch(_) => None,
+                    CurveRef::Sketch(_) | CurveRef::BodyEdge { .. } => None,
                 })
                 .collect::<Vec<_>>()
         };
@@ -1282,6 +1289,83 @@ mod tests {
         assert_eq!(joins[0].0, [1.0, 0.0, 0.0], "placed where the body sits");
         bench.check = None;
         assert!(bench.task(&ctx).is_none());
+    }
+
+    fn shaped(document: &mut Document, body: BodyId) {
+        document.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        document.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
+    }
+
+    /// A step built on an edge of another body takes that body's shape and
+    /// where it sits, and builds again when its shape changes.
+    #[test]
+    fn an_edge_of_another_body_is_carried_into_the_step() {
+        let mut document = Document::new("t");
+        let other = document.create_body(Some("Solid".into()));
+        shaped(&mut document, other);
+        document.set_body_placement(
+            other,
+            core_document::BodyPlacement {
+                translation: [0.0, 0.0, 5.0],
+                ..core_document::BodyPlacement::IDENTITY
+            },
+        );
+        let body = document.create_body(Some("Surface".into()));
+        let edge = EdgePick {
+            point: [5.0, 0.0, 0.0],
+            direction: [1.0, 0.0, 0.0],
+            faces: [0, 0],
+            length: 10.0,
+        };
+        let wall = SurfaceFeature::Extrude {
+            curves: vec![CurveRef::BodyEdge { body: other, edge }],
+            direction: crate::feature::Direction::Z,
+            length: 3.0,
+            symmetric: false,
+            reversed: false,
+        };
+        let id = document
+            .add_feature_in_body(wall, "Wall".into(), Some(body))
+            .unwrap();
+        document.mark_feature_dirty(id);
+        let jobs = build::rebuild_jobs(&mut document);
+        assert_eq!(jobs.len(), 1);
+        let plan = jobs[0].plan.as_ref().unwrap();
+        let kernel_api::SolidOp::Surface(kernel_api::SurfaceOp::Extrude { curves, .. }) =
+            &plan.ops[0]
+        else {
+            panic!("{:?}", plan.ops)
+        };
+        let kernel_api::CurveSource::BodyEdge {
+            brep, transform, ..
+        } = &curves[0]
+        else {
+            panic!("{curves:?}")
+        };
+        assert_eq!(brep.as_slice(), b"ogeom shape");
+        assert_eq!(
+            transform.as_ref().unwrap()[2][3],
+            5.0,
+            "raised where that body sits"
+        );
+        assert!(build::rebuild_jobs(&mut document).is_empty(), "settled");
+        shaped(&mut document, other);
+        assert_eq!(
+            build::rebuild_jobs(&mut document).len(),
+            1,
+            "its shape changed"
+        );
     }
 
     /// Two faces picked fill a fillet between surfaces, first and second

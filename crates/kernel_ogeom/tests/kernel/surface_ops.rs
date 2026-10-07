@@ -1410,3 +1410,49 @@ fn a_round_joins_two_separate_walls() {
         "{error:?}"
     );
 }
+
+/// An edge of another body's sheet, where that body sits 5 above this
+/// one, extrudes into a wall standing on it there; one it does not hold
+/// is refused.
+#[test]
+fn an_edge_of_another_body_extrudes_where_that_body_sits() {
+    let other = build(vec![SurfaceOp::PlanarFill {
+        curves: vec![square_loop(0.0, 10.0)],
+    }])
+    .unwrap();
+    let raised = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 5.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    let wall = |point: [f64; 3]| {
+        build(vec![SurfaceOp::Extrude {
+            curves: vec![CurveSource::BodyEdge {
+                brep: other.brep_blob.clone(),
+                edge: kernel_api::EdgeProbe {
+                    point,
+                    direction: [1.0, 0.0, 0.0],
+                    faces: [0, 0],
+                },
+                transform: Some(Box::new(raised)),
+            }],
+            direction: [0.0, 0.0, 1.0],
+            length: 3.0,
+            symmetric: false,
+        }])
+    };
+    let result = wall([5.0, 0.0, 0.0]).unwrap();
+    assert_eq!(census(&result), (1, 0));
+    let (lo, hi) = bounds(&result);
+    assert!(
+        (lo[2] - 5.0).abs() < 1e-6 && (hi[2] - 8.0).abs() < 1e-6,
+        "{lo:?} {hi:?}"
+    );
+    assert!(
+        lo[1].abs() < 1e-6 && hi[1].abs() < 1e-6,
+        "along the edge at y = 0"
+    );
+    assert!((hi[0] - 10.0).abs() < 1e-6);
+    assert!(wall([5.0, 40.0, 0.0]).is_err(), "no edge there");
+}

@@ -41,6 +41,52 @@ pub fn is_surface_body(document: &Document, body: BodyId) -> bool {
         .any(|(_, n)| n.workbench_id.as_str() == KIND && n.body == Some(body))
 }
 
+/// Each surface feature of `body` that reads edges of other bodies, with
+/// what those bodies are now summed up: their shapes' revisions and where
+/// they sit relative to `body`.
+fn edge_inputs(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
+    use std::hash::{Hash, Hasher};
+    surface_features_of_body(document, body)
+        .into_iter()
+        .filter_map(|(id, feature)| {
+            let others = feature.edge_bodies();
+            if others.is_empty() {
+                return None;
+            }
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for other in others {
+                other.hash(&mut hasher);
+                document
+                    .imported_geometry(other)
+                    .map(|g| g.revision)
+                    .hash(&mut hasher);
+                for row in into_frame(document, body, other).rows() {
+                    for value in row {
+                        value.to_bits().hash(&mut hasher);
+                    }
+                }
+            }
+            Some((id, hasher.finish()))
+        })
+        .collect()
+}
+
+/// Where `other`'s own frame sits in `body`'s.
+fn into_frame(document: &Document, body: BodyId, other: BodyId) -> BodyPlacement {
+    document
+        .body_placement(body)
+        .inverse()
+        .after(&document.body_placement(other))
+}
+
+/// Whether a surface step of `other` reads edges of `body`: then `body`
+/// may not read `other`'s, or each would rebuild the other forever.
+fn reads_edges_of(document: &Document, other: BodyId, body: BodyId) -> bool {
+    surface_features_of_body(document, other)
+        .iter()
+        .any(|(_, f)| f.edge_bodies().contains(&body))
+}
+
 /// Bodies with a surface feature to build again.
 fn pending(document: &Document) -> Vec<BodyId> {
     let mut bodies: Vec<BodyId> = document
@@ -56,8 +102,18 @@ fn pending(document: &Document) -> Vec<BodyId> {
 
 /// The bodies to build again, each with its plan. The dirty flags of the
 /// body's surface features and of the sketches they read are settled
-/// first, so a plan that fails does not come back every frame.
+/// first, so a plan that fails does not come back every frame. A step
+/// reading another body's edges builds again when that body's shape
+/// changes or either body moves.
 pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
+    let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
+    for body in bodies {
+        for (feature, inputs) in edge_inputs(document, body) {
+            if document.built_against(feature) != Some(inputs) {
+                document.mark_feature_stale(feature);
+            }
+        }
+    }
     pending(document)
         .into_iter()
         .map(|body| {
@@ -72,6 +128,9 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
                 .collect();
             for id in features.iter().chain(&inputs) {
                 document.clear_feature_dirty(*id);
+            }
+            for (feature, seen) in edge_inputs(document, body) {
+                document.note_built_against(feature, seen);
             }
             RebuildJob {
                 body,
@@ -428,6 +487,28 @@ pub fn sources(
                 );
             }
             CurveRef::Edge(pick) => out.push(CurveSource::Edge(edge_probe(pick))),
+            CurveRef::BodyEdge { body: other, edge } if *other == body => {
+                out.push(CurveSource::Edge(edge_probe(edge)));
+            }
+            CurveRef::BodyEdge { body: other, edge } => {
+                if reads_edges_of(document, *other, body) {
+                    return Err(
+                        "it reads edges of a body that reads this one's; one of the two has \
+                         to go"
+                            .into(),
+                    );
+                }
+                let brep = document
+                    .imported_brep_blob(*other)
+                    .ok_or("the body its edge is on has no shape yet")?
+                    .to_vec();
+                let moved = into_frame(document, body, *other);
+                out.push(CurveSource::BodyEdge {
+                    brep,
+                    edge: edge_probe(edge),
+                    transform: (!moved.is_identity()).then(|| Box::new(moved.rows())),
+                });
+            }
         }
     }
     Ok(out)
@@ -437,7 +518,7 @@ pub fn sources(
 fn first_plane(document: &Document, body: BodyId, refs: &[CurveRef]) -> Option<ProfilePlane> {
     refs.iter().find_map(|r| match r {
         CurveRef::Sketch(id) => sketch_plane(document, body, *id).ok(),
-        CurveRef::Edge(_) => None,
+        CurveRef::Edge(_) | CurveRef::BodyEdge { .. } => None,
     })
 }
 

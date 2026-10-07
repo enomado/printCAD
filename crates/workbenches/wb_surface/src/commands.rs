@@ -9,7 +9,11 @@ use crate::feature::{Kind, SurfaceFeature};
 use crate::{CHECK_TOOL, CURVATURE_TOOL, SET_COMMAND, ZEBRA_TOOL};
 
 const EDGE: &str = "{point, direction}, as pc.doc.edges lists an edge";
-const CURVE: &str = "{Sketch = id}, or {Edge = {point, direction}} for an edge of the body";
+const CURVE: &str = "{Sketch = id}, {Edge = {point, direction}} for an edge of the body, or \
+     {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame";
+const BY_CURVES: &str = "In place of `sketches`: each {Sketch = id}, {Edge = {point, direction}} for \
+     an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of \
+     another body, in its frame";
 
 /// The command that makes a kind of step.
 pub fn step(kind: &Kind) -> CommandSpec {
@@ -245,11 +249,7 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
             ),
             ("symmetric", Bool, "Half each way"),
             ("reversed", Bool, "The other way"),
-            (
-                "curves",
-                List,
-                "In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body",
-            ),
+            ("curves", List, BY_CURVES),
         ],
         "surface.revolve" => &[
             ("angle_deg", Number, "Degrees (360)"),
@@ -259,28 +259,16 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
                 "SketchVertical (the default), SketchHorizontal, X, Y, Z or \
                  {Custom = {origin = {x, y, z}, direction = {x, y, z}}}",
             ),
-            (
-                "curves",
-                List,
-                "In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body",
-            ),
+            ("curves", List, BY_CURVES),
         ],
-        "surface.planar" => &[(
-            "curves",
-            List,
-            "In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body",
-        )],
+        "surface.planar" => &[("curves", List, BY_CURVES)],
         "surface.fill" => &[
             (
                 "continuity",
                 String,
                 "G0 (the default), G1 or G2: how it meets the faces of edges in `boundary`",
             ),
-            (
-                "boundary",
-                List,
-                "In place of `sketches`: each {Sketch = id}, or {Edge = {point, direction}} for an edge of the body",
-            ),
+            ("boundary", List, BY_CURVES),
         ],
         "surface.ruled" => &[("first", Any, CURVE), ("second", Any, CURVE)],
         "surface.loft" => &[
@@ -448,6 +436,11 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 "Built from edges (`curves`) it needs a direction of its own: SketchNormal \
                  fails at rebuild (\"the direction follows a sketch's plane\").",
             )
+            .note(
+                "An edge of another body (`BodyEdge`, the edge as `pc.doc.edges{body = id}` \
+                 lists it) is taken where that body sits, and the step builds again when that \
+                 body changes or moves.",
+            )
             .see_also("surface.check")
             .example(
                 "Two walls from an open outline",
@@ -461,6 +454,17 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 local m = pc.doc.measure{body = body}
                 assert(math.abs(m.area - 100) < 1e-6 and m.volume == nil, "a sheet, open")
                 assert(math.abs(m.max[3] - 5) < 1e-6)
+
+                -- A wall standing on the top edge of the first, in a body of its own.
+                local top
+                for _, e in ipairs(pc.doc.edges{body = body}) do
+                  if math.abs(e.point[3] - 5) < 1e-6 and math.abs(e.point[2]) < 1e-6 then top = e end
+                end
+                local on = pc.surface.extrude{direction = "Z", length = 2, curves = {
+                  {BodyEdge = {body = body, edge = {point = top.point, direction = top.direction}}}}}
+                assert(#pc.doc.rebuild() == 0)
+                local other = pc.doc.measure{body = pc.doc.feature{id = on}.body}
+                assert(math.abs(other.min[3] - 5) < 1e-6 and math.abs(other.max[3] - 7) < 1e-6)
                 "#,
             ),
         "surface.revolve" => spec

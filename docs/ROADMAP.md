@@ -28,7 +28,6 @@ Not yet filed:
 
 ## Surfaces
 
-- [ ] Picked edges of other bodies as curves (the body's own only today).
 - [ ] A pick of a face's edges by clicking the face, as external geometry
   does in the sketcher.
 

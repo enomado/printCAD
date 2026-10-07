@@ -334,6 +334,16 @@ fn curve_name(ctx: &WorkbenchRuntimeContext, curve: &CurveRef) -> String {
             .map(|n| n.name.clone())
             .unwrap_or_else(|| "A sketch that is gone".into()),
         CurveRef::Edge(edge) => edge_name(edge),
+        CurveRef::BodyEdge { body, edge } => {
+            let name = ctx
+                .document
+                .bodies()
+                .iter()
+                .find(|b| b.id == *body)
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| "a body that is gone".into());
+            format!("{} of {name}", edge_name(edge))
+        }
     }
 }
 
@@ -416,7 +426,7 @@ fn edge_list(ui: &mut Ui, title: &str, edges: &mut Vec<EdgePick>, picked: &[Curv
         .iter()
         .filter_map(|c| match c {
             CurveRef::Edge(e) => Some(*e),
-            CurveRef::Sketch(_) => None,
+            CurveRef::Sketch(_) | CurveRef::BodyEdge { .. } => None,
         })
         .collect();
     list(ui, title, edges, &picked, edge_name)
@@ -449,7 +459,7 @@ fn one_edge(ui: &mut Ui, title: &str, slot: &mut Option<EdgePick>, picked: &[Cur
         .iter()
         .find_map(|c| match c {
             CurveRef::Edge(e) => Some(*e),
-            CurveRef::Sketch(_) => None,
+            CurveRef::Sketch(_) | CurveRef::BodyEdge { .. } => None,
         })
         .into_iter()
         .collect();
