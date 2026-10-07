@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>printCAD: parametric CAD for 3D-printed parts</title>
+  <meta name="description" content="printCAD is a free, open-source parametric CAD application for designing 3D-printed parts, for Linux, Windows and macOS.">
+  <link rel="icon" href="assets/printcad-small.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/printcad.svg" alt="">printCAD</a>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#scripting">Scripting</a>
+        <a href="docs/">Guides</a>
+        <a href="#download">Download</a>
+        <a href="https://github.com/gilbertorconde/printCAD">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap hero" id="download">
+      <img class="logo" src="assets/printcad.svg" alt="printCAD">
+      <h1>Parametric CAD for 3D-printed parts</h1>
+      <p class="lede">Sketch, constrain, pad, fillet and assemble, then send the parts
+        laid out on the bed straight to your slicer. Free and open source, for Linux,
+        Windows and macOS.</p>
+      <div class="downloads">
+        <a class="button primary" data-platform="linux" href="https://github.com/gilbertorconde/printCAD/releases/latest">Linux <small>.tar.gz</small></a>
+        <a class="button" data-platform="windows" href="https://github.com/gilbertorconde/printCAD/releases/latest">Windows <small>.zip</small></a>
+        <a class="button" data-platform="macos" href="https://github.com/gilbertorconde/printCAD/releases/latest">macOS <small>.dmg</small></a>
+      </div>
+      <p class="release-line" id="release-line">
+        Every release: <a href="https://github.com/gilbertorconde/printCAD/releases">GitHub releases</a>.
+        Early development: the whole path from sketch to printable file works, expect rough edges.
+      </p>
+      <div class="shot"><img src="assets/shots/design.png" alt="printCAD's Design workbench with a part and its feature history" width="1578" height="929"></div>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <h2>Everything a printed part needs</h2>
+        <p class="sub">A feature history you can go back into, sketches that solve as you
+          draw, and the tools that matter once the part leaves the screen.</p>
+        <div class="grid">
+          <div class="card"><span class="tag">Sketcher</span><h3>Constraints solved live</h3>
+            <p>Lines, arcs, circles, ellipses, splines, slots and text, with geometric and
+              dimensional constraints. Solid edges and other sketches come in as references,
+              and generators draw gears, sprockets, shafts and keyways from their numbers.</p></div>
+          <div class="card"><span class="tag">Design</span><h3>Features, in order</h3>
+            <p>Pad, pocket, revolve, loft, pipe, helix, holes to thread standards, fillets,
+              chamfers, draft, thickness, patterns and booleans, each editable in the feature
+              tree. Imported solids take features too.</p></div>
+          <div class="card"><span class="tag">Surfaces</span><h3>Sheets into solids</h3>
+            <p>Extruded, revolved, filled, lofted and swept surfaces; trimmed, blended,
+              filleted and sewn into solids or thickened, with curvature maps, zebra stripes
+              and a continuity check.</p></div>
+          <div class="card"><span class="tag">Assembly</span><h3>Parts that move</h3>
+            <p>Mates, hinges, sliders, gears and more, motion over time recorded to a
+              picture, interference checks, exploded views and a parts list that counts what
+              to print.</p></div>
+          <div class="card"><span class="tag">Printing</span><h3>Straight to the slicer</h3>
+            <p>Every part laid flat on the bed and packed, as many as the parts list says;
+              nut traps for captive nuts; the filament each part takes in the material you
+              print with.</p></div>
+          <div class="card"><span class="tag">Files</span><h3>Bring parts in, send them out</h3>
+            <p>STEP and IGES as solids with their dimensions and notes; STL, OBJ, 3MF, PLY,
+              glTF and VRML as meshes that convert to solids. Export STEP, STL and 3MF.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap split">
+        <div>
+          <h2>Sketches that know what you mean</h2>
+          <p class="sub">Endpoints snap together, constraints appear as you draw, and the
+            sketch tells you what is still free. Formulas and variables drive any number,
+            and a configuration table switches a part between sizes.</p>
+          <a class="button" href="docs/EDITING.html">How editing works</a>
+        </div>
+        <div class="shot"><img src="assets/shots/sketch.png" alt="A constrained sketch being edited" width="1578" height="929"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap split">
+        <div class="shot"><img src="assets/shots/surfaces.png" alt="A body painted by its curvature" width="1578" height="929"></div>
+        <div>
+          <h2>Shapes beyond the box</h2>
+          <p class="sub">The Surface workbench builds what a pad cannot: lofts through
+            guide curves, sweeps along two rails, fillets between separate sheets. Check
+            how smoothly they meet before you print.</p>
+          <a class="button" href="docs/SURFACES.html">The Surface guide</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="scripting">
+      <div class="wrap">
+        <h2>Scriptable, and ready for AI agents</h2>
+        <p class="sub">Every tool ends in a command you can record, replay and call from Lua,
+          from the built-in console or from a script file. An AI agent connected to printCAD
+          calls the same commands, finds them by what a task needs, and checks its work with
+          pictures of the model.</p>
+<pre><code>local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 60, height = 40}
+local pad = pc.design.pad{sketch = s, length = 8}
+assert(#pc.doc.rebuild() == 0)</code></pre>
+        <div class="grid" style="margin-top: 20px">
+          <div class="card"><h3>Lua scripting</h3><p>A command reference generated from the app
+            itself, every example run by the test suite. <a href="docs/SCRIPTING.html">Scripting guide</a></p></div>
+          <div class="card"><h3>AI assistant</h3><p>Chat with an agent beside your model, and
+            have it ask before it changes anything. <a href="docs/AI.html">AI guide</a></p></div>
+          <div class="card"><h3>Workbench packages</h3><p>Add workbenches written in Rust and
+            compiled to WebAssembly, installed from a store or a GitHub address, sandboxed.
+            <a href="docs/PLUGINS.html">Packages guide</a></p></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Built from the ground up</h2>
+        <p class="sub">printCAD is written in Rust, draws with Vulkan, and models with
+          <a href="https://github.com/gilbertorconde/ogeom-rs">ogeom</a>, a boundary
+          representation kernel written in pure Rust alongside it. No system CAD libraries,
+          one download per platform. Licensed MIT or Apache-2.0.</p>
+        <div class="downloads" style="justify-content: flex-start">
+          <a class="button primary" href="docs/">Read the guides</a>
+          <a class="button" href="https://github.com/gilbertorconde/printCAD">Source on GitHub</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>printCAD</span>
+      <a href="https://github.com/gilbertorconde/printCAD">GitHub</a>
+      <a href="https://github.com/gilbertorconde/printCAD/releases">Releases</a>
+      <a href="https://github.com/gilbertorconde/printCAD/issues">Issues</a>
+      <a href="docs/">Guides</a>
+      <span>MIT or Apache-2.0</span>
+    </div>
+  </footer>
+
+  <script>
+    // The download buttons point at the latest release's files once GitHub
+    // answers; until then (or without it) they open the release page.
+    fetch("https://api.github.com/repos/gilbertorconde/printCAD/releases/latest")
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((release) => {
+        const ends = { linux: "linux-x86_64.tar.gz", windows: "windows-x86_64.zip", macos: "macos-universal.dmg" };
+        for (const button of document.querySelectorAll("[data-platform]")) {
+          const asset = release.assets.find((a) => a.name.endsWith(ends[button.dataset.platform]));
+          if (asset) button.href = asset.browser_download_url;
+        }
+        const line = document.getElementById("release-line");
+        line.firstChild.textContent = `Version ${release.tag_name.replace(/^v/, "")}. Every release: `;
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

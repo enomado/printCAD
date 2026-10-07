@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Build the website into a folder (default `_site`): the landing page and
+# stylesheet from site/, the fonts and icon from the app, and every guide
+# in docs/ (and docs/recipes/) turned into a page with pandoc.
+#
+#   scripts/build-site.sh [out-dir]
+#
+# Needs pandoc. GitHub Pages serves the result (.github/workflows/pages.yml).
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+out="${1:-$root/_site}"
+tools="$root/site/tools"
+
+rm -rf "$out"
+mkdir -p "$out/assets" "$out/fonts" "$out/docs/recipes"
+cp "$root/site/index.html" "$root/site/style.css" "$out/"
+cp -r "$root/site/assets/." "$out/assets/"
+cp "$root/crates/app_shell/assets/icon/printcad.svg" \
+  "$root/crates/app_shell/assets/icon/printcad-small.svg" "$out/assets/"
+cp "$root"/crates/ui_kit/fonts/*.ttf "$root/crates/ui_kit/fonts/LICENSE.txt" "$out/fonts/"
+
+# The guides, in the order the side menu lists them: "heading" lines start
+# a group, the rest are paths under docs/ without ".md".
+guides=(
+  "heading Modelling" EDITING SURFACES ASSEMBLY HOLES VARIABLES TEXTURES CAMERA
+  "heading Printing" PRINTING
+  "heading Automating" SCRIPTING AI
+  "heading Recipes"
+  recipes/plate-pocket-hole recipes/bracket-fillet-holes recipes/revolved-bushing
+  recipes/flange-bolt-circle recipes/variables-configurations recipes/hinged-arm
+  recipes/surfaces-sewn-solid recipes/surfaces-trimmed-shade
+  "heading Extending" PLUGINS WORKBENCH_GUIDE
+  "heading Inside printCAD" ARCHITECTURE DOCUMENT_MODEL ROADMAP
+)
+
+# The side menu for a page at `docs/<current>.html` (`index` for the list).
+nav() {
+  local current="$1" up="$2" open=0 entry title
+  printf '      <h4><a href="%sindex.html">All guides</a></h4>\n' "$up"
+  for entry in "${guides[@]}"; do
+    if [[ "$entry" == heading* ]]; then
+      ((open)) && printf '      </ul>\n'
+      printf '      <h4>%s</h4>\n      <ul>\n' "${entry#heading }"
+      open=1
+      continue
+    fi
+    title="$(head -1 "$root/docs/$entry.md" | sed 's/^# *//')"
+    if [[ "$entry" == "$current" ]]; then
+      printf '        <li><a href="%s%s.html" aria-current="page">%s</a></li>\n' "$up" "$entry" "$title"
+    else
+      printf '        <li><a href="%s%s.html">%s</a></li>\n' "$up" "$entry" "$title"
+    fi
+  done
+  ((open)) && printf '      </ul>\n'
+}
+
+# One page: `docs/<name>.md` (or another markdown file standing as it) to
+# `docs/<name>.html`.
+page() {
+  local name="$1" input="$2" source="$3"
+  local depth="${name//[^\/]/}"
+  local up="" rootrel="../"
+  for ((i = 0; i < ${#depth}; i++)); do
+    up+="../"
+    rootrel+="../"
+  done
+  local title
+  title="$(head -1 "$input" | sed 's/^# *//')"
+  pandoc "$input" \
+    --from gfm+attributes --to html5 \
+    --template "$tools/guide.html" \
+    --lua-filter "$tools/links.lua" \
+    --metadata source="$source" \
+    --metadata pagetitle="$title" \
+    --variable root="$rootrel" \
+    --variable nav="$(nav "$name" "$up")" \
+    --output "$out/docs/$name.html"
+}
+
+for entry in "${guides[@]}"; do
+  [[ "$entry" == heading* ]] && continue
+  page "$entry" "$root/docs/$entry.md" "docs/$entry.md"
+done
+page index "$root/site/guides.md" "docs/index.md"
+# The list's source link names the file it is made from.
+sed -i 's#blob/master/docs/index.md#blob/master/site/guides.md#' "$out/docs/index.html"
+
+echo "built $out"

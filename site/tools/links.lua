@@ -1,0 +1,53 @@
+-- Links between the guides go to their pages; links into the source tree
+-- go to the file on GitHub. `source` is the guide's path in the repository.
+local blob = "https://github.com/gilbertorconde/printCAD/blob/master/"
+local tree = "https://github.com/gilbertorconde/printCAD/tree/master/"
+
+local function dirname(path)
+  return path:match("^(.*)/") or ""
+end
+
+local function join(dir, rel)
+  local parts = {}
+  for part in (dir .. "/" .. rel):gmatch("[^/]+") do
+    if part == ".." then
+      table.remove(parts)
+    elseif part ~= "." then
+      table.insert(parts, part)
+    end
+  end
+  return table.concat(parts, "/")
+end
+
+local source = ""
+
+function Meta(meta)
+  source = pandoc.utils.stringify(meta.source or "")
+end
+
+function Link(link)
+  local target = link.target
+  if target:match("^%a+:") or target:match("^#") then
+    return link
+  end
+  local path, anchor = target:match("^([^#]*)(#?.*)$")
+  local repo = join(dirname(source), path)
+  -- A guide in docs/ (not an RFC) is a page here.
+  local page = repo:match("^docs/(.+)%.md$")
+  if page and not page:match("^rfcs/") then
+    local here = source:match("^docs/(.*)$") or ""
+    local depth = select(2, here:gsub("/", ""))
+    link.target = string.rep("../", depth) .. page .. ".html" .. anchor
+  elseif repo:match("^docs/recipes/?$") then
+    local here = source:match("^docs/(.*)$") or ""
+    local depth = select(2, here:gsub("/", ""))
+    link.target = string.rep("../", depth) .. "#recipes"
+  elseif path:match("/$") or not path:match("%.[%w]+$") then
+    link.target = tree .. repo .. anchor
+  else
+    link.target = blob .. repo .. anchor
+  end
+  return link
+end
+
+return { { Meta = Meta }, { Link = Link } }
