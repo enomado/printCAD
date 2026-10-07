@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Build the website into a folder (default `_site`): the landing page and
-# stylesheet from site/, the fonts and icon from the app, and every guide
-# in docs/ (and docs/recipes/) turned into a page with pandoc.
+# Build the website into a folder (default `_site`): the landing page (its
+# script, WebGL viewer and packed models) and the guides' stylesheet from
+# site/, the fonts and icon from the app, and every guide in docs/ (and
+# docs/recipes/) turned into a page with pandoc.
 #
 #   scripts/build-site.sh [out-dir]
 #
@@ -14,7 +15,7 @@ tools="$root/site/tools"
 
 rm -rf "$out"
 mkdir -p "$out/assets" "$out/fonts" "$out/docs/recipes"
-cp "$root/site/index.html" "$root/site/style.css" "$out/"
+cp "$root"/site/{index.html,style.css,main.js,gl.js,guides.css} "$out/"
 cp -r "$root/site/assets/." "$out/assets/"
 cp "$root/crates/app_shell/assets/icon/printcad.svg" \
   "$root/crates/app_shell/assets/icon/printcad-small.svg" "$out/assets/"

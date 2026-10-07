@@ -96,12 +96,15 @@ cargo fmt --all                   # CI enforces --check
   window finds through its app id `printcad`.
   The CI's `platforms` job runs clippy and the tests on Windows and macOS.
 - The website (GitHub Pages) is `site/` (a hand-written landing page,
-  stylesheet in the app's palette, screenshots in `site/assets/shots/`,
-  the guides' index `site/guides.md`) plus every guide in `docs/` turned
-  into a page by `scripts/build-site.sh` (pandoc, `site/tools/`: the page
-  template and a filter sending guide links to pages and source links to
-  GitHub); `.github/workflows/pages.yml` builds and publishes it on pushes
-  touching them. A new guide goes into the script's `guides` list and
+  `index.html`, `style.css` and `main.js` over a small WebGL2 viewer,
+  `gl.js`, drawing the parts in `site/assets/models.bin`, which
+  `site/tools/pack-models.py` packs from STL exports of the scripts in
+  `site/tools/scenes/`; the guides' stylesheet `guides.css` and index
+  `site/guides.md`) plus every guide in `docs/` turned into a page by
+  `scripts/build-site.sh` (pandoc, `site/tools/`: the page template and a
+  filter sending guide links to pages and source links to GitHub);
+  `.github/workflows/pages.yml` builds and publishes it on pushes touching
+  them. A new guide goes into the script's `guides` list and
   `site/guides.md`.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
