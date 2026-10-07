@@ -11,16 +11,6 @@ noted on its item here, and the rest of the item is built around it, with
 a test marked `#[ignore = "kernel: … (ogeom-rs#N)"]` that passes once the
 kernel has it.
 
-## Sketcher
-
-- [ ] **An ellipse with its foci shown, dragged through a circle** (M). A
-  minor radius dragged past the major makes it the major, but not while
-  the ellipse shows its foci: a focus stands √(a² − b²) from the centre,
-  which changes infinitely fast as the radii meet, so the solve grows both
-  radii into a circle instead. Wants a focus constraint with no such point
-  (along · across = 0 and along² − across² = a² − b²) and one keeping the
-  two foci on opposite sides as they cross.
-
 ## Waiting on the kernel
 
 Gaps in the kernel printCAD runs into. When a fix is

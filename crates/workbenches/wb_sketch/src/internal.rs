@@ -570,6 +570,65 @@ mod tests {
         assert!(near(again, major) && (ratio_again - ratio).abs() < 1e-5);
     }
 
+    /// The minor axis's end dragged past the major radius in small steps,
+    /// as a drag goes, with the foci shown: the ellipse passes through a
+    /// circle (the foci meeting at the centre) and comes out with the axes
+    /// traded, the foci on the new major axis, the first on its vertex's
+    /// side and the second opposite.
+    #[test]
+    fn an_ellipse_with_its_foci_drags_through_a_circle() {
+        let mut sketch = Sketch::new("t");
+        let e = ellipse(&mut sketch);
+        let centre = match sketch.get_geometry(e) {
+            Some(GeometryElement::Ellipse(el)) => el.center,
+            _ => panic!(),
+        };
+        sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: centre,
+            position: v(1.0, 2.0),
+        });
+        show(&mut sketch, e);
+        let minor = role(&sketch, e, InternalRole::MinorAxis);
+        let Some(GeometryElement::Line(line)) = sketch.get_geometry(minor) else {
+            panic!()
+        };
+        let end = line.end;
+        assert!(near(sketch.point_position(end).unwrap(), v(1.0, 5.0)));
+        // From 3 above the centre to 8, in quarter steps: through 5,
+        // where the ellipse is a circle.
+        for step in 1..=20 {
+            let y = 5.0 + step as f32 * 0.25;
+            if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(end) {
+                p.position = v(1.0, y);
+            }
+            crate::solver::solve_holding(&mut sketch, &[end]);
+            assert!(
+                near(sketch.point_position(end).unwrap(), v(1.0, y)),
+                "the end follows the drag at {y}"
+            );
+            assert!(aligned(&sketch, e), "everything sits on the ellipse at {y}");
+        }
+        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
+            panic!()
+        };
+        assert!(el.major.x.abs() < 1e-3, "upright: {:?}", el.major);
+        assert!((el.major.to_glam().length() - 8.0).abs() < 1e-3);
+        assert!((el.ratio - 5.0 / 8.0).abs() < 1e-3, "{}", el.ratio);
+        // a = 8, b = 5: the foci sit √39 from the centre, along the axis.
+        let f = 39f32.sqrt();
+        let up = el.major.y.signum();
+        let (f1, f2) = (
+            sketch
+                .point_position(role(&sketch, e, InternalRole::Focus1))
+                .unwrap(),
+            sketch
+                .point_position(role(&sketch, e, InternalRole::Focus2))
+                .unwrap(),
+        );
+        assert!(near(f1, v(1.0, 2.0 + up * f)), "{f1:?}");
+        assert!(near(f2, v(1.0, 2.0 - up * f)), "{f2:?}");
+    }
+
     /// A minor radius dimensioned past the major: the axes trade places
     /// and the dimensions name the axes they now hold.
     #[test]
@@ -603,6 +662,65 @@ mod tests {
         assert_eq!(names(&sketch), [(false, 5.0), (true, 8.0)]);
         crate::solver::solve(&mut sketch);
         assert_eq!(names(&sketch), [(false, 5.0), (true, 8.0)], "settled");
+    }
+
+    /// A focus dragged through the centre and out square to the axis, its
+    /// partner held by a point it is joined to: the ellipse passes through
+    /// a circle, the axes trade, and the two foci stay opposite each other
+    /// all the way.
+    #[test]
+    fn a_focus_dragged_through_the_centre_turns_the_ellipse() {
+        let mut sketch = Sketch::new("t");
+        let e = ellipse(&mut sketch);
+        let centre = match sketch.get_geometry(e) {
+            Some(GeometryElement::Ellipse(el)) => el.center,
+            _ => panic!(),
+        };
+        sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: centre,
+            position: v(1.0, 2.0),
+        });
+        show(&mut sketch, e);
+        let (focus, other) = (
+            role(&sketch, e, InternalRole::Focus1),
+            role(&sketch, e, InternalRole::Focus2),
+        );
+        let joined = point(&mut sketch, -3.0, 2.0);
+        sketch.add_constraint(ConstraintKind::Coincident {
+            point1: other,
+            point2: joined,
+        });
+        // From (5, 2) to the centre, then up to (1, 5).
+        let path = (1..=16)
+            .map(|k| v(5.0 - k as f32 * 0.25, 2.0))
+            .chain((1..=12).map(|k| v(1.0, 2.0 + k as f32 * 0.25)));
+        for at in path {
+            if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(focus) {
+                p.position = at;
+            }
+            crate::solver::solve_holding(&mut sketch, &[focus]);
+            assert!(near(sketch.point_position(focus).unwrap(), at), "{at:?}");
+            let (f, g) = (
+                sketch.point_position(focus).unwrap().to_glam(),
+                sketch.point_position(other).unwrap().to_glam(),
+            );
+            assert!(
+                ((f + g) * 0.5 - glam::Vec2::new(1.0, 2.0)).length() < 1e-3,
+                "opposite through the centre at {at:?}: {f} {g}"
+            );
+            assert!(aligned(&sketch, e), "on the ellipse at {at:?}");
+        }
+        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
+            panic!()
+        };
+        assert!(el.major.x.abs() < 1e-3, "upright: {:?}", el.major);
+        assert!(el.ratio < 1.0);
+        assert!(near(sketch.point_position(joined).unwrap(), v(1.0, -1.0)));
+        assert_eq!(role(&sketch, e, InternalRole::Focus1), focus);
+        assert!(
+            el.major.y > 0.0,
+            "the first focus is on the major vertex's side"
+        );
     }
 
     #[test]

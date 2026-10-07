@@ -4284,6 +4284,57 @@ fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
     );
 }
 
+/// The minor axis's end dragged past the major radius with the foci shown:
+/// the ellipse goes through a circle and comes out taller than wide, the
+/// foci on its new major axis.
+#[test]
+fn an_ellipse_showing_its_foci_drags_through_a_circle() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.ellipse");
+    h.click(10.0, 0.0, "sketch.ellipse");
+    h.click(5.0, 4.0, "sketch.ellipse");
+    h.click(0.0, 4.0, "sketch.select");
+    h.release(0.0, 4.0, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.internal_geometry"));
+    // The centre held, the minor axis's top end dragged from 4 up to 14.
+    h.click(30.0, 30.0, "sketch.select");
+    h.release(30.0, 30.0, "sketch.select");
+    h.click(0.0, 0.0, "sketch.select");
+    h.release(0.0, 0.0, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.constrain.lock"));
+    h.click(0.0, 4.0, "sketch.select");
+    for k in 1..=40 {
+        h.mouse_move(0.0, 4.0 + k as f32 * 0.25, "sketch.select");
+    }
+    h.release(0.0, 14.0, "sketch.select");
+    let sketch = h.sketch();
+    let ellipse = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Ellipse(e) => Some(e.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let a = ellipse.major.to_glam().length();
+    assert!(
+        ellipse.major.x.abs() < 1e-2 && (a - 14.0).abs() < 1e-2,
+        "the major axis stands upright through the dragged end: {:?}",
+        ellipse.major
+    );
+    assert!(
+        (a * ellipse.ratio - 10.0).abs() < 1e-2,
+        "the old major radius is the minor"
+    );
+    // a = 14, b = 10: the foci sit √96 above and below the centre.
+    let f = 96f32.sqrt();
+    assert!(
+        h.point_at(0.0, f) && h.point_at(0.0, -f),
+        "the foci followed"
+    );
+}
+
 #[test]
 fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
     let mut h = Harness::new();

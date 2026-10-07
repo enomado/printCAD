@@ -770,6 +770,17 @@ enum ResidualSpec {
         shape: CurveShape,
         at: Offset,
     },
+    /// An ellipse's focus `p`, its offset from the centre `z = along + i
+    /// across` in the curve's frame: `z² = a² − b²` (2 residuals,
+    /// `along · across` and `along² − across² − (a² − b²)`, over `2a`).
+    /// It has no singular point where the radii meet: the focus slides
+    /// into the centre and out across as the minor radius grows past the
+    /// major, which side the solve keeps from where the point stands.
+    Focus {
+        p: usize,
+        c: usize,
+        shape: CurveShape,
+    },
 }
 
 /// An ellipse's or conic's shape: the vector along its axis (an ellipse's
@@ -802,10 +813,6 @@ enum Offset {
     Major(f64),
     /// `sign · b` across.
     Minor(f64),
-    /// An ellipse's foci: `sign · √(a² − b²)` along, or across when the
-    /// minor radius has grown past the major in a solve (the axes trade
-    /// places when the solve is written back).
-    EllipseFocus(f64),
     /// `√(a² + b²)` along: a hyperbola's focus.
     HyperbolaFocus,
 }
@@ -817,8 +824,6 @@ impl Offset {
         let (along, across) = match self {
             Offset::Major(sign) => (sign * a, 0.0),
             Offset::Minor(sign) => (0.0, sign * minor),
-            Offset::EllipseFocus(sign) if minor > a => (0.0, sign * (minor * minor - a * a).sqrt()),
-            Offset::EllipseFocus(sign) => (sign * (a * a - minor * minor).max(0.0).sqrt(), 0.0),
             Offset::HyperbolaFocus => (a.hypot(minor), 0.0),
         };
         (u.0 * along + w.0 * across, u.1 * along + w.1 * across)
@@ -860,7 +865,8 @@ impl ResidualSpec {
             | ResidualSpec::PointOnCurve { .. }
             | ResidualSpec::SameStep { .. }
             | ResidualSpec::Step { .. }
-            | ResidualSpec::Internal { .. } => 2,
+            | ResidualSpec::Internal { .. }
+            | ResidualSpec::Focus { .. } => 2,
             ResidualSpec::CurvesMeet { .. } => 3,
             _ => 1,
         }
@@ -1184,6 +1190,16 @@ impl ResidualSpec {
                 out.push(v[p] - (v[c] + dx));
                 out.push(v[p + 1] - (v[c + 1] + dy));
             }
+            ResidualSpec::Focus { p, c, shape } => {
+                let (x, y, minor) = shape.get(v);
+                let a = x.hypot(y).max(MIN_LEN);
+                let (dx, dy) = (v[p] - v[c], v[p + 1] - v[c + 1]);
+                let along = (dx * x + dy * y) / a;
+                let across = (dy * x - dx * y) / a;
+                let scale = 2.0 * a.max(minor.abs());
+                out.push(2.0 * along * across / scale);
+                out.push((along * along - across * across - (a * a - minor * minor)) / scale);
+            }
         }
     }
 }
@@ -1236,6 +1252,9 @@ struct System {
     /// Ellipse or conic id -> index of its three shape variables (see
     /// `CurveShape`), for the curves whose internal geometry is shown.
     shape_vars: HashMap<Uuid, usize>,
+    /// Ellipse foci nothing but their curve holds: left out of the solve
+    /// and placed from the solved shape after it.
+    derived_foci: std::collections::HashSet<Uuid>,
     /// Resolved residuals (user constraints plus implicit arc consistency).
     specs: Vec<ResidualSpec>,
     /// Total residual dimension.
@@ -1387,6 +1406,15 @@ fn build_system_with(
     // Text outlines follow their point after the solve.
     for id in crate::text::outline_points(sketch) {
         if let Some(&v) = point_vars.get(&id) {
+            pinned.extend([v, v + 1]);
+        }
+    }
+    // A focus only its ellipse holds follows the shape after the solve,
+    // so moving it costs the solve nothing: a radius dragged past the
+    // other trades the axes as it does with the foci hidden.
+    let derived_foci = derived_foci(sketch, exclude, held);
+    for id in &derived_foci {
+        if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
         }
     }
@@ -2084,7 +2112,13 @@ fn build_system_with(
 
     vars.extend(aux);
     specs.extend(conic_end_residuals(sketch, &point_var, &shape_vars));
-    specs.extend(internal_residuals(sketch, exclude, &point_var, &shape_vars));
+    specs.extend(internal_residuals(
+        sketch,
+        exclude,
+        &point_var,
+        &shape_vars,
+        &derived_foci,
+    ));
 
     let residual_len = specs.iter().map(ResidualSpec::dim).sum();
     let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
@@ -2094,6 +2128,7 @@ fn build_system_with(
         point_vars,
         radius_vars,
         shape_vars,
+        derived_foci,
         specs,
         residual_len,
     }
@@ -2172,10 +2207,13 @@ fn internal_residuals(
     exclude: Option<Uuid>,
     point_var: &impl Fn(Uuid) -> Option<usize>,
     shape_vars: &HashMap<Uuid, usize>,
+    derived_foci: &std::collections::HashSet<Uuid>,
 ) -> Vec<ResidualSpec> {
     use crate::sketch::{ConicKind, InternalRole};
     let mut specs = Vec::new();
     let mut placed: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    type Foci = (usize, CurveShape, Option<Uuid>, Option<Uuid>);
+    let mut foci: HashMap<Uuid, Foci> = HashMap::new();
     for constraint in &sketch.constraints {
         let ConstraintKind::InternalAlignment {
             element,
@@ -2201,17 +2239,27 @@ fn internal_residuals(
         };
         let own = Sketch::curve_point_ids(geometry);
         let shape = curve_shape(sketch, shape_vars, curve);
-        // The points of the element and where each goes.
+        // The points of the element and where each goes. An ellipse's
+        // foci are placed after the loop, the second from the first.
         let targets: Vec<(Uuid, Offset)> = match (role, sketch.get_geometry(element)) {
-            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p))) => {
-                let sign = if role == InternalRole::Focus1 {
-                    1.0
+            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p)))
+                if ellipse && derived_foci.contains(&p.id) =>
+            {
+                Vec::new()
+            }
+            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p)))
+                if ellipse =>
+            {
+                let slot = foci.entry(curve).or_insert((c, shape, None, None));
+                if role == InternalRole::Focus1 {
+                    slot.2 = slot.2.or(Some(p.id));
                 } else {
-                    -1.0
-                };
-                let at = if ellipse {
-                    Offset::EllipseFocus(sign)
-                } else if hyperbola {
+                    slot.3 = slot.3.or(Some(p.id));
+                }
+                Vec::new()
+            }
+            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p))) => {
+                let at = if hyperbola {
                     Offset::HyperbolaFocus
                 } else {
                     Offset::Major(1.0)
@@ -2239,7 +2287,72 @@ fn internal_residuals(
             }
         }
     }
+    // An ellipse's first focus solves `z² = a² − b²` and the second stands
+    // opposite it through the centre, which keeps them on opposite sides
+    // as they cross it; a lone focus solves the square itself.
+    let mut foci: Vec<_> = foci.into_iter().collect();
+    foci.sort_by_key(|(curve, _)| *curve);
+    for (_, (c, shape, first, second)) in foci {
+        let first = first.filter(|id| placed.insert(*id)).and_then(point_var);
+        let second = second.filter(|id| placed.insert(*id)).and_then(point_var);
+        match (first, second) {
+            (Some(p), Some(q)) => {
+                specs.push(ResidualSpec::Focus { p, c, shape });
+                specs.push(ResidualSpec::Midpoint { p: c, s: p, e: q });
+            }
+            (Some(p), None) | (None, Some(p)) => specs.push(ResidualSpec::Focus { p, c, shape }),
+            (None, None) => {}
+        }
+    }
     specs
+}
+
+/// The ellipse foci nothing holds but their curve: no other constraint
+/// names them, no curve runs through them, and they are not being dragged.
+fn derived_foci(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    held: &[Uuid],
+) -> std::collections::HashSet<Uuid> {
+    let mut foci = std::collections::HashSet::new();
+    for c in &sketch.constraints {
+        if let ConstraintKind::InternalAlignment {
+            element,
+            curve,
+            role: InternalRole::Focus1 | InternalRole::Focus2,
+        } = c.kind
+            && c.is_solved()
+            && exclude != Some(c.id)
+            && matches!(
+                sketch.get_geometry(curve),
+                Some(GeometryElement::Ellipse(_))
+            )
+            && matches!(
+                sketch.get_geometry(element),
+                Some(GeometryElement::Point(_))
+            )
+            && !held.contains(&element)
+        {
+            foci.insert(element);
+        }
+    }
+    for c in &sketch.constraints {
+        if !c.is_solved()
+            || exclude == Some(c.id)
+            || matches!(c.kind, ConstraintKind::InternalAlignment { .. })
+        {
+            continue;
+        }
+        for id in constraint_refs(&c.kind) {
+            foci.remove(&id);
+        }
+    }
+    for g in &sketch.geometry {
+        for id in Sketch::curve_point_ids(g) {
+            foci.remove(&id);
+        }
+    }
+    foci
 }
 
 /// Resolve an optional point reference: absent is fine (measure from the
@@ -2505,6 +2618,116 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
     for id in reversed {
         if let Some(GeometryElement::Line(l)) = sketch.get_geometry_mut(id) {
             std::mem::swap(&mut l.start, &mut l.end);
+        }
+    }
+    // An ellipse's first focus is the one on its major vertex's side: a
+    // focus that came out on the other (through a circle, or past the
+    // centre) takes the other name.
+    let sides: Vec<(usize, InternalRole)> = sketch
+        .constraints
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            let ConstraintKind::InternalAlignment {
+                curve,
+                role: InternalRole::Focus1 | InternalRole::Focus2,
+                element,
+            } = c.kind
+            else {
+                return None;
+            };
+            if sys.derived_foci.contains(&element) {
+                return None;
+            }
+            let Some(GeometryElement::Ellipse(e)) = sketch.get_geometry(curve) else {
+                return None;
+            };
+            let at = sketch.point_position(element)?.to_glam();
+            let centre = sketch.point_position(e.center)?.to_glam();
+            let axis = e.major.to_glam();
+            let along = (at - centre).dot(axis) / axis.length().max(1e-9);
+            if along.abs() <= 1e-6 * axis.length() {
+                return None;
+            }
+            let role = if along > 0.0 {
+                InternalRole::Focus1
+            } else {
+                InternalRole::Focus2
+            };
+            Some((i, role))
+        })
+        .collect();
+    for (i, side) in sides {
+        if let ConstraintKind::InternalAlignment { role, .. } = &mut sketch.constraints[i].kind {
+            *role = side;
+        }
+    }
+    place_derived_foci(sketch, &sys.derived_foci);
+}
+
+/// The foci the solve left out, placed from their ellipse as it stands: a
+/// focus the solve placed has its partner opposite it through the centre,
+/// under the other name; otherwise the first stands `√(a² − b²)` from the
+/// centre toward the major vertex and the second as far the other way.
+fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<Uuid>) {
+    if derived.is_empty() {
+        return;
+    }
+    let foci: Vec<(usize, Uuid, InternalRole, Uuid)> = sketch
+        .constraints
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| match c.kind {
+            ConstraintKind::InternalAlignment {
+                curve,
+                role: role @ (InternalRole::Focus1 | InternalRole::Focus2),
+                element,
+            } => Some((i, curve, role, element)),
+            _ => None,
+        })
+        .collect();
+    for &(i, curve, role, element) in &foci {
+        if !derived.contains(&element) {
+            continue;
+        }
+        let Some(GeometryElement::Ellipse(e)) = sketch.get_geometry(curve) else {
+            continue;
+        };
+        let Some(centre) = sketch.point_position(e.center).map(|p| p.to_glam()) else {
+            continue;
+        };
+        let partner = foci.iter().find_map(|&(_, c, r, p)| {
+            (c == curve && p != element && !derived.contains(&p))
+                .then(|| sketch.point_position(p).map(|at| (r, at.to_glam())))
+                .flatten()
+        });
+        let (role, at) = match partner {
+            Some((other, at)) => {
+                let role = if other == InternalRole::Focus1 {
+                    InternalRole::Focus2
+                } else {
+                    InternalRole::Focus1
+                };
+                (role, centre * 2.0 - at)
+            }
+            None => {
+                let axis = e.major.to_glam();
+                let a = axis.length();
+                let b = a * e.ratio;
+                let f = (a * a - b * b).max(0.0).sqrt();
+                let sign = if role == InternalRole::Focus1 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                (role, centre + axis.normalize_or_zero() * f * sign)
+            }
+        };
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(element) {
+            p.position = Vec2D::from_glam(at);
+        }
+        if let ConstraintKind::InternalAlignment { role: r, .. } = &mut sketch.constraints[i].kind {
+            *r = role;
         }
     }
 }
