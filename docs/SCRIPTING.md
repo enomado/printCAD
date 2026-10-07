@@ -835,37 +835,39 @@ assert(failed[1].error:find("not closed"), failed[1].error)
 `pc.doc.faces`: The faces of a body's solid, where it sits.
 
 - `body` (id)
+- `frame` (string, optional): world (the default): where the body sits; body: in the body's own frame, as features take faces and edges
 - Returns a list of {index, kind, point, area, normal?, axis?, radius?, name?}: point lies on the face, normal is a flat face's outward one, axis a turned face's {point, direction}
 
 Notes:
 
 - It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is refused ("the body has no solid yet").
-- Points, normals and axes are in world space, where the body sits; features take faces in the body's own frame, the same unless the body was moved.
+- Points, normals and axes are in world space, where the body sits; features take faces in the body's own frame, the same unless the body was moved: for a moved body ask with frame = "body" to pass a face to a feature.
 - Every rebuild numbers the faces afresh: find a face by its kind, normal and point in the same script rather than keep its index. `name` is a string.
 
 See also `pc.doc.measure`.
 
-Example: The top face of a block found by its normal.
+Example: A moved block's top, where it sits and as a feature takes it.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-local pad = pc.design.pad{sketch = s, length = 4}
+local body = pc.doc.feature{id = pc.design.pad{sketch = s, length = 4}}.body
+pc.asm.place{body = body, translation = {0, 0, 50}}
 assert(#pc.doc.rebuild() == 0)
-local faces = pc.doc.faces{body = pc.doc.feature{id = pad}.body}
-assert(#faces == 6)
-local top
-for _, face in ipairs(faces) do
-  if face.kind == "plane" and face.normal[3] > 0.99 then top = face end
+local function top(faces)
+  for _, face in ipairs(faces) do
+    if face.kind == "plane" and face.normal[3] > 0.99 then return face end
+  end
 end
-assert(top and math.abs(top.point[3] - 4) < 1e-6, "the top is at z = 4")
-assert(math.abs(top.area - 200) < 1e-3)
-assert(type(top.name) == "string")
+assert(math.abs(top(pc.doc.faces{body = body}).point[3] - 54) < 1e-6)
+local own = top(pc.doc.faces{body = body, frame = "body"})
+assert(math.abs(own.point[3] - 4) < 1e-6, "4 in the body's own frame")
 ```
 
 `pc.doc.edges`: The edges of a body's solid, where it sits.
 
 - `body` (id)
+- `frame` (string, optional): world (the default): where the body sits; body: in the body's own frame, as features take faces and edges
 - Returns a list of {index, kind, point, direction, length, faces, names?, centre?, normal?, radius?}: kind is line, circle or other; point lies halfway along the edge and direction is its way there, in world space, as an edge pick takes them ({point = e.point, direction = e.direction}); faces are the indices doc.faces gives the two faces it runs between, names theirs as strings; a circle's centre, normal and radius
 
 Notes:
@@ -873,6 +875,7 @@ Notes:
 - It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is refused ("the body has no solid yet").
 - `length` is measured along the drawn outline, a little under a curved edge's true length (31.40 for a 5 mm circle's 31.42). The seam of a turned face is an edge with one face in `faces`.
 - Every rebuild numbers the edges afresh, as it does the faces: find an edge by its kind, point and faces in the same script.
+- As doc.faces, world space unless frame = "body", which is what a fillet or chamfer of a moved body takes.
 
 See also `pc.doc.faces`.
 

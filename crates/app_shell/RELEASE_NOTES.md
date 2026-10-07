@@ -14,6 +14,9 @@ version first.
 - A gear's root is the one a rack cutter leaves, undercutting the flanks of a pinion of few teeth.
 - Gears and sprockets take a keyway in the bore, and the Keyway generator draws a shaft's key slot to pocket, both sized by the standard key (DIN 6885) unless given.
 
+### AI assistant
+- doc.faces and doc.edges give a moved body's faces and edges in its own frame too (frame = "body"), as features take them.
+
 ### View
 - A mouse release a panel, a dialog or a bench took no longer leaves a drag held, which turned the next right-button pan into a roll.
 

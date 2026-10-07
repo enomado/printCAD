@@ -7,9 +7,9 @@
   `doc.replace_shape`, `sketch.import_dxf`, `sketch.image` and
   `sketch.set_image` (the window, a file or the user's selection). The
   app's keymap commands (`app.*`, `file.*`, `edit.*`, `view.*`, `tab.*`)
-  have their summary alone. Open: Design's face and edge picks are in
-  the body's own frame while `doc.faces`/`doc.edges` give world points,
-  which differ for a placed body; the before-and-after picture.
+  have their summary alone. `doc.faces`/`doc.edges` give world points, or the body's own frame
+  that Design's face and edge picks take (`frame = "body"`). Open: the
+  before-and-after picture.
 - Date: 2026-10-06
 - Scope: `core_document::command` (the command contract), the `agents`
   crate, `app_shell` (`app/mcp.rs`, `app/agent_context.rs`,

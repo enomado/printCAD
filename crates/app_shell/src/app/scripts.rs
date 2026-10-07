@@ -767,6 +767,12 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         ),
         CommandSpec::new("doc.faces", "The faces of a body's solid, where it sits")
             .param("body", ParamKind::Id, "")
+            .optional(
+                "frame",
+                ParamKind::String,
+                "world (the default): where the body sits; body: in the body's own frame, \
+                 as features take faces and edges",
+            )
             .returns(
                 "a list of {index, kind, point, area, normal?, axis?, radius?, name?}: \
                  point lies on the face, normal is a flat face's outward one, \
@@ -779,7 +785,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             )
             .note(
                 "Points, normals and axes are in world space, where the body sits; features \
-                 take faces in the body's own frame, the same unless the body was moved.",
+                 take faces in the body's own frame, the same unless the body was moved: \
+                 for a moved body ask with frame = \"body\" to pass a face to a feature.",
             )
             .note(
                 "Every rebuild numbers the faces afresh: find a face by its kind, normal \
@@ -787,6 +794,24 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                  string.",
             )
             .see_also("doc.measure")
+            .example(
+                "A moved block's top, where it sits and as a feature takes it",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+                local body = pc.doc.feature{id = pc.design.pad{sketch = s, length = 4}}.body
+                pc.asm.place{body = body, translation = {0, 0, 50}}
+                assert(#pc.doc.rebuild() == 0)
+                local function top(faces)
+                  for _, face in ipairs(faces) do
+                    if face.kind == "plane" and face.normal[3] > 0.99 then return face end
+                  end
+                end
+                assert(math.abs(top(pc.doc.faces{body = body}).point[3] - 54) < 1e-6)
+                local own = top(pc.doc.faces{body = body, frame = "body"})
+                assert(math.abs(own.point[3] - 4) < 1e-6, "4 in the body's own frame")
+                "#,
+            )
             .example(
                 "The top face of a block found by its normal",
                 r#"
@@ -807,6 +832,12 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             ),
         CommandSpec::new("doc.edges", "The edges of a body's solid, where it sits")
             .param("body", ParamKind::Id, "")
+            .optional(
+                "frame",
+                ParamKind::String,
+                "world (the default): where the body sits; body: in the body's own frame, \
+                 as features take faces and edges",
+            )
             .returns(
                 "a list of {index, kind, point, direction, length, faces, names?, centre?, \
                  normal?, radius?}: kind is line, circle or other; point lies halfway along \
@@ -828,6 +859,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .note(
                 "Every rebuild numbers the edges afresh, as it does the faces: find an \
                  edge by its kind, point and faces in the same script.",
+            )
+            .note(
+                "As doc.faces, world space unless frame = \"body\", which is what a \
+                 fillet or chamfer of a moved body takes.",
             )
             .see_also("doc.faces")
             .example(
@@ -2882,19 +2917,26 @@ pub(crate) fn document_command(
             }
             Ok(Value::Null)
         }
-        "doc.faces" => {
+        "doc.faces" | "doc.edges" => {
             let body = body_arg(document, &a)?;
-            let geometry = document
-                .imported_geometry(body)
-                .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
-            Ok(faces_of(&geometry.mesh))
-        }
-        "doc.edges" => {
-            let body = body_arg(document, &a)?;
-            let geometry = document
-                .imported_geometry(body)
-                .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
-            Ok(crate::app::edges::edges_of(&geometry.mesh))
+            let in_body = match a.opt_string("frame")? {
+                None | Some("world") => false,
+                Some("body") => true,
+                Some(_) => return Err(CommandError::bad("frame", "must be world or body")),
+            };
+            let mesh = if in_body {
+                document.local_geometry(body).map(|(mesh, _)| mesh)
+            } else {
+                document
+                    .imported_geometry(body)
+                    .map(|g| std::sync::Arc::clone(&g.mesh))
+            }
+            .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
+            Ok(if id == "doc.faces" {
+                faces_of(&mesh)
+            } else {
+                crate::app::edges::edges_of(&mesh)
+            })
         }
         "doc.measure" => {
             let body = body_arg(document, &a)?;
