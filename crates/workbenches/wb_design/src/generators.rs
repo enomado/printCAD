@@ -1,13 +1,14 @@
-//! The Generators: an involute gear, a chain sprocket and a stepped shaft,
-//! each a sketch made from a few numbers (`wb_sketch::generator`), ready
-//! for a Pad (the gear, the sprocket) or a Revolution (the shaft).
+//! The Generators: an involute gear, a chain sprocket, a stepped shaft and
+//! a shaft's keyway, each a sketch made from a few numbers
+//! (`wb_sketch::generator`), ready for a Pad (the gear, the sprocket), a
+//! Revolution (the shaft) or a Pocket (the keyway).
 //!
 //! The tool opens the sketcher's plane picker for the selected body, as a
 //! new sketch does, the picked face offered first and the generator centred
 //! where it was picked; the sketch is made on the plane chosen and opened,
-//! where its panel sets the numbers. `design.gear`, `design.sprocket` and
-//! `design.shaft` make one from a script, on a picked face or a base plane
-//! (the shaft stands on XZ, so it turns about Z).
+//! where its panel sets the numbers. `design.gear`, `design.sprocket`,
+//! `design.shaft` and `design.keyway` make one from a script, on a picked
+//! face or a base plane (the shaft stands on XZ, so it turns about Z).
 
 use core_document::{
     Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, InputResult,
@@ -24,6 +25,7 @@ const GENERATORS: &[(&str, &str, &str, &str)] = &[
     ("gear", "Involute gear", "involute-gear", "design.gear"),
     ("sprocket", "Sprocket", "sprocket", "design.sprocket"),
     ("shaft", "Shaft", "revolution", "design.shaft"),
+    ("keyway", "Keyway", "slot", "design.keyway"),
 ];
 
 /// The toolbar's Generators dropdown.
@@ -38,20 +40,24 @@ pub(crate) fn tool() -> ToolDescriptor {
         )
 }
 
-/// Register `design.gear`, `design.sprocket` and `design.shaft`.
+/// Register `design.gear`, `design.sprocket`, `design.shaft` and
+/// `design.keyway`.
 pub(crate) fn register(context: &mut WorkbenchContext) {
     let fields = [
         (
             "design.gear",
             "Make an involute spur gear's profile, outer or internal (ring): a sketch to pad",
             "module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in \
-             modules), backlash, root_fillet (in modules), bore, internal (true for a ring), \
-             rim (a ring's outside diameter)",
+             modules), backlash, root_fillet (in modules), undercut (the root a rack cutter \
+             leaves; false for a fillet arc), bore, keyway = {on, width, depth} (0 for the \
+             standard key's by the bore), internal (true for a ring), rim (a ring's outside \
+             diameter)",
         ),
         (
             "design.sprocket",
             "Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad",
-            "pitch, roller (the roller's diameter), teeth, bore",
+            "pitch, roller (the roller's diameter), teeth, bore, keyway = {on, width, depth} \
+             (0 for the standard key's by the bore)",
         ),
         (
             "design.shaft",
@@ -60,51 +66,65 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
              loads = {bearings = {a, b}, forces = {{at, force, angle_deg}, ...}, torque (N·m), \
              torque_from, torque_to, modulus (GPa)} for its stresses and deflection",
         ),
+        (
+            "design.keyway",
+            "Make the slot of a parallel key in a shaft (DIN 6885): a sketch to pocket",
+            "shaft (its diameter, which sizes the standard key), length, width and depth (0 \
+             for the standard key's), rounded (false for square ends)",
+        ),
     ];
     for (id, summary, extra) in fields {
+        let mut spec = CommandSpec::new(id, summary);
+        if id == "design.keyway" {
+            spec = spec.optional(
+                "along",
+                ParamKind::List,
+                "With face_point: the way it runs on the face, {x, y, z}, such as the \
+                 shaft's axis",
+            );
+        }
         context.register_command(explained(
             id,
-            CommandSpec::new(id, summary)
-                .optional(
-                    "body",
-                    ParamKind::Id,
-                    "The body it goes in; the selected one, else a new one",
-                )
-                .optional(
-                    "plane",
-                    ParamKind::String,
-                    "The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, \
+            spec.optional(
+                "body",
+                ParamKind::Id,
+                "The body it goes in; the selected one, else a new one",
+            )
+            .optional(
+                "plane",
+                ParamKind::String,
+                "The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, \
                      a shaft XZ)",
-                )
-                .optional(
-                    "face_point",
-                    ParamKind::List,
-                    "Or a face it lies on, centred at this point of it, {x, y, z}, in the \
+            )
+            .optional(
+                "face_point",
+                ParamKind::List,
+                "Or a face it lies on, centred at this point of it, {x, y, z}, in the \
                      body's own frame",
-                )
-                .optional(
-                    "face_normal",
-                    ParamKind::List,
-                    "With face_point: the face's outward normal, {x, y, z}",
-                )
-                .optional("name", ParamKind::String, "Its name in the tree")
-                .extra_args(extra)
-                .returns("the sketch's id")
-                .note(
-                    "It makes only the sketch, whose curves its numbers fix: a pad or a \
+            )
+            .optional(
+                "face_normal",
+                ParamKind::List,
+                "With face_point: the face's outward normal, {x, y, z}",
+            )
+            .optional("name", ParamKind::String, "Its name in the tree")
+            .extra_args(extra)
+            .returns("the sketch's id")
+            .note(
+                "It makes only the sketch, whose curves its numbers fix: a pad or a \
                      revolution built from it makes the solid, and `sketch.generator` \
                      changes the numbers afterwards.",
-                )
-                .note(
-                    "Without `body` it goes in the selected body, else in a new one: in a \
+            )
+            .note(
+                "Without `body` it goes in the selected body, else in a new one: in a \
                      script each call without `body` starts a body of its own.",
-                )
-                .note(
-                    "A field the generator lacks is refused, naming the ones it has; \
+            )
+            .note(
+                "A field the generator lacks is refused, naming the ones it has; \
                      fields left out keep their defaults, which `pc.doc.feature{id = \
                      ...}.fields.generator` shows.",
-                )
-                .see_also("sketch.generator"),
+            )
+            .see_also("sketch.generator"),
         ));
     }
 }
@@ -122,11 +142,17 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 "A bore that does not fit inside the root circle is refused, and no body \
                  is made for it.",
             )
+            .note(
+                "A gear of few teeth (below about 17 at 20°) is undercut at its root as a rack \
+                 cutter leaves it; `pc.sketch.generator` answers `undercut = true` for it. \
+                 `keyway = {on = true}` cuts the standard key's keyway into the bore.",
+            )
             .see_also("design.pad")
             .example(
                 "A 12-tooth gear padded 5 mm",
                 r#"
                 local gear = pc.design.gear{module = 2, teeth = 12, bore = 6}
+                assert(pc.sketch.generator{sketch = gear}.undercut, "12 teeth are undercut")
                 local pad = pc.design.pad{sketch = gear, length = 5}
                 assert(#pc.doc.rebuild() == 0, "the gear builds")
                 local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
@@ -150,6 +176,43 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 assert(math.abs(size.pitch_diameter - 12.7 / math.sin(math.pi / 9)) < 1e-3)
                 local pad = pc.design.pad{sketch = sprocket, length = 3}
                 assert(#pc.doc.rebuild() == 0, "the sprocket builds")
+                "#,
+            ),
+        "design.keyway" => spec
+            .note(
+                "The slot is `length` long end to end and as wide as the key, centred on the \
+                 plane's origin or on `face_point`, running along x or `along`. \
+                 `pc.sketch.generator{sketch = id}` answers its `width` and the `depth` to \
+                 pocket it; a shaft outside 6 to 230 mm has no standard key and needs both \
+                 given.",
+            )
+            .note(
+                "On a shaft turned about Z with `design.shaft`, give the face as a point on \
+                 its round side and the outward normal there, and `along = {0, 0, 1}`.",
+            )
+            .see_also("design.pocket")
+            .see_also("design.shaft")
+            .example(
+                "A keyway pocketed into a 20 mm shaft",
+                r#"
+                local section = pc.design.shaft{start_chamfer = 0, sections = {{length = 60, diameter = 20}}}
+                local turn = pc.design.revolve{sketch = section}
+                local body = pc.doc.feature{id = turn}.body
+                assert(#pc.doc.rebuild() == 0)
+                local before = pc.doc.measure{body = body}.volume
+                local key = pc.design.keyway{body = body, shaft = 20, length = 25,
+                  face_point = {10, 0, 30}, face_normal = {1, 0, 0}, along = {0, 0, 1}}
+                local size = pc.sketch.generator{sketch = key}
+                -- A 20 mm shaft takes a 6 x 6 key, 3.5 mm into the shaft.
+                assert(size.width == 6 and size.depth == 3.5)
+                pc.design.pocket{sketch = key, depth = size.depth}
+                assert(#pc.doc.rebuild() == 0, "the keyway cuts")
+                local m = pc.doc.measure{body = body}
+                -- The slot's footprint, 142.3 mm², at most 3.5 mm deep, and
+                -- no less than 3.04 at its sides, where the shaft curves away.
+                local taken = before - m.volume
+                assert(taken > 142.27 * 3.03 and taken < 142.27 * 3.5, taken)
+                assert(math.abs(m.max[3] - 60) < 1e-6, "the shaft keeps its length")
                 "#,
             ),
         "design.shaft" => spec
@@ -239,7 +302,14 @@ pub(crate) fn command(
         .map(|(variant, ..)| *variant)
         .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
     let mut generator = Generator::named(variant).expect("a generator per command");
-    let own = ["body", "plane", "face_point", "face_normal", "name"];
+    let own = [
+        "body",
+        "plane",
+        "face_point",
+        "face_normal",
+        "name",
+        "along",
+    ];
     let fields: Map<String, Value> = args
         .iter()
         .filter(|(k, _)| !own.contains(&k.as_str()))
@@ -257,10 +327,22 @@ pub(crate) fn command(
         None => ctx.selected_body_id.map(BodyId),
     };
     let plane = if a.has("face_point") {
-        face_plane(
+        let plane = face_plane(
             vector3(args.get("face_point"), "face_point")?,
             vector3(args.get("face_normal"), "face_normal")?,
-        )
+        );
+        match args.get("along").filter(|v| !v.is_null()) {
+            Some(along) => {
+                let along = glam::Vec3::from_array(vector3(Some(along), "along")?);
+                let n = glam::Vec3::from_array(plane.normal);
+                let x = (along - n * along.dot(n)).normalize_or_zero();
+                if x == glam::Vec3::ZERO {
+                    return Err(CommandError::bad("along", "must run across the face"));
+                }
+                SketchPlane::from_frame(plane.origin, plane.normal, x.to_array())
+            }
+            None => plane,
+        }
     } else {
         match a.opt_string("plane")? {
             None => base_plane(&generator).0,

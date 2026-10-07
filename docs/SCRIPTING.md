@@ -1584,7 +1584,7 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 - `normal` (list, optional): A plane of its own instead: its normal as {x, y, z}
 - `origin` (list, optional): With normal: where the plane's origin sits, {x, y, z}
 - `x_axis` (list, optional): With normal: the sketch's X direction, {x, y, z}
-- `generator` (string, optional): gear, sprocket or shaft: the sketch is that generator's, at its default numbers, centred on the plane's origin
+- `generator` (string, optional): gear, sprocket, shaft or keyway: the sketch is that generator's, at its default numbers, centred on the plane's origin
 - Returns the sketch's id
 
 Notes:
@@ -2929,7 +2929,7 @@ end
 assert(pc.sketch.status{sketch = s}.dof == 5, "still a rectangle, free to turn")
 ```
 
-`pc.sketch.generator`: Change the numbers a generated sketch (a gear, a sprocket, a shaft) is made from, or detach it into a plain sketch.
+`pc.sketch.generator`: Change the numbers a generated sketch (a gear, a sprocket, a shaft, a keyway) is made from, or detach it into a plain sketch.
 
 - `sketch` (id): The generated sketch
 - `detach` (boolean, optional): Keep the curves as they are and forget the numbers: a plain sketch to edit by hand
@@ -4158,7 +4158,7 @@ assert(not line.straight)
 - `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `name` (string, optional): Its name in the tree
-- Other arguments: module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in modules), backlash, root_fillet (in modules), bore, internal (true for a ring), rim (a ring's outside diameter)
+- Other arguments: module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in modules), backlash, root_fillet (in modules), undercut (the root a rack cutter leaves; false for a fillet arc), bore, keyway = {on, width, depth} (0 for the standard key's by the bore), internal (true for a ring), rim (a ring's outside diameter)
 - Returns the sketch's id
 
 Notes:
@@ -4168,6 +4168,7 @@ Notes:
 - A field the generator lacks is refused, naming the ones it has; fields left out keep their defaults, which `pc.doc.feature{id = ...}.fields.generator` shows.
 - `module` is in mm (2 when left out) and `teeth` 20: the pitch diameter is module times teeth, the tip diameter two modules more. It lies on XY centred on the origin, with a 5 mm `bore` (0 for none).
 - A bore that does not fit inside the root circle is refused, and no body is made for it.
+- A gear of few teeth (below about 17 at 20°) is undercut at its root as a rack cutter leaves it; `pc.sketch.generator` answers `undercut = true` for it. `keyway = {on = true}` cuts the standard key's keyway into the bore.
 
 See also `pc.sketch.generator`, `pc.design.pad`.
 
@@ -4175,6 +4176,7 @@ Example: A 12-tooth gear padded 5 mm.
 
 ```lua
 local gear = pc.design.gear{module = 2, teeth = 12, bore = 6}
+assert(pc.sketch.generator{sketch = gear}.undercut, "12 teeth are undercut")
 local pad = pc.design.pad{sketch = gear, length = 5}
 assert(#pc.doc.rebuild() == 0, "the gear builds")
 local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
@@ -4190,7 +4192,7 @@ assert(math.abs(m.max[3] - 5) < 1e-6)
 - `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `name` (string, optional): Its name in the tree
-- Other arguments: pitch, roller (the roller's diameter), teeth, bore
+- Other arguments: pitch, roller (the roller's diameter), teeth, bore, keyway = {on, width, depth} (0 for the standard key's by the bore)
 - Returns the sketch's id
 
 Notes:
@@ -4243,6 +4245,50 @@ local m = pc.doc.measure{body = pc.doc.feature{id = turn}.body}
 local volume = math.pi * (5 ^ 2 * 20 + 8 ^ 2 * 30)
 assert(math.abs(m.volume - volume) < 1e-3, m.volume)
 assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
+```
+
+`pc.design.keyway`: Make the slot of a parallel key in a shaft (DIN 6885): a sketch to pocket.
+
+- `along` (list, optional): With face_point: the way it runs on the face, {x, y, z}, such as the shaft's axis
+- `body` (id, optional): The body it goes in; the selected one, else a new one
+- `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
+- `face_point` (list, optional): Or a face it lies on, centred at this point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- `name` (string, optional): Its name in the tree
+- Other arguments: shaft (its diameter, which sizes the standard key), length, width and depth (0 for the standard key's), rounded (false for square ends)
+- Returns the sketch's id
+
+Notes:
+
+- It makes only the sketch, whose curves its numbers fix: a pad or a revolution built from it makes the solid, and `sketch.generator` changes the numbers afterwards.
+- Without `body` it goes in the selected body, else in a new one: in a script each call without `body` starts a body of its own.
+- A field the generator lacks is refused, naming the ones it has; fields left out keep their defaults, which `pc.doc.feature{id = ...}.fields.generator` shows.
+- The slot is `length` long end to end and as wide as the key, centred on the plane's origin or on `face_point`, running along x or `along`. `pc.sketch.generator{sketch = id}` answers its `width` and the `depth` to pocket it; a shaft outside 6 to 230 mm has no standard key and needs both given.
+- On a shaft turned about Z with `design.shaft`, give the face as a point on its round side and the outward normal there, and `along = {0, 0, 1}`.
+
+See also `pc.sketch.generator`, `pc.design.pocket`, `pc.design.shaft`.
+
+Example: A keyway pocketed into a 20 mm shaft.
+
+```lua
+local section = pc.design.shaft{start_chamfer = 0, sections = {{length = 60, diameter = 20}}}
+local turn = pc.design.revolve{sketch = section}
+local body = pc.doc.feature{id = turn}.body
+assert(#pc.doc.rebuild() == 0)
+local before = pc.doc.measure{body = body}.volume
+local key = pc.design.keyway{body = body, shaft = 20, length = 25,
+  face_point = {10, 0, 30}, face_normal = {1, 0, 0}, along = {0, 0, 1}}
+local size = pc.sketch.generator{sketch = key}
+-- A 20 mm shaft takes a 6 x 6 key, 3.5 mm into the shaft.
+assert(size.width == 6 and size.depth == 3.5)
+pc.design.pocket{sketch = key, depth = size.depth}
+assert(#pc.doc.rebuild() == 0, "the keyway cuts")
+local m = pc.doc.measure{body = body}
+-- The slot's footprint, 142.3 mm², at most 3.5 mm deep, and
+-- no less than 3.04 at its sides, where the shaft curves away.
+local taken = before - m.volume
+assert(taken > 142.27 * 3.03 and taken < 142.27 * 3.5, taken)
+assert(math.abs(m.max[3] - 60) < 1e-6, "the shaft keeps its length")
 ```
 
 ### surface

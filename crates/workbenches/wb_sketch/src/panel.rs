@@ -343,9 +343,11 @@ impl SketchWorkbench {
                 // On the face itself, not the drawn mesh the click met.
                 let face = face.on_its_plane();
                 let mut plane = SketchPlane::from_face(face.point, face.normal);
-                // A generator stands where the face was clicked.
-                if made_by.is_some() {
-                    plane = SketchPlane::from_frame(face.point, plane.normal, plane.x_axis);
+                // A generator stands where the face was clicked, a keyway
+                // running along the shaft it is clicked on.
+                if let Some(made_by) = &made_by {
+                    let x_axis = made_by.runs_along(&face).unwrap_or(plane.x_axis);
+                    plane = SketchPlane::from_frame(face.point, plane.normal, x_axis);
                 }
                 // A face of the sketch's own body, or one it borrows, is
                 // followed.

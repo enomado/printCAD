@@ -27,7 +27,7 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional(
             "generator",
             ParamKind::String,
-            "gear, sprocket or shaft: the sketch is that generator's, at its default \
+            "gear, sprocket, shaft or keyway: the sketch is that generator's, at its default \
              numbers, centred on the plane's origin",
         )
         .returns("the sketch's id")
@@ -1962,7 +1962,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     if id == "sketch.new" {
         let made_by = match a.opt_string("generator")? {
             Some(kind) => Some(crate::generator::Generator::named(kind).ok_or_else(|| {
-                CommandError::bad("generator", "must be gear, sprocket or shaft")
+                CommandError::bad("generator", "must be gear, sprocket, shaft or keyway")
             })?),
             None => None,
         };

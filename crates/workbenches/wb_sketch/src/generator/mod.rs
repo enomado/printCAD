@@ -1,5 +1,6 @@
 //! Generated profiles: a sketch whose curves are made from a few numbers
-//! (an involute gear, a chain sprocket, a stepped shaft) rather than drawn.
+//! (an involute gear, a chain sprocket, a stepped shaft, a shaft's
+//! keyway) rather than drawn.
 //!
 //! The numbers live on the sketch ([`crate::SketchFeature::generator`]);
 //! the curves are made again from them whenever they change, by hand, by a
@@ -11,6 +12,7 @@
 
 mod fit;
 mod gear;
+pub mod keyway;
 mod loads;
 #[cfg(feature = "egui")]
 pub(crate) mod panel;
@@ -26,6 +28,7 @@ use crate::feature::SketchFeature;
 use crate::sketch::{Arc, BSpline, Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
 pub use gear::GearSpec;
+pub use keyway::{BoreKeyway, KeySize, KeywaySpec};
 pub use loads::{ShaftAnalysis, ShaftForce, ShaftLoads, analyse};
 pub use shaft::{ShaftSection, ShaftSpec};
 pub use sprocket::{SPROCKET_CHAINS, SprocketSpec};
@@ -36,6 +39,7 @@ pub enum Generator {
     Gear(GearSpec),
     Sprocket(SprocketSpec),
     Shaft(ShaftSpec),
+    Keyway(KeywaySpec),
 }
 
 impl Generator {
@@ -46,16 +50,18 @@ impl Generator {
             "gear" => Generator::Gear(GearSpec::default()),
             "sprocket" => Generator::Sprocket(SprocketSpec::default()),
             "shaft" => Generator::Shaft(ShaftSpec::default()),
+            "keyway" => Generator::Keyway(KeywaySpec::default()),
             _ => return None,
         })
     }
 
-    /// `gear`, `sprocket` or `shaft`.
+    /// `gear`, `sprocket`, `shaft` or `keyway`.
     pub fn kind(&self) -> &'static str {
         match self {
             Generator::Gear(_) => "gear",
             Generator::Sprocket(_) => "sprocket",
             Generator::Shaft(_) => "shaft",
+            Generator::Keyway(_) => "keyway",
         }
     }
 
@@ -65,6 +71,7 @@ impl Generator {
             Generator::Gear(_) => "Involute gear",
             Generator::Sprocket(_) => "Sprocket",
             Generator::Shaft(_) => "Shaft",
+            Generator::Keyway(_) => "Keyway",
         }
     }
 
@@ -74,6 +81,7 @@ impl Generator {
             Generator::Gear(_) => "involute-gear",
             Generator::Sprocket(_) => "sprocket",
             Generator::Shaft(_) => "revolution",
+            Generator::Keyway(_) => "slot",
         }
     }
 
@@ -83,7 +91,23 @@ impl Generator {
             Generator::Gear(_) => "Gear",
             Generator::Sprocket(_) => "Sprocket",
             Generator::Shaft(_) => "Shaft",
+            Generator::Keyway(_) => "Keyway",
         }
+    }
+
+    /// The way its sketch's x runs on `face`, when it has one of its own:
+    /// a keyway along the axis of the round face it is cut into.
+    pub fn runs_along(&self, face: &core_document::FaceRef) -> Option<[f32; 3]> {
+        let Generator::Keyway(_) = self else {
+            return None;
+        };
+        let (_, axis) = face.surface?.axis()?;
+        let (a, n) = (
+            glam::Vec3::from_array(axis),
+            glam::Vec3::from_array(face.normal).normalize_or_zero(),
+        );
+        let along = (a - n * a.dot(n)).normalize_or_zero();
+        (along != glam::Vec3::ZERO).then(|| along.to_array())
     }
 
     /// The curves its numbers make, or why they make none.
@@ -92,6 +116,7 @@ impl Generator {
             Generator::Gear(spec) => spec.outline(),
             Generator::Sprocket(spec) => spec.outline(),
             Generator::Shaft(spec) => spec.outline(),
+            Generator::Keyway(spec) => spec.outline(),
         }
     }
 
@@ -121,6 +146,8 @@ impl Generator {
                 length("backlash", "Backlash", "Gear", "backlash"),
                 number("root_fillet", "Root fillet", "Gear", "root_fillet"),
                 length("bore", "Bore", "Gear", "bore"),
+                length("keyway_width", "Keyway width", "Gear", "keyway/width"),
+                length("keyway_depth", "Keyway depth", "Gear", "keyway/depth"),
                 length("rim", "Ring rim", "Gear", "rim"),
             ],
             Generator::Sprocket(_) => vec![
@@ -128,6 +155,14 @@ impl Generator {
                 length("roller", "Roller diameter", "Sprocket", "roller"),
                 Parameter::count("teeth", "Teeth", at("Sprocket", "teeth")),
                 length("bore", "Bore", "Sprocket", "bore"),
+                length("keyway_width", "Keyway width", "Sprocket", "keyway/width"),
+                length("keyway_depth", "Keyway depth", "Sprocket", "keyway/depth"),
+            ],
+            Generator::Keyway(_) => vec![
+                length("shaft", "Shaft diameter", "Keyway", "shaft"),
+                length("length", "Length", "Keyway", "length"),
+                length("width", "Width", "Keyway", "width"),
+                length("depth", "Depth", "Keyway", "depth"),
             ],
             Generator::Shaft(spec) => {
                 let mut out = vec![length(
@@ -255,8 +290,8 @@ pub fn register(context: &mut core_document::WorkbenchContext) {
     context.register_command(
         CommandSpec::new(
             "sketch.generator",
-            "Change the numbers a generated sketch (a gear, a sprocket, a shaft) is made from, \
-             or detach it into a plain sketch",
+            "Change the numbers a generated sketch (a gear, a sprocket, a shaft, a keyway) is \
+             made from, or detach it into a plain sketch",
         )
         .param("sketch", ParamKind::Id, "The generated sketch")
         .optional(
@@ -351,20 +386,38 @@ pub fn summary(generator: &Generator) -> serde_json::Value {
             .geometry()
             .and_then(|g| spec.tip_and_root_diameters().map(|d| (g, d)))
         {
-            Ok((g, (tip, root))) => json!({
-                "pitch_diameter": 2.0 * g.pitch_radius,
-                "base_diameter": 2.0 * g.base_radius,
-                "tip_diameter": tip,
-                "root_diameter": root,
-            }),
+            Ok((g, (tip, root))) => {
+                let mut out = json!({
+                    "pitch_diameter": 2.0 * g.pitch_radius,
+                    "base_diameter": 2.0 * g.base_radius,
+                    "tip_diameter": tip,
+                    "root_diameter": root,
+                });
+                if spec.undercut && !spec.internal {
+                    out["undercut"] = json!(spec.is_undercut());
+                }
+                if spec.internal {
+                    out
+                } else {
+                    with_keyway(out, &spec.keyway, f64::from(spec.bore))
+                }
+            }
             Err(why) => json!({ "error": why }),
         },
         Generator::Sprocket(spec) => match spec.geometry() {
-            Ok(g) => json!({
-                "pitch_diameter": g.pitch_diameter,
-                "tip_diameter": g.tip_diameter,
-                "root_diameter": g.root_diameter,
-            }),
+            Ok(g) => with_keyway(
+                json!({
+                    "pitch_diameter": g.pitch_diameter,
+                    "tip_diameter": g.tip_diameter,
+                    "root_diameter": g.root_diameter,
+                }),
+                &spec.keyway,
+                f64::from(spec.bore),
+            ),
+            Err(why) => json!({ "error": why }),
+        },
+        Generator::Keyway(spec) => match spec.size() {
+            Ok((width, depth)) => json!({ "width": width, "depth": depth }),
             Err(why) => json!({ "error": why }),
         },
         Generator::Shaft(spec) => {
@@ -393,6 +446,17 @@ pub fn summary(generator: &Generator) -> serde_json::Value {
             out
         }
     }
+}
+
+/// `out` with a bore keyway's width and depth, when it has one.
+fn with_keyway(mut out: serde_json::Value, keyway: &BoreKeyway, bore: f64) -> serde_json::Value {
+    if keyway.on
+        && let Ok((width, depth)) = keyway.size(bore)
+    {
+        out["keyway_width"] = serde_json::json!(width);
+        out["keyway_depth"] = serde_json::json!(depth);
+    }
+    out
 }
 
 /// A count as JSON holds it: a formula may leave `12.0`, a hand edit
@@ -534,11 +598,13 @@ pub fn shoelace(points: &[P2]) -> f64 {
         / 2.0
 }
 
-/// What a generator makes: closed loops, whole circles (a bore), and
-/// construction circles drawn as guides (a pitch circle).
+/// What a generator makes: closed loops, loops standing as holes in them
+/// (a bore with its keyway), whole circles (a bore), and construction
+/// circles drawn as guides (a pitch circle).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Outline {
     pub loops: Vec<Loop>,
+    pub holes: Vec<Loop>,
     pub circles: Vec<(P2, f64)>,
     pub guides: Vec<(P2, f64)>,
 }
@@ -585,7 +651,7 @@ impl Outline {
             sketch.add_geometry(GeometryElement::Point(Point { id, position: v(p) }));
             id
         };
-        for lp in &self.loops {
+        for lp in self.loops.iter().chain(&self.holes) {
             let joints: Vec<Uuid> = lp
                 .joints
                 .iter()
@@ -639,8 +705,8 @@ impl Outline {
         }
     }
 
-    /// The area the outline encloses: its loops less its circles (the
-    /// bores inside them), or a ring's rim less its loop.
+    /// The area the outline encloses: its loops less its holes and
+    /// circles (the bores inside them), or a ring's rim less its loop.
     pub fn area(&self) -> f64 {
         let loops: f64 = self
             .loops
@@ -651,6 +717,7 @@ impl Outline {
             .circles
             .iter()
             .map(|(_, r)| std::f64::consts::PI * r * r)
+            .chain(self.holes.iter().map(|l| shoelace(&l.polyline(64)).abs()))
             .sum();
         (loops - holes).abs()
     }
@@ -687,14 +754,32 @@ mod tests {
         assert!((reactions.iter().sum::<f64>() - 500.0).abs() < 1e-6);
     }
 
+    /// A sprocket's bore takes the standard keyway: a 12 mm bore a 4 mm
+    /// key, its keyway 1.8 mm past the bore.
+    #[test]
+    fn a_sprocket_takes_a_keyway_in_its_bore() {
+        let mut generator = Generator::named("sprocket").unwrap();
+        let fields = serde_json::json!({"bore": 12.0, "keyway": {"on": true}});
+        generator.merge(fields.as_object().unwrap()).unwrap();
+        let out = summary(&generator);
+        assert_eq!(out["keyway_width"], 4.0, "{out}");
+        assert!((out["keyway_depth"].as_f64().unwrap() - 1.8).abs() < 1e-9);
+        let outline = generator.outline().unwrap();
+        assert!(outline.circles.is_empty() && outline.holes.len() == 1);
+    }
+
     #[test]
     fn every_generator_makes_one_closed_profile() {
-        for kind in ["gear", "sprocket", "shaft"] {
+        for kind in ["gear", "sprocket", "shaft", "keyway"] {
             let mut feature = SketchFeature::from_sketch(Sketch::new(kind));
             feature.generator = Generator::named(kind);
             regenerate(&mut feature).unwrap();
             let wires = crate::profile::extract_wires(&feature.sketch).unwrap();
-            let expect = if kind == "shaft" { 1 } else { 2 };
+            let expect = if matches!(kind, "shaft" | "keyway") {
+                1
+            } else {
+                2
+            };
             assert_eq!(wires.len(), expect, "{kind}: its outline and bore");
         }
     }
@@ -727,7 +812,7 @@ mod tests {
 
     #[test]
     fn every_parameter_points_at_a_number() {
-        for kind in ["gear", "sprocket", "shaft"] {
+        for kind in ["gear", "sprocket", "shaft", "keyway"] {
             let mut feature = SketchFeature::from_sketch(Sketch::new(kind));
             feature.generator = Generator::named(kind);
             let json = feature.to_json();

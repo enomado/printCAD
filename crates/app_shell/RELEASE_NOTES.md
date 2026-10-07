@@ -11,6 +11,8 @@ version first.
 - The refine after a feature merges only what that feature made with its neighbours: rebuilds take a third to a half less time, and a split kept on purpose stays.
 - Borrowed faces are stop faces of an up-to-shape pad or pocket and targets a revolution or groove turns until, and an existing sketch maps onto one from its tree menu (design.map_sketch), following it.
 - A chamfer by two distances, or by a distance and an angle, keeps each distance on its own side all along a tangent chain, where the faces change from a flat side to a round and on.
+- A gear's root is the one a rack cutter leaves, undercutting the flanks of a pinion of few teeth.
+- Gears and sprockets take a keyway in the bore, and the Keyway generator draws a shaft's key slot to pocket, both sized by the standard key (DIN 6885) unless given.
 
 ### View
 - A mouse release a panel, a dialog or a bench took no longer leaves a drag held, which turned the next right-button pan into a roll.

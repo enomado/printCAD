@@ -34,6 +34,8 @@ pub struct SprocketSpec {
     pub teeth: u32,
     /// Bore diameter, mm; 0 leaves it solid.
     pub bore: f32,
+    /// A keyway in the bore.
+    pub keyway: super::BoreKeyway,
 }
 
 impl Default for SprocketSpec {
@@ -43,6 +45,7 @@ impl Default for SprocketSpec {
             roller: 8.51,
             teeth: 18,
             bore: 8.0,
+            keyway: super::BoreKeyway::default(),
         }
     }
 }
@@ -96,6 +99,9 @@ impl SprocketSpec {
         let bore = f64::from(self.bore);
         if bore < 0.0 || bore >= g.root_diameter {
             return Err("the bore must fit inside the root circle".into());
+        }
+        if self.keyway.on && bore <= 0.0 {
+            return Err("a keyway needs a bore".into());
         }
         Ok(g)
     }
@@ -164,10 +170,13 @@ impl SprocketSpec {
             guides: vec![([0.0, 0.0], g.pitch_diameter / 2.0)],
             ..Outline::default()
         };
-        if self.bore > 0.0 {
+        let bore = f64::from(self.bore);
+        if self.keyway.on {
             outline
-                .circles
-                .push(([0.0, 0.0], f64::from(self.bore) / 2.0));
+                .holes
+                .push(self.keyway.bore_loop(bore, g.root_diameter / 2.0)?);
+        } else if bore > 0.0 {
+            outline.circles.push(([0.0, 0.0], bore / 2.0));
         }
         Ok(outline)
     }
@@ -254,6 +263,7 @@ mod tests {
                     roller: *roller,
                     teeth,
                     bore: 0.0,
+                    ..SprocketSpec::default()
                 };
                 spec.outline()
                     .unwrap_or_else(|e| panic!("{name} with {teeth}: {e}"));

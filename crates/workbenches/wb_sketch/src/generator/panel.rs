@@ -82,12 +82,44 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
                 set_value(&mut data, "/generator/Gear/internal", json!(internal));
                 edited.push("internal".into());
             }
+            if !spec.internal {
+                let mut undercut = spec.undercut;
+                if check_row(ui, &mut undercut, "Root as the cutter leaves it")
+                    .on_hover_text(
+                        "The trochoid a rack cutter's rounded tip traces, which undercuts the \
+                         flanks of a pinion of few teeth; off, a root fillet arc",
+                    )
+                    .changed()
+                {
+                    set_value(&mut data, "/generator/Gear/undercut", json!(undercut));
+                    edited.push("undercut".into());
+                }
+                keyway_check(ui, &mut data, &mut edited, "Gear", spec.keyway);
+            }
+        }
+        if let Generator::Sprocket(spec) = &generator {
+            keyway_check(ui, &mut data, &mut edited, "Sprocket", spec.keyway);
+        }
+        if let Generator::Keyway(spec) = &generator {
+            let mut rounded = spec.rounded;
+            if check_row(ui, &mut rounded, "Round ends").changed() {
+                set_value(&mut data, "/generator/Keyway/rounded", json!(rounded));
+                edited.push("rounded".into());
+            }
         }
         let params = generator.parameters();
         for (i, p) in params.iter().enumerate() {
             match (&generator, p.key.as_str()) {
                 (Generator::Gear(spec), "bore" | "root_fillet") if spec.internal => continue,
                 (Generator::Gear(spec), "rim") if !spec.internal => continue,
+                (Generator::Gear(spec), "keyway_width" | "keyway_depth")
+                    if spec.internal || !spec.keyway.on =>
+                {
+                    continue;
+                }
+                (Generator::Sprocket(spec), "keyway_width" | "keyway_depth") if !spec.keyway.on => {
+                    continue;
+                }
                 _ => {}
             }
             if let Some(section) = shaft_section_start(p) {
@@ -261,10 +293,14 @@ fn measured(ui: &mut egui::Ui, generator: &Generator) {
     };
     Card::new().show(ui, |ui| {
         for (key, value) in values {
-            let Some(v) = value.as_f64() else { continue };
+            let shown = match (value.as_f64(), value.as_bool()) {
+                (Some(v), _) => format!("{v:.3} mm"),
+                (_, Some(yes)) => if yes { "yes" } else { "no" }.to_string(),
+                _ => continue,
+            };
             ui.horizontal(|ui| {
                 label_cell(ui, &key.replace('_', " "));
-                mono_label(ui, format!("{v:.3} mm"), FONT_SM, TEXT1);
+                mono_label(ui, shown, FONT_SM, TEXT1);
             });
         }
     });
@@ -415,6 +451,29 @@ fn shaft_section_start(p: &Parameter) -> Option<usize> {
 
 /// The generator's field a pointer lands in: `teeth`, or `sections` for
 /// anything inside a shaft's sections.
+/// The check that cuts a keyway into the bore; its width and depth, 0
+/// for the standard key's by the bore, are fields below it.
+fn keyway_check(
+    ui: &mut egui::Ui,
+    data: &mut Value,
+    edited: &mut Vec<String>,
+    variant: &str,
+    keyway: super::BoreKeyway,
+) {
+    let mut on = keyway.on;
+    if check_row(ui, &mut on, "Keyway in the bore")
+        .on_hover_text("Its width and depth at 0 take the standard key's (DIN 6885) by the bore")
+        .changed()
+    {
+        set_value(
+            data,
+            &format!("/generator/{variant}/keyway"),
+            serde_json::to_value(super::BoreKeyway { on, ..keyway }).unwrap_or_default(),
+        );
+        edited.push("keyway".into());
+    }
+}
+
 fn field_of(pointer: &str) -> String {
     pointer.split('/').nth(3).unwrap_or_default().to_string()
 }

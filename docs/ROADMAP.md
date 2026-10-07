@@ -11,10 +11,6 @@ noted on its item here, and the rest of the item is built around it, with
 a test marked `#[ignore = "kernel: … (ogeom-rs#N)"]` that passes once the
 kernel has it.
 
-## Design
-
-- [ ] **Generators** (M). Undercut on small pinions, and keyways.
-
 ## Sketcher
 
 - [ ] **An ellipse with its foci shown, dragged through a circle** (M). A

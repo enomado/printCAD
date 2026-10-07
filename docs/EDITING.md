@@ -118,6 +118,24 @@ numbers to change like any hole's. Bores it cannot describe (a
 counterbore, a countersink, a slot) are left as they are and counted in
 the log. On an imported solid it gives the body its base shape first.
 
+**Generators** (the toolbar's Generators list) make a sketch from a few
+numbers, set in its panel or with formulas: an involute gear to pad, a
+chain sprocket to pad, a stepped shaft to revolve, and a shaft's keyway
+to pocket. Each asks for its plane as a new sketch does.
+
+- A gear's root is the one a rack cutter leaves, its rounded tip tracing
+  the root fillet; on a pinion of few teeth (below about 17 at 20°) the
+  cutter undercuts the flanks above the base circle, and the panel says
+  so. Root as the cutter leaves it off draws a root fillet arc instead
+  (what gears made before had).
+- Keyway in the bore cuts a parallel key's keyway into a gear's or a
+  sprocket's bore. Its width and depth at 0 take the standard key's by
+  the bore (DIN 6885, ISO 773, bores of 6 to 230 mm).
+- The Keyway generator draws the key's slot, round ended or square, its
+  width the standard key's for the shaft's diameter; the panel gives the
+  depth to pocket it. Placed on the round face of a shaft, it runs along
+  the shaft's axis.
+
 **Borrowed geometry** brings another body's sketch, or faces and edges of
 its solid, into this body, where the two bodies sit (Borrow geometry in Design;
 `design.borrow`). It follows its source, or keeps a frozen copy. A
