@@ -8,6 +8,7 @@ version first.
 
 ### Kernel
 - Built on ogeom 0.9.9: a small cut into a large part costs what it touches (a hole added to a plate of 576 holes takes 0.3 s in place of 1.1 s), and features on imported parts whose fillets carry small rings build, half domes sew into an open dome, mirrored sheets shade the right way, lofts and domes thicken, fillets take a fraction of the time, and a body's saved shape is a fraction of the size (1.6 MB in place of 39 MB for a plate of 576 holes).
+- Known: the interference check fails on a worm passing through a bearing, its worm built by this kernel; a fix is on its way in the kernel.
 
 ### Surfaces
 - A curvature map (Gaussian, mean, largest or smallest) and zebra stripes paint a body with how its surfaces bend, and Check continuity tells curvature continuous joins (G2) from tangent ones.
