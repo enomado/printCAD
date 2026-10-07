@@ -3147,11 +3147,13 @@ impl AssemblyWorkbench {
         placements: &[(BodyId, BodyPlacement)],
     ) -> TaskOutcome {
         if request.cancel {
+            self.handles.reset();
             restore_placements(ctx, placements);
             self.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
+            self.handles.reset();
             let placement = ctx.document.body_placement(body);
             ctx.record(
                 "asm.place",

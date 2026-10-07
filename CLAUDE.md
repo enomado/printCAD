@@ -501,7 +501,11 @@ active. The UI surface: `configure` registers
 `viewport_hud()`, `status_items()`, `editing_feature()`,
 `get_screen_space_overlays/polygons/marks/labels()` feed the viewport and
 chrome (polygons are filled fans drawn beneath the lines: the Assembly's
-Move handles, `wb_assembly/src/handles.rs` over `transform_gizmo`);
+  Move handles, `wb_assembly/src/handles.rs` over `transform_gizmo`);
+`WorkbenchRuntimeContext::pixels_per_point` carries the UI scale: input and
+overlay coordinates are physical pixels, while the transform gizmo's adapter
+converts them to and from logical pixels. `cancel_pointer_gesture()` restores
+a held pointer gesture when the window loses focus, before UI event filtering;
 `ui_settings()` draws the bench's Preferences page (a rail entry for
 each bench whose `has_settings` is true; a package's is true when its
 settings page has widgets); `feature_info`/`passive_geometry`/`pick_feature`/

@@ -13,6 +13,7 @@ pub struct HostCtxParams {
     pub camera_target: [f32; 3],
     /// `(x, y, width, height)` in physical pixels.
     pub viewport: (u32, u32, u32, u32),
+    pub pixels_per_point: f32,
     pub view_proj: Option<[[f32; 4]; 4]>,
     pub selected_body_id: Option<uuid::Uuid>,
     pub selected_face: Option<core_document::FaceRef>,
@@ -28,6 +29,7 @@ impl Default for HostCtxParams {
             camera_position: [0.0, 0.0, 5.0],
             camera_target: [0.0; 3],
             viewport: (0, 0, 1, 1),
+            pixels_per_point: 1.0,
             view_proj: None,
             selected_body_id: None,
             selected_face: None,
@@ -51,6 +53,7 @@ pub fn panel_ctx<'a>(
         params.viewport,
     );
     ctx.view_proj = params.view_proj;
+    ctx.pixels_per_point = params.pixels_per_point;
     ctx.active_document_object = active_document_object;
     ctx.selected_body_id = params.selected_body_id;
     ctx.selected_face = params.selected_face;

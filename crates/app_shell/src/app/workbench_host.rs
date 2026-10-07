@@ -18,11 +18,12 @@ use crate::ui::TreeItemId;
 /// [`PrintCadApp::interaction_ctx_params`] / [`PrintCadApp::overlay_ctx_params`]
 /// (`&self`-only: a `&mut self` builder could not coexist with the split
 /// field borrows inside [`PrintCadApp::with_workbench_ctx`]).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct WbCtxParams {
     pub cam_pos: [f32; 3],
     pub cam_target: [f32; 3],
     pub viewport: (u32, u32, u32, u32),
+    pub pixels_per_point: f32,
     pub view_proj: Option<[[f32; 4]; 4]>,
     pub hovered_world_pos: Option<[f32; 3]>,
     pub hovered_body_id: Option<Uuid>,
@@ -49,6 +50,13 @@ pub(crate) enum HookSite {
 }
 
 impl PrintCadApp {
+    /// Physical pixels per logical UI pixel, with the UI's zoom applied.
+    pub(crate) fn pixels_per_point(&self) -> f32 {
+        self.gfx
+            .as_ref()
+            .map_or(1.0, |gfx| gfx.ui_layer.pixels_per_point())
+    }
+
     /// Close the current undo step, after working out the formulas and
     /// letting every bench follow values they moved, so an edit and what
     /// it moves are one step.
@@ -83,6 +91,7 @@ impl PrintCadApp {
             cam_pos: self.session.camera.position(),
             cam_target: self.session.camera.target(),
             viewport: (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            pixels_per_point: self.pixels_per_point(),
             view_proj: Some(self.session.camera.view_projection()),
             hovered_world_pos: self.session.hovered_world_pos,
             hovered_body_id: self.session.hovered_body,
@@ -116,6 +125,7 @@ impl PrintCadApp {
             cam_pos: self.session.camera.position(),
             cam_target: self.session.camera.target(),
             viewport,
+            pixels_per_point: self.pixels_per_point(),
             view_proj: Some(self.session.camera.view_projection()),
             hovered_world_pos: None,
             hovered_body_id: None,
@@ -153,6 +163,7 @@ impl PrintCadApp {
             params.viewport,
         );
         ctx.view_proj = params.view_proj;
+        ctx.pixels_per_point = params.pixels_per_point;
         ctx.hovered_world_pos = params.hovered_world_pos;
         ctx.hovered_body_id = params.hovered_body_id;
         ctx.selected_body_id = params.selected_body_id;

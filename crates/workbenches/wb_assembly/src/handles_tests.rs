@@ -7,7 +7,6 @@ use crate::{AssemblyWorkbench, Task};
 
 const EYE: Vec3 = Vec3::new(60.0, -80.0, 140.0);
 const TARGET: [f32; 3] = [30.0, 0.0, 40.0];
-const VIEWPORT: (u32, u32, u32, u32) = (0, 0, 800, 600);
 
 /// The scene's part with its Move task open, seen in perspective from
 /// above.
@@ -16,9 +15,16 @@ struct Rig {
     wb: AssemblyWorkbench,
     part: BodyId,
     view_proj: [[f32; 4]; 4],
+    viewport: (u32, u32, u32, u32),
+    pixels_per_point: f32,
+    shift_down: bool,
 }
 
 fn rig() -> Rig {
+    rig_at_scale(1.0)
+}
+
+fn rig_at_scale(scale: f32) -> Rig {
     let (doc, _, part) = crate::tests::scene();
     let view = glam::camera::rh::view::look_at_mat4(EYE, Vec3::from_array(TARGET), Vec3::Z);
     let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
@@ -32,41 +38,56 @@ fn rig() -> Rig {
             ..AssemblyWorkbench::default()
         },
         part,
+        viewport: (0, 0, (800.0 * scale) as u32, (600.0 * scale) as u32),
+        pixels_per_point: scale,
+        shift_down: false,
         view_proj: (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d(),
     }
 }
 
 impl Rig {
     fn context(&mut self) -> WorkbenchRuntimeContext<'_> {
-        let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, EYE.to_array(), TARGET, VIEWPORT);
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, EYE.to_array(), TARGET, self.viewport);
         ctx.view_proj = Some(self.view_proj);
+        ctx.pixels_per_point = self.pixels_per_point;
+        ctx.shift_down = self.shift_down;
         ctx
     }
 
     /// Hand `event` to the bench as the host does; whether it took it.
     fn send(&mut self, event: WorkbenchInputEvent) -> bool {
-        let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, EYE.to_array(), TARGET, VIEWPORT);
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, EYE.to_array(), TARGET, self.viewport);
         ctx.view_proj = Some(self.view_proj);
+        ctx.pixels_per_point = self.pixels_per_point;
+        ctx.shift_down = self.shift_down;
         self.wb.on_input(&event, None, &mut ctx).consumed
     }
 
     fn screen(&self, point: Vec3) -> Pos2 {
-        let (x, y) =
-            core_document::runtime::world_to_viewport(self.view_proj, VIEWPORT, point.to_array())
-                .unwrap();
+        let (x, y) = core_document::runtime::world_to_viewport(
+            self.view_proj,
+            self.viewport,
+            point.to_array(),
+        )
+        .unwrap();
         emath::pos2(x, y)
     }
 
     /// The handle a press at `at` would take.
     fn under(&mut self, at: Pos2) -> Option<Handle> {
         let part = self.part;
-        let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, EYE.to_array(), TARGET, VIEWPORT);
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, EYE.to_array(), TARGET, self.viewport);
         ctx.view_proj = Some(self.view_proj);
+        ctx.pixels_per_point = self.pixels_per_point;
+        ctx.shift_down = self.shift_down;
         let handles = &self.wb.handles;
         handles
             .gizmo
             .layout(&View(&ctx), &axes(centre(&ctx, part)?), handles.mode)
-            .hit(at, handles.gizmo.style.hit_radius)
+            .hit(View(&ctx).logical(at), handles.gizmo.style.hit_radius)
     }
 
     /// The length that shows a pixel long at `point`.
@@ -170,4 +191,159 @@ fn escape_puts_the_body_back_where_its_handle_took_it() {
         "nothing is held"
     );
     assert_eq!(rig.doc.body_placement(rig.part), before);
+}
+
+/// A scaled display draws and grabs the same logical handle, and its ray
+/// still moves the body by the same world distance.
+#[test]
+fn handles_draw_and_pick_in_logical_pixels() {
+    let pivot = Vec3::new(35.0, 5.0, 40.0);
+    let mut baseline = rig();
+    let base_drawing = {
+        let mut ctx = WorkbenchRuntimeContext::new(
+            &mut baseline.doc,
+            EYE.to_array(),
+            TARGET,
+            baseline.viewport,
+        );
+        ctx.view_proj = Some(baseline.view_proj);
+        baseline.wb.handles.drawing(&ctx, baseline.part)
+    };
+    for scale in [1.0, 1.25, 2.0, 3.0] {
+        let mut rig = rig_at_scale(scale);
+        let drawing = {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut rig.doc, EYE.to_array(), TARGET, rig.viewport);
+            ctx.view_proj = Some(rig.view_proj);
+            ctx.pixels_per_point = scale;
+            rig.wb.handles.drawing(&ctx, rig.part)
+        };
+        assert_eq!(drawing.overlays.len(), base_drawing.overlays.len());
+        for (actual, base) in drawing.overlays.iter().zip(&base_drawing.overlays) {
+            for (a, b) in actual
+                .start
+                .into_iter()
+                .zip(base.start)
+                .chain(actual.end.into_iter().zip(base.end))
+            {
+                assert!((a / scale - b).abs() < 0.01);
+            }
+            assert!((actual.thickness / scale - base.thickness).abs() < 1e-5);
+        }
+        assert_eq!(drawing.polygons.len(), base_drawing.polygons.len());
+        for (actual, base) in drawing.polygons.iter().zip(&base_drawing.polygons) {
+            assert_eq!(actual.points.len(), base.points.len());
+            for (a, b) in actual
+                .points
+                .iter()
+                .flatten()
+                .zip(base.points.iter().flatten())
+            {
+                assert!((a / scale - b).abs() < 0.01);
+            }
+        }
+        assert_eq!(drawing.labels.len(), base_drawing.labels.len());
+        for (actual, base) in drawing.labels.iter().zip(&base_drawing.labels) {
+            assert!((actual.size / scale - base.size).abs() < 1e-5);
+        }
+
+        let start = rig.x_shaft(pivot);
+        let at = rig.screen(start);
+        // Just inside the logical hit radius, beyond the shaft's thickness.
+        assert!(rig.press(at + emath::vec2(0.0, 7.0 * scale)));
+        assert!(rig.move_to(rig.screen(start + Vec3::X * 20.0) + emath::vec2(0.0, 7.0 * scale)));
+        assert!(rig.release());
+        assert!((rig.doc.body_placement(rig.part).translation[0] - 50.0).abs() < 0.1);
+    }
+}
+
+#[test]
+fn shift_disc_keeps_the_body_in_the_screen_plane_at_every_scale() {
+    for scale in [1.0, 1.25, 2.0, 3.0] {
+        let mut rig = rig_at_scale(scale);
+        let pivot = Vec3::new(35.0, 5.0, 40.0);
+        let at = rig.screen(pivot);
+        assert_eq!(rig.under(at), Some(Handle::View));
+        assert!(rig.press(at));
+        let before = rig.doc.body_placement(rig.part).offset();
+        rig.shift_down = true;
+        assert!(rig.move_to(at + emath::vec2(37.0, 19.0) * scale));
+        let offset = rig.doc.body_placement(rig.part).offset() - before;
+        let forward = (Vec3::from_array(TARGET) - EYE).normalize();
+        assert!(offset.length() > 1.0);
+        assert!(
+            offset.dot(forward).abs() < 0.001,
+            "scale {scale}: {offset:?}"
+        );
+        assert!(rig.release());
+    }
+}
+
+#[test]
+fn focus_loss_restores_the_press_state_and_releases_the_handle() {
+    let mut rig = rig_at_scale(2.0);
+    let before = rig.doc.body_placement(rig.part);
+    let start = rig.x_shaft(Vec3::new(35.0, 5.0, 40.0));
+    assert!(rig.press(rig.screen(start)));
+    assert!(rig.move_to(rig.screen(start + Vec3::X * 20.0)));
+    assert_ne!(rig.doc.body_placement(rig.part), before);
+    {
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut rig.doc, EYE.to_array(), TARGET, rig.viewport);
+        rig.wb.cancel_pointer_gesture(&mut ctx);
+    }
+    assert_eq!(rig.doc.body_placement(rig.part), before);
+    assert!(!rig.move_to(rig.screen(start + Vec3::X * 40.0)));
+    assert_eq!(rig.doc.body_placement(rig.part), before);
+    assert!(rig.press(rig.screen(start)));
+    assert!(rig.release());
+}
+
+#[test]
+fn focus_loss_also_cancels_a_body_drag_without_handles() {
+    let mut rig = rig();
+    rig.wb.task = None;
+    let before = rig.doc.body_placement(rig.part);
+    let pivot = Vec3::new(35.0, 5.0, 40.0);
+    let at = rig.screen(pivot);
+    let to = rig.screen(pivot + Vec3::X * 20.0);
+    let mut ctx = WorkbenchRuntimeContext::new(&mut rig.doc, EYE.to_array(), TARGET, rig.viewport);
+    ctx.view_proj = Some(rig.view_proj);
+    ctx.hovered_body_id = Some(rig.part.0);
+    ctx.hovered_world_pos = Some(pivot.to_array());
+    rig.wb.on_input(
+        &WorkbenchInputEvent::MousePress {
+            button: MouseButton::Left,
+            viewport_pos: (at.x, at.y),
+        },
+        None,
+        &mut ctx,
+    );
+    rig.wb.on_input(
+        &WorkbenchInputEvent::MouseMove {
+            viewport_pos: (to.x, to.y),
+        },
+        None,
+        &mut ctx,
+    );
+    assert_ne!(ctx.document.body_placement(rig.part), before);
+    rig.wb.cancel_pointer_gesture(&mut ctx);
+    assert_eq!(ctx.document.body_placement(rig.part), before);
+    assert!(
+        !rig.wb
+            .on_input(
+                &WorkbenchInputEvent::MouseMove {
+                    viewport_pos: (to.x + 20.0, to.y),
+                },
+                None,
+                &mut ctx
+            )
+            .redraw
+    );
+    assert_eq!(ctx.document.body_placement(rig.part), before);
+    assert!(
+        core_document::HookOutcome::take(&mut ctx)
+            .recorded
+            .is_empty()
+    );
 }

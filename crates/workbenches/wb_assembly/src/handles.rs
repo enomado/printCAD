@@ -21,7 +21,7 @@ pub const MODE_ACTION: &str = "asm.move_mode";
 /// The choices of the Move task's panel, in [`Handles::mode_index`] order.
 pub const MODES: [&str; 2] = ["Move", "Turn"];
 
-/// Size of an axis letter and of the value shown while dragging, pixels.
+/// Size of an axis letter and of the value shown while dragging, logical pixels.
 const TEXT_PX: f32 = 13.0;
 /// Segments a circle of the drag's feedback is drawn with.
 const CIRCLE_SEGMENTS: usize = 32;
@@ -37,6 +37,16 @@ pub fn centre(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<Vec3> {
 struct View<'v, 'a>(&'v WorkbenchRuntimeContext<'a>);
 
 impl View<'_, '_> {
+    fn logical(&self, point: Pos2) -> Pos2 {
+        let scale = self.0.pixels_per_point;
+        Pos2::new(point.x / scale, point.y / scale)
+    }
+
+    fn physical(&self, point: Pos2) -> Pos2 {
+        let scale = self.0.pixels_per_point;
+        Pos2::new(point.x * scale, point.y * scale)
+    }
+
     fn eye(&self) -> DVec3 {
         Vec3::from_array(self.0.camera_position).as_dvec3()
     }
@@ -45,10 +55,11 @@ impl View<'_, '_> {
 impl GizmoView for View<'_, '_> {
     fn project(&self, point: DVec3) -> Option<Pos2> {
         let (x, y) = self.0.world_to_viewport(point.as_vec3().to_array())?;
-        Some(Pos2::new(x, y))
+        Some(self.logical(Pos2::new(x, y)))
     }
 
     fn ray(&self, point: Pos2) -> Option<(DVec3, DVec3)> {
+        let point = self.physical(point);
         let (origin, direction) = self.0.viewport_to_ray((point.x, point.y))?;
         let direction = Vec3::from_array(direction).as_dvec3().try_normalize()?;
         Some((Vec3::from_array(origin).as_dvec3(), direction))
@@ -157,6 +168,7 @@ impl Handles {
             return false;
         };
         let view = View(ctx);
+        let at = view.logical(at);
         let set = axes(pivot);
         let Some(handle) = self
             .gizmo
@@ -182,6 +194,7 @@ impl Handles {
     /// The pointer at `at`: a held handle moves the body; `false` when none
     /// is held.
     pub fn drag(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId, at: Pos2) -> bool {
+        let at = View(ctx).logical(at);
         self.pointer = Some(at);
         if !self.gizmo.is_dragging() {
             return false;
@@ -252,7 +265,7 @@ impl Handles {
         });
         let mut drawing = Drawing::default();
         for shape in self.gizmo.shapes(&view, &layout, lit) {
-            drawing.add(shape, &ctx.sketch_palette);
+            drawing.add(shape, &ctx.sketch_palette, ctx.pixels_per_point);
         }
         drawing
     }
@@ -275,16 +288,18 @@ fn colour(palette: &SketchPalette, paint: Paint) -> ([f32; 3], f32) {
 }
 
 impl Drawing {
-    fn add(&mut self, shape: Shape, palette: &SketchPalette) {
+    fn add(&mut self, shape: Shape, palette: &SketchPalette, scale: f32) {
+        let physical = |point: Pos2| [point.x * scale, point.y * scale];
         let line = |points: &[Pos2], width: f32, paint: Paint, dash: Option<(f32, f32)>| {
             let (rgb, alpha) = colour(palette, paint);
             points
                 .windows(2)
                 .map(|w| {
-                    let segment = ScreenSpaceOverlay::new(w[0].into(), w[1].into(), rgb, width)
-                        .with_alpha(alpha);
+                    let segment =
+                        ScreenSpaceOverlay::new(physical(w[0]), physical(w[1]), rgb, width * scale)
+                            .with_alpha(alpha);
                     match dash {
-                        Some((dash, gap)) => segment.dashed(dash, gap),
+                        Some((dash, gap)) => segment.dashed(dash * scale, gap * scale),
                         None => segment,
                     }
                 })
@@ -304,15 +319,16 @@ impl Drawing {
             Shape::Fan { points, paint } => {
                 let (color, alpha) = colour(palette, paint);
                 self.polygons.push(ScreenSpacePolygon {
-                    points: points.into_iter().map(Into::into).collect(),
+                    points: points.into_iter().map(physical).collect(),
                     color,
                     alpha,
                 });
             }
             Shape::Dot { at, radius, paint } => {
                 let (rgb, alpha) = colour(palette, paint);
-                self.marks
-                    .push(ScreenSpaceMark::dot(at.into(), radius, rgb).with_alpha(alpha));
+                self.marks.push(
+                    ScreenSpaceMark::dot(physical(at), radius * scale, rgb).with_alpha(alpha),
+                );
             }
             Shape::Circle { at, radius, stroke } => {
                 let points: Vec<Pos2> = (0..=CIRCLE_SEGMENTS)
@@ -326,17 +342,26 @@ impl Drawing {
             }
             Shape::Letter { at, text, paint } => {
                 let (rgb, _) = colour(palette, paint);
-                self.labels
-                    .push(ScreenSpaceLabel::new(at.into(), text, rgb, TEXT_PX));
+                self.labels.push(ScreenSpaceLabel::new(
+                    physical(at),
+                    text,
+                    rgb,
+                    TEXT_PX * scale,
+                ));
             }
             Shape::Plate { at, text } => {
                 // The plate is placed by its top left; a label by its centre,
                 // and a monospace character is about 0.6 of its size wide.
                 let half = emath::vec2(text.chars().count() as f32 * 0.3, 0.5) * TEXT_PX;
                 self.labels.push(
-                    ScreenSpaceLabel::new((at + half).into(), text, palette.preselect, TEXT_PX)
-                        .mono()
-                        .pill(),
+                    ScreenSpaceLabel::new(
+                        physical(at + half),
+                        text,
+                        palette.preselect,
+                        TEXT_PX * scale,
+                    )
+                    .mono()
+                    .pill(),
                 );
             }
         }

@@ -417,6 +417,8 @@ struct Drag<K> {
     normal: DVec3,
     anchor: DVec3,
     screen_axis: Vec2,
+    /// Screen-right direction in the view handle's press plane, for snapping.
+    view_right: DVec3,
     /// Ring seen edge-on at the press: the angle is the pointer travel along
     /// `screen_axis` (the nearest ring point's tangent), not a plane-hit angle.
     edge_on: bool,
@@ -988,6 +990,15 @@ impl<K: Copy + PartialEq + fmt::Debug> Drag<K> {
             };
             (anchor, screen_axis)
         };
+        let view_right = if matches!(grip, Grip::View) {
+            plane_hit(view, start + emath::vec2(1.0, 0.0), placement.pivot, normal)
+                .map(|hit| hit - anchor)
+                .map(|right| right - normal * right.dot(normal))
+                .and_then(DVec3::try_normalize)
+                .unwrap_or_else(|| normal.any_orthonormal_vector())
+        } else {
+            DVec3::ZERO
+        };
         let delta = match motion {
             Motion::Translate => Delta::Translation(DVec3::ZERO),
             Motion::Rotate => Delta::Rotation {
@@ -1006,6 +1017,7 @@ impl<K: Copy + PartialEq + fmt::Debug> Drag<K> {
             normal,
             anchor,
             screen_axis,
+            view_right,
             edge_on,
             unit,
             step: nice_step(unit * SNAP_PX),
@@ -1071,10 +1083,9 @@ impl<K: Copy + PartialEq + fmt::Debug> Drag<K> {
                         let (a, b) = plane.split(offset);
                         first.0 * step(a) + second.0 * step(b)
                     }
-                    Grip::View if snap => Axis::ALL
-                        .map(|axis| along(self.set.placement.axis(axis)))
-                        .into_iter()
-                        .sum(),
+                    Grip::View if snap => {
+                        along(self.view_right) + along(self.normal.cross(self.view_right))
+                    }
                     Grip::Plane { .. } | Grip::View => offset,
                     Grip::Ring { .. } => unreachable!("rings rotate"),
                 };
