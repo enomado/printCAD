@@ -429,7 +429,7 @@ impl NameMap {
 
 /// A number for the kind of surface a face lies on, as far as naming
 /// needs to tell faces apart.
-fn surface_kind(model: &Model, face: &Shape) -> u8 {
+pub(crate) fn surface_kind(model: &Model, face: &Shape) -> u8 {
     let Some(NodeData::Face(data)) = model.node(face).map(|n| n.data()) else {
         return 0;
     };

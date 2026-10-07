@@ -951,11 +951,10 @@ pub fn execute_cached(
 }
 
 /// A solid's geometry, hashed: every vertex, three points along every
-/// edge, and a point inside every face with its normal there, each to a
-/// micrometre. Equal for the same solid however its curves and surfaces
+/// edge and every face's kept box, each to a micrometre, with the way
+/// each face faces and the kind of its surface. Equal for the same solid however its curves and surfaces
 /// record their parameter ranges, which a snapshot would tell apart.
 fn fingerprint(model: &Model, shape: &Shape) -> Option<u64> {
-    use ogeom::mesh::{Deflection, triangulate_face};
     use ogeom::topo::{NodeData, ShapeType, explore_unique};
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -975,29 +974,13 @@ fn fingerprint(model: &Model, shape: &Shape) -> Option<u64> {
             }
         }
     }
-    let tol = tess::tolerances();
     for face in explore_unique(model, shape, ShapeType::Face).ok()? {
-        let chord = tess::robust_bounds(model, &face)
-            .map_or(0.25, |(lo, hi)| (hi - lo).magnitude() * 0.05)
-            .clamp(0.01, 0.25);
-        let mesh = triangulate_face(model, &face, Deflection::with_chord(chord).ok()?, tol).ok()?;
-        let largest = mesh.triangles.iter().max_by(|a, b| {
-            let area = |t: &[u32; 3]| {
-                let [p, q, r] = t.map(|i| mesh.positions[i as usize]);
-                (q - p).cross(r - p).magnitude()
-            };
-            area(a).total_cmp(&area(b))
-        })?;
-        let [p, q, r] = largest.map(|i| mesh.positions[i as usize]);
-        micrometres(Point::new(
-            (p.x + q.x + r.x) / 3.0,
-            (p.y + q.y + r.y) / 3.0,
-            (p.z + q.z + r.z) / 3.0,
-        ))
-        .hash(&mut hasher);
-        let n = (q - p).cross(r - p);
-        let n = n * (1e3 / n.magnitude());
-        [n.x, n.y, n.z].map(|c| c.round() as i64).hash(&mut hasher);
+        let bounds = ogeom::algo::face_bounds(model, &face).ok()?;
+        let (lo, hi) = (bounds.low()?, bounds.high()?);
+        micrometres(lo).hash(&mut hasher);
+        micrometres(hi).hash(&mut hasher);
+        format!("{:?}", face.orientation()).hash(&mut hasher);
+        crate::naming::surface_kind(model, &face).hash(&mut hasher);
     }
     Some(hasher.finish())
 }
