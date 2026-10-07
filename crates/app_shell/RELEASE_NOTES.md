@@ -14,6 +14,7 @@ version first.
 
 ### Sketcher
 - An ellipse showing its foci drags through a circle: a minor radius pulled past the major makes it the major, the foci sliding through the centre onto the new axis.
+
 ### Design
 - The gear, sprocket and shaft tools ask for their plane as a new sketch does, the clicked face offered first; on a face of the body's own solid the sketch follows it, centred where it was clicked, and the view turns square to it. sketch.new takes a generator.
 - The refine after a feature merges only what that feature made with its neighbours: rebuilds take a third to a half less time, and a split kept on purpose stays.
