@@ -9,7 +9,7 @@ use crate::{GRID_FRAG_SPV, GRID_VERT_SPV, GridSubmission, RenderError, create_sh
 
 /// `grid.vert`'s and `grid.frag`'s push-constant block.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct GridPushConstants {
     view_proj: [[f32; 4]; 4],
     camera_step: [f32; 4],
@@ -136,16 +136,12 @@ impl GridPipeline {
             }
             let pc = GridPushConstants::new(grid, view_proj, camera_pos, clip_plane);
             unsafe {
-                let bytes = std::slice::from_raw_parts(
-                    &pc as *const GridPushConstants as *const u8,
-                    GRID_PUSH_SIZE as usize,
-                );
                 device.cmd_push_constants(
                     command_buffer,
                     self.layout,
                     vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     0,
-                    bytes,
+                    bytemuck::bytes_of(&pc),
                 );
                 device.cmd_draw(command_buffer, 6, 1, 0, 0);
             }

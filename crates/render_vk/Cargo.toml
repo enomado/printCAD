@@ -16,7 +16,7 @@ tracing.workspace = true
 winit.workspace = true
 egui.workspace = true
 egui-ash-renderer.workspace = true
-bytemuck.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
 uuid.workspace = true
 glam.workspace = true
 rayon.workspace = true
