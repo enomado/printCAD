@@ -32,9 +32,13 @@ function Link(link)
   end
   local path, anchor = target:match("^([^#]*)(#?.*)$")
   local repo = join(dirname(source), path)
-  -- A guide in docs/ (not an RFC) is a page here.
+  -- The design notes stay out of the site: a link to one is its text.
+  if repo:match("^docs/rfcs/") then
+    return link.content
+  end
+  -- A guide in docs/ is a page here.
   local page = repo:match("^docs/(.+)%.md$")
-  if page and not page:match("^rfcs/") then
+  if page then
     local here = source:match("^docs/(.*)$") or ""
     local depth = select(2, here:gsub("/", ""))
     link.target = string.rep("../", depth) .. page .. ".html" .. anchor

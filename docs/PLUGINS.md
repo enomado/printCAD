@@ -7,8 +7,8 @@ Preferences page. A package is a WebAssembly component, so one file runs
 on every system printCAD runs on, and it runs sandboxed: it reaches its own
 folder and nothing else unless the user allows more.
 
-The design is [RFC 0001](rfcs/0001-wasm-workbenches.md). A complete
-example sits under `sdk/examples/gear`: a spur gear workbench. A larger
+A complete example sits under `sdk/examples/gear`: a spur gear
+workbench. A larger
 one is the CAM package,
 [PrintCAD-cam-wb](https://github.com/gilbertorconde/PrintCAD-cam-wb), which
 works out pocket toolpaths from a sketch's outline in a job, draws them
