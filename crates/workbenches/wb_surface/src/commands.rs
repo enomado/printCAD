@@ -118,8 +118,8 @@ pub fn curvature() -> CommandSpec {
     .returns("{measure, low, high, unit}: the measure's range over the body")
     .read_only()
     .note(
-        "Curvatures are signed against the faces' outward normals: negative where a \
-             surface bulges out, positive in a hollow. `gaussian` is the product of the two \
+        "`mean`, `max` and `min` are signed against the faces' outward normals: negative \
+             where a surface bulges out, positive in a hollow. `gaussian` is the product of the two \
              principal curvatures (1/mm²): positive on a dome or in a bowl, negative on a \
              saddle, zero on a plane and on what unrolls flat (a cylinder, a cone). `mean` \
              is their average, `max` and `min` each (1/mm).",

@@ -4951,7 +4951,7 @@ end
 
 Notes:
 
-- Curvatures are signed against the faces' outward normals: negative where a surface bulges out, positive in a hollow. `gaussian` is the product of the two principal curvatures (1/mm²): positive on a dome or in a bowl, negative on a saddle, zero on a plane and on what unrolls flat (a cylinder, a cone). `mean` is their average, `max` and `min` each (1/mm).
+- `mean`, `max` and `min` are signed against the faces' outward normals: negative where a surface bulges out, positive in a hollow. `gaussian` is the product of the two principal curvatures (1/mm²): positive on a dome or in a bowl, negative on a saddle, zero on a plane and on what unrolls flat (a cylinder, a cone). `mean` is their average, `max` and `min` each (1/mm).
 - The view paints the body until the task closes, or until `surface.zebra` or `surface.check` takes its place. A body not built yet is refused ("The body has no shape to paint yet").
 
 See also `pc.surface.zebra`, `pc.surface.check`.

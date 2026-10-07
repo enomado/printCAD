@@ -554,12 +554,15 @@ pub fn analysis(
     let mut next = display;
     match &mut next {
         Display::Curvature { measure, limit } => {
+            let sign = if *measure == Measure::Gaussian {
+                "positive on a dome or in a bowl, negative on a saddle, none where a \
+                 surface unrolls flat"
+            } else {
+                "negative where they bulge out, positive in a hollow"
+            };
             hint(
                 ui,
-                &format!(
-                    "{body}, painted by how its surfaces bend: negative where they bulge \
-                     out, positive in a hollow; a saddle's Gaussian curvature is negative."
-                ),
+                &format!("{body}, painted by how its surfaces bend: {sign}."),
             );
             row(ui, "Curvature", |ui| {
                 let options: Vec<(Measure, &str)> =

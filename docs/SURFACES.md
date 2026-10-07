@@ -90,7 +90,7 @@ The curvature map paints the selected body by how sharply its surfaces
 bend, read from the exact surfaces at every point of its mesh: the
 Gaussian curvature (positive on a dome or in a bowl, negative on a
 saddle, nothing on a plane or on what unrolls flat, such as a cylinder),
-the mean, or the largest or smallest. Values are negative where a surface
+the mean, or the largest or smallest, which are negative where a surface
 bulges out and positive in a hollow; the colours run from the low end
 through green at none to the high end, reaching their ends at the range
 the task sets, by default the size most of the body stays within.
