@@ -68,8 +68,6 @@ the result the same as now).
 Features that matter only for printing, for once the modelling is
 complete.
 
-- [ ] **Printing columns** (S). Volume, filament mass from a density, and
-  the count to print in the parts list (`parts.rs`).
 - [ ] **Nut trap** (S). A hexagonal pocket sized from the thread's nut,
   for captive nuts.
 - [ ] **Print layout** (M). Each part of the parts list laid flat on its

@@ -319,6 +319,7 @@ More detail in [docs](docs/):
 - [Surfaces](docs/SURFACES.md)
 - [Holes](docs/HOLES.md)
 - [Surface textures](docs/TEXTURES.md)
+- [Printing](docs/PRINTING.md)
 - [Workbench packages](docs/PLUGINS.md)
 - [AI agents](docs/AI.md)
 - [Roadmap](docs/ROADMAP.md)

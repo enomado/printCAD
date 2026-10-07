@@ -1735,6 +1735,11 @@ impl AssemblyWorkbench {
             self.task = None;
             return TaskOutcome::Cancelled;
         }
+        let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
+        if self.volumes.refresh(ctx.document, &parts, ctx.kernel) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let outcome = self.declared_panel(ui, ctx);
         if let Some(csv) = self.copied.take() {
             ui.ctx().copy_text(csv);
@@ -1764,9 +1769,18 @@ impl AssemblyWorkbench {
             .collect()
     }
 
+    /// The parts list with each part's volume, as far as it is measured.
+    fn measured_parts(&self, ctx: &WorkbenchRuntimeContext) -> Vec<crate::Part> {
+        let mut parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
+        self.volumes.fill(ctx.document, &mut parts);
+        parts
+    }
+
     fn parts_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
         use bench_api::Cell;
-        let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
+        let parts = self.measured_parts(ctx);
+        let unit = ctx.document.display_unit();
+        let pending = if self.volumes.running() { "…" } else { "-" };
         let table = crate::parts::table_of(ctx.document)
             .map(|(_, t)| t)
             .unwrap_or_default();
@@ -1810,11 +1824,27 @@ impl AssemblyWorkbench {
                             text: format!("{}{}", "    ".repeat(*depth), part.name),
                         },
                         text(bodies.len().to_string(), true, false),
+                        Cell::Edit {
+                            text: part.print.to_string(),
+                        },
                         text(
                             part.size_mm.map_or_else(
                                 || "-".to_string(),
                                 |s| format!("{:.1} × {:.1} × {:.1}", s[0], s[1], s[2]),
                             ),
+                            true,
+                            false,
+                        ),
+                        text(
+                            part.volume_mm3.map_or_else(
+                                || pending.to_string(),
+                                |v| core_document::format_volume_mm3(v, unit, 2),
+                            ),
+                            true,
+                            false,
+                        ),
+                        text(
+                            part.mass_g().map_or_else(|| pending.to_string(), mass_text),
                             true,
                             false,
                         ),
@@ -1833,16 +1863,43 @@ impl AssemblyWorkbench {
                     }
                 })
                 .collect();
-        let mut columns: Vec<String> = ["No.", "Part", "Qty", "Size (mm)", "Bought"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let mut columns: Vec<String> = PARTS_COLUMNS.into_iter().map(String::from).collect();
         columns.extend(table.columns.iter().cloned());
         widgets.push(Widget::Sheet {
             id: "parts".into(),
             columns,
             rows,
         });
+        let preset = crate::parts::PRINT_MATERIALS
+            .iter()
+            .position(|(name, density)| {
+                *name == table.material.name && *density == table.material.density
+            });
+        let mut options: Vec<String> = crate::parts::PRINT_MATERIALS
+            .iter()
+            .map(|(name, density)| format!("{name} ({density} g/cm³)"))
+            .collect();
+        options.push("Custom".into());
+        widgets.push(w::hinted(
+            "The filament the parts print in; a body with a material of its own is \
+             weighed at its own",
+            Widget::Choice {
+                id: "print_material".into(),
+                label: "Printed in".into(),
+                selected: preset.unwrap_or(options.len() - 1),
+                options,
+            },
+        ));
+        if preset.is_none() {
+            widgets.push(w::ranged(
+                "print_density",
+                "Density, g/cm³",
+                table.material.density,
+                Dim::Number,
+                Some((0.01, 100.0)),
+            ));
+        }
+        widgets.push(w::text(print_summary(&parts, &table.material.name, unit)));
         widgets.push(w::hinted(
             "Give every part without an item number the next one, in list order",
             w::button("number", "Number the parts", ButtonStyle::Secondary),
@@ -1891,7 +1948,7 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
-        let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
+        let parts = self.measured_parts(ctx);
         let mut table = crate::parts::table_of(ctx.document)
             .map(|(_, t)| t)
             .unwrap_or_default();
@@ -1902,9 +1959,33 @@ impl AssemblyWorkbench {
             crate::parts::LevelRow::Part { part, bodies, .. } => Some((&parts[*part], bodies)),
             crate::parts::LevelRow::Component { .. } => None,
         };
-        const FIXED: usize = 5;
+        const FIXED: usize = PARTS_COLUMNS.len();
         match event {
             PanelEvent::Toggle { id, on } if id == "by_component" => table.by_component = *on,
+            PanelEvent::Choice { id, index } if id == "print_material" => {
+                table.material = match crate::parts::PRINT_MATERIALS.get(*index) {
+                    Some((name, _)) => crate::parts::PrintMaterial::named(name, None),
+                    None => crate::parts::PrintMaterial {
+                        name: "Custom".into(),
+                        density: table.material.density,
+                    },
+                };
+            }
+            PanelEvent::Number { id, value } if id == "print_density" && *value > 0.0 => {
+                table.material.density = *value as f32;
+            }
+            PanelEvent::CellText {
+                row, column, value, ..
+            } if *column == PRINT_COLUMN => {
+                let (part, _) = part_at(*row)?;
+                let value = value.trim();
+                let count = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.parse::<u32>().ok()?)
+                };
+                table.entry_mut(&part.bodies).print = count;
+            }
             PanelEvent::Select { index, .. } => {
                 let (_, bodies) = part_at(*index)?;
                 ctx.request(core_document::HostRequest::SelectBody(*bodies.first()?));
@@ -3181,6 +3262,48 @@ impl AssemblyWorkbench {
 mod tests;
 
 /// A mass in grams, or kilograms from a thousand.
+/// The parts list's own columns, before the ones added to it.
+const PARTS_COLUMNS: [&str; 8] = [
+    "No.",
+    "Part",
+    "Qty",
+    "Print",
+    "Size (mm)",
+    "Volume",
+    "Mass",
+    "Bought",
+];
+
+/// The parts list's column of how many of a part to print.
+const PRINT_COLUMN: usize = 3;
+
+/// What the print takes: how many pieces, their volume and the
+/// filament's mass, as far as the parts are measured.
+fn print_summary(parts: &[crate::Part], material: &str, unit: core_document::Unit) -> String {
+    let printed: Vec<&crate::Part> = parts.iter().filter(|p| p.print > 0).collect();
+    let pieces: u32 = printed.iter().map(|p| p.print).sum();
+    if pieces == 0 {
+        return "Nothing to print".into();
+    }
+    let s = if pieces == 1 { "" } else { "s" };
+    if printed.iter().any(|p| p.volume_mm3.is_none()) {
+        return format!("To print: {pieces} piece{s}, measuring");
+    }
+    let volume: f64 = printed
+        .iter()
+        .map(|p| p.volume_mm3.unwrap_or(0.0) * f64::from(p.print))
+        .sum();
+    let mass: f64 = printed
+        .iter()
+        .map(|p| p.mass_g().unwrap_or(0.0) * f64::from(p.print))
+        .sum();
+    format!(
+        "To print: {pieces} piece{s}, {}, {} of {material}",
+        core_document::format_volume_mm3(volume, unit, 2),
+        mass_text(mass)
+    )
+}
+
 fn mass_text(grams: f64) -> String {
     if grams >= 1000.0 {
         format!("{:.3} kg", grams / 1000.0)

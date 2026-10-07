@@ -246,6 +246,9 @@ pub struct AssemblyWorkbench {
     /// drawn.
     #[cfg(feature = "egui")]
     copied: Option<String>,
+    /// The parts' volumes for the parts list, measured once per geometry.
+    #[cfg(feature = "egui")]
+    volumes: parts::Volumes,
 }
 
 /// A body taken by the mouse: the point taken, in the body's own frame,
@@ -829,6 +832,14 @@ impl AssemblyWorkbench {
             found: None,
             density,
         });
+    }
+
+    /// Whether the parts list's volumes are being measured.
+    fn measuring_volumes(&self) -> bool {
+        #[cfg(feature = "egui")]
+        return self.volumes.running();
+        #[cfg(not(feature = "egui"))]
+        false
     }
 
     /// A finished measuring's report, when it has come.
@@ -2496,6 +2507,7 @@ impl Workbench for AssemblyWorkbench {
             || self.sweeping.is_some()
             || matches!(&self.task, Some(Task::Explode { steps, .. }) if steps.playing)
             || matches!(&self.task, Some(Task::Motion(studying)) if studying.playing)
+            || self.measuring_volumes()
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {

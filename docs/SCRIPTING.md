@@ -6486,12 +6486,13 @@ assert(m.centre[1] == 10 and m.centre[3] == 2.5)
 `pc.asm.parts`: Every part: bodies of the same shape counted together.
 
 - `by_component` (boolean, optional): Each component's parts under it: every entry gains a depth, and components come as {component, name, depth}
-- Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number or nil, bought, values = {column = text}}, numbered parts first by number, then by name
+- Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number or nil, bought, values = {column = text}, print, volume (mm³) or nil, mass (g) or nil, density}, numbered parts first by number, then by name
 
 Notes:
 
 - Bodies count as one part when they share one shape: linked copies from `asm.copy` do; bodies modelled apart do not, however alike.
 - `size` is the part's bounding box, mm.
+- `volume` and `mass` are of one piece: the volume the kernel measures of its solid (a mesh body's from its triangles), the mass at its body's material's density, else at the list's printing material (`asm.print_material`). `print` is how many to print: the count set with `asm.part`, else one per body, none of a bought part.
 
 See also `pc.asm.part`, `pc.asm.parts_table`, `pc.asm.copy`.
 
@@ -6521,6 +6522,7 @@ assert(counts[3] and counts[3].size[3] == 2,
 - `number` (number, optional): Its item number
 - `bought` (boolean, optional): Bought rather than made: left out of exports and the slicer
 - `values` (any, optional): {column = text}: its values, a column not yet in the list added to it
+- `print` (number, optional): How many of it to print; below 0 goes back to one per body
 
 Notes:
 
@@ -6543,6 +6545,34 @@ local p = pc.asm.parts{}[1]
 assert(p.quantity == 4 and p.number == 4 and p.bought,
   "set on one, kept for the part")
 assert(p.values.Supplier == "ACME")
+```
+
+`pc.asm.print_material`: Set the material the parts list weighs printed parts in.
+
+- `name` (string): PLA, PETG, ABS, ASA, TPU, Nylon or PC, or a name of your own with its density
+- `density` (number, optional): g/cm³; an offered material's own when left out
+- Returns {name, density}
+
+Notes:
+
+- It is kept with the document. A body with a material of its own (`doc.set_body`) is weighed at that material's density instead.
+- A name the list does not offer needs its density.
+
+See also `pc.asm.parts`, `pc.asm.part`.
+
+Example: A plate's filament in PETG, two to print.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local plate = pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
+assert(#pc.doc.rebuild() == 0)
+local m = pc.asm.print_material{name = "petg"}
+assert(m.name == "PETG" and math.abs(m.density - 1.27) < 1e-6)
+pc.asm.part{body = plate, print = 2}
+local p = pc.asm.parts{}[1]
+assert(p.print == 2 and math.abs(p.volume - 1000) < 1e-3)
+assert(math.abs(p.mass - 1.27) < 1e-4, "1 cm³ at 1.27 g/cm³")
 ```
 
 `pc.asm.parts_table`: Replace what the parts list keeps, whole.

@@ -1524,8 +1524,8 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .returns(
             "a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number \
-             or nil, bought, values = {column = text}}, numbered parts first by number, \
-             then by name",
+             or nil, bought, values = {column = text}, print, volume (mm³) or nil, mass (g) \
+             or nil, density}, numbered parts first by number, then by name",
         )
         .read_only()
         .note(
@@ -1533,6 +1533,13 @@ pub fn register(context: &mut WorkbenchContext) {
              `asm.copy` do; bodies modelled apart do not, however alike.",
         )
         .note("`size` is the part's bounding box, mm.")
+        .note(
+            "`volume` and `mass` are of one piece: the volume the kernel measures of its \
+             solid (a mesh body's from its triangles), the mass at its body's material's \
+             density, else at the list's printing material (`asm.print_material`). `print` \
+             is how many to print: the count set with `asm.part`, else one per body, none \
+             of a bought part.",
+        )
         .see_also("asm.part")
         .see_also("asm.parts_table")
         .see_also("asm.copy")
@@ -1575,6 +1582,11 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Any,
             "{column = text}: its values, a column not yet in the list added to it",
         )
+        .optional(
+            "print",
+            ParamKind::Number,
+            "How many of it to print; below 0 goes back to one per body",
+        )
         .note(
             "What is set is kept for the whole part, every body of its shape, whichever \
              body is named.",
@@ -1599,6 +1611,45 @@ pub fn register(context: &mut WorkbenchContext) {
             assert(p.quantity == 4 and p.number == 4 and p.bought,
               "set on one, kept for the part")
             assert(p.values.Supplier == "ACME")
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.print_material",
+            "Set the material the parts list weighs printed parts in",
+        )
+        .param(
+            "name",
+            ParamKind::String,
+            "PLA, PETG, ABS, ASA, TPU, Nylon or PC, or a name of your own with its density",
+        )
+        .optional(
+            "density",
+            ParamKind::Number,
+            "g/cm³; an offered material's own when left out",
+        )
+        .returns("{name, density}")
+        .note(
+            "It is kept with the document. A body with a material of its own \
+             (`doc.set_body`) is weighed at that material's density instead.",
+        )
+        .note("A name the list does not offer needs its density.")
+        .see_also("asm.parts")
+        .see_also("asm.part")
+        .example(
+            "A plate's filament in PETG, two to print",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local plate = pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.asm.print_material{name = "petg"}
+            assert(m.name == "PETG" and math.abs(m.density - 1.27) < 1e-6)
+            pc.asm.part{body = plate, print = 2}
+            local p = pc.asm.parts{}[1]
+            assert(p.print == 2 and math.abs(p.volume - 1000) < 1e-3)
+            assert(math.abs(p.mass - 1.27) < 1e-4, "1 cm³ at 1.27 g/cm³")
             "#,
         ),
     );
@@ -2684,9 +2735,16 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             }))
         }
         "asm.parts" => {
-            let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
+            let mut parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
+            let mut volumes = crate::parts::Volumes::default();
+            volumes.measure_now(ctx.document, &parts, ctx.kernel);
+            volumes.fill(ctx.document, &mut parts);
             let entry = |part: &crate::Part, bodies: &[BodyId]| {
                 json!({
+                    "print": part.print,
+                    "volume": part.volume_mm3,
+                    "mass": part.mass_g(),
+                    "density": part.density,
                     "name": part.name,
                     "quantity": bodies.len(),
                     "bodies": bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
@@ -2722,6 +2780,29 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     .collect(),
             ))
         }
+        "asm.print_material" => {
+            let name = a.string("name")?.to_string();
+            let density = a.opt_number("density")?;
+            if density.is_some_and(|d| d <= 0.0) {
+                return Err(CommandError::bad("density", "must be above 0"));
+            }
+            let known = crate::parts::PRINT_MATERIALS
+                .iter()
+                .any(|(n, _)| n.eq_ignore_ascii_case(&name));
+            if !known && density.is_none() {
+                return Err(CommandError::bad(
+                    "density",
+                    format!("{name} is not a material offered: give its density"),
+                ));
+            }
+            let mut table = crate::parts::table_of(ctx.document)
+                .map(|(_, t)| t)
+                .unwrap_or_default();
+            table.material = crate::parts::PrintMaterial::named(&name, density.map(|d| d as f32));
+            crate::parts::store_table(ctx.document, &table)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            Ok(json!({"name": table.material.name, "density": table.material.density}))
+        }
         "asm.parts_table" => {
             let table: crate::parts::PartsTable =
                 serde_json::from_value(a.0.get("table").cloned().unwrap_or(Value::Null))
@@ -2750,6 +2831,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let entry = table.entry_mut(&bodies);
             if let Some(n) = a.opt_number("number")? {
                 entry.number = n.max(0.0) as u32;
+            }
+            if let Some(n) = a.opt_number("print")? {
+                entry.print = (n >= 0.0).then_some(n.round() as u32);
             }
             if let Some(values) = a.0.get("values").and_then(Value::as_object) {
                 for (column, value) in values {

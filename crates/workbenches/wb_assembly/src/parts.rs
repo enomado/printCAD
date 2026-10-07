@@ -31,6 +31,56 @@ pub struct PartsTable {
     /// the components are.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub by_component: bool,
+    /// What the parts are printed in: the filament's mass of a part
+    /// whose body has no material of its own is at its density.
+    pub material: PrintMaterial,
+}
+
+/// A printing material: its name and density, g/cm³.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrintMaterial {
+    pub name: String,
+    pub density: f32,
+}
+
+impl Default for PrintMaterial {
+    fn default() -> Self {
+        Self {
+            name: PRINT_MATERIALS[0].0.into(),
+            density: PRINT_MATERIALS[0].1,
+        }
+    }
+}
+
+/// The filaments offered for the parts list, densities in g/cm³.
+pub const PRINT_MATERIALS: &[(&str, f32)] = &[
+    ("PLA", 1.24),
+    ("PETG", 1.27),
+    ("ABS", 1.04),
+    ("ASA", 1.07),
+    ("TPU", 1.21),
+    ("Nylon", 1.14),
+    ("PC", 1.20),
+];
+
+impl PrintMaterial {
+    /// The offered material of `name`, or one of its own at `density`.
+    pub fn named(name: &str, density: Option<f32>) -> Self {
+        let preset = PRINT_MATERIALS
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name));
+        match (preset, density) {
+            (Some((n, d)), None) => Self {
+                name: (*n).into(),
+                density: *d,
+            },
+            (_, density) => Self {
+                name: name.into(),
+                density: density.unwrap_or(1.0),
+            },
+        }
+    }
 }
 
 /// What the list keeps for one part.
@@ -47,6 +97,10 @@ pub struct PartEntry {
     pub made: bool,
     /// Its value in each added column, by column.
     pub values: BTreeMap<String, String>,
+    /// How many of it to print, when set; otherwise as many as the
+    /// assembly holds, none of a bought part.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub print: Option<u32>,
 }
 
 impl WorkbenchFeature for PartsTable {
@@ -159,6 +213,22 @@ pub struct Part {
     pub bought_kind: bool,
     /// Its values in the list's added columns.
     pub values: BTreeMap<String, String>,
+    /// How many of it to print: the count set in the table, else one per
+    /// body, none when bought.
+    pub print: u32,
+    /// The density its filament mass is reckoned at, g/cm³: its body's
+    /// material's, else the list's.
+    pub density: f32,
+    /// The volume of one piece, mm³, once measured.
+    pub volume_mm3: Option<f64>,
+}
+
+impl Part {
+    /// The mass of one piece, grams, once its volume is measured.
+    pub fn mass_g(&self) -> Option<f64> {
+        self.volume_mm3
+            .map(|v| v * f64::from(self.density) / 1000.0)
+    }
 }
 
 /// The bodies of bought parts: what an export of the model, or the
@@ -222,6 +292,9 @@ pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part
                     bought: false,
                     bought_kind: of_bought_kind.contains(&body.id),
                     values: BTreeMap::new(),
+                    print: 0,
+                    density: body.material.as_ref().map_or(0.0, |m| m.density),
+                    volume_mm3: None,
                 },
             )),
         }
@@ -231,10 +304,16 @@ pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part
         .into_iter()
         .map(|(_, mut p)| {
             p.bought = p.bought_kind;
+            let mut print = None;
             if let Some(entry) = table.entry(&p.bodies) {
                 p.number = (entry.number > 0).then_some(entry.number);
                 p.bought = entry.bought || (p.bought_kind && !entry.made);
                 p.values = entry.values.clone();
+                print = entry.print;
+            }
+            p.print = print.unwrap_or(if p.bought { 0 } else { p.bodies.len() as u32 });
+            if p.density <= 0.0 {
+                p.density = table.material.density;
             }
             p
         })
@@ -242,6 +321,165 @@ pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part
     // Numbered parts by number, then the rest by name.
     out.sort_by_key(|p| (p.number.unwrap_or(u32::MAX), p.name.to_lowercase()));
     out
+}
+
+/// The volume a closed mesh encloses, mm³: the signed volumes of the
+/// tetrahedra its triangles make with the origin, summed.
+pub fn mesh_volume_mm3(mesh: &kernel_api::TriMesh) -> f64 {
+    let p = |i: u32| mesh.positions.get(i as usize).map(|v| v.map(f64::from));
+    mesh.indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter_map(|t| {
+            let (a, b, c) = (p(t[0])?, p(t[1])?, p(t[2])?);
+            Some(
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0,
+            )
+        })
+        .sum::<f64>()
+}
+
+/// What a part's volume is measured from: its solid, or its mesh's
+/// volume already worked out.
+enum Source {
+    Solid(std::sync::Arc<Vec<u8>>),
+    Known(Option<f64>),
+}
+
+/// A measured volume: the body measured, at which revision of its
+/// geometry, and the volume, `None` when it encloses none.
+type Measured = (BodyId, u64, Option<f64>);
+
+/// The parts' volumes, each measured once per revision of its geometry:
+/// a solid by the kernel (away from the window for the panel), a mesh
+/// body from its triangles.
+#[derive(Default)]
+pub struct Volumes {
+    known: std::collections::HashMap<BodyId, (u64, Option<f64>)>,
+    running: Option<std::sync::mpsc::Receiver<Vec<Measured>>>,
+}
+
+impl std::fmt::Debug for Volumes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Volumes")
+            .field("known", &self.known.len())
+            .field("running", &self.running.is_some())
+            .finish()
+    }
+}
+
+impl Volumes {
+    /// Each part's volume, measured from its first body, where it is
+    /// known at the geometry the body has now.
+    pub fn fill(&self, document: &Document, parts: &mut [Part]) {
+        for part in parts {
+            part.volume_mm3 = part.bodies.first().and_then(|b| {
+                let revision = document.imported_geometry(*b)?.revision;
+                self.known
+                    .get(b)
+                    .filter(|(r, _)| *r == revision)
+                    .and_then(|(_, v)| *v)
+            });
+        }
+    }
+
+    /// Whether a measuring is running.
+    pub fn running(&self) -> bool {
+        self.running.is_some()
+    }
+
+    /// What is still to be measured, with where to measure it from.
+    fn wanted(&self, document: &Document, parts: &[Part]) -> Vec<(BodyId, u64, Source)> {
+        parts
+            .iter()
+            .filter_map(|part| {
+                let body = *part.bodies.first()?;
+                let geometry = document.imported_geometry(body)?;
+                if self
+                    .known
+                    .get(&body)
+                    .is_some_and(|(r, _)| *r == geometry.revision)
+                {
+                    return None;
+                }
+                let source = match document.imported_brep_blob_arc(body) {
+                    Some(blob) => Source::Solid(blob),
+                    None => Source::Known(
+                        document
+                            .local_geometry(body)
+                            .map(|(mesh, _)| mesh_volume_mm3(&mesh))
+                            .filter(|v| *v > 0.0),
+                    ),
+                };
+                Some((body, geometry.revision, source))
+            })
+            .collect()
+    }
+
+    /// Measure what is not yet known, here and now.
+    pub fn measure_now(
+        &mut self,
+        document: &Document,
+        parts: &[Part],
+        kernel: Option<&dyn kernel_api::KernelQueries>,
+    ) {
+        for (body, revision, source) in self.wanted(document, parts) {
+            let volume = measure(source, kernel);
+            self.known.insert(body, (revision, volume));
+        }
+    }
+
+    /// Take a finished measuring's volumes, and start one on its own
+    /// thread for what is still unknown. True while one runs.
+    pub fn refresh(
+        &mut self,
+        document: &Document,
+        parts: &[Part],
+        kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    ) -> bool {
+        if let Some(answer) = &self.running {
+            match answer.try_recv() {
+                Ok(measured) => {
+                    for (body, revision, volume) in measured {
+                        self.known.insert(body, (revision, volume));
+                    }
+                    self.running = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.running = None,
+            }
+        }
+        let wanted = self.wanted(document, parts);
+        if wanted.is_empty() {
+            return false;
+        }
+        let (send, answer) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("printcad-part-volumes".into())
+            .spawn(move || {
+                let measured = wanted
+                    .into_iter()
+                    .map(|(body, revision, source)| (body, revision, measure(source, kernel)))
+                    .collect();
+                let _ = send.send(measured);
+            });
+        if spawned.is_ok() {
+            self.running = Some(answer);
+        }
+        self.running.is_some()
+    }
+}
+
+/// A part's volume from its source; `None` when it encloses none or
+/// there is no kernel to measure a solid with.
+fn measure(source: Source, kernel: Option<&dyn kernel_api::KernelQueries>) -> Option<f64> {
+    match source {
+        Source::Known(volume) => volume,
+        Source::Solid(blob) => kernel?.measure(&blob).ok()?.volume_mm3.filter(|v| *v > 0.0),
+    }
 }
 
 /// A row of the list by component.
@@ -319,8 +557,10 @@ fn field(text: &str) -> String {
 /// number, part, quantity, size, kind, whether bought, then the added
 /// `columns`.
 pub fn parts_csv(parts: &[Part], columns: &[String]) -> String {
-    let mut out =
-        String::from("Item,Part,Quantity,Size X (mm),Size Y (mm),Size Z (mm),Kind,Bought");
+    let mut out = String::from(
+        "Item,Part,Quantity,Size X (mm),Size Y (mm),Size Z (mm),Kind,Bought,Print,\
+         Volume (cm³),Mass (g)",
+    );
     for column in columns {
         out.push(',');
         out.push_str(&field(column));
@@ -334,10 +574,15 @@ pub fn parts_csv(parts: &[Part], columns: &[String]) -> String {
         let kind = if part.mesh { "mesh" } else { "solid" };
         let number = part.number.map_or(String::new(), |n| n.to_string());
         let bought = if part.bought { "yes" } else { "" };
+        let volume = part
+            .volume_mm3
+            .map_or(String::new(), |v| format!("{:.2}", v / 1000.0));
+        let mass = part.mass_g().map_or(String::new(), |m| format!("{m:.2}"));
         out.push_str(&format!(
-            "{number},{},{},{size},{kind},{bought}",
+            "{number},{},{},{size},{kind},{bought},{},{volume},{mass}",
             field(&part.name),
-            part.bodies.len()
+            part.bodies.len(),
+            part.print,
         ));
         for column in columns {
             out.push(',');
@@ -356,7 +601,7 @@ pub fn levels_csv(parts: &[Part], rows: &[LevelRow], columns: &[String]) -> Stri
     for row in rows {
         match row {
             LevelRow::Component { depth, name, .. } => {
-                out.push_str(&format!("{depth},,{},1,,,,component,", field(name)));
+                out.push_str(&format!("{depth},,{},1,,,,component,,,,", field(name)));
                 out.push_str(&",".repeat(columns.len()));
                 out.push('\n');
             }
@@ -424,8 +669,11 @@ mod tests {
         let csv = levels_csv(&parts, &rows, &[]);
         let lines: Vec<&str> = csv.lines().collect();
         assert!(lines[0].starts_with("Level,Item,Part"));
-        assert_eq!(lines[1], "0,,Top,1,,,,component,");
-        assert_eq!(lines[2], "1,,Bolt,1,,,,solid,");
+        assert_eq!(lines[1], "0,,Top,1,,,,component,,,,");
+        assert_eq!(
+            lines[2], "1,,Bolt,1,,,,solid,,2,,",
+            "the whole part's count to print"
+        );
     }
 
     #[test]
@@ -443,8 +691,8 @@ mod tests {
         assert_eq!(parts[0].bodies, [a, b]);
         let csv = parts_csv(&parts, &[]);
         let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[1], ",Bolt,2,,,,solid,");
-        assert_eq!(lines[2], ",\"Bracket, left\",1,,,,solid,");
+        assert_eq!(lines[1], ",Bolt,2,,,,solid,,2,,");
+        assert_eq!(lines[2], ",\"Bracket, left\",1,,,,solid,,1,,");
     }
 
     /// The table numbers the parts, keeps each part's bought mark and
@@ -478,7 +726,10 @@ mod tests {
         let csv = parts_csv(&parts, &table.columns);
         assert!(csv.starts_with("Item,Part,Quantity"), "{csv}");
         assert!(
-            csv.lines().nth(2).unwrap().ends_with(",yes,\"ACME, Inc\""),
+            csv.lines()
+                .nth(2)
+                .unwrap()
+                .ends_with(",yes,0,,,\"ACME, Inc\""),
             "{csv}"
         );
         // Stored once: a second store updates the same feature.
@@ -518,5 +769,104 @@ mod tests {
         table.set_bought(part, true);
         store_table(&mut document, &table).unwrap();
         assert_eq!(bought_bodies(&document, &kinds), [screw]);
+    }
+
+    /// A unit cube's triangles, outward.
+    fn cube(size: f32) -> kernel_api::TriMesh {
+        let corners: Vec<[f32; 3]> = (0..8)
+            .map(|i| {
+                [
+                    (i & 1) as f32 * size,
+                    ((i >> 1) & 1) as f32 * size,
+                    ((i >> 2) & 1) as f32 * size,
+                ]
+            })
+            .collect();
+        let quads = [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ];
+        kernel_api::TriMesh {
+            positions: corners,
+            indices: quads
+                .iter()
+                .flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]])
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_closed_mesh_encloses_its_volume_wherever_it_sits() {
+        let mut mesh = cube(10.0);
+        assert!((mesh_volume_mm3(&mesh) - 1000.0).abs() < 1e-6);
+        for p in &mut mesh.positions {
+            p[0] += 250.0;
+            p[2] -= 40.0;
+        }
+        assert!((mesh_volume_mm3(&mesh) - 1000.0).abs() < 1e-3);
+    }
+
+    /// A mesh body is measured from its triangles, weighed at the list's
+    /// material unless its body has one, and printed once per body until
+    /// a count is set.
+    #[test]
+    fn a_part_is_weighed_at_its_material_and_printed_as_counted() {
+        let mut document = Document::new("t");
+        let a = document.create_body(Some("Cube".into()));
+        let b = document.create_body(Some("Steel cube".into()));
+        for (body, size) in [(a, 10.0), (b, 20.0)] {
+            document.set_imported_geometry(
+                body,
+                core_document::ImportedGeometry {
+                    mesh: std::sync::Arc::new(cube(size)),
+                    source_asset: None,
+                    revision: 0,
+                    bounds_mm: None,
+                    brep_blob_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+        }
+        document.set_body_material(
+            b,
+            Some(core_document::Material {
+                name: "Steel".into(),
+                density: 7.85,
+            }),
+        );
+        let table = PartsTable {
+            material: PrintMaterial::named("petg", None),
+            ..PartsTable::default()
+        };
+        store_table(&mut document, &table).unwrap();
+        let mut parts = parts_list(&document, &[]);
+        let mut volumes = Volumes::default();
+        volumes.measure_now(&document, &parts, None);
+        volumes.fill(&document, &mut parts);
+        let cube = parts.iter().find(|p| p.bodies == [a]).unwrap();
+        assert!((cube.volume_mm3.unwrap() - 1000.0).abs() < 1e-6);
+        assert!(
+            (cube.mass_g().unwrap() - 1.27).abs() < 1e-6,
+            "1 cm³ of PETG"
+        );
+        let steel = parts.iter().find(|p| p.bodies == [b]).unwrap();
+        assert!((steel.mass_g().unwrap() - 8.0 * 7.85).abs() < 1e-4);
+        assert_eq!(cube.print, 1);
+
+        let mut table = table_of(&document).unwrap().1;
+        table.entry_mut(&[a]).print = Some(4);
+        store_table(&mut document, &table).unwrap();
+        let csv = parts_csv(&parts_list(&document, &[]), &[]);
+        assert!(
+            csv.lines()
+                .any(|l| l.starts_with(",Cube,1,") && l.contains(",4,")),
+            "{csv}"
+        );
     }
 }

@@ -605,7 +605,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         panic!("the list is a sheet");
     };
     assert_eq!(rows.len(), parts.len());
-    assert_eq!(columns.len(), 5);
+    assert_eq!(columns.len(), 8);
 
     send(
         &mut wb,
@@ -631,7 +631,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         PanelEvent::CellText {
             id: "parts".into(),
             row: 0,
-            column: 5,
+            column: 8,
             value: "ACME".into(),
         },
     );
@@ -641,9 +641,57 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         PanelEvent::CellCheck {
             id: "parts".into(),
             row: 0,
-            column: 4,
+            column: 7,
             on: true,
         },
+    );
+    assert_eq!(
+        crate::parts_list(&doc, &[])[0].print,
+        0,
+        "a bought part prints none"
+    );
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::CellText {
+            id: "parts".into(),
+            row: 0,
+            column: 3,
+            value: "5".into(),
+        },
+    );
+    assert_eq!(crate::parts_list(&doc, &[])[0].print, 5);
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::Choice {
+            id: "print_material".into(),
+            index: 1,
+        },
+    );
+    let (_, table) = crate::parts::table_of(&doc).unwrap();
+    assert_eq!(table.material.name, "PETG");
+    assert!(field(&widgets(&wb, &mut doc), "print_density").is_none());
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::Choice {
+            id: "print_material".into(),
+            index: crate::parts::PRINT_MATERIALS.len(),
+        },
+    );
+    send(
+        &mut wb,
+        &mut doc,
+        PanelEvent::Number {
+            id: "print_density".into(),
+            value: 1.3,
+        },
+    );
+    let (_, table) = crate::parts::table_of(&doc).unwrap();
+    assert_eq!(
+        (table.material.name.as_str(), table.material.density),
+        ("Custom", 1.3)
     );
     send(&mut wb, &mut doc, button("number"));
     let first = &crate::parts_list(&doc, &[])[0];

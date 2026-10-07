@@ -23,6 +23,9 @@ version first.
 - A gear's root is the one a rack cutter leaves, undercutting the flanks of a pinion of few teeth.
 - Gears and sprockets take a keyway in the bore, and the Keyway generator draws a shaft's key slot to pocket, both sized by the standard key (DIN 6885) unless given.
 
+### Printing
+- The parts list says how many of each part to print (one per body unless you set another count), the volume of a piece and the filament it takes in the material you print in (PLA, PETG, ABS, ASA, TPU, Nylon, PC or a density of your own), and adds up the whole print. asm.print_material sets the material, asm.part a count.
+
 ### AI assistant
 - doc.faces and doc.edges give a moved body's faces and edges in its own frame too (frame = "body"), as features take them.
 
@@ -275,6 +278,7 @@ version first.
 - Section view, kept per sketch, cuts away everything in front of the sketch plane while editing.
 - Constraint symbols park on a second layer, and the constraint list filters by kind, name, reference, selection and relation.
 - Remove axis alignment turns horizontal and vertical constraints into parallel and perpendicular ones so a group turns as a whole.
+
 ### Part Design
 - The model tree is the body's history in order. Selecting a feature shows the body as it stood there, and a feature made then goes in at that point; selecting the last feature shows everything again. Moving through history is not an undo step. Going back to a point already seen shows it at once.
 - A click in the tree selects; a double click opens the feature's settings. A feature stays selected after its settings close.

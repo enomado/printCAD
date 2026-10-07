@@ -236,7 +236,9 @@ from then on; Bought marks a part bought rather than made, which leaves
 its bodies out of an export of every visible body and out of Send to
 slicer; Add column adds a column of your own (a part number, a supplier)
 with a value per part. All of it is kept in the document as the Parts list
-row of the tree, and `asm.part` sets it from a script.
+row of the tree, and `asm.part` sets it from a script. The list's
+printing columns (how many to print, each piece's volume and filament
+mass) are described in [PRINTING.md](PRINTING.md).
 
 With components in the model, By component lists each component with its
 parts under it, nested as the components are (a bolt in two components
