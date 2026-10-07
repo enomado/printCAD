@@ -15,7 +15,9 @@
 //!
 //! Then an imported part (the bundled `drive_frame_upper.step`) as a
 //! body's base, a boss beside it whose height is edited: the history is short,
-//! the solid large and curved, so meshing is most of a build.
+//! the solid large and curved, so meshing is most of a build. Then a pocket
+//! cut down through that part's middle and widened: a small edit the
+//! boolean must still make against the whole solid.
 
 use core_document::{
     CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, FeatureId,
@@ -239,27 +241,52 @@ fn imported_part(detail: &TessellationSettings, before: bool) {
     let base = SolidOp::Shape {
         brep: body.brep_blob.clone(),
     };
+    // A pocket cut into the part's middle, straight down through it: the
+    // boolean meets the large solid, though it touches little of it.
+    let pocket = |radius: f64| SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius,
+            height: f64::from(hi[2] - lo[2]) + 2.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            origin: [
+                f64::from(lo[0] + hi[0]) / 2.0,
+                f64::from(lo[1] + hi[1]) / 2.0,
+                f64::from(lo[2]) - 1.0,
+            ],
+            ..Placement::default()
+        },
+        op: BooleanOp::Cut,
+    };
     let tags = [1, 2];
     let mut cache = ChainCache::default();
     println!();
-    for (label, height) in [
-        ("imported, from scratch", 4.0),
-        ("imported, boss edited", 5.0),
-        ("imported, boss edited again", 6.0),
+    for (label, edit) in [
+        ("imported, from scratch", boss(4.0)),
+        ("imported, boss edited", boss(5.0)),
+        ("imported, boss edited again", boss(6.0)),
+        ("imported, pocket cut in", pocket(2.0)),
+        ("imported, pocket widened", pocket(2.5)),
+        ("imported, pocket widened again", pocket(3.0)),
     ] {
         let started = std::time::Instant::now();
-        let built = OgeomKernel::new()
-            .execute_solid_chain_cached(
-                &[base.clone(), boss(height)],
-                &tags,
-                detail,
-                None,
-                &[],
-                (!before).then_some(&mut cache),
-            )
-            .unwrap();
+        let built = match OgeomKernel::new().execute_solid_chain_cached(
+            &[base.clone(), edit],
+            &tags,
+            detail,
+            None,
+            &[],
+            (!before).then_some(&mut cache),
+        ) {
+            Ok(built) => built,
+            Err(e) => {
+                println!("{label:<31} failed: {}", e.message);
+                continue;
+            }
+        };
         println!(
-            "{label:<28} {:>4} ops, {:>2} kept  {:>8.1} ms  {} triangles",
+            "{label:<31} {:>4} ops, {:>2} kept  {:>8.1} ms  {} triangles",
             2,
             cache.resumed(),
             started.elapsed().as_secs_f64() * 1000.0,

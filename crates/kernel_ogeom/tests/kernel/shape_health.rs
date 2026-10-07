@@ -66,6 +66,46 @@ fn a_well_formed_export_checks_clean() {
     }
 }
 
+/// A clean part takes features: a pocket cut down through its middle.
+#[test]
+#[ignore = "kernel: every boolean against this part fails, a face boundary strand dangles (ogeom-rs#133)"]
+fn a_clean_imported_part_takes_a_pocket() {
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let (mut kernel, model) = import("drive_frame_upper.step");
+    let body = &model.bodies[0];
+    let (lo, hi) = body.bounds_mm.expect("bounds");
+    let pocket = SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 2.0,
+            height: f64::from(hi[2] - lo[2]) + 2.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            origin: [
+                f64::from(lo[0] + hi[0]) / 2.0,
+                f64::from(lo[1] + hi[1]) / 2.0,
+                f64::from(lo[2]) - 1.0,
+            ],
+            ..Placement::default()
+        },
+        op: BooleanOp::Cut,
+    };
+    let base = SolidOp::Shape {
+        brep: body.brep_blob.clone(),
+    };
+    let built = kernel
+        .execute_solid_chain_cached(
+            &[base, pocket],
+            &[1, 2],
+            &TessellationSettings::default(),
+            None,
+            &[],
+            None,
+        )
+        .expect("the pocket is cut");
+    assert!(!built.mesh.indices.is_empty());
+}
+
 #[test]
 fn a_repair_clears_tolerance_containment_findings() {
     let (mut kernel, model) = import("drive_frame_upper.step");

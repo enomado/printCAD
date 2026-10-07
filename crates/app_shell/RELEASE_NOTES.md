@@ -4,6 +4,15 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.7.0
+
+### Design
+- The gear, sprocket and shaft tools ask for their plane as a new sketch does, the clicked face offered first; on a face of the body's own solid the sketch follows it, centred where it was clicked, and the view turns square to it. sketch.new takes a generator.
+- The refine after a feature merges only what that feature made with its neighbours: rebuilds take a third to a half less time, and a split kept on purpose stays.
+
+### View
+- A mouse release a panel, a dialog or a bench took no longer leaves a drag held, which turned the next right-button pan into a roll.
+
 ## 0.6.0
 
 ### AI assistant

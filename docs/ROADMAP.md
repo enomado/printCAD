@@ -68,10 +68,6 @@ touches. The kernel work, in order of payoff:
   rebuilt; a connected region of them is classified once, by one probe;
   only the region near the tool is sewn again; a face tree replaces the
   all-pairs box test.
-- [ ] **B. "Unchanged" in the history** (S). A face that came through
-  untouched is reported as the same face, not as modified.
-- [ ] **C. Local refine** (S). `unify_same_domain` restricted to given
-  faces and their neighbours.
 - [ ] **D. Fillets in one pass** (M). All of a fillet's blends applied in
   one boolean, or by replacing faces locally, not one whole-solid boolean
   per edge piece.
@@ -80,18 +76,17 @@ touches. The kernel work, in order of payoff:
 
 And in printCAD, as each lands:
 
-- [ ] With B: face naming carries an unchanged face's names straight
+- [ ] With the history's exact copies (`History::copy_of`, in the
+  kernel): face naming carries an unchanged face's names straight
   across, about 60 ms an op on a 400-face part, and mesh, outline and
   bounds reuse key on the face itself instead of hashing its geometry.
-- [ ] With C: the refine after a feature looks only at the faces it made.
-- [ ] A "large solid, small edit" case in `rebuild_bench` (an imported
-  part with a pocket cut into it; its imported case puts a boss beside the
-  part, so no boolean touches it), measured before and after each item.
+- [ ] The "large solid, small edit" case in `rebuild_bench` (a pocket cut
+  into the imported part and widened) fails until ogeom-rs#133: every
+  boolean against that part fails. Measure A and D on it once it builds.
 
 Each goes to the kernel's repository as an issue with its API, a repro, the
 bench numbers and an acceptance test (the time follows the touched region,
-the result the same as now). A and B first: together they are most of the
-cost.
+the result the same as now).
 
 ## Printing
 

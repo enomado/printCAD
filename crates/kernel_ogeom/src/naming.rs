@@ -647,6 +647,40 @@ pub(crate) fn set_current(names: NameMap) -> Current {
     Current
 }
 
+/// The faces of `result` an op made or changed: all of them but those it
+/// carried over from `base` untouched, the same face or an exact copy of
+/// it through every one of the op's kernel operations (`histories`, in
+/// order). What the refine after a feature looks around.
+pub(crate) fn touched_faces(
+    model: &Model,
+    base: &Shape,
+    result: &Shape,
+    histories: &[History],
+) -> Vec<Shape> {
+    let mut kept: std::collections::HashSet<SameKey> = explore_unique(model, base, ShapeType::Face)
+        .unwrap_or_default()
+        .into_iter()
+        .map(SameKey)
+        .collect();
+    for history in histories {
+        kept = kept
+            .into_iter()
+            .filter_map(|SameKey(face)| {
+                if history.is_affected(&face) {
+                    history.copy_of(&face).cloned().map(SameKey)
+                } else {
+                    Some(SameKey(face))
+                }
+            })
+            .collect();
+    }
+    explore_unique(model, result, ShapeType::Face)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|face| !kept.contains(&SameKey(face.clone())))
+        .collect()
+}
+
 /// A kernel operation's record turned about: each shape it made, with the
 /// shapes it made it from.
 type Sources = std::collections::HashMap<SameKey, Vec<Shape>>;

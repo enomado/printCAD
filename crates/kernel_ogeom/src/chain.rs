@@ -50,6 +50,9 @@ struct Saved {
     current: Option<Shape>,
     names: NameMap,
     tools: Vec<Option<ToolSnapshot>>,
+    /// The faces the op before `at` made or changed, which a refine at
+    /// `at` looks around.
+    touched: Option<Vec<Shape>>,
     /// The probes asked of the solid before `at`, with their answers.
     answered: Vec<(ChainProbe, Result<ProbeAnswer, String>)>,
 }
@@ -356,6 +359,9 @@ pub fn execute_cached(
     // before, the last feature is the likeliest.
     let mut start = 0;
     let mut keep_at = None;
+    // The faces the op before made or changed, as its kernel operations
+    // said; unknown after an import or an op that said nothing.
+    let mut touched: Option<Vec<Shape>> = None;
     let mut edit: Option<(usize, u64)> = None;
     let keys = cache.as_ref().map(|_| op_keys(ops_list, &op_tags));
     let prefix = keys.as_deref().map(prefix_keys);
@@ -366,6 +372,7 @@ pub fn execute_cached(
             current = saved.current.clone();
             names = saved.names.clone();
             tools = saved.tools.clone();
+            touched = saved.touched.clone();
             for (probe, answer) in probes.iter().zip(answers.iter_mut()) {
                 if let Some((_, known)) = saved.answered.iter().find(|(q, _)| q == probe) {
                     *answer = known.clone();
@@ -412,6 +419,7 @@ pub fn execute_cached(
                 current: current.clone(),
                 names: names.clone(),
                 tools: tools.clone(),
+                touched: touched.clone(),
                 answered: answered_before(probes, &answers, index),
             });
         }
@@ -637,12 +645,23 @@ pub fn execute_cached(
             }
             SolidOp::Refine => {
                 let solid = base.ok_or_else(|| err("refine needs an existing solid".into()))?;
-                ogeom::heal::unify_same_domain(&mut model, &solid, ops::tol())
-                    .map(|(built, _)| {
-                        naming::record(&built.history);
-                        built.shape
-                    })
-                    .map_err(|e| err(format!("refine failed: {e}")))?
+                // After a feature, only the faces it made or changed are
+                // merged with their neighbours: the rest of the part was
+                // refined when it was made.
+                match touched.as_deref() {
+                    Some(around) => ogeom::heal::unify_same_domain_around(
+                        &mut model,
+                        &solid,
+                        around,
+                        ops::tol(),
+                    ),
+                    None => ogeom::heal::unify_same_domain(&mut model, &solid, ops::tol()),
+                }
+                .map(|(built, _)| {
+                    naming::record(&built.history);
+                    built.shape
+                })
+                .map_err(|e| err(format!("refine failed: {e}")))?
             }
             SolidOp::OffsetFaces {
                 faces,
@@ -752,6 +771,12 @@ pub fn execute_cached(
 
         // The result's faces take the names of the faces they came from.
         let (before_names, histories) = named.take_with_histories();
+        touched = match current.as_ref() {
+            Some(before) if !histories.is_empty() => {
+                Some(naming::touched_faces(&model, before, &next, &histories))
+            }
+            _ => None,
+        };
         names = match solid_op {
             SolidOp::Shape { .. } => tool_names_fresh(&model, &next, tag),
             _ => {
@@ -893,6 +918,7 @@ pub fn execute_cached(
             current: Some(final_shape),
             names,
             tools,
+            touched,
             answered,
         });
     }

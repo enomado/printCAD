@@ -1385,6 +1385,49 @@ fn refining_merges_the_faces_a_flush_fuse_splits() {
     assert_close(max[2] - min[2], 20.0, 1e-3, "the block keeps its height");
 }
 
+/// The refine after a feature merges what that feature made with its
+/// neighbours and leaves the rest of the part as it stands: a split an
+/// earlier feature left (its refine off) survives a later feature's refine
+/// elsewhere, while the later feature's own split sides merge.
+#[test]
+fn a_refine_after_a_feature_looks_only_around_what_it_made() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let pad_at = |x: f64, z: f64, op| {
+        let mut pad = blind_pad(vec![rect_wire(x, 0.0, x + 20.0, 20.0)], 10.0, op);
+        if let SolidOp::Sweep { profile, .. } = &mut pad {
+            profile.plane.origin = [0.0, 0.0, z];
+        }
+        pad
+    };
+    // Two blocks stacked flush, left unrefined: four split sides.
+    let left = [
+        pad_at(0.0, 0.0, BooleanOp::NewSolid),
+        pad_at(0.0, 10.0, BooleanOp::Fuse),
+    ];
+    let split = kernel
+        .execute_solid_chain(&left, &detail)
+        .expect("stacked pads fuse");
+    let split_faces = face_count(&split.mesh);
+    assert!(split_faces > 6);
+    // Far to the side, a block on a block, refined.
+    let mut ops = left.to_vec();
+    ops.extend([
+        pad_at(100.0, 0.0, BooleanOp::Fuse),
+        pad_at(100.0, 10.0, BooleanOp::Fuse),
+        SolidOp::Refine,
+    ]);
+    let built = kernel
+        .execute_solid_chain(&ops, &detail)
+        .expect("the far blocks fuse and refine");
+    assert_eq!(
+        face_count(&built.mesh),
+        split_faces + 6,
+        "the left stack keeps its splits; the right one, its last block's \
+         sides merged across the seam with the first block's, is one block"
+    );
+}
+
 /// Each face of a mesh says what surface it was cut from: a cylinder's side
 /// knows its axis and radius, its caps are planes facing out.
 #[test]
