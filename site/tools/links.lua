@@ -50,4 +50,17 @@ function Link(link)
   return link
 end
 
-return { { Meta = Meta }, { Link = Link } }
+-- The page's first heading is its title, drawn by the template above the
+-- body, so the table of contents lists only the sections.
+function Pandoc(doc)
+  for i, block in ipairs(doc.blocks) do
+    if block.t == "Header" and block.level == 1 then
+      doc.meta.heading = block.content
+      doc.blocks:remove(i)
+      break
+    end
+  end
+  return doc
+end
+
+return { { Meta = Meta }, { Link = Link }, { Pandoc = Pandoc } }

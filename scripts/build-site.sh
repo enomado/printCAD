@@ -5,7 +5,7 @@
 #
 #   scripts/build-site.sh [out-dir]
 #
-# Needs pandoc. GitHub Pages serves the result (.github/workflows/pages.yml).
+# Needs pandoc (the workflow pins 3.11). GitHub Pages serves the result (.github/workflows/pages.yml).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -55,10 +55,21 @@ nav() {
   ((open)) && printf '      </ul>\n'
 }
 
+# The guides alone, in order, for the previous and next links.
+pages=()
+for entry in "${guides[@]}"; do
+  [[ "$entry" == heading* ]] || pages+=("$entry")
+done
+
+# The title of guide `$1`.
+title_of() {
+  head -1 "$root/docs/$1.md" | sed 's/^# *//'
+}
+
 # One page: `docs/<name>.md` (or another markdown file standing as it) to
-# `docs/<name>.html`.
+# `docs/<name>.html`; `prev` and `next` are the guides beside it.
 page() {
-  local name="$1" input="$2" source="$3"
+  local name="$1" input="$2" source="$3" prev="$4" next="$5"
   local depth="${name//[^\/]/}"
   local up="" rootrel="../"
   for ((i = 0; i < ${#depth}; i++)); do
@@ -67,6 +78,13 @@ page() {
   done
   local title
   title="$(head -1 "$input" | sed 's/^# *//')"
+  local beside=()
+  if [[ -n "$prev" ]]; then
+    beside+=(--variable "prev_href=$up$prev.html" --variable "prev_title=$(title_of "$prev")")
+  fi
+  if [[ -n "$next" ]]; then
+    beside+=(--variable "next_href=$up$next.html" --variable "next_title=$(title_of "$next")")
+  fi
   pandoc "$input" \
     --from gfm+attributes --to html5 \
     --template "$tools/guide.html" \
@@ -75,14 +93,19 @@ page() {
     --metadata pagetitle="$title" \
     --variable root="$rootrel" \
     --variable nav="$(nav "$name" "$up")" \
+    --toc --toc-depth=3 \
+    "${beside[@]}" \
     --output "$out/docs/$name.html"
 }
 
-for entry in "${guides[@]}"; do
-  [[ "$entry" == heading* ]] && continue
-  page "$entry" "$root/docs/$entry.md" "docs/$entry.md"
+for i in "${!pages[@]}"; do
+  prev=""
+  next=""
+  ((i > 0)) && prev="${pages[i - 1]}"
+  ((i + 1 < ${#pages[@]})) && next="${pages[i + 1]}"
+  page "${pages[i]}" "$root/docs/${pages[i]}.md" "docs/${pages[i]}.md" "$prev" "$next"
 done
-page index "$root/site/guides.md" "docs/index.md"
+page index "$root/site/guides.md" "docs/index.md" "" "${pages[0]}"
 # The list's source link names the file it is made from.
 sed -i 's#blob/master/docs/index.md#blob/master/site/guides.md#' "$out/docs/index.html"
 

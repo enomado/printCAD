@@ -99,6 +99,9 @@ pre code {
   margin: 0 auto;
   padding: 0 24px;
 }
+.wrap.wide {
+  max-width: 1360px;
+}
 
 /* Header */
 
@@ -300,7 +303,7 @@ footer a {
 
 .docs {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr) 200px;
   gap: 48px;
   padding-top: 32px;
   padding-bottom: 64px;
@@ -411,5 +414,194 @@ article blockquote {
   }
   .top nav {
     gap: 14px;
+  }
+}
+
+/* Code in the guides: pandoc marks each token with a class. The colours
+   are the app's own (sketch and status palette). */
+
+div.sourceCode {
+  position: relative;
+  margin: 16px 0;
+}
+div.sourceCode pre {
+  margin: 0;
+}
+code span.kw,
+code span.cf,
+code span.im {
+  color: #c77dff;
+}
+code span.st,
+code span.ss,
+code span.vs,
+code span.ch,
+code span.sc {
+  color: #4fd08f;
+}
+code span.co,
+code span.do,
+code span.an,
+code span.cv,
+code span.in {
+  color: var(--text3);
+  font-style: italic;
+}
+code span.dv,
+code span.bn,
+code span.fl,
+code span.cn {
+  color: #e6a44f;
+}
+code span.fu {
+  color: #6fd3c9;
+}
+code span.bu,
+code span.ex {
+  color: #7fd1e8;
+}
+code span.dt,
+code span.at {
+  color: #f2d479;
+}
+code span.op,
+code span.ot {
+  color: var(--text2);
+}
+code span.va {
+  color: var(--text1);
+}
+code span.pp {
+  color: #e86e6e;
+}
+code span.al,
+code span.er {
+  color: #e86e6e;
+  font-weight: 600;
+}
+code span.wa {
+  color: #e6a44f;
+  font-style: italic;
+}
+
+.copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--text2);
+  font: 12px "Plex Sans", sans-serif;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+div.sourceCode:hover .copy,
+pre:hover .copy,
+.copy:focus {
+  opacity: 1;
+}
+.copy:hover {
+  color: var(--text1);
+  background: var(--bg3);
+}
+
+/* Headings carry a link to themselves. */
+article .anchor {
+  margin-left: 8px;
+  color: var(--text3);
+  font-weight: 400;
+  opacity: 0;
+  text-decoration: none;
+}
+article h2:hover .anchor,
+article h3:hover .anchor,
+article .anchor:focus {
+  opacity: 1;
+}
+article h2,
+article h3 {
+  scroll-margin-top: 72px;
+}
+
+/* On this page, beside the guide on wide screens. */
+.docs aside.toc {
+  position: sticky;
+  top: 80px;
+  align-self: start;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  font-size: 13px;
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
+}
+.docs aside.toc h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text3);
+}
+.docs aside.toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.docs aside.toc ul ul {
+  padding-left: 12px;
+}
+.docs aside.toc a {
+  display: block;
+  padding: 3px 0;
+  color: var(--text2);
+}
+.docs aside.toc a:hover {
+  color: var(--text1);
+  text-decoration: none;
+}
+
+/* Previous and next guide. */
+.pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 48px;
+}
+.pager a {
+  display: block;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg1);
+  color: var(--text1);
+}
+.pager a:hover {
+  border-color: var(--border-strong);
+  background: var(--bg2);
+  text-decoration: none;
+}
+.pager small {
+  display: block;
+  color: var(--text3);
+  font-size: 12px;
+}
+.pager .next {
+  text-align: right;
+  grid-column: 2;
+}
+
+@media (max-width: 1200px) {
+  .docs {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .docs aside.toc {
+    display: none;
+  }
+}
+@media (max-width: 860px) {
+  .docs {
+    grid-template-columns: 1fr;
   }
 }

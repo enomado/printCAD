@@ -9,7 +9,7 @@
 </head>
 <body>
   <header class="top">
-    <div class="wrap">
+    <div class="wrap wide">
       <a class="brand" href="$root$"><img src="$root$assets/printcad.svg" alt="">printCAD</a>
       <nav>
         <a href="$root$#features">Features</a>
@@ -19,22 +19,62 @@
       </nav>
     </div>
   </header>
-  <div class="wrap docs">
+  <div class="wrap wide docs">
     <nav class="side">
 $nav$
     </nav>
     <article>
+      <h1>$heading$</h1>
 $body$
+      <nav class="pager">
+$if(prev_href)$
+        <a class="prev" href="$prev_href$"><small>Previous</small>$prev_title$</a>
+$endif$
+$if(next_href)$
+        <a class="next" href="$next_href$"><small>Next</small>$next_title$</a>
+$endif$
+      </nav>
       <p class="release-line"><a href="https://github.com/gilbertorconde/printCAD/blob/master/$source$">This page's source</a></p>
     </article>
+$if(table-of-contents)$
+    <aside class="toc">
+      <h4>On this page</h4>
+$table-of-contents$
+    </aside>
+$endif$
   </div>
   <footer>
-    <div class="wrap">
+    <div class="wrap wide">
       <span>printCAD</span>
       <a href="https://github.com/gilbertorconde/printCAD">GitHub</a>
       <a href="https://github.com/gilbertorconde/printCAD/releases">Releases</a>
       <span>MIT or Apache-2.0</span>
     </div>
   </footer>
+  <script>
+    // A copy button on every code block.
+    for (const pre of document.querySelectorAll("article pre")) {
+      const button = document.createElement("button");
+      button.className = "copy";
+      button.type = "button";
+      button.textContent = "Copy";
+      button.addEventListener("click", () => {
+        navigator.clipboard.writeText(pre.innerText).then(() => {
+          button.textContent = "Copied";
+          setTimeout(() => (button.textContent = "Copy"), 1500);
+        });
+      });
+      (pre.parentElement.classList.contains("sourceCode") ? pre.parentElement : pre).append(button);
+    }
+    // Section headings carry a link to themselves.
+    for (const heading of document.querySelectorAll("article h2[id], article h3[id]")) {
+      const link = document.createElement("a");
+      link.className = "anchor";
+      link.href = "#" + heading.id;
+      link.textContent = "#";
+      link.setAttribute("aria-label", "Link to this section");
+      heading.append(link);
+    }
+  </script>
 </body>
 </html>

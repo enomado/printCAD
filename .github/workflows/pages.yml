@@ -31,8 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Pinned: the code colours read the classes this version's
+      # highlighter gives.
       - name: Pandoc
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq pandoc
+        run: |
+          curl -sSLo pandoc.deb https://github.com/jgm/pandoc/releases/download/3.11/pandoc-3.11-1-amd64.deb
+          sudo dpkg -i pandoc.deb
+          rm pandoc.deb
 
       - name: Build the site
         run: scripts/build-site.sh _site
