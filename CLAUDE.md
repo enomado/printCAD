@@ -492,7 +492,9 @@ active. The UI surface: `configure` registers
 `is_tool_enabled`/`tool_toggled` decide button state each frame; `task()` +
 `ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);
 `viewport_hud()`, `status_items()`, `editing_feature()`,
-`get_screen_space_overlays/marks/labels()` feed the viewport and chrome;
+`get_screen_space_overlays/polygons/marks/labels()` feed the viewport and
+chrome (polygons are filled fans drawn beneath the lines: the Assembly's
+Move handles, `wb_assembly/src/handles.rs` over `transform_gizmo`);
 `ui_settings()` draws the bench's Preferences page (a rail entry for
 each bench whose `has_settings` is true; a package's is true when its
 settings page has widgets); `feature_info`/`passive_geometry`/`pick_feature`/

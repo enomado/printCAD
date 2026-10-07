@@ -5367,11 +5367,13 @@ version = "0.1.0"
 dependencies = [
  "core_document",
  "egui",
+ "emath",
  "glam 0.33.7",
  "printcad-bench-api",
  "printcad-kernel-api",
  "serde",
  "serde_json",
+ "transform_gizmo",
  "ui_kit",
  "uuid",
 ]
