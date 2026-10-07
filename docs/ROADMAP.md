@@ -17,6 +17,21 @@ Gaps in the kernel printCAD runs into. When a fix is
 released: bump `ogeom` in the workspace `Cargo.toml`, take the `#[ignore]`
 off its tests, run the suite.
 
+Filed:
+
+- [ ] **Sewing half domes** (ogeom-rs#138). Two halves of a dome (one
+  mirrored from the other, or turned the other way) sew with their half
+  rims taken for one edge when the arc is a hair off its axis, as a
+  sketched one is: the open sheet closes into a solid out of shape.
+  `surface_ops::half_domes_sew_into_an_open_dome`.
+- [ ] **Shading a mirrored face** (ogeom-rs#139). A face under a mirroring
+  placement (the Surface bench's Mirror) meshes with its normals against
+  its triangles, so the image is lit from behind.
+  `surface_ops::a_mirrored_sheet_is_shaded_the_way_it_faces`.
+- [ ] **Thickening free-form sheets** (ogeom-rs#140). A loft through three
+  sections and a revolved dome miss the offset fit's bound, so Thicken
+  fails on them. `surface_ops::free_form_sheets_thicken`.
+
 Not yet filed:
 
 - [ ] **A pad on a converted solid that was not refined** (M). Fusing a

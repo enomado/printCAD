@@ -1553,3 +1553,227 @@ fn a_line_extruded_along_itself_is_refused() {
     assert_eq!(along.op_index, 0);
     assert!(along.message.contains("sweeps out no surface"), "{along}");
 }
+
+/// A quarter arc through a point given to eight places, as a sketch holds
+/// one, from the dome's rim at (10, 0, 0) up to its pole.
+fn dome_quarter() -> CurveSource {
+    sketch(
+        plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        vec![arc([10.0, 0.0], [7.071_067_8, 7.071_067_8], [0.0, 10.0])],
+    )
+}
+
+/// Half a dome sewn to its mirror image, or to a second half turned the
+/// other way: one open sheet, the two rims left apart, its shape as it was.
+#[test]
+#[ignore = "kernel: sew joins the two half rims of a dome made of halves into one edge, closing the sheet and pulling it out of shape (ogeom-rs#138)"]
+fn half_domes_sew_into_an_open_dome() {
+    let half = |axis: [f64; 3]| SurfaceOp::Revolve {
+        curves: vec![dome_quarter()],
+        origin: [0.0; 3],
+        axis,
+        angle_deg: 180.0,
+    };
+    let mirrored = vec![
+        half([0.0, 0.0, 1.0]),
+        SurfaceOp::Mirror {
+            origin: [0.0; 3],
+            normal: [0.0, 1.0, 0.0],
+        },
+        SurfaceOp::Sew { gap: 0.0 },
+    ];
+    let turned = vec![
+        half([0.0, 0.0, 1.0]),
+        half([0.0, 0.0, -1.0]),
+        SurfaceOp::Sew { gap: 0.0 },
+    ];
+    for (name, ops) in [("mirrored", mirrored), ("turned", turned)] {
+        let result = build(ops).unwrap();
+        assert_eq!(census(&result), (2, 0), "{name}: an open sheet");
+        assert_eq!(shells(&result), 1, "{name}");
+        let (lo, hi) = bounds(&result);
+        assert!(
+            (lo[1] + 10.0).abs() < 1e-3 && (hi[2] - 10.0).abs() < 1e-3,
+            "{name}: {lo:?} {hi:?}"
+        );
+    }
+}
+
+/// Triangles whose vertex normals point against the side their winding
+/// faces: drawn lit from behind.
+fn shaded_from_behind(mesh: &kernel_api::TriMesh) -> usize {
+    mesh.indices
+        .chunks(3)
+        .filter(|t| {
+            let p = [0, 1, 2].map(|k| mesh.positions[t[k] as usize].map(f64::from));
+            let (a, b) = (
+                [0, 1, 2].map(|k| p[1][k] - p[0][k]),
+                [0, 1, 2].map(|k| p[2][k] - p[0][k]),
+            );
+            let facing = [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ];
+            let normal = [0, 1, 2].map(|k| {
+                t.iter()
+                    .map(|&i| f64::from(mesh.normals[i as usize][k]))
+                    .sum::<f64>()
+            });
+            (0..3).map(|k| facing[k] * normal[k]).sum::<f64>() < 0.0
+        })
+        .count()
+}
+
+/// A half cylinder and its mirror image: the image's mesh is shaded the
+/// way its triangles face, as the original's is.
+#[test]
+#[ignore = "kernel: a face under a mirroring placement triangulates with its normals against its triangles' winding (ogeom-rs#139)"]
+fn a_mirrored_sheet_is_shaded_the_way_it_faces() {
+    let result = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![sketch(
+                xy(0.0),
+                vec![arc([10.0, 0.0], [0.0, 10.0], [-10.0, 0.0])],
+            )],
+            direction: [0.0, 0.0, 1.0],
+            length: 5.0,
+            symmetric: false,
+        },
+        SurfaceOp::Mirror {
+            origin: [0.0; 3],
+            normal: [0.0, 1.0, 0.0],
+        },
+    ])
+    .unwrap();
+    assert_eq!(shaded_from_behind(&result.mesh), 0);
+}
+
+/// Free-form sheets thicken into a solid, one side or both: a loft
+/// through three bowed sections that bow the other way between, and a
+/// dome turned from a quarter arc.
+#[test]
+#[ignore = "kernel: make_thick_sheet's free-form offset fit misses its bound on a loft through three sections and on a revolved dome (ogeom-rs#140)"]
+fn free_form_sheets_thicken() {
+    let section =
+        |z: f64, bulge: f64| sketch(xy(z), vec![arc([0.0, 0.0], [10.0, bulge], [20.0, 0.0])]);
+    let loft = SurfaceOp::Loft {
+        sections: vec![section(0.0, 3.0), section(10.0, -3.0), section(20.0, 5.0)],
+        closed: false,
+    };
+    let dome = SurfaceOp::Revolve {
+        curves: vec![dome_quarter()],
+        origin: [0.0; 3],
+        axis: [0.0, 0.0, 1.0],
+        angle_deg: 360.0,
+    };
+    for (name, sheet) in [("loft", loft), ("dome", dome)] {
+        for both_sides in [false, true] {
+            let result = build(vec![
+                sheet.clone(),
+                SurfaceOp::Thicken {
+                    thickness: 1.0,
+                    both_sides,
+                },
+            ]);
+            match result {
+                Ok(r) => assert_eq!(census(&r).1, 1, "{name} {both_sides}"),
+                Err(e) => panic!("{name} {both_sides}: {e}"),
+            }
+        }
+    }
+}
+
+/// A half circle turned a whole turn is a closed sheet; sewn, it is a
+/// ball's solid.
+#[test]
+fn a_revolved_half_circle_sews_into_a_ball() {
+    let half_circle = sketch(
+        plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        vec![arc([0.0, -10.0], [10.0, 0.0], [0.0, 10.0])],
+    );
+    let result = build(vec![
+        SurfaceOp::Revolve {
+            curves: vec![half_circle],
+            origin: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            angle_deg: 360.0,
+        },
+        SurfaceOp::Sew { gap: 0.0 },
+    ])
+    .unwrap();
+    assert_eq!(census(&result), (1, 1));
+    let volume = OgeomKernel::new()
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a ball has a volume");
+    let ball = 4.0 / 3.0 * std::f64::consts::PI * 1000.0;
+    assert!((volume - ball).abs() < 1e-6 * ball, "{volume}");
+}
+
+/// Mesh edges, welded where their ends meet, that two triangles walk the
+/// same way: where neighbouring faces disagree about which side is out.
+fn walked_one_way(mesh: &kernel_api::TriMesh) -> usize {
+    let key = |i: u32| mesh.positions[i as usize].map(|c| (c * 1000.0).round() as i64);
+    let mut walks = std::collections::HashMap::new();
+    for t in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let (a, b) = (key(t[k]), key(t[(k + 1) % 3]));
+            if a != b {
+                *walks.entry((a, b)).or_insert(0usize) += 1;
+            }
+        }
+    }
+    walks.values().filter(|&&n| n > 1).count()
+}
+
+/// Sheets made facing every which way sew into one that faces one way: a
+/// box of walls run down from the top and lids drawn upside down is a
+/// solid with its volume outside in, and an open tray's floor turns to
+/// face out with its walls.
+#[test]
+fn sewn_sheets_face_one_way() {
+    let upside_down = |z: f64| {
+        sketch(
+            plane([0.0, 0.0, z], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]),
+            vec![
+                line([0.0, 0.0], [10.0, 0.0]),
+                line([10.0, 0.0], [10.0, 10.0]),
+                line([10.0, 10.0], [0.0, 10.0]),
+                line([0.0, 10.0], [0.0, 0.0]),
+            ],
+        )
+    };
+    let walls_down = SurfaceOp::Extrude {
+        curves: vec![square_loop(5.0, 10.0)],
+        direction: [0.0, 0.0, -1.0],
+        length: 5.0,
+        symmetric: false,
+    };
+    let result = build(vec![
+        walls_down,
+        SurfaceOp::PlanarFill {
+            curves: vec![upside_down(0.0)],
+        },
+        SurfaceOp::PlanarFill {
+            curves: vec![upside_down(5.0)],
+        },
+        SurfaceOp::Sew { gap: 0.0 },
+    ])
+    .unwrap();
+    assert_eq!(census(&result), (6, 1));
+    assert_eq!(walked_one_way(&result.mesh), 0);
+    let volume = OgeomKernel::new()
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    assert!((volume - 500.0).abs() < 1e-6, "{volume}");
+
+    let mut tray = tray();
+    assert!(walked_one_way(&build(tray.clone()).unwrap().mesh) > 0);
+    tray.push(SurfaceOp::Sew { gap: 0.0 });
+    let sewn = build(tray).unwrap();
+    assert_eq!(walked_one_way(&sewn.mesh), 0);
+}
