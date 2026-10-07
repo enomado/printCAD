@@ -12,6 +12,7 @@ use settings::{ProjectionMode, SixDofButtonAction, UserSettings};
 use uuid::Uuid;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
+use super::scene_guides::{self, GuideView};
 use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, OrientationCubeInput};
 use crate::{Document, PrintCadApp, ui};
@@ -735,6 +736,7 @@ impl PrintCadApp {
         let viewport_data = self.build_scene_submission(dt_secs);
         if self.session.screen == crate::ui::Screen::Start {
             self.frame_submission.bodies.clear();
+            self.frame_submission.grids.clear();
         }
         let ViewportData {
             overlays: screen_space_overlays,
@@ -1791,6 +1793,26 @@ impl PrintCadApp {
             }
         }
 
+        // The ground grid and the origin's planes, out of the way while an
+        // edit session draws its own plane's grid.
+        let guides = GuideView::of(&self.session.camera);
+        let rendering = &self.user_settings.rendering;
+        self.frame_submission.grids.clear();
+        if !editing {
+            if rendering.show_grid {
+                self.frame_submission.grids.push(scene_guides::ground_grid(
+                    &guides,
+                    &self.session.camera.axis_system(),
+                ));
+            }
+            if rendering.show_origin_planes {
+                all_meshes.extend(
+                    self.origin_planes
+                        .bodies(scene_guides::origin_plane_half(&guides)),
+                );
+            }
+        }
+
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.draw_edges = draw_style == settings::DrawStyle::ShadedEdges;
         // A bench's cut stands in for the toolbar's while it asks for one.
@@ -1880,6 +1902,10 @@ impl PrintCadApp {
             if let Some(bounds) = feature.mesh.bounds() {
                 add(bounds);
             }
+        }
+        if self.user_settings.rendering.show_origin_planes && !self.sketch_editing_active() {
+            let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.camera));
+            add(([-half; 3], [half; 3]));
         }
         let printing = &self.user_settings.printing;
         if printing.show_bed {

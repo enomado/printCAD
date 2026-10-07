@@ -324,6 +324,7 @@ struct PrintCadApp {
     /// settings it was built from.
     print_bed_id: Uuid,
     print_bed: Option<(u64, std::sync::Arc<kernel_api::TriMesh>)>,
+    origin_planes: app::scene_guides::OriginPlanes,
     /// The title the window currently shows; rewritten only on change.
     window_title: String,
     /// The thread the console and scripts run on; its engine keeps the
@@ -528,6 +529,7 @@ impl PrintCadApp {
             edge_select_id: Uuid::new_v4(),
             print_bed_id: Uuid::new_v4(),
             print_bed: None,
+            origin_planes: app::scene_guides::OriginPlanes::new(),
             window_title: String::new(),
             recent: app::doc_io::load_recent(),
         }

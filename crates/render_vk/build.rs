@@ -10,6 +10,8 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/edge.frag");
     println!("cargo:rerun-if-changed=shaders/pick.vert");
     println!("cargo:rerun-if-changed=shaders/pick.frag");
+    println!("cargo:rerun-if-changed=shaders/grid.vert");
+    println!("cargo:rerun-if-changed=shaders/grid.frag");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
     fs::create_dir_all(&out_dir).expect("failed to create OUT_DIR");
@@ -20,6 +22,8 @@ fn main() {
     compile_shader("edge.frag", shaderc::ShaderKind::Fragment, &out_dir);
     compile_shader("pick.vert", shaderc::ShaderKind::Vertex, &out_dir);
     compile_shader("pick.frag", shaderc::ShaderKind::Fragment, &out_dir);
+    compile_shader("grid.vert", shaderc::ShaderKind::Vertex, &out_dir);
+    compile_shader("grid.frag", shaderc::ShaderKind::Fragment, &out_dir);
 }
 
 fn compile_shader(name: &str, kind: shaderc::ShaderKind, out_dir: &Path) {

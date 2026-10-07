@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use uuid::Uuid;
 
+use crate::grid::GridPipeline;
 use crate::{
-    BodySubmission, EDGE_FRAG_SPV, EDGE_VERT_SPV, HighlightState, MAX_FRAMES_IN_FLIGHT,
-    MESH_FRAG_SPV, MESH_VERT_SPV, RenderError, ViewportRect, util::create_buffer,
+    BodySubmission, EDGE_FRAG_SPV, EDGE_VERT_SPV, GridSubmission, HighlightState,
+    MAX_FRAMES_IN_FLIGHT, MESH_FRAG_SPV, MESH_VERT_SPV, RenderError, ViewportRect,
+    util::create_buffer,
 };
 
 use crate::create_shader_module;
@@ -665,6 +667,7 @@ pub(crate) struct MeshRenderer {
     translucent_pipeline: vk::Pipeline,
     translucent_front_pipeline: vk::Pipeline,
     on_top_pipeline: vk::Pipeline,
+    grid: GridPipeline,
     msaa_samples: vk::SampleCountFlags,
     solid_line_width: f32,
     line_width_range: [f32; 2],
@@ -756,6 +759,7 @@ impl MeshRenderer {
             false,
             non_solid_fill,
         )?;
+        let grid = GridPipeline::new(&device, render_pass, msaa_samples)?;
 
         Ok(Self {
             device,
@@ -767,6 +771,7 @@ impl MeshRenderer {
             translucent_pipeline,
             translucent_front_pipeline,
             on_top_pipeline,
+            grid,
             msaa_samples,
             solid_line_width,
             line_width_range: line_range,
@@ -850,6 +855,8 @@ impl MeshRenderer {
             false,
             self.non_solid_fill,
         )?;
+        self.grid
+            .set_render_pass(&self.device, render_pass, msaa_samples)?;
         Ok(())
     }
 
@@ -870,12 +877,13 @@ impl MeshRenderer {
         lighting: &LightingData,
         draw_edges: bool,
         clip_plane: Option<[f32; 4]>,
+        grids: &[GridSubmission],
     ) -> Result<DrawStats, RenderError> {
         for body in bodies {
             cache.ensure_uploaded(&self.device, &self.memory_properties, body)?;
         }
 
-        if bodies.is_empty() {
+        if bodies.is_empty() && grids.is_empty() {
             return Ok(DrawStats::default());
         }
 
@@ -1077,6 +1085,22 @@ impl MeshRenderer {
                 stats.triangle_indices += u64::from(cached.index_count);
                 self.draw_body(command_buffer, cached, body);
             }
+        }
+
+        // Grids behind what is opaque, under what is see-through.
+        if !grids.is_empty() {
+            unsafe {
+                self.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+            }
+            self.grid.draw(
+                &self.device,
+                command_buffer,
+                grids,
+                view_proj,
+                camera_pos,
+                clip_plane,
+            );
         }
 
         // Translucent bodies last, over everything opaque and its edges:
@@ -1283,6 +1307,7 @@ impl MeshRenderer {
             self.device.destroy_pipeline(self.on_top_pipeline, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.grid.destroy(&self.device);
         }
     }
 }

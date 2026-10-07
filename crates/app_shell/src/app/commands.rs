@@ -32,6 +32,8 @@ struct FrameIntents {
     set_draw_style: Option<settings::DrawStyle>,
     toggle_print_bed: bool,
     toggle_annotations: bool,
+    toggle_grid: bool,
+    toggle_origin_planes: bool,
     toggle_measure: bool,
     edit: Vec<crate::ui::EditCommand>,
     body_display: Vec<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
@@ -146,6 +148,8 @@ impl PrintCadApp {
                 UiCommand::SetDrawStyle(style) => intents.set_draw_style = Some(style),
                 UiCommand::TogglePrintBed => intents.toggle_print_bed = true,
                 UiCommand::ToggleAnnotations => intents.toggle_annotations = true,
+                UiCommand::ToggleGrid => intents.toggle_grid = true,
+                UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {
@@ -502,6 +506,15 @@ impl PrintCadApp {
         if intents.toggle_annotations {
             self.user_settings.rendering.show_annotations =
                 !self.user_settings.rendering.show_annotations;
+            intents.persist_settings = true;
+        }
+        if intents.toggle_grid {
+            self.user_settings.rendering.show_grid = !self.user_settings.rendering.show_grid;
+            intents.persist_settings = true;
+        }
+        if intents.toggle_origin_planes {
+            self.user_settings.rendering.show_origin_planes =
+                !self.user_settings.rendering.show_origin_planes;
             intents.persist_settings = true;
         }
         if let Some(style) = intents.set_draw_style

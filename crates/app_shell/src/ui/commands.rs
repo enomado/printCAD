@@ -83,6 +83,10 @@ pub enum UiCommand {
     SetSlicerLayout(bool),
     /// The annotations imported files carry drawn over the scene, or not.
     ToggleAnnotations,
+    /// The grid on the ground plane drawn, or not.
+    ToggleGrid,
+    /// The origin's planes drawn, or not.
+    ToggleOriginPlanes,
     /// Arm the measure tool, or put it away.
     ToggleMeasure,
     Edit(EditCommand),

@@ -1331,6 +1331,7 @@ impl RendererCore {
                     &frame.lighting,
                     frame.draw_edges,
                     frame.clip_plane,
+                    &frame.grids,
                 )?;
             }
 
@@ -1789,6 +1790,28 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
             None => 0u8.hash(&mut h),
         }
         body.front_only.hash(&mut h);
+    }
+    frame.grids.len().hash(&mut h);
+    for grid in &frame.grids {
+        f32s(&mut h, &grid.origin);
+        f32s(&mut h, &grid.u);
+        f32s(&mut h, &grid.v);
+        f32s(&mut h, &grid.center);
+        f32s(&mut h, &grid.forward);
+        f32s(&mut h, &grid.depth_range);
+        f32s(&mut h, &grid.color);
+        f32s(&mut h, &grid.u_axis_color);
+        f32s(&mut h, &grid.v_axis_color);
+        f32s(
+            &mut h,
+            &[
+                grid.step,
+                grid.radius,
+                grid.minor_alpha,
+                grid.major_alpha,
+                grid.axis_alpha,
+            ],
+        );
     }
     h.finish()
 }

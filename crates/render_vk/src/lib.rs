@@ -1,5 +1,6 @@
 mod core;
 mod debug;
+mod grid;
 mod mesh;
 mod picking;
 mod surface;
@@ -27,6 +28,8 @@ const EDGE_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/edge.vert
 const EDGE_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/edge.frag.spv"));
 const PICK_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pick.vert.spv"));
 const PICK_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pick.frag.spv"));
+const GRID_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/grid.vert.spv"));
+const GRID_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/grid.frag.spv"));
 
 fn map_egui_err(err: egui_ash_renderer::RendererError) -> RenderError {
     RenderError::Initialization(format!("egui renderer error: {err}"))
@@ -308,6 +311,44 @@ pub struct FrameSubmission {
     /// A plane cutting the scene: `[a, b, c, d]` keeps the points where
     /// `a·x + b·y + c·z + d >= 0`, in every pass including picking.
     pub clip_plane: Option<[f32; 4]>,
+    /// Grids drawn into the scene, each on its own plane.
+    pub grids: Vec<GridSubmission>,
+}
+
+/// Lines on a plane, drawn into the scene after the opaque bodies and
+/// their edges: depth-tested against them, never writing depth, blended,
+/// unseen by picking. Three decades of lines draw at once (`step`, ten and
+/// a hundred times it), each as strong as its spacing on screen allows, so
+/// the grid thins out with distance and zoom on its own; the host only
+/// moves `step` by a decade as the view's scale passes one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridSubmission {
+    /// Where the plane's axes cross: the lines numbered zero.
+    pub origin: [f32; 3],
+    /// Unit directions in the plane, square to each other; lines run
+    /// along both.
+    pub u: [f32; 3],
+    pub v: [f32; 3],
+    /// The spacing of the finest lines, in model units.
+    pub step: f32,
+    /// The point of the plane the drawn patch is centred on, and how far
+    /// it reaches; it fades out over its outer half.
+    pub center: [f32; 3],
+    pub radius: f32,
+    /// The view's depth range, along `forward` from the frame's camera
+    /// position: the grid fades out before the far end would cut it off.
+    pub forward: [f32; 3],
+    pub depth_range: [f32; 2],
+    pub color: [f32; 3],
+    /// How opaque the finest lines are once they stand apart on screen,
+    /// and lines far apart.
+    pub minor_alpha: f32,
+    pub major_alpha: f32,
+    /// The line along `u` through `origin`, and the one along `v`, drawn
+    /// in their own colours over the rest at `axis_alpha` (0 draws none).
+    pub u_axis_color: [f32; 3],
+    pub v_axis_color: [f32; 3],
+    pub axis_alpha: f32,
 }
 
 impl Default for FrameSubmission {
@@ -321,6 +362,7 @@ impl Default for FrameSubmission {
             viewport_rect: None,
             draw_edges: true,
             clip_plane: None,
+            grids: Vec::new(),
         }
     }
 }

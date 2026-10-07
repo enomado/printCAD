@@ -407,6 +407,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   wrap.
 - `render_vk`: data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
+  `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
+  plane whose lines `grid.frag` works out per pixel, three decades at once,
+  each faded by its spacing on screen, drawn after the opaque bodies,
+  depth-tested and never picked; the app's `app/scene_guides.rs` lays out
+  the ground grid (square to the axis preset's up) and the origin's three
+  planes (see-through bodies, a fixed size on screen), View › Grid and
+  Origin planes, both hidden while an edit session holds the view.
   The Vulkan library is loaded at run time (`load_vulkan`; on macOS the
   loader or MoltenVK, then a bundle's `Frameworks`), kept as the renderer's
   last field so it outlives every call; surfaces come from `ash-window`,
