@@ -19,6 +19,8 @@ cp -r "$root/site/assets/." "$out/assets/"
 cp "$root/crates/app_shell/assets/icon/printcad.svg" \
   "$root/crates/app_shell/assets/icon/printcad-small.svg" "$out/assets/"
 cp "$root"/crates/ui_kit/fonts/*.ttf "$root/crates/ui_kit/fonts/LICENSE.txt" "$out/fonts/"
+mkdir -p "$out/docs/images"
+cp "$root"/docs/images/*.png "$out/docs/images/"
 
 # The guides, in the order the side menu lists them: "heading" lines start
 # a group, the rest are paths under docs/ without ".md".

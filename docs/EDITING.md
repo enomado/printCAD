@@ -55,6 +55,8 @@ a plane picker:
 The sketch is added to the body, opened for editing, and the camera turns
 square to its plane.
 
+![A sketch being edited: a rectangle and a circle with their dimensions](images/sketch-view.png)
+
 **Editing one.** Double clicking a sketch in the tree opens it the same way.
 
 **While editing,** the view stays square to the sketch plane: pan, zoom and
@@ -63,6 +65,8 @@ roll work, orbit and standard views do not.
 **Finishing.** Close in the task panel, or Enter, ends the edit and returns
 to the workbench you came from. Escape in the view drops what is in
 progress first: a typed value, a half-drawn shape, the selection.
+
+![The sketcher's task panel: what the solver says, its settings and the constraints](images/sketch-panel.png)
 
 ## Design features
 
@@ -75,6 +79,9 @@ progress first: a typed value, a half-drawn shape, the selection.
 Everything done in one task panel is one undo step. While the panel is
 open, the material the feature adds or takes away is drawn as a translucent
 preview.
+
+![A pad's preview, drawn see-through](images/pad-preview.png)
+![The Pad task panel](images/pad-task.png)
 
 **Imported and converted solids take features too.** The first feature
 added to one (a pocket, a fillet) gives the body a **Base shape** feature
@@ -97,6 +104,8 @@ a distance and an angle, measures its first distance on one face of the
 edge (Flip direction takes the other) and keeps it on that side all along
 a tangent chain, even where the faces change from a flat side to a round
 and on.
+
+![An angle bracket with the fillet in its inside corner painted](images/bracket-fillet.png)
 
 **Delete faces** takes picked faces out of the solid and closes each
 opening from the faces around it: a bore, a boss or a round taken away,
@@ -122,6 +131,8 @@ the log. On an imported solid it gives the body its base shape first.
 numbers, set in its panel or with formulas: an involute gear to pad, a
 chain sprocket to pad, a stepped shaft to revolve, and a shaft's keyway
 to pocket. Each asks for its plane as a new sketch does.
+
+![A gear with a keyed bore and a chain sprocket, each a generated sketch padded](images/generators.png)
 
 - A gear's root is the one a rack cutter leaves, its rounded tip tracing
   the root fillet; on a pinion of few teeth (below about 17 at 20°) the
@@ -176,6 +187,8 @@ pipe's path.
   puts back what was there.
 - Deleting a body removes its features. Unless the body was still empty,
   this clears the undo history.
+
+![The feature tree of the bracket: its sketches, pad, holes and fillet in order](images/feature-tree.png)
 
 ## Rebuilding
 

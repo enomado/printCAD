@@ -5,6 +5,8 @@ joint belongs to the body it moves and names the body it holds against.
 Joints solve when one is made or edited and when a body moves, and the
 moves are ordinary edits: a joint and the moves it causes undo as one step.
 
+![An arm hinged on a plate](images/hinged-arm.png)
+
 ## Making a joint
 
 Pick a joint tool, click a face on the body to move, then a face on the

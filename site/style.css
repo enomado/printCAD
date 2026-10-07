@@ -392,6 +392,27 @@ article th {
 }
 article img {
   max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg1);
+  vertical-align: top;
+}
+/* A picture on its own line, or two side by side, shrinking alike. */
+article p:has(> img) {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 20px 0;
+}
+@media (max-width: 700px) {
+  article p:has(> img) {
+    flex-wrap: wrap;
+  }
+}
+article p:has(> img) img {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 article blockquote {
   margin: 16px 0;

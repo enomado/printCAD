@@ -6,6 +6,8 @@ own. The exact solid stays as it is. The texture is drawn in the view and
 pressed into the STL and 3MF files you export and the file sent to the
 slicer. STEP export writes the solid without it.
 
+![A knurl pressed into the side of a cylindrical grip](images/knurl-texture.png)
+
 ## Adding one
 
 Right click a body (in the tree or the view) and pick **Surface

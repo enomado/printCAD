@@ -43,6 +43,8 @@ A Hole's **Nut trap** (in the Hole task, under the hole cut) cuts a
 hexagonal pocket at one end of the hole for a nut to sit in captive, so
 a screw turns into it from the other side.
 
+![A nut trap under an M5 hole, cut through its centre](images/nut-trap.png)
+
 - **Nut**: the standard the pocket is sized from, by the hole's ISO
   metric thread size: ISO 4032 (the usual hex nut) or DIN 934 (17, 19 and
   22 mm across the flats for M10, M12 and M14 where ISO 4032 has 16, 18
@@ -89,6 +91,9 @@ print on the bed, as many copies as the parts list's Print column asks
 for, and shows them there in the view while its task is open. Nothing
 moves: the model is back where it was when the task closes, and the
 layout is only where export and the slicer put the copies.
+
+![Three parts laid flat in a corner of the bed](images/print-layout-view.png)
+![The Print layout task](images/print-layout-task.png)
 
 - **Which parts, how many**: each part of the parts list with a count to
   print above none and at least one visible body. A document whose

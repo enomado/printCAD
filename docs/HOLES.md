@@ -7,6 +7,8 @@ deep, drilled against the sketch's normal; **Reversed** drills the other
 way. The task panel sets the rows below; a script sets the same fields
 by name (`pc.design.hole`, `pc.design.set`).
 
+![A plate cut through four holes: plain, a socket head counterbore, a countersink, and a modeled M8 thread with its drill point](images/holes-section.png)
+
 ## Size
 
 **Standard** is Custom (a plain diameter) or a thread standard:

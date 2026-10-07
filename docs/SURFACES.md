@@ -46,6 +46,8 @@ takes it out.
 
 ## Making surfaces
 
+![A shade: a line revolved into a cone, trimmed by a plane and thickened](images/surface-shade.png)
+
 | Tool | What it makes |
 | --- | --- |
 | Extruded surface | Each curve swept straight: square to its sketch, or along X, Y or Z; one way, reversed, or half each way. A curve running along the direction sweeps nothing, and the step says so. |
@@ -86,6 +88,9 @@ jumps (a flat wall running into a round), the crease angle, or the gap
 where the faces are apart; the task lists them from the sharpest crease
 down. Close puts the labels away.
 
+![Check continuity labelling each join of a rounded puck](images/continuity-check.png)
+![The joins it measured, sharpest first](images/continuity-table.png)
+
 The curvature map paints the selected body by how sharply its surfaces
 bend, read from the exact surfaces at every point of its mesh: the
 Gaussian curvature (positive on a dome or in a bowl, negative on a
@@ -94,6 +99,9 @@ the mean, or the largest or smallest, which are negative where a surface
 bulges out and positive in a hollow; the colours run from the low end
 through green at none to the high end, reaching their ends at the range
 the task sets, by default the size most of the body stays within.
+
+![The curvature map: the flat top and the wall at none, the round painted where it bends](images/curvature-map.png)
+![Zebra stripes running over the round](images/zebra-stripes.png)
 
 Zebra stripes paint the body with bands of the way its surfaces face,
 turned about X, Y or Z. Across a crease the stripes break; across a
