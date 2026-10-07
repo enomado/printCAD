@@ -17,6 +17,14 @@ Gaps in the kernel printCAD runs into. When a fix is
 released: bump `ogeom` in the workspace `Cargo.toml`, take the `#[ignore]`
 off its tests, run the suite.
 
+Filed:
+
+- [ ] **A worm 0.9.9 builds** (ogeom-rs#142). A revolved blank cut by a
+  helix and an extrusion checks clean, but no boolean closes against it
+  (0.9.8 built one that did), so the Assembly's interference check fails
+  on a worm through a bearing.
+  `solid_ops::a_worm_through_a_bearing_shares_material_with_it`.
+
 Not yet filed:
 
 - [ ] **A pad on a converted solid that was not refined** (M). Fusing a
@@ -31,12 +39,13 @@ Not yet filed:
 The rebuild skips the history an edit did not change; the operations
 themselves still cost what the whole solid holds, not what an edit
 touches. The kernel work, in order of payoff (`rebuild_bench`'s holed plates: one
-hole added to a 582-face plate costs 1.1 s on ogeom 0.9.8, of which the
-boolean 0.14 s, meshing 0.15 s, the snapshot 0.02 s and resuming the
-chain from its kept state 0.7 s, nearly all of it cloning the model):
+hole added to a 582-face plate costs 0.3 s on ogeom 0.9.9, the boolean
+0.01 s of it, the snapshot 0.01 s, and resuming the chain from its kept
+state, cloning a model that holds every intermediate result, most of
+the rest):
 
-- [ ] **A. Local boolean** (L, ogeom-rs#134, on the kernel's master after 0.9.8: the
-  corner hole's boolean 0.14 s to 0.02 s). Faces whose box misses the tool's and that
+- [ ] **A. Local boolean** (L, ogeom-rs#134, in 0.9.9: the corner hole's
+  boolean 0.14 s to 0.01 s). Faces whose box misses the tool's and that
   no section crosses pass through as they are, not split, classified or
   rebuilt; a connected region of them is classified once, by one probe;
   only the region near the tool is sewn again; a face tree replaces the
