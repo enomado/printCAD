@@ -11,6 +11,7 @@ version first.
 - Fillet between surfaces rounds between two faces that share no edge, lofts follow guide curves, and a sweep can ride two rails.
 - Edges picked on other bodies, solids too, are curves a surface builds from, following those bodies as they change and move.
 - A face picked gives its edges at once to the surface tools that take curves or edges.
+- Check continuity measures a solid's far ends where they stand: a padded block's top edges no longer show as gaps the pad's length wide.
 - A swept surface runs from the end of its path the profile sits by, rather than on past the path's far end when the path was drawn toward the profile.
 
 ### Sketcher

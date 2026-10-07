@@ -49,7 +49,13 @@ impl KernelQueries for OgeomQueries {
         // Stations along each edge where the faces are compared.
         const STATIONS: usize = 9;
         let tol = tess::tolerances();
-        let (model, root) = tess::read_blob(brep)?;
+        let (mut model, root) = tess::read_blob(brep)?;
+        // The kernel compares faces in their own coordinates: a placed face
+        // (a pad's far end is its sketch's face moved along) is restated
+        // where it stands first, or its edges are measured where it was.
+        let root = ogeom::algo::baked_where_placed(&mut model, &root, tol)
+            .map_err(other)?
+            .shape;
         // A curvature the kernel could not read comes back infinite.
         let read = |k: f64| k.is_finite().then_some(k);
         let mut found: Vec<(Shape, f64, f64, Option<f64>)> = Vec::new();

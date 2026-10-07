@@ -1493,3 +1493,37 @@ fn a_sweep_starts_at_the_end_of_the_path_its_profile_sits_by() {
         }
     }
 }
+
+/// A padded block's twelve edges meet with no gap: the pad's far end is
+/// its sketch's face moved along, and is measured where it stands.
+#[test]
+fn a_padded_block_has_no_gaps() {
+    use kernel_api::{BooleanOp, ExtrudeTermination, KernelQueries, Profile, SweepKind};
+    let CurveSource::Sketch { plane, wire } = square_loop(0.0, 10.0) else {
+        unreachable!()
+    };
+    let pad = SolidOp::Sweep {
+        profile: Profile {
+            plane,
+            wires: vec![wire],
+        },
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::Blind { distance: 5.0 },
+            second_side: None,
+            symmetric: false,
+            reversed: false,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op: BooleanOp::NewSolid,
+    };
+    let block = OgeomKernel::new()
+        .execute_solid_chain(&[pad], &TessellationSettings::default())
+        .unwrap();
+    let joins = kernel_ogeom::QUERIES.continuity(&block.brep_blob).unwrap();
+    assert_eq!(joins.len(), 12, "{joins:?}");
+    for join in &joins {
+        assert!(join.gap < 1e-6, "{join:?}");
+        assert!((join.angle_deg - 90.0).abs() < 1e-6, "{join:?}");
+    }
+}
