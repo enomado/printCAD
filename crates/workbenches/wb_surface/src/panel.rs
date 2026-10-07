@@ -2,7 +2,8 @@
 //!
 //! A step's inputs are lists: each row names a sketch or an edge, with a
 //! cross to take it out; "Add the selection" takes what is selected now
-//! (a sketch in the tree, edges and a face of the body in the view). Every
+//! (a sketch in the tree, edges and faces in the view; a list of curves or
+//! edges takes a face's edges). Every
 //! edit writes the step at once and it builds again.
 
 use core_document::{FeatureId, WorkbenchRuntimeContext};
@@ -20,8 +21,9 @@ use crate::feature::{Axis, CurveRef, Direction, EdgePick, FacePick, PlaneRef, Su
 
 const FIELD: f32 = 150.0;
 
-/// What is selected now: curves and faces a step could take.
-pub type Selection = (Vec<CurveRef>, Vec<FacePick>);
+/// What is selected now: curves and faces a step could take, and the
+/// edges round the faces.
+pub type Selection = (Vec<CurveRef>, Vec<FacePick>, Vec<CurveRef>);
 
 /// Draw the step's editor; whether anything changed.
 pub fn editor(
@@ -31,7 +33,10 @@ pub fn editor(
     feature: &mut SurfaceFeature,
     selection: Option<Selection>,
 ) -> bool {
-    let (picked, faces) = selection.unwrap_or_default();
+    let (picked, faces, outline) = selection.unwrap_or_default();
+    // A list of curves or edges takes a picked face's edges too.
+    let mut around = picked.clone();
+    around.extend(outline.into_iter().filter(|c| !picked.contains(c)));
     let mut changed = false;
     if let Some(waits) = feature.kind().waits {
         note_card(
@@ -57,7 +62,7 @@ pub fn editor(
             symmetric,
             reversed,
         } => {
-            changed |= curve_list(ui, ctx, "Curves", curves, &picked);
+            changed |= curve_list(ui, ctx, "Curves", curves, &around);
             changed |= length_row(ui, "Length", length);
             changed |= direction_row(ui, direction);
             changed |= check_row(ui, symmetric, "Both ways, half each").changed();
@@ -68,7 +73,7 @@ pub fn editor(
             axis,
             angle_deg,
         } => {
-            changed |= curve_list(ui, ctx, "Curves", curves, &picked);
+            changed |= curve_list(ui, ctx, "Curves", curves, &around);
             changed |= axis_row(ui, axis);
             changed |= row(ui, "Angle", |ui| {
                 QtyField::degrees(angle_deg).range(0.1..=360.0).show(ui)
@@ -79,7 +84,7 @@ pub fn editor(
                 ui,
                 "Closed loops in one plane; a loop inside another is a hole.",
             );
-            changed |= curve_list(ui, ctx, "Loops", curves, &picked);
+            changed |= curve_list(ui, ctx, "Loops", curves, &around);
         }
         SurfaceFeature::Fill {
             boundary,
@@ -90,7 +95,7 @@ pub fn editor(
                 "Curves meeting end to end round the hole: four today. Pick edges of the \
                  body's sheets to fill between them.",
             );
-            changed |= curve_list(ui, ctx, "Boundary", boundary, &picked);
+            changed |= curve_list(ui, ctx, "Boundary", boundary, &around);
             changed |= continuity_row(ui, continuity);
         }
         SurfaceFeature::Ruled { first, second } => {
@@ -139,7 +144,7 @@ pub fn editor(
             length,
             continuity,
         } => {
-            changed |= edge_list(ui, "Edges", edges, &picked);
+            changed |= edge_list(ui, "Edges", edges, &around);
             changed |= length_row(ui, "Length", length);
             changed |= continuity_row(ui, continuity);
         }
@@ -168,7 +173,7 @@ pub fn editor(
         }
         SurfaceFeature::Fillet { edges, radius } => {
             hint(ui, "Edges where two faces of the body's surfaces meet.");
-            changed |= edge_list(ui, "Edges", edges, &picked);
+            changed |= edge_list(ui, "Edges", edges, &around);
             changed |= length_row(ui, "Radius", radius);
         }
         SurfaceFeature::FilletFaces {

@@ -27,6 +27,10 @@ A step is built from curves:
   or of any other body, a Design solid too, taken where that body sits.
   A step on another body's edge builds again when that body changes or
   moves. Two bodies may not each read the other's edges.
+- **A face's edges.** A face picked in the view gives every edge round it
+  at once (a seam left out) to the tools that take curves or edges in any
+  number: extruded, revolved and planar surfaces, filling, extending and
+  the surface fillet.
 
 A sketch a new step reads is hidden, the surface standing in for it
 (Preferences › Surface turns this off).
@@ -34,7 +38,7 @@ A sketch a new step reads is hidden, the surface standing in for it
 Create sketch starts a sketch in the selected surface body (or a new
 one); finishing it comes back to Surface with the sketch selected, ready
 for a tool. The tools that build from curves stay dim until a sketch is
-selected in the tree or edges are picked; Sew and Mirror until a surface
+selected in the tree or edges or a face are picked; Sew and Mirror until a surface
 body with a shape is selected, and Check continuity, the curvature map
 and zebra stripes until any body with a shape is. A tool takes what is selected when it is clicked; in its task,
 "Add the selection" takes what is selected now, and the cross by a row

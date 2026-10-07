@@ -114,7 +114,13 @@ pub struct SurfaceWorkbench {
     task: Option<Task>,
     check: Option<Check>,
     analysis: Option<analysis::Analysis>,
+    /// The edges round each face picked, as the kernel last read them: by
+    /// the face's body, its shape's revision and the pick's point.
+    outlines: std::sync::Mutex<std::collections::HashMap<OutlineKey, Vec<EdgePick>>>,
 }
+
+/// A picked face's body, that body's geometry revision, and the pick.
+type OutlineKey = (uuid::Uuid, u64, [u32; 3]);
 
 impl SurfaceWorkbench {
     fn open_task(&mut self, task: Task) {
@@ -199,6 +205,59 @@ impl SurfaceWorkbench {
         (curves, faces)
     }
 
+    /// The edges round every face picked, as curves for `body`: its own
+    /// edges, or another body's where the face is on another body. The
+    /// kernel reads each face once per shape.
+    fn outline(&self, ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<CurveRef> {
+        let (Some(kernel), Some(on)) = (ctx.kernel, ctx.selected_body_id.map(BodyId)) else {
+            return Vec::new();
+        };
+        let (Some(brep), Some(revision)) = (
+            ctx.document.imported_brep_blob(on),
+            ctx.document.imported_geometry(on).map(|g| g.revision),
+        ) else {
+            return Vec::new();
+        };
+        let Ok(mut cache) = self.outlines.lock() else {
+            return Vec::new();
+        };
+        // Picks of shapes long gone are let go now and then.
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        let mut out = Vec::new();
+        for face in ctx.selected_faces_in(on) {
+            let key = (on.0, revision, face.point.map(f32::to_bits));
+            let edges = cache.entry(key).or_insert_with(|| {
+                kernel
+                    .face_edges(brep, face.point.map(f64::from))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(point, direction)| EdgePick {
+                        point: point.map(|v| v as f32),
+                        direction: direction.map(|v| v as f32),
+                        faces: [0, 0],
+                        length: 0.0,
+                    })
+                    .collect()
+            });
+            for edge in edges.iter() {
+                let curve = if on == body {
+                    CurveRef::Edge(*edge)
+                } else {
+                    CurveRef::BodyEdge {
+                        body: on,
+                        edge: *edge,
+                    }
+                };
+                if !out.contains(&curve) {
+                    out.push(curve);
+                }
+            }
+        }
+        out
+    }
+
     /// The body the selection names, whichever bench builds it: the
     /// selected body, else the selected feature's.
     fn selected_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
@@ -210,13 +269,13 @@ impl SurfaceWorkbench {
     }
 
     /// Whether the selection gives a step a curve to start from: a sketch
-    /// in the tree, or edges picked on any body.
+    /// in the tree, edges picked on any body, or a face, whose edges count.
     fn has_curves(ctx: &WorkbenchRuntimeContext) -> bool {
         let sketch = ctx
             .active_document_object
             .and_then(|id| ctx.document.get_feature_meta(id))
             .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
-        sketch || !ctx.selected_edges.is_empty()
+        sketch || !ctx.selected_edges.is_empty() || !ctx.picked_faces().is_empty()
     }
 
     /// Open the sketcher on a surface body: the selected one when it takes
@@ -309,7 +368,14 @@ impl SurfaceWorkbench {
         let mut feature =
             SurfaceFeature::for_tool(tool).ok_or_else(|| format!("no surface tool `{tool}`"))?;
         let (body, made_body) = Self::target_body(ctx);
-        let (curves, faces) = Self::picked(ctx, body);
+        let (mut curves, faces) = Self::picked(ctx, body);
+        if panel_free::takes_outline(&feature) {
+            for curve in self.outline(ctx, body) {
+                if !curves.contains(&curve) {
+                    curves.push(curve);
+                }
+            }
+        }
         panel_free::take_selection(&mut feature, &curves, &faces);
         let (id, hidden) = self.add(ctx, body, feature)?;
         ctx.active_document_object = Some(id);
@@ -699,6 +765,21 @@ fn unreadable(error: core_document::DocumentError) -> CommandError {
 mod panel_free {
     use crate::feature::{CurveRef, FacePick, SurfaceFeature};
 
+    /// Whether a picked face gives the step its edges: the steps that take
+    /// any number of curves or edges alike, not those that take a curve
+    /// per role (ruled, swept, lofted, blended) or faces.
+    pub fn takes_outline(feature: &SurfaceFeature) -> bool {
+        matches!(
+            feature,
+            SurfaceFeature::Extrude { .. }
+                | SurfaceFeature::Revolve { .. }
+                | SurfaceFeature::PlanarFill { .. }
+                | SurfaceFeature::Fill { .. }
+                | SurfaceFeature::Extend { .. }
+                | SurfaceFeature::Fillet { .. }
+        )
+    }
+
     /// Put picked curves and faces where the step takes them.
     pub fn take_selection(feature: &mut SurfaceFeature, curves: &[CurveRef], faces: &[FacePick]) {
         let edges = || {
@@ -1031,7 +1112,10 @@ impl Workbench for SurfaceWorkbench {
             .document
             .get_feature_meta(task.feature)
             .and_then(|n| n.body);
-        let selection = body.map(|b| Self::picked(ctx, b));
+        let selection = body.map(|b| {
+            let (curves, faces) = Self::picked(ctx, b);
+            (curves, faces, self.outline(ctx, b))
+        });
         if panel::editor(ui, ctx, task.feature, &mut feature, selection) {
             Self::write(ctx, task.feature, &feature);
         }
@@ -1366,6 +1450,91 @@ mod tests {
             1,
             "its shape changed"
         );
+    }
+
+    /// A kernel that finds two edges round any face: a square's bottom and
+    /// left sides.
+    struct Square;
+
+    impl kernel_api::KernelQueries for Square {
+        fn project_edge(
+            &self,
+            _brep: &[u8],
+            _near: [f64; 3],
+            _plane: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("project_edge".into()))
+        }
+
+        fn face_edges(
+            &self,
+            _brep: &[u8],
+            _near: [f64; 3],
+        ) -> kernel_api::KernelResult<Vec<([f64; 3], [f64; 3])>> {
+            Ok(vec![
+                ([5.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+                ([0.0, 5.0, 0.0], [0.0, 1.0, 0.0]),
+            ])
+        }
+    }
+
+    /// A face picked gives a curve tool the edges round it: the body's own
+    /// for a surface body, another body's for a solid, which the step
+    /// goes beside in a body of its own.
+    #[test]
+    fn a_picked_face_gives_a_step_its_edges() {
+        static KERNEL: Square = Square;
+        let face = core_document::FaceRef {
+            point: [5.0, 5.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            surface: None,
+            name: 0,
+        };
+        let mut document = Document::new("t");
+        let sheet = document.create_body(Some("Sheet".into()));
+        shaped(&mut document, sheet);
+        let other = SurfaceFeature::for_tool("surface.planar").unwrap();
+        document
+            .add_feature_in_body(other, "Plate".into(), Some(sheet))
+            .unwrap();
+        let solid = document.create_body(Some("Solid".into()));
+        shaped(&mut document, solid);
+        document.add_feature_of_kind(
+            core_document::WorkbenchId::new("wb.design"),
+            "Pad".into(),
+            Some(solid),
+            Vec::new(),
+            json!({}),
+            core_document::FeatureOrigin::default(),
+        );
+        for (picked_on, own) in [(sheet, true), (solid, false)] {
+            let mut bench = SurfaceWorkbench::default();
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.kernel = Some(&KERNEL);
+            ctx.selected_body_id = Some(picked_on.0);
+            ctx.selected_face = Some(face);
+            assert!(bench.is_tool_enabled("surface.extrude", &ctx));
+            let id = bench.start("surface.extrude", &mut ctx).unwrap();
+            let Some(SurfaceFeature::Extrude { curves, .. }) = ctx
+                .document
+                .get_feature_data(id)
+                .and_then(|v| SurfaceFeature::from_json(v).ok())
+            else {
+                panic!()
+            };
+            assert_eq!(curves.len(), 2, "both edges round the face");
+            for curve in curves {
+                match curve {
+                    CurveRef::Edge(_) => assert!(own, "{curve:?}"),
+                    CurveRef::BodyEdge { body, .. } => {
+                        assert!(!own && body == solid, "{curve:?}")
+                    }
+                    CurveRef::Sketch(_) => panic!(),
+                }
+            }
+            bench.close(&mut ctx, true);
+        }
     }
 
     /// Two faces picked fill a fillet between surfaces, first and second

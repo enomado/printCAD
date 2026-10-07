@@ -26,11 +26,6 @@ Not yet filed:
   log line, and the failed feature's task); the kernel's owner is working
   on the boolean itself.
 
-## Surfaces
-
-- [ ] A pick of a face's edges by clicking the face, as external geometry
-  does in the sketcher.
-
 ## Faster kernel operations
 
 The rebuild skips the history an edit did not change; the operations
