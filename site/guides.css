@@ -181,6 +181,21 @@ pre code {
   opacity: 0.75;
 }
 
+footer {
+  border-top: 1px solid var(--border);
+  padding: 32px 0 48px;
+  color: var(--text3);
+  font-size: 14px;
+}
+footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+footer a {
+  color: var(--text2);
+}
+
 /* Guides */
 
 .release-line {
@@ -310,16 +325,12 @@ article blockquote {
 }
 
 @media (max-width: 860px) {
-  .split,
   .docs {
     grid-template-columns: 1fr;
   }
   .docs nav.side {
     position: static;
     max-height: none;
-  }
-  .hero h1 {
-    font-size: 34px;
   }
   .top nav {
     gap: 14px;
