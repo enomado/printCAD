@@ -195,6 +195,10 @@ handle is held the distance or angle shows beside it, Shift moves in
 steps (a round length that follows the zoom, 15°), and Escape puts the
 body back where the handle took it. OK keeps where it ends.
 
+Handle sizes and their picking distance follow the UI scale on every display.
+The middle disc stays in the view plane, including its steps with Shift. Losing
+window focus cancels a held handle or body drag and restores its press state.
+
 A drag stops where the body would run into another: it comes to rest
 against it. Faces that only touch, as mated faces do, never stop it, and
 bodies that already overlapped when the drag began may move as long as

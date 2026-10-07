@@ -287,6 +287,40 @@ impl GizmoView for Turned {
 }
 
 #[test]
+fn view_translation_snaps_in_the_screen_plane() {
+    for rotation in [
+        DQuat::IDENTITY,
+        DQuat::from_rotation_z(0.4) * DQuat::from_rotation_x(1.0),
+        DQuat::from_rotation_y(-0.7) * DQuat::from_rotation_z(1.1),
+    ] {
+        let view = Turned { rotation };
+        let set = HandleSet::placement_axes(Placement {
+            pivot: DVec3::ZERO,
+            orientation: DQuat::from_rotation_x(0.6),
+        });
+        let mut drag = Drag::begin(
+            &view,
+            &set,
+            Mode::Translate,
+            Handle::View,
+            pos2(300.0, 300.0),
+        )
+        .unwrap();
+        drag.sample(&view, pos2(337.0, 319.0), true);
+        let offset = translation_of(drag.delta);
+        let expected = rotation * DVec3::new(40.0, -20.0, 0.0);
+        assert!(
+            (offset - expected).length() < 1e-4,
+            "{offset:?} != {expected:?}"
+        );
+        assert!(offset.dot(view.forward()).abs() < 1e-9);
+        drag.sample(&view, pos2(337.0, 319.0), false);
+        let unsnapped = translation_of(drag.delta);
+        assert!((unsnapped - rotation * DVec3::new(37.0, -19.0, 0.0)).length() < 1e-4);
+    }
+}
+
+#[test]
 fn far_half_of_a_ring_is_a_dim_hint_that_never_grabs() {
     // A generic oblique view: no ring is edge-on, none faces the camera.
     let view = Turned {

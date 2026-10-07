@@ -11,6 +11,9 @@ meant to become a common library. Keep it that way:
   converts its own types at the boundary: host space is `glam` in `f64`
   (points, unit directions, `DQuat`), angles are radians, the view's scale is
   host units per logical pixel, screen points are `emath::Pos2`.
+  A host using physical viewport pixels converts projection and pointer input
+  to logical pixels, then converts every shape's points and sizes back for its
+  painter, using the UI's physical-pixels-per-point scale.
 - Colours are roles (`paint::Ink`), never values: the host maps them to its
   palette.
 - A change here goes to the shared copy first, then comes back whole, so the

@@ -2751,6 +2751,16 @@ impl Workbench for AssemblyWorkbench {
         InputResult::consumed()
     }
 
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(body) = self.handled_body(ctx) {
+            self.handles.cancel(ctx, body);
+        }
+        self.handles.reset();
+        if let Some(grab) = self.grab.take() {
+            restore_placements(ctx, &grab.placements);
+        }
+    }
+
     fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.collect_interference(ctx);
         self.collect_mass(ctx);
@@ -3211,6 +3221,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer_gesture(ctx);
         self.put_back_motion(ctx);
         self.picking = None;
         self.checking = None;
@@ -3220,6 +3231,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer_gesture(ctx);
         self.put_back_motion(ctx);
         self.picking = None;
         self.checking = None;

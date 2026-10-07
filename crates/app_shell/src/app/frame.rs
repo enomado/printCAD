@@ -775,6 +775,7 @@ impl PrintCadApp {
         let dimensions = self.selection_dimensions();
         let physical = self.panel_physical();
         let host_params = ui::HostCtxParams {
+            pixels_per_point: self.pixels_per_point(),
             camera_position: self.session.camera.position(),
             camera_target: self.session.camera.target(),
             viewport: self

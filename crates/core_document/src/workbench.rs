@@ -851,6 +851,10 @@ pub trait Workbench: Send {
         InputResult::ignored()
     }
 
+    /// Cancel a held pointer gesture when the window loses focus. A release
+    /// outside the window may not arrive; restore the gesture's press state.
+    fn cancel_pointer_gesture(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
+
     /// Draw custom UI in the left panel, above the feature tree.
     /// Called every frame while this workbench is active.
     #[cfg(feature = "egui")]
