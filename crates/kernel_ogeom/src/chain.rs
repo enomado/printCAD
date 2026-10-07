@@ -412,6 +412,16 @@ pub fn execute_cached(
         if keep_at == Some(index)
             && let (Some(cache), Some(prefix)) = (cache.as_deref_mut(), prefix.as_ref())
         {
+            // The model keeps every intermediate result; what the chain
+            // still reaches is all it needs, and a clone costs what is kept.
+            let mut roots: Vec<Shape> = [&current, &before, &after, &edit_solid]
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect();
+            roots.extend(preview_tools.iter().cloned());
+            roots.extend(tools.iter().flatten().filter_map(|t| t.solid.clone()));
+            compact(&mut model, &roots);
             cache.keep(Saved {
                 at: index,
                 key: prefix[index],
@@ -936,6 +946,10 @@ pub fn execute_cached(
         && start < ops_list.len()
     {
         let answered = answered_before(probes, &result.probes, ops_list.len());
+        let mut model = model;
+        let mut roots = vec![final_shape.clone()];
+        roots.extend(tools.iter().flatten().filter_map(|t| t.solid.clone()));
+        compact(&mut model, &roots);
         cache.keep(Saved {
             at: ops_list.len(),
             key: prefix[ops_list.len()],
@@ -948,6 +962,15 @@ pub fn execute_cached(
         });
     }
     Ok(result)
+}
+
+/// Drop from `model` what `roots` do not reach, the handles into what they
+/// do kept as they are. A model the kernel will not compact (one whose
+/// tolerances were widened) is left whole: it is only larger.
+fn compact(model: &mut Model, roots: &[Shape]) {
+    if let Err(e) = model.retain_reachable(roots) {
+        tracing::debug!(target: "printcad.chain", "the model was left whole: {e}");
+    }
 }
 
 /// A solid's geometry, hashed: every vertex, three points along every
