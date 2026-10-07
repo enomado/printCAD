@@ -25,21 +25,21 @@ mod task;
 
 pub use borrow::freeze;
 pub use build::{
-    BuildError, BuildPlan, body_build_ops, delete_feature, design_feature_ids,
+    BuildError, BuildPlan, NutPocket, body_build_ops, delete_feature, design_feature_ids,
     design_features_of_body, hole_diameter, invalidate_body, mark_all_design_features_dirty,
-    pending_body_rebuilds, rebuild_jobs, retarget_feature_sketch, sketch_plane_description,
-    sketches_of_body,
+    nut_pocket, pending_body_rebuilds, rebuild_jobs, retarget_feature_sketch,
+    sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
     Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DesignFeature,
     DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick,
     FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane,
-    PatternAxis, PipeCorner, PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis,
-    ThreadSpec, TransformStep, primitive_icon, primitive_preset,
+    NutSide, NutTrap, PatternAxis, PipeCorner, PipeOrientation, PlaneTarget, RevolveAxis,
+    RevolveMode, SketchAxis, ThreadSpec, TransformStep, primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
-    CUT_PROFILES_FILE, CutProfile, ScrewSeat, ThreadSize, ThreadStandard, parse_cut_profiles,
-    user_cut_profiles,
+    CUT_PROFILES_FILE, CutProfile, NutSize, NutStandard, ScrewSeat, ThreadSize, ThreadStandard,
+    parse_cut_profiles, user_cut_profiles,
 };
 
 use core_document::{
@@ -599,6 +599,7 @@ impl DesignWorkbench {
                         drill_point: DrillPoint::Flat,
                         point_in_depth: false,
                         taper_deg: 0.0,
+                        nut_trap: None,
                         reversed: false,
                     },
                     "Hole",

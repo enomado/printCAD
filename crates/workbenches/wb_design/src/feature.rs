@@ -778,6 +778,72 @@ pub enum TransformStep {
     },
 }
 
+/// A hexagonal pocket for a captive nut, at one end of a hole: sized
+/// from the nut of the hole's metric thread, or from an across-flats of
+/// its own.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NutTrap {
+    /// The nut standard the size comes from.
+    pub standard: crate::hole_tables::NutStandard,
+    /// Across the pocket's flats, mm, in place of the nut's.
+    pub across_flats: Option<f32>,
+    /// Added to the nut's across-flats and to its thickness, mm, so the
+    /// nut drops in.
+    pub clearance: f32,
+    /// How deep the pocket is, mm; the nut's thickness and the clearance
+    /// when not given.
+    pub depth: Option<f32>,
+    /// Which end of the hole it sits at.
+    pub side: NutSide,
+    /// The hexagon turned about the hole's axis, degrees; at 0 a corner
+    /// points along the sketch's X.
+    pub turn_deg: f32,
+}
+
+impl Default for NutTrap {
+    fn default() -> Self {
+        Self {
+            standard: Default::default(),
+            across_flats: None,
+            clearance: 0.3,
+            depth: None,
+            side: NutSide::Top,
+            turn_deg: 0.0,
+        }
+    }
+}
+
+/// Which end of a hole a nut trap sits at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum NutSide {
+    /// At its mouth, on the sketch's plane.
+    #[default]
+    Top,
+    /// At its bottom, the pocket's floor where the hole's depth ends: a
+    /// nut set in while the part prints.
+    Bottom,
+}
+
+/// A hole's nut trap as a script may give it: whole, `true` for the
+/// usual one, or `false` for none.
+pub(crate) fn nut_trap_or_flag<'de, D>(deserializer: D) -> Result<Option<NutTrap>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Given {
+        Flag(bool),
+        Trap(NutTrap),
+    }
+    Ok(match Option::<Given>::deserialize(deserializer)? {
+        None | Some(Given::Flag(false)) => None,
+        Some(Given::Flag(true)) => Some(NutTrap::default()),
+        Some(Given::Trap(trap)) => Some(trap),
+    })
+}
+
 /// What a hole cuts around its mouth, beyond the drill.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum HoleCut {
@@ -1393,6 +1459,9 @@ pub enum DesignFeature {
         /// a tapered thread standard's taper stands in for it.
         #[serde(default)]
         taper_deg: f32,
+        /// A hexagonal pocket for a captive nut at one end.
+        #[serde(default, deserialize_with = "nut_trap_or_flag")]
+        nut_trap: Option<NutTrap>,
         #[serde(default)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.

@@ -7,8 +7,8 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{check_row, mono_label};
 
 use super::{Formulas, deg_drag, label_cell, mm_drag, sketch_combo};
-use crate::feature::{DesignFeature, DrillPoint, HoleCut, HoleFit, ThreadSpec};
-use crate::hole_tables::{ScrewSeat, ThreadStandard, user_cut_profiles};
+use crate::feature::{DesignFeature, DrillPoint, HoleCut, HoleFit, NutSide, NutTrap, ThreadSpec};
+use crate::hole_tables::{NutStandard, ScrewSeat, ThreadStandard, user_cut_profiles};
 
 /// The drill points the panel offers by name, included angle in degrees.
 const POINT_ANGLES: [f32; 2] = [118.0, 135.0];
@@ -58,6 +58,7 @@ pub(super) fn hole_editor(
         drill_point,
         point_in_depth,
         taper_deg,
+        nut_trap,
         reversed,
     } = feature
     else {
@@ -383,6 +384,118 @@ pub(super) fn hole_editor(
             mono_label(ui, text, FONT_SM, TEXT2);
         }
     }
+    let nominal = thread
+        .as_ref()
+        .filter(|t| t.standard.is_metric())
+        .and_then(|t| t.resolve().ok())
+        .map(|size| size.major);
+    changed |= nut_trap_editor(ui, fx, feature_id, nut_trap, nominal, *through_all);
     changed |= check_row(ui, reversed, "Reversed").changed();
     changed
+}
+
+/// The nut trap's rows: on or off, the nut it is sized from (or a size
+/// of its own), clearance, depth, side and turn, and what it cuts.
+fn nut_trap_editor(
+    ui: &mut Ui,
+    fx: &mut Formulas,
+    feature_id: FeatureId,
+    nut_trap: &mut Option<NutTrap>,
+    nominal: Option<f64>,
+    through_all: bool,
+) -> bool {
+    let mut changed = false;
+    let mut on = nut_trap.is_some();
+    if check_row(ui, &mut on, "Nut trap")
+        .on_hover_text("A hexagonal pocket at one end that holds a nut captive")
+        .changed()
+    {
+        *nut_trap = on.then(NutTrap::default);
+        changed = true;
+    }
+    let Some(trap) = nut_trap else {
+        return changed;
+    };
+    let shown = match trap.across_flats {
+        Some(_) => "Own size",
+        None => trap.standard.label(),
+    };
+    combo_row(ui, "Nut", ("hole_nut", feature_id), shown, |ui| {
+        for standard in NutStandard::ALL {
+            let current = trap.across_flats.is_none() && trap.standard == standard;
+            if ui.selectable_label(current, standard.label()).clicked() && !current {
+                trap.standard = standard;
+                trap.across_flats = None;
+                changed = true;
+            }
+        }
+        if ui
+            .selectable_label(trap.across_flats.is_some(), "Own size")
+            .clicked()
+            && trap.across_flats.is_none()
+        {
+            let made = crate::build::nut_pocket(trap, nominal).ok();
+            trap.across_flats = Some(made.map_or(8.0, |p| p.across_flats as f32));
+            trap.depth = Some(made.map_or(3.0, |p| p.depth as f32));
+            changed = true;
+        }
+    });
+    if let Some(across_flats) = &mut trap.across_flats {
+        changed |= mm_drag(ui, fx, across_flats, "Across flats:");
+    } else {
+        changed |= mm_drag(ui, fx, &mut trap.clearance, "Nut clearance:");
+    }
+    let mut own_depth = trap.depth.is_some();
+    if check_row(ui, &mut own_depth, "Own depth")
+        .on_hover_text("Deeper or shallower than the nut and its clearance")
+        .changed()
+    {
+        trap.depth = if own_depth {
+            Some(crate::build::nut_pocket(trap, nominal).map_or(3.0, |p| p.depth as f32))
+        } else {
+            None
+        };
+        changed = true;
+    }
+    if let Some(depth) = &mut trap.depth {
+        changed |= mm_drag(ui, fx, depth, "Nut depth:");
+    }
+    combo_row(
+        ui,
+        "Nut side",
+        ("hole_nut_side", feature_id),
+        side_label(trap.side),
+        |ui| {
+            for side in [NutSide::Top, NutSide::Bottom] {
+                if ui
+                    .selectable_label(trap.side == side, side_label(side))
+                    .clicked()
+                    && trap.side != side
+                {
+                    trap.side = side;
+                    changed = true;
+                }
+            }
+        },
+    );
+    changed |= deg_drag(ui, fx, &mut trap.turn_deg, "Nut turn:", -180.0..=180.0);
+    let text = match crate::build::nut_pocket(trap, nominal) {
+        Ok(_) if trap.side == NutSide::Bottom && through_all => {
+            "At the bottom: give the hole a depth".to_string()
+        }
+        Ok(pocket) => format!(
+            "Hex {:.2} mm across flats, {:.2} mm deep",
+            pocket.across_flats, pocket.depth
+        ),
+        Err(why) => why,
+    };
+    mono_label(ui, text, FONT_SM, TEXT2);
+    changed
+}
+
+fn side_label(side: NutSide) -> &'static str {
+    match side {
+        NutSide::Top => "Top (at the mouth)",
+        NutSide::Bottom => "Bottom (where it ends)",
+    }
 }

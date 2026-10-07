@@ -17,8 +17,8 @@ use wb_sketch::sketch::{GeometryElement, Sketch};
 
 use crate::feature::{
     BorrowSource, DesignFeature, DrillPoint, ExtrudeDirection, ExtrudeMode, FacePick, HelixMode,
-    HoleCut, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode, ThreadSpec,
-    TransformStep,
+    HoleCut, NutSide, NutTrap, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
+    ThreadSpec, TransformStep,
 };
 
 /// This body's part features in history order (the build history).
@@ -1982,6 +1982,7 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
         thread_length,
         drill_point,
         point_in_depth,
+        nut_trap,
         ..
     } = feature
     else {
@@ -2191,6 +2192,64 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
             ops.extend(cones(cd_depth, wide, narrow, (wide - narrow) / tan_half));
         }
     }
+    if let Some(trap) = nut_trap {
+        let metric = thread.as_ref().is_some_and(|t| t.standard.is_metric());
+        let nominal = size.as_ref().filter(|_| metric).map(|s| s.major);
+        let pocket = nut_pocket(trap, nominal)?;
+        if pocket.across_flats <= f64::from(diameter) {
+            return Err(format!(
+                "the nut trap, {:.2} mm across its flats, must be wider than the hole",
+                pocket.across_flats
+            ));
+        }
+        let down = match trap.side {
+            NutSide::Top => 0.0,
+            NutSide::Bottom if *through_all => {
+                return Err(
+                    "a nut trap at the bottom needs the hole's depth: give the hole \
+                     a depth (where the nut sits) rather than through all"
+                        .into(),
+                );
+            }
+            NutSide::Bottom => {
+                let depth = f64::from(*depth);
+                if pocket.depth >= depth {
+                    return Err(format!(
+                        "the nut trap, {:.2} mm deep, must be shallower than the hole",
+                        pocket.depth
+                    ));
+                }
+                depth - pocket.depth
+            }
+        };
+        let mut at = plane;
+        for (origin, into) in at.origin.iter_mut().zip(into) {
+            *origin += into * down;
+        }
+        ops.push(SolidOp::Sweep {
+            profile: Profile {
+                plane: at,
+                wires: centers
+                    .iter()
+                    .map(|center| ProfileWire {
+                        names: Vec::new(),
+                        segments: hexagon(*center, pocket.across_flats, trap.turn_deg),
+                    })
+                    .collect(),
+            },
+            kind: SweepKind::Extrude {
+                termination: ExtrudeTermination::Blind {
+                    distance: pocket.depth,
+                },
+                second_side: None,
+                symmetric: false,
+                reversed: !*reversed,
+                taper_deg: 0.0,
+                direction: None,
+            },
+            op: BooleanOp::Cut,
+        });
+    }
     if *threaded && *modeled_thread {
         let (spec, size) = thread
             .as_ref()
@@ -2237,6 +2296,66 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
 
 /// A cone cut `down` along `into` below a hole center: `wide` in radius
 /// there, `narrow` `height` further in.
+/// A nut trap's pocket: across its flats and how deep, mm.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NutPocket {
+    pub across_flats: f64,
+    pub depth: f64,
+}
+
+/// The pocket `trap` cuts for a screw of `nominal` diameter (the hole's
+/// metric thread's major diameter, when it has one): the nut's across
+/// flats and thickness, each with the clearance, unless the trap gives
+/// its own.
+pub fn nut_pocket(trap: &NutTrap, nominal: Option<f64>) -> Result<NutPocket, String> {
+    let clearance = f64::from(trap.clearance);
+    if clearance < 0.0 {
+        return Err("the nut trap's clearance must not be negative".into());
+    }
+    let nut = nominal.and_then(|d| trap.standard.nut(d));
+    let across_flats = match (trap.across_flats, nut) {
+        (Some(own), _) => f64::from(own),
+        (None, Some(nut)) => nut.across_flats + clearance,
+        (None, None) => {
+            return Err(format!(
+                "a nut trap needs the hole sized from an ISO metric thread with a {} nut, or \
+                 an across-flats of its own",
+                trap.standard.label()
+            ));
+        }
+    };
+    let depth = match (trap.depth, nut) {
+        (Some(own), _) => f64::from(own),
+        (None, Some(nut)) => nut.thickness + clearance,
+        (None, None) => {
+            return Err("a nut trap of its own size needs its depth".into());
+        }
+    };
+    if across_flats <= 0.0 || depth <= 0.0 {
+        return Err("the nut trap's size and depth must be positive".into());
+    }
+    Ok(NutPocket {
+        across_flats,
+        depth,
+    })
+}
+
+/// A regular hexagon about `center`, `across_flats` wide between
+/// opposite sides, a corner turned `turn_deg` from the X axis.
+fn hexagon(center: [f64; 2], across_flats: f64, turn_deg: f32) -> Vec<ProfileSegment> {
+    let radius = across_flats / 3f64.sqrt();
+    let corner = |i: usize| {
+        let a = f64::from(turn_deg).to_radians() + i as f64 * std::f64::consts::FRAC_PI_3;
+        [center[0] + radius * a.cos(), center[1] + radius * a.sin()]
+    };
+    (0..6)
+        .map(|i| ProfileSegment::Line {
+            start: corner(i),
+            end: corner((i + 1) % 6),
+        })
+        .collect()
+}
+
 fn cone_cut(
     plane: &kernel_api::ProfilePlane,
     center: [f64; 2],
@@ -3666,6 +3785,7 @@ mod tests {
                 drill_point: DrillPoint::Flat,
                 point_in_depth: false,
                 taper_deg: 0.0,
+                nut_trap: None,
                 reversed: false,
             },
             "Hole".into(),
@@ -3793,6 +3913,7 @@ mod tests {
             drill_point: DrillPoint::Flat,
             point_in_depth: false,
             taper_deg: 0.0,
+            nut_trap: None,
             reversed: false,
         };
         let ops = hole_ops(&doc, &hole).unwrap();
@@ -3973,6 +4094,7 @@ mod tests {
                     drill_point: DrillPoint::Flat,
                     point_in_depth: false,
                     taper_deg: 0.0,
+                    nut_trap: None,
                     reversed: false,
                 },
                 "Hole".into(),
@@ -4021,6 +4143,7 @@ mod tests {
             drill_point: DrillPoint::Flat,
             point_in_depth: false,
             taper_deg: 0.0,
+            nut_trap: None,
             reversed: false,
         };
         edit(&mut hole);
@@ -4368,6 +4491,7 @@ mod tests {
             drill_point: DrillPoint::Flat,
             point_in_depth: false,
             taper_deg: 0.0,
+            nut_trap: None,
             reversed: false,
         };
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
@@ -4391,6 +4515,7 @@ mod tests {
             drill_point: DrillPoint::Flat,
             point_in_depth: false,
             taper_deg: 0.0,
+            nut_trap: None,
             reversed: false,
         };
         assert!(

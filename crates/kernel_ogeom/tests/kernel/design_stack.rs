@@ -382,6 +382,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
             drill_point: wb_design::DrillPoint::Flat,
             point_in_depth: false,
             taper_deg: 0.0,
+            nut_trap: None,
             reversed: false,
         },
         "Hole".into(),
@@ -398,6 +399,138 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     assert!((max[0] - min[0] - 30.0).abs() < 1e-3, "plate width kept");
     // The two through-bores add interior walls: more than the 12 box tris.
     assert!(result.mesh.indices.len() / 3 > 12);
+}
+
+/// A plate 30 × 20 × 6 with an M3 clearance hole at its middle, drilled
+/// `depth` deep (or through), with `trap`; its volume once built, or the
+/// plan's refusal.
+fn plate_with_nut_trap(depth: Option<f32>, trap: wb_design::NutTrap) -> Result<f64, String> {
+    let (mut doc, body, rect_id) = setup(30.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(rect_id, 6.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let top_face = wb_sketch::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
+    let mut holes = Sketch::new("holes");
+    holes.plane = top_face;
+    holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(15.0, 10.0))));
+    let holes_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(holes, top_face),
+            "holes".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        DesignFeature::Hole {
+            clearance: None,
+            thread_length: Default::default(),
+            refine: false,
+            sketch: holes_id,
+            diameter: 3.4,
+            depth: depth.unwrap_or(6.0),
+            through_all: depth.is_none(),
+            cut: wb_design::HoleCut::None,
+            thread: Some(wb_design::ThreadSpec::new(
+                wb_design::ThreadStandard::IsoMetricCoarse,
+                "M3",
+            )),
+            threaded: false,
+            modeled_thread: false,
+            thread_depth: 0.0,
+            fit: wb_design::HoleFit::Normal,
+            drill_point: wb_design::DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
+            nut_trap: Some(trap),
+            reversed: false,
+        },
+        "Hole".into(),
+        Some(body),
+    )
+    .unwrap();
+    let plan = wb_design::body_build_ops(&doc, body).map_err(|e| e.to_string())?;
+    let built = OgeomKernel::new()
+        .execute_solid_chain(&plan.ops, &TessellationSettings::default())
+        .map_err(|e| e.to_string())?;
+    let (min, max) = mesh_bounds(&built.mesh);
+    assert!(
+        (max[2] - min[2] - 6.0).abs() < 1e-3,
+        "the plate's thickness kept"
+    );
+    Ok(
+        kernel_api::KernelQueries::measure(&kernel_ogeom::QUERIES, &built.brep_blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap(),
+    )
+}
+
+/// An M3 nut trap is a hexagon 5.5 mm across the flats and 2.4 mm thick
+/// (ISO 4032), each with its 0.3 mm clearance, at the hole's mouth or
+/// where a blind hole ends.
+#[test]
+fn a_nut_trap_pockets_the_nut_at_either_end_of_the_hole() {
+    let plate = 30.0 * 20.0 * 6.0;
+    let bore = std::f64::consts::PI * 1.7 * 1.7;
+    let hex = 3f64.sqrt() / 2.0 * 5.8 * 5.8;
+    let depth = 2.7;
+
+    let top = plate_with_nut_trap(None, wb_design::NutTrap::default()).unwrap();
+    let expected = plate - bore * (6.0 - depth) - hex * depth;
+    assert!((top - expected).abs() < 1e-3, "{top} against {expected}");
+
+    // A turned hexagon takes the same material.
+    let turned = plate_with_nut_trap(
+        None,
+        wb_design::NutTrap {
+            turn_deg: 30.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!((turned - expected).abs() < 1e-3);
+
+    // At the bottom of a hole 5 deep: the nut buried under 1 mm.
+    let bottom = plate_with_nut_trap(
+        Some(5.0),
+        wb_design::NutTrap {
+            side: wb_design::NutSide::Bottom,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let expected = plate - bore * (5.0 - depth) - hex * depth;
+    assert!(
+        (bottom - expected).abs() < 1e-3,
+        "{bottom} against {expected}"
+    );
+
+    // An own size and depth stand in for the nut's.
+    let own = plate_with_nut_trap(
+        None,
+        wb_design::NutTrap {
+            across_flats: Some(7.0),
+            depth: Some(3.0),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let hex7 = 3f64.sqrt() / 2.0 * 49.0;
+    let expected = plate - bore * 3.0 - hex7 * 3.0;
+    assert!((own - expected).abs() < 1e-3, "{own} against {expected}");
+
+    let refused = plate_with_nut_trap(
+        None,
+        wb_design::NutTrap {
+            side: wb_design::NutSide::Bottom,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(refused.contains("depth"), "{refused}");
 }
 
 #[test]
@@ -1099,6 +1232,7 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         drill_point: wb_design::DrillPoint::Flat,
         point_in_depth: false,
         taper_deg: 0.0,
+        nut_trap: None,
         reversed: false,
     };
     let hole_id = doc
@@ -1823,6 +1957,7 @@ fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> DesignFeature {
         drill_point: wb_design::DrillPoint::Flat,
         point_in_depth: false,
         taper_deg: 0.0,
+        nut_trap: None,
         reversed: false,
     }
 }

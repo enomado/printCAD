@@ -68,7 +68,5 @@ the result the same as now).
 Features that matter only for printing, for once the modelling is
 complete.
 
-- [ ] **Nut trap** (S). A hexagonal pocket sized from the thread's nut,
-  for captive nuts.
 - [ ] **Print layout** (M). Each part of the parts list laid flat on its
   best face and copies packed on the bed, for export or the slicer.

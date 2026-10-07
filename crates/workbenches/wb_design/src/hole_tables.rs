@@ -687,6 +687,90 @@ const HEX_HEAD_SEATS: &[(f64, f64, f64)] = &[
     (20.0, 46.0, 12.9),
 ];
 
+/// A hex nut standard a nut trap is sized from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum NutStandard {
+    /// ISO 4032 hex nuts, style 1.
+    #[default]
+    Iso4032,
+    /// DIN 934 hex nuts, wider across the flats from M10 to M14.
+    Din934,
+}
+
+/// A nut's size: across its flats and how thick it is, mm.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NutSize {
+    pub across_flats: f64,
+    pub thickness: f64,
+}
+
+impl NutStandard {
+    pub const ALL: [NutStandard; 2] = [NutStandard::Iso4032, NutStandard::Din934];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NutStandard::Iso4032 => "ISO 4032",
+            NutStandard::Din934 => "DIN 934",
+        }
+    }
+
+    /// The nut for a screw of `nominal` diameter, mm.
+    pub fn nut(self, nominal: f64) -> Option<NutSize> {
+        let table = match self {
+            NutStandard::Iso4032 => ISO_4032_NUTS,
+            NutStandard::Din934 => DIN_934_NUTS,
+        };
+        table.iter().find(|(d, ..)| (d - nominal).abs() < 1e-9).map(
+            |&(_, across_flats, thickness)| NutSize {
+                across_flats,
+                thickness,
+            },
+        )
+    }
+}
+
+/// ISO 4032 hex nuts: nominal, across flats s, thickness m (its largest).
+const ISO_4032_NUTS: &[(f64, f64, f64)] = &[
+    (1.6, 3.2, 1.3),
+    (2.0, 4.0, 1.6),
+    (2.5, 5.0, 2.0),
+    (3.0, 5.5, 2.4),
+    (3.5, 6.0, 2.8),
+    (4.0, 7.0, 3.2),
+    (5.0, 8.0, 4.7),
+    (6.0, 10.0, 5.2),
+    (8.0, 13.0, 6.8),
+    (10.0, 16.0, 8.4),
+    (12.0, 18.0, 10.8),
+    (14.0, 21.0, 12.8),
+    (16.0, 24.0, 14.8),
+    (20.0, 30.0, 18.0),
+    (24.0, 36.0, 21.5),
+    (30.0, 46.0, 25.6),
+    (36.0, 55.0, 31.0),
+];
+
+/// DIN 934 hex nuts: nominal, across flats s, thickness m.
+const DIN_934_NUTS: &[(f64, f64, f64)] = &[
+    (1.6, 3.2, 1.3),
+    (2.0, 4.0, 1.6),
+    (2.5, 5.0, 2.0),
+    (3.0, 5.5, 2.4),
+    (3.5, 6.0, 2.8),
+    (4.0, 7.0, 3.2),
+    (5.0, 8.0, 4.0),
+    (6.0, 10.0, 5.0),
+    (8.0, 13.0, 6.5),
+    (10.0, 17.0, 8.0),
+    (12.0, 19.0, 10.0),
+    (14.0, 22.0, 11.0),
+    (16.0, 24.0, 13.0),
+    (20.0, 30.0, 16.0),
+    (24.0, 36.0, 19.0),
+    (30.0, 46.0, 24.0),
+    (36.0, 55.0, 29.0),
+];
+
 /// A named cut from the user's table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CutProfile {
@@ -910,6 +994,37 @@ mod tests {
                 diameter: 10.5,
                 depth: 3.2
             })
+        );
+    }
+
+    /// The nut tables differ only where DIN 934 is wider across the flats
+    /// (M10 to M14) or thinner; every nut is half again its screw across
+    /// the flats or more, and its pocket is the nut and the clearance.
+    #[test]
+    fn nuts_are_sized_by_their_standard() {
+        let iso = NutStandard::Iso4032.nut(10.0).unwrap();
+        let din = NutStandard::Din934.nut(10.0).unwrap();
+        assert_eq!((iso.across_flats, din.across_flats), (16.0, 17.0));
+        for (nominal, ..) in ISO_4032_NUTS.iter().chain(DIN_934_NUTS) {
+            for standard in NutStandard::ALL {
+                let nut = standard.nut(*nominal).unwrap();
+                assert!(nut.across_flats >= 1.5 * nominal, "M{nominal}");
+                assert!(nut.thickness > 0.5 * nominal && nut.thickness < *nominal);
+            }
+        }
+        let trap = crate::feature::NutTrap::default();
+        let pocket = crate::build::nut_pocket(&trap, Some(3.0)).unwrap();
+        assert!((pocket.across_flats - 5.8).abs() < 1e-6);
+        assert!((pocket.depth - 2.7).abs() < 1e-6);
+        let no_size = crate::build::nut_pocket(&trap, None).unwrap_err();
+        assert!(no_size.contains("across-flats"), "{no_size}");
+        let own = crate::feature::NutTrap {
+            across_flats: Some(11.0),
+            ..trap
+        };
+        assert!(
+            crate::build::nut_pocket(&own, None).is_err(),
+            "needs its depth"
         );
     }
 }

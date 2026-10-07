@@ -131,6 +131,30 @@ fn fields(variant: &str) -> &'static [Field] {
                 "Counterdrill angle",
                 Some(ANGLE),
             ),
+            (
+                "nut_trap/clearance",
+                "nut_clearance",
+                "Nut trap clearance",
+                Some(LENGTH),
+            ),
+            (
+                "nut_trap/depth",
+                "nut_depth",
+                "Nut trap depth",
+                Some(LENGTH),
+            ),
+            (
+                "nut_trap/across_flats",
+                "nut_across_flats",
+                "Nut trap across flats",
+                Some(LENGTH),
+            ),
+            (
+                "nut_trap/turn_deg",
+                "nut_turn",
+                "Nut trap turn",
+                Some(ANGLE),
+            ),
         ],
         "Fillet" => &[("radius", "radius", "Radius", Some(LENGTH))],
         "Chamfer" => &[

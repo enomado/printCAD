@@ -3387,31 +3387,25 @@ Notes:
 - It drills at every circle's centre and every point of its sketch; the circles' sizes are ignored, the hole's own `diameter` (5 mm when left out) is what it drills.
 - It drills against the sketch's normal, `depth` deep (10 mm) or `through_all = true`. A sketch on the bottom of a pad drills away from the material and removes nothing, without an error; `reversed = true` turns it.
 - Counterbores, countersinks and threads are fields too (`cut`, `threaded`, `thread`); docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` shows a hole's fields.
+- `nut_trap = true` cuts a hexagonal pocket for a captive nut at the hole's mouth, sized from the ISO 4032 nut of its metric `thread` with 0.3 mm clearance; give a table for more: `{side = "Bottom", clearance, depth, across_flats, turn_deg, standard = "Din934"}`. At the bottom it ends where a hole with a `depth` ends; through all, it is refused.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.circle`, `pc.design.pocket`.
 
-Example: Two holes through a plate, one at a circle and one at a point.
+Example: An M3 clearance hole with a nut trap at its mouth.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
-pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
-local pad = pc.design.pad{sketch = s, length = 4}
-local body = pc.doc.feature{id = pad}.body
-local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
-pc.sketch.circle{sketch = at, x = 10, y = 10, radius = 1}
-pc.sketch.point{sketch = at, x = 30, y = 10}
-pc.design.hole{sketch = at, diameter = 6, through_all = true}
-assert(#pc.doc.rebuild() == 0, "the holes build")
-local bores = 0
-for _, face in ipairs(pc.doc.faces{body = body}) do
-  if face.kind == "cylinder" then
-    bores = bores + 1
-    assert(math.abs(face.radius - 3) < 1e-6, "the hole's diameter, not the circle's")
-  end
-end
-assert(bores == 2)
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 20}
+local body = pc.doc.feature{id = pc.design.pad{sketch = s, length = 6}}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 6}
+pc.sketch.point{sketch = at, x = 15, y = 10}
+pc.design.hole{sketch = at, thread = "M3", through_all = true, nut_trap = true}
+assert(#pc.doc.rebuild() == 0, "the hole and its trap build")
+-- The nut, 5.5 across the flats and 2.4 thick, each with 0.3 more.
+local hex = math.sqrt(3) / 2 * 5.8 ^ 2
+local bore = math.pi * 1.7 ^ 2
 local volume = pc.doc.measure{body = body}.volume
-assert(math.abs(volume - (40 * 20 - 2 * math.pi * 9) * 4) < 1e-3, volume)
+assert(math.abs(volume - (30 * 20 * 6 - bore * 3.3 - hex * 2.7)) < 1e-3, volume)
 ```
 
 `pc.design.fillet`: Round edges.

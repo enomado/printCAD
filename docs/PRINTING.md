@@ -1,8 +1,7 @@
 # Printing
 
 What printCAD offers for the step from a model to a printer: the parts
-list's printing columns, nut traps for captive nuts, and the print
-layout that lays every part flat on the bed for export or the slicer.
+list's printing columns, and nut traps for captive nuts.
 The bed itself (its size, where its origin is, whether it is drawn) and
 the slicer command are set in Preferences › Printing.
 
@@ -36,3 +35,48 @@ From a script, `asm.parts` answers `print`, `volume`, `mass` and
 `density` for each part, `asm.part{body = ..., print = 3}` sets a count
 and `asm.print_material{name = "PETG"}` the material (a name of your own
 needs its `density`).
+
+## Nut traps
+
+A Hole's **Nut trap** (in the Hole task, under the hole cut) cuts a
+hexagonal pocket at one end of the hole for a nut to sit in captive, so
+a screw turns into it from the other side.
+
+- **Nut**: the standard the pocket is sized from, by the hole's ISO
+  metric thread size: ISO 4032 (the usual hex nut) or DIN 934 (17, 19 and
+  22 mm across the flats for M10, M12 and M14 where ISO 4032 has 16, 18
+  and 21). **Own size** takes an across-flats of your own instead, for
+  any hole, a thread of another standard included.
+- **Nut clearance**: added to the nut's across-flats and to its
+  thickness, 0.3 mm unless set, so the nut drops in. Printers that print
+  holes small want more.
+- **Own depth**: a pocket deeper or shallower than the nut and its
+  clearance.
+- **Nut side**: Top puts the pocket at the hole's mouth, on its sketch's
+  plane. Bottom puts it where the hole ends, its floor at the hole's
+  depth: a nut buried in the part, set in by pausing the print at the
+  layer above the pocket. A hole through all has no end to measure from,
+  so a pocket at its bottom asks for the hole's depth instead; to trap a
+  nut on the far face of a plate, give the hole the plate's thickness as
+  its depth.
+- **Nut turn**: the hexagon turned about the hole's axis; at 0 a corner
+  points along the sketch's X. Turn it 30° to lay a flat along X, which
+  prints a cleaner pocket roof when the hole lies on its side.
+
+The panel says what the pocket comes to, or why it cannot be cut (no
+metric size, a pocket no wider than the hole, one deeper than the hole).
+A nut trap's clearance, depth, across-flats and turn take formulas
+(`Hole.nut_clearance`, `Hole.nut_depth`, `Hole.nut_across_flats`,
+`Hole.nut_turn`).
+
+ISO 4032 across flats and thickness, mm:
+
+| Size | M2 | M2.5 | M3 | M4 | M5 | M6 | M8 | M10 | M12 | M16 | M20 |
+|------|----|------|----|----|----|----|----|-----|-----|-----|-----|
+| Across flats | 4 | 5 | 5.5 | 7 | 8 | 10 | 13 | 16 | 18 | 24 | 30 |
+| Thickness | 1.6 | 2 | 2.4 | 3.2 | 4.7 | 5.2 | 6.8 | 8.4 | 10.8 | 14.8 | 18 |
+
+From a script, `nut_trap` is a field of `design.hole`: `nut_trap = true`
+for the usual pocket at the mouth, or a table, `{side = "Bottom",
+clearance = 0.4, depth = 3, across_flats = 7, turn_deg = 30, standard =
+"Din934"}`, each field left out taking its usual value.

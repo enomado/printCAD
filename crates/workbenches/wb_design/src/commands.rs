@@ -160,8 +160,32 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                  `thread`); docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` \
                  shows a hole's fields.",
             )
+            .note(
+                "`nut_trap = true` cuts a hexagonal pocket for a captive nut at the hole's \
+                 mouth, sized from the ISO 4032 nut of its metric `thread` with 0.3 mm \
+                 clearance; give a table for more: `{side = \"Bottom\", clearance, depth, \
+                 across_flats, turn_deg, standard = \"Din934\"}`. At the bottom it ends \
+                 where a hole with a `depth` ends; through all, it is refused.",
+            )
             .see_also("sketch.circle")
             .see_also("design.pocket")
+            .example(
+                "An M3 clearance hole with a nut trap at its mouth",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 20}
+                local body = pc.doc.feature{id = pc.design.pad{sketch = s, length = 6}}.body
+                local at = pc.sketch.new{body = body, plane = "XY", offset = 6}
+                pc.sketch.point{sketch = at, x = 15, y = 10}
+                pc.design.hole{sketch = at, thread = "M3", through_all = true, nut_trap = true}
+                assert(#pc.doc.rebuild() == 0, "the hole and its trap build")
+                -- The nut, 5.5 across the flats and 2.4 thick, each with 0.3 more.
+                local hex = math.sqrt(3) / 2 * 5.8 ^ 2
+                local bore = math.pi * 1.7 ^ 2
+                local volume = pc.doc.measure{body = body}.volume
+                assert(math.abs(volume - (30 * 20 * 6 - bore * 3.3 - hex * 2.7)) < 1e-3, volume)
+                "#,
+            )
             .example(
                 "Two holes through a plate, one at a circle and one at a point",
                 r#"

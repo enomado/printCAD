@@ -74,6 +74,14 @@ thread, and a size the seat's table lacks says so in the panel.
 - **ISO 4017 seat:** the counterbore for a hex head screw, with room for a
   socket wrench (DIN 974-2).
 
+## Nut trap
+
+**Nut trap** cuts a hexagonal pocket at one end of the hole that holds a
+nut captive, beside any hole cut. It is sized from the nut of the hole's
+ISO metric thread; [PRINTING.md](PRINTING.md#nut-traps) has the sizes,
+the clearance, the depth and the side it sits on. A hole sized otherwise
+takes a nut trap of its own size.
+
 ## Your own cuts
 
 Cuts you use often go in `hole_cuts.json` in the application's
@@ -115,7 +123,10 @@ designation the panel lists. A size alone, `thread = "M6"` or
 "SocketHead"}}`, or `"Countersunk"`, `"ButtonHead"`, `"SlottedCountersunk"`,
 `"CrossCountersunk"`, `"LowHeadCap"`, `"CapScrewWithWasher"`, `"HexHead"`.
 `clearance` sets a clearance of your own; `thread_length` is `"Given"`,
-`"HoleDepth"` or `"RunOut"`.
+`"HoleDepth"` or `"RunOut"`. `nut_trap = true` adds a nut trap at the
+mouth; a table sets it: `nut_trap = {side = "Bottom", clearance = 0.4,
+depth = 3, across_flats = 7, turn_deg = 30, standard = "Din934"}`, each
+field left out taking its usual value.
 
 ## Holes already in a solid
 
