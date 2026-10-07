@@ -6,6 +6,9 @@ version first.
 
 ## 0.7.0
 
+### Kernel
+- Built on ogeom 0.9.8: features on imported parts whose fillets carry small rings build, half domes sew into an open dome, mirrored sheets shade the right way, lofts and domes thicken, fillets take a fraction of the time, and a body's saved shape is a fraction of the size (1.6 MB in place of 39 MB for a plate of 576 holes).
+
 ### Surfaces
 - A curvature map (Gaussian, mean, largest or smallest) and zebra stripes paint a body with how its surfaces bend, and Check continuity tells curvature continuous joins (G2) from tangent ones.
 - Fillet between surfaces rounds between two faces that share no edge, lofts follow guide curves, and a sweep can ride two rails.

@@ -17,21 +17,6 @@ Gaps in the kernel printCAD runs into. When a fix is
 released: bump `ogeom` in the workspace `Cargo.toml`, take the `#[ignore]`
 off its tests, run the suite.
 
-Filed:
-
-- [ ] **Sewing half domes** (ogeom-rs#138). Two halves of a dome (one
-  mirrored from the other, or turned the other way) sew with their half
-  rims taken for one edge when the arc is a hair off its axis, as a
-  sketched one is: the open sheet closes into a solid out of shape.
-  `surface_ops::half_domes_sew_into_an_open_dome`.
-- [ ] **Shading a mirrored face** (ogeom-rs#139). A face under a mirroring
-  placement (the Surface bench's Mirror) meshes with its normals against
-  its triangles, so the image is lit from behind.
-  `surface_ops::a_mirrored_sheet_is_shaded_the_way_it_faces`.
-- [ ] **Thickening free-form sheets** (ogeom-rs#140). A loft through three
-  sections and a revolved dome miss the offset fit's bound, so Thicken
-  fails on them. `surface_ops::free_form_sheets_thicken`.
-
 Not yet filed:
 
 - [ ] **A pad on a converted solid that was not refined** (M). Fusing a
@@ -46,10 +31,12 @@ Not yet filed:
 The rebuild skips the history an edit did not change; the operations
 themselves still cost what the whole solid holds, not what an edit
 touches. The kernel work, in order of payoff (`rebuild_bench`'s holed plates: one
-hole added to a 582-face plate costs 1.6 s, of which the boolean 0.18 s,
-meshing 0.5 s and the snapshot 0.7 s):
+hole added to a 582-face plate costs 1.1 s on ogeom 0.9.8, of which the
+boolean 0.14 s, meshing 0.15 s, the snapshot 0.02 s and resuming the
+chain from its kept state 0.7 s, nearly all of it cloning the model):
 
-- [ ] **A. Local boolean** (L, ogeom-rs#134). Faces whose box misses the tool's and that
+- [ ] **A. Local boolean** (L, ogeom-rs#134, on the kernel's master after 0.9.8: the
+  corner hole's boolean 0.14 s to 0.02 s). Faces whose box misses the tool's and that
   no section crosses pass through as they are, not split, classified or
   rebuilt; a connected region of them is classified once, by one probe;
   only the region near the tool is sewn again; a face tree replaces the
@@ -57,12 +44,10 @@ meshing 0.5 s and the snapshot 0.7 s):
 - [ ] **D. Fillets in one pass** (M, ogeom-rs#135). All of a fillet's blends applied in
   one boolean, or by replacing faces locally, not one whole-solid boolean
   per edge piece.
-- [ ] **E. Face bounds in the model** (S, ogeom-rs#136). Each face's box kept in the
-  model, read by the booleans, `tight_bounds` and printCAD alike.
-- [ ] **F. Snapshots of what the solid reaches** (S, ogeom-rs#137). The
-  native text carries every provenance entry the model ever made: 39 MB
-  and 0.7 s for a 582-face plate, written after every rebuild and saved
-  in the document.
+- [ ] **G. Compacting a model in place** (S, ogeom-rs#141). A chain's
+  model keeps every intermediate result: 2.5 million nodes behind a
+  582-face plate, and cloning it to resume a build costs 0.6 to 2.8 s.
+  Wants the unreachable dropped with the handles printCAD holds kept.
 
 And in printCAD, as each lands:
 
@@ -70,9 +55,8 @@ And in printCAD, as each lands:
   kernel): face naming carries an unchanged face's names straight
   across, about 60 ms an op on a 400-face part, and mesh, outline and
   bounds reuse key on the face itself instead of hashing its geometry.
-- [ ] The "large solid, small edit" case in `rebuild_bench` (a pocket cut
-  into the imported part and widened) fails until ogeom-rs#133: every
-  boolean against that part fails. Measure A and D on it once it builds.
+- [ ] With G: the chain cache keeps its states compacted, and the
+  running model is compacted as it grows.
 
 Each goes to the kernel's repository as an issue with its API, a repro, the
 bench numbers and an acceptance test (the time follows the touched region,

@@ -68,7 +68,6 @@ fn a_well_formed_export_checks_clean() {
 
 /// A clean part takes features: a pocket cut down through its middle.
 #[test]
-#[ignore = "kernel: every boolean against this part fails, a face boundary strand dangles (ogeom-rs#133)"]
 fn a_clean_imported_part_takes_a_pocket() {
     use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
     let (mut kernel, model) = import("drive_frame_upper.step");

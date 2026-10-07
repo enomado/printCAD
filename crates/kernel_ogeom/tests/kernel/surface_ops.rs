@@ -1566,7 +1566,6 @@ fn dome_quarter() -> CurveSource {
 /// Half a dome sewn to its mirror image, or to a second half turned the
 /// other way: one open sheet, the two rims left apart, its shape as it was.
 #[test]
-#[ignore = "kernel: sew joins the two half rims of a dome made of halves into one edge, closing the sheet and pulling it out of shape (ogeom-rs#138)"]
 fn half_domes_sew_into_an_open_dome() {
     let half = |axis: [f64; 3]| SurfaceOp::Revolve {
         curves: vec![dome_quarter()],
@@ -1628,7 +1627,6 @@ fn shaded_from_behind(mesh: &kernel_api::TriMesh) -> usize {
 /// A half cylinder and its mirror image: the image's mesh is shaded the
 /// way its triangles face, as the original's is.
 #[test]
-#[ignore = "kernel: a face under a mirroring placement triangulates with its normals against its triangles' winding (ogeom-rs#139)"]
 fn a_mirrored_sheet_is_shaded_the_way_it_faces() {
     let result = build(vec![
         SurfaceOp::Extrude {
@@ -1653,7 +1651,6 @@ fn a_mirrored_sheet_is_shaded_the_way_it_faces() {
 /// through three bowed sections that bow the other way between, and a
 /// dome turned from a quarter arc.
 #[test]
-#[ignore = "kernel: make_thick_sheet's free-form offset fit misses its bound on a loft through three sections and on a revolved dome (ogeom-rs#140)"]
 fn free_form_sheets_thicken() {
     let section =
         |z: f64, bulge: f64| sketch(xy(z), vec![arc([0.0, 0.0], [10.0, bulge], [20.0, 0.0])]);
