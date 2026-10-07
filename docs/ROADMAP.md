@@ -17,14 +17,6 @@ Gaps in the kernel printCAD runs into. When a fix is
 released: bump `ogeom` in the workspace `Cargo.toml`, take the `#[ignore]`
 off its tests, run the suite.
 
-Filed:
-
-- [ ] **A worm 0.9.9 builds** (ogeom-rs#142). A revolved blank cut by a
-  helix and an extrusion checks clean, but no boolean closes against it
-  (0.9.8 built one that did), so the Assembly's interference check fails
-  on a worm through a bearing.
-  `solid_ops::a_worm_through_a_bearing_shares_material_with_it`.
-
 Not yet filed:
 
 - [ ] **A pad on a converted solid that was not refined** (M). Fusing a
@@ -53,10 +45,6 @@ the rest):
 - [ ] **D. Fillets in one pass** (M, ogeom-rs#135). All of a fillet's blends applied in
   one boolean, or by replacing faces locally, not one whole-solid boolean
   per edge piece.
-- [ ] **G. Compacting a model in place** (S, ogeom-rs#141). A chain's
-  model keeps every intermediate result: 2.5 million nodes behind a
-  582-face plate, and cloning it to resume a build costs 0.6 to 2.8 s.
-  Wants the unreachable dropped with the handles printCAD holds kept.
 
 And in printCAD, as each lands:
 
@@ -64,8 +52,6 @@ And in printCAD, as each lands:
   kernel): face naming carries an unchanged face's names straight
   across, about 60 ms an op on a 400-face part, and mesh, outline and
   bounds reuse key on the face itself instead of hashing its geometry.
-- [ ] With G: the chain cache keeps its states compacted, and the
-  running model is compacted as it grows.
 
 Each goes to the kernel's repository as an issue with its API, a repro, the
 bench numbers and an acceptance test (the time follows the touched region,

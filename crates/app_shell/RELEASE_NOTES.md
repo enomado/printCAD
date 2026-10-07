@@ -4,6 +4,12 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.7.1
+
+### Kernel
+- Built on ogeom 0.9.10: the interference check works again on a worm passing through a bearing.
+- A small edit to a large part rebuilds in about half the time: the check for an edit that made the same solid no longer meshes every face, and the states a body's builds keep hold only what the solid still reaches.
+
 ## 0.7.0
 
 ### Kernel
