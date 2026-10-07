@@ -46,6 +46,14 @@ pub struct SketchPalette {
     pub wall_thin: Rgb,
     /// A measured centre line.
     pub centre_line: Rgb,
+    /// A curvature map's colours: the most negative values, none, and the
+    /// most positive.
+    pub analysis_low: Rgb,
+    pub analysis_mid: Rgb,
+    pub analysis_high: Rgb,
+    /// Zebra stripes, dark and light.
+    pub stripe_dark: Rgb,
+    pub stripe_light: Rgb,
 }
 
 impl Default for SketchPalette {
@@ -70,6 +78,11 @@ impl Default for SketchPalette {
             wall: hex(0x4FD08F),
             wall_thin: hex(0xE6A44F),
             centre_line: hex(0x6FD3C9),
+            analysis_low: hex(0x4FA3E6),
+            analysis_mid: hex(0x4FD08F),
+            analysis_high: hex(0xE86E6E),
+            stripe_dark: hex(0x0F1216),
+            stripe_light: hex(0xE6EBF0),
         }
     }
 }

@@ -324,8 +324,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`SurfaceFeature::missing`); `surface.set` changes a step's fields and
   curves, `surface.check` returns a body's joins. Check continuity (`surface.check`) asks
   `KernelQueries::continuity` (the kernel's `analyse_blend` over every
-  face: gap and crease per shared edge) of the selected body and labels
-  the edges through `get_screen_space_labels`.
+  face: gap, crease and curvature jump per shared edge, G2 below
+  `G2_PER_MM`) of the selected body and labels the edges through
+  `get_screen_space_labels`. The curvature map and zebra stripes
+  (`analysis.rs`) paint the selected body as one `get_overlay_meshes`
+  mesh, cached by the body's geometry revision: the map's values from
+  `KernelQueries::curvature` at the mesh's vertices, the stripes from its
+  normals, each triangle split along the stripes' borders; colours from
+  the palette's `analysis_*` and `stripe_*`.
 - `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
   planar anchors with offset/flip, Align of two axes, Angle, Hinge, Slider,
   Fixed, Parallel, Perpendicular, Distance and Tangent; Ground keeps a body

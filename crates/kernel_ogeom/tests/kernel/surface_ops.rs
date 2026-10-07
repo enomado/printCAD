@@ -1127,3 +1127,159 @@ fn a_loft_between_two_arcs_thickens() {
         }
     }
 }
+
+/// How sharply the faces bend either side of a join: a line running on
+/// into an arc of radius 5 meets it tangent but goes from flat to 1/5; a
+/// face split in two bends alike on both sides.
+#[test]
+fn continuity_tells_a_tangent_join_from_a_curvature_continuous_one() {
+    use kernel_api::KernelQueries;
+    let smooth = build(vec![SurfaceOp::Extrude {
+        curves: vec![sketch(
+            xy(0.0),
+            vec![
+                line([0.0, 0.0], [10.0, 0.0]),
+                arc(
+                    [10.0, 0.0],
+                    [13.535_533_905_932_737, 1.464_466_094_067_262_4],
+                    [15.0, 5.0],
+                ),
+            ],
+        )],
+        direction: [0.0, 0.0, 1.0],
+        length: 5.0,
+        symmetric: false,
+    }])
+    .unwrap();
+    let joins = kernel_ogeom::QUERIES.continuity(&smooth.brep_blob).unwrap();
+    assert_eq!(joins.len(), 1, "{joins:?}");
+    let jump = joins[0].curvature.expect("read");
+    assert!((jump - 0.2).abs() < 1e-3, "{joins:?}");
+
+    let split = build(vec![
+        SurfaceOp::Extrude {
+            curves: vec![sketch(
+                xy(0.0),
+                vec![arc([5.0, 0.0], [0.0, 5.0], [-5.0, 0.0])],
+            )],
+            direction: [0.0, 0.0, 1.0],
+            length: 10.0,
+            symmetric: false,
+        },
+        SurfaceOp::Split {
+            faces: vec![kernel_api::FaceProbe {
+                point: [0.0, 5.0, 5.0],
+                normal: [0.0, 1.0, 0.0],
+                name: 0,
+            }],
+            curves: vec![sketch(
+                plane([0.0, 10.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+                vec![line([-4.0, -1.0], [4.0, 11.0])],
+            )],
+        },
+        SurfaceOp::Sew { gap: 0.0 },
+    ])
+    .unwrap();
+    let joins = kernel_ogeom::QUERIES.continuity(&split.brep_blob).unwrap();
+    assert_eq!(joins.len(), 1, "{joins:?}");
+    assert!(joins[0].angle_deg < 0.01, "{joins:?}");
+    assert!(joins[0].curvature.expect("read") < 1e-6, "{joins:?}");
+}
+
+/// The curvature at every vertex of a mesh, read from the exact surfaces
+/// and signed against the mesh's normal there, asked of a sheet and of a
+/// solid: a tube of radius 5 bends
+/// 1/5 round and not at all along, a ball of radius 4 bends 1/4 every way,
+/// negative where the normal points out of the bulge.
+#[test]
+fn curvature_is_read_at_points_on_the_faces() {
+    use kernel_api::KernelQueries;
+    let tube = build(vec![SurfaceOp::Revolve {
+        curves: vec![sketch(
+            plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            vec![line([5.0, 0.0], [5.0, 10.0])],
+        )],
+        origin: [0.0; 3],
+        axis: [0.0, 0.0, 1.0],
+        angle_deg: 360.0,
+    }])
+    .unwrap();
+    let ball = build(vec![
+        SurfaceOp::Revolve {
+            curves: vec![sketch(
+                plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+                vec![arc([0.0, -4.0], [4.0, 0.0], [0.0, 4.0])],
+            )],
+            origin: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            angle_deg: 360.0,
+        },
+        SurfaceOp::Sew { gap: 0.0 },
+    ])
+    .unwrap();
+    // How far out from the axis or the centre a normal points, and the
+    // curvatures, largest first, for a normal pointing out.
+    let round = |p: [f32; 3], n: [f32; 3]| {
+        let r = (p[0] * p[0] + p[1] * p[1]).sqrt();
+        (p[0] * n[0] + p[1] * n[1]) / r
+    };
+    let centre = |p: [f32; 3], n: [f32; 3]| {
+        let r = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+        (p[0] * n[0] + p[1] * n[1] + p[2] * n[2]) / r
+    };
+    type Out = fn([f32; 3], [f32; 3]) -> f32;
+    for (result, out, bends) in [
+        (&tube, round as Out, [0.0, -0.2]),
+        (&ball, centre as Out, [-0.25, -0.25]),
+    ] {
+        let mesh = &result.mesh;
+        let inside = {
+            let t = &mesh.indices[0..3];
+            [0, 1, 2].map(|k| {
+                t.iter()
+                    .map(|&i| f64::from(mesh.positions[i as usize][k]))
+                    .sum::<f64>()
+                    / 3.0
+            })
+        };
+        // The triangles' corners: the outline has vertices of its own.
+        let mut used: Vec<usize> = mesh.indices.iter().map(|&i| i as usize).collect();
+        used.sort_unstable();
+        used.dedup();
+        let points: Vec<([f64; 3], [f64; 3])> = used
+            .iter()
+            .map(|&i| {
+                (
+                    mesh.positions[i].map(f64::from),
+                    mesh.normals[i].map(f64::from),
+                )
+            })
+            .collect();
+        let read = kernel_ogeom::QUERIES
+            .curvature(&result.brep_blob, &[(inside, points.clone())])
+            .unwrap();
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].len(), points.len());
+        let mut seen = 0;
+        for (&i, k) in used.iter().zip(&read[0]) {
+            let Some(k) = k else { continue };
+            seen += 1;
+            let outward = out(mesh.positions[i], mesh.normals[i]);
+            assert!(outward.abs() > 0.9, "a normal square to the surface");
+            let expect = if outward > 0.0 {
+                bends
+            } else {
+                [-bends[1], -bends[0]]
+            };
+            assert!(
+                (k[0] - expect[0]).abs() < 1e-6 && (k[1] - expect[1]).abs() < 1e-6,
+                "{k:?} for {expect:?}"
+            );
+        }
+        assert!(
+            seen * 10 >= points.len() * 9,
+            "most points read: {seen} of {}",
+            points.len()
+        );
+    }
+}

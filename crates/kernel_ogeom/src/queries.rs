@@ -31,6 +31,15 @@ fn other(message: impl std::fmt::Display) -> KernelError {
     KernelError::Other(anyhow::anyhow!("{message}"))
 }
 
+/// How far the foot found for a point asked its curvature may stand from
+/// it and still be taken: the points lie on the surface, so a foot further
+/// off is a wrong one (a ball's pole beside it) and the surface is searched
+/// again, more finely (mm).
+const CURVATURE_REACH: f64 = 1e-3;
+
+/// Seeds per direction for each search of a surface afresh, coarse first.
+const CURVATURE_SEEDS: [usize; 2] = [16, 64];
+
 /// A shared solid smaller than this, in mm³, is taken for two faces that
 /// touch: what a boolean of flush faces leaves behind.
 const TOUCHING_MM3: f64 = 1e-6;
@@ -41,24 +50,31 @@ impl KernelQueries for OgeomQueries {
         const STATIONS: usize = 9;
         let tol = tess::tolerances();
         let (model, root) = tess::read_blob(brep)?;
-        let mut found: Vec<(Shape, f64, f64)> = Vec::new();
+        // A curvature the kernel could not read comes back infinite.
+        let read = |k: f64| k.is_finite().then_some(k);
+        let mut found: Vec<(Shape, f64, f64, Option<f64>)> = Vec::new();
         for face in explore_unique(&model, &root, ShapeType::Face).map_err(other)? {
             let contacts =
                 ogeom::fillet::analyse_blend(&model, &root, &face, STATIONS, tol).map_err(other)?;
             for contact in contacts {
+                let bend = read(contact.curvature_error);
                 match found.iter_mut().find(|(e, ..)| e.is_same(&contact.edge)) {
                     // Each shared edge is met from both its faces.
-                    Some((_, gap, angle)) => {
+                    Some((_, gap, angle, curvature)) => {
                         *gap = gap.max(contact.gap);
                         *angle = angle.max(contact.tangency_error);
+                        *curvature = match (*curvature, bend) {
+                            (Some(a), Some(b)) => Some(a.max(b)),
+                            (a, b) => a.or(b),
+                        };
                     }
-                    None => found.push((contact.edge, contact.gap, contact.tangency_error)),
+                    None => found.push((contact.edge, contact.gap, contact.tangency_error, bend)),
                 }
             }
         }
         found
             .into_iter()
-            .map(|(edge, gap, angle)| {
+            .map(|(edge, gap, angle, curvature)| {
                 let point = edge_samples(&model, &edge, &[0.5])?
                     .first()
                     .copied()
@@ -67,9 +83,92 @@ impl KernelQueries for OgeomQueries {
                     point: [point.x, point.y, point.z],
                     gap,
                     angle_deg: angle.to_degrees(),
+                    curvature,
                 })
             })
             .collect()
+    }
+
+    fn curvature(
+        &self,
+        brep: &[u8],
+        faces: &[kernel_api::FacePoints],
+    ) -> KernelResult<Vec<Vec<Option<[f64; 2]>>>> {
+        use ogeom::geom::Surface as _;
+        let tol = tess::tolerances();
+        let (mut model, root) = tess::read_blob(brep)?;
+        let mut out = Vec::with_capacity(faces.len());
+        for (inside, points) in faces {
+            let face = nearest_of(
+                &mut model,
+                &root,
+                ShapeType::Face,
+                Point::new(inside[0], inside[1], inside[2]),
+            )
+            .map_err(other)?;
+            let Some(NodeData::Face(data)) = model.node(&face).map(|n| n.data()) else {
+                out.push(vec![None; points.len()]);
+                continue;
+            };
+            let Some(surface) = model.geometry().surface(data.surface).cloned() else {
+                out.push(vec![None; points.len()]);
+                continue;
+            };
+            let placement = face.transform(model.datums()).map_err(other)?;
+            let back = placement.inverse().map_err(other)?;
+            let scale = placement.scale_factor();
+            let mut guess: Option<(f64, f64)> = None;
+            let mut read = Vec::with_capacity(points.len());
+            for (p, n) in points {
+                let target = back.apply(Point::new(p[0], p[1], p[2]));
+                let facing = back.apply_vector(Vector::new(n[0], n[1], n[2]));
+                // From the last point's foot first, the surface searched
+                // afresh where that lands far off or on a pole.
+                let at = |foot: ogeom::geom::SurfaceProjection| {
+                    let (u, v) = foot.parameters;
+                    surface
+                        .curvature_at(u, v, tol)
+                        .ok()
+                        .map(|c| (foot.parameters, c))
+                };
+                let found = guess
+                    .and_then(|g| {
+                        ogeom::geom::project_on_surface_from(&surface, target, g, tol).ok()
+                    })
+                    .filter(|f| f.distance <= CURVATURE_REACH)
+                    .and_then(at)
+                    .or_else(|| {
+                        let mut best: Option<ogeom::geom::SurfaceProjection> = None;
+                        for seeds in CURVATURE_SEEDS {
+                            if let Ok(foot) =
+                                ogeom::geom::project_on_surface(&surface, target, seeds, tol)
+                                && best.is_none_or(|b| foot.distance < b.distance)
+                            {
+                                best = Some(foot);
+                            }
+                            if best.is_some_and(|b| b.distance <= CURVATURE_REACH) {
+                                break;
+                            }
+                        }
+                        best.and_then(at)
+                    });
+                let Some((parameters, c)) = found else {
+                    read.push(None);
+                    continue;
+                };
+                guess = Some(parameters);
+                // The surface's curvatures are signed against its own
+                // normal: turned round where the asked one faces away.
+                let (max, min) = (c.max / scale, c.min / scale);
+                read.push(Some(if c.normal.vector().dot(facing) < 0.0 {
+                    [-min, -max]
+                } else {
+                    [max, min]
+                }));
+            }
+            out.push(read);
+        }
+        Ok(out)
     }
 
     fn face_edges(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<([f64; 3], [f64; 3])>> {

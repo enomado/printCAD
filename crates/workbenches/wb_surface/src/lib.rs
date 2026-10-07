@@ -15,9 +15,12 @@
 //! Cancel puts it back, or takes away the step (and the body) the tool made.
 //!
 //! Check continuity measures how the faces of the selected body meet
-//! across every edge they share (the gap, and the crease angle), labels
-//! each edge in the view and lists them in a task of its own.
+//! across every edge they share (the gap, the crease angle and the jump in
+//! curvature), labels each edge in the view and lists them in a task of
+//! its own. The curvature map and zebra stripes paint the selected body
+//! with how its surfaces bend, until their task closes.
 
+pub mod analysis;
 pub mod build;
 mod commands;
 pub mod feature;
@@ -66,6 +69,10 @@ struct Task {
 
 /// The tool that measures how a body's faces meet.
 pub const CHECK_TOOL: &str = "surface.check";
+/// The tool that paints a body with its curvature.
+pub const CURVATURE_TOOL: &str = "surface.curvature";
+/// The tool that paints a body with zebra stripes.
+pub const ZEBRA_TOOL: &str = "surface.zebra";
 /// The tool that starts a sketch in a surface body.
 pub const SKETCH_TOOL: &str = "surface.new_sketch";
 /// Changes fields of a surface step.
@@ -75,6 +82,22 @@ pub const SET_COMMAND: &str = "surface.set";
 const TANGENT_DEG: f64 = 0.5;
 /// Above this gap the faces count as apart (mm).
 const APART_MM: f64 = 1e-3;
+/// Below this jump in curvature tangent faces count as curvature
+/// continuous (1/mm).
+const G2_PER_MM: f64 = 1e-3;
+
+/// What a join reads as: `G2`, `G1`, the crease angle, or the gap.
+fn join_label(join: &kernel_api::EdgeContinuity) -> String {
+    if join.gap > APART_MM {
+        format!("gap {:.3}", join.gap)
+    } else if join.angle_deg >= TANGENT_DEG {
+        format!("{:.1}°", join.angle_deg)
+    } else if join.curvature.is_some_and(|k| k < G2_PER_MM) {
+        "G2".into()
+    } else {
+        "G1".into()
+    }
+}
 
 /// A continuity check on show: the body, and how its faces meet at each
 /// shared edge, the points in world space.
@@ -90,6 +113,7 @@ pub struct SurfaceWorkbench {
     options: Options,
     task: Option<Task>,
     check: Option<Check>,
+    analysis: Option<analysis::Analysis>,
 }
 
 impl SurfaceWorkbench {
@@ -232,6 +256,7 @@ impl SurfaceWorkbench {
             .find(|b| b.id == body)
             .map(|b| b.name.clone())
             .unwrap_or_default();
+        self.analysis = None;
         self.check = Some(Check {
             body,
             name,
@@ -240,6 +265,31 @@ impl SurfaceWorkbench {
                 .map(|j| (placed.point(j.point.map(|c| c as f32)), j))
                 .collect(),
         });
+        Ok(())
+    }
+
+    /// Paint `body` as `display` shows it, in place of any check.
+    fn analyse(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+        display: analysis::Display,
+    ) -> Result<(), String> {
+        if ctx.document.imported_geometry(body).is_none() {
+            return Err("The body has no shape to paint yet".into());
+        }
+        if matches!(display, analysis::Display::Curvature { .. }) && ctx.kernel.is_none() {
+            return Err("No geometry kernel to read curvature from".into());
+        }
+        let name = ctx
+            .document
+            .bodies()
+            .iter()
+            .find(|b| b.id == body)
+            .map(|b| b.name.clone())
+            .unwrap_or_default();
+        self.check = None;
+        self.analysis = Some(analysis::Analysis::new(body, name, display));
         Ok(())
     }
 
@@ -458,9 +508,75 @@ impl SurfaceWorkbench {
         Ok(Value::Array(
             joins
                 .iter()
-                .map(|(at, j)| json!({"point": at, "gap": j.gap, "angle_deg": j.angle_deg}))
+                .map(|(at, j)| {
+                    json!({
+                        "point": at,
+                        "gap": j.gap,
+                        "angle_deg": j.angle_deg,
+                        "curvature": j.curvature,
+                        "join": join_label(j),
+                    })
+                })
                 .collect(),
         ))
+    }
+}
+
+impl SurfaceWorkbench {
+    /// `surface.curvature` and `surface.zebra`: the body painted, and for
+    /// the map the measure's range over it.
+    fn analyse_by_command(
+        &mut self,
+        id: &str,
+        args: &CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> CommandResult {
+        let a = core_document::command::Args(args);
+        let body = body_of(ctx.document, a.id("body")?)?;
+        let display = if id == CURVATURE_TOOL {
+            let measure = match a.opt_string("measure")? {
+                Some(name) => analysis::Measure::from_name(name)
+                    .ok_or_else(|| CommandError::bad("measure", "is gaussian, mean, max or min"))?,
+                None => analysis::Measure::Gaussian,
+            };
+            let limit = a.opt_number("limit")?.unwrap_or(0.0);
+            if !(limit.is_finite() && limit >= 0.0) {
+                return Err(CommandError::bad("limit", "is a curvature of 0 or more"));
+            }
+            analysis::Display::Curvature { measure, limit }
+        } else {
+            let stripes = a
+                .opt_number("stripes")?
+                .unwrap_or(f64::from(analysis::DEFAULT_STRIPES));
+            if !(1.0..=64.0).contains(&stripes) {
+                return Err(CommandError::bad("stripes", "is a count from 1 to 64"));
+            }
+            let axis = match a.opt_string("axis")? {
+                Some(name) => analysis::StripeAxis::ALL
+                    .into_iter()
+                    .find(|x| x.label() == name)
+                    .ok_or_else(|| CommandError::bad("axis", "is X, Y or Z"))?,
+                None => analysis::StripeAxis::Z,
+            };
+            analysis::Display::Zebra {
+                stripes: stripes.round() as u32,
+                axis,
+            }
+        };
+        self.analyse(ctx, body, display)
+            .map_err(CommandError::failed)?;
+        let Some(analysis) = &self.analysis else {
+            return Ok(Value::Null);
+        };
+        if let analysis::Display::Curvature { measure, .. } = display {
+            let (low, high) = analysis
+                .range(ctx.document, ctx.kernel, &ctx.sketch_palette)
+                .ok_or_else(|| CommandError::failed("the kernel read no curvature of the body"))?;
+            return Ok(
+                json!({"measure": measure.name(), "low": low, "high": high, "unit": measure.unit()}),
+            );
+        }
+        Ok(Value::Null)
     }
 }
 
@@ -732,6 +848,16 @@ impl Workbench for SurfaceWorkbench {
                 .icon("surface-continuity"),
         );
         context.register_command(commands::check());
+        context.register_tool(
+            ToolDescriptor::new_action(CURVATURE_TOOL, "Curvature map", Some("analysis"))
+                .icon("bspline-comb"),
+        );
+        context.register_command(commands::curvature());
+        context.register_tool(
+            ToolDescriptor::new_action(ZEBRA_TOOL, "Zebra stripes", Some("analysis"))
+                .icon("draw-style-shaded"),
+        );
+        context.register_command(commands::zebra());
         context.register_command(commands::set());
     }
 
@@ -756,6 +882,28 @@ impl Workbench for SurfaceWorkbench {
             return InputResult::consumed();
         }
         if let WorkbenchInputEvent::ToolActivated = event
+            && let Some(tool @ (CURVATURE_TOOL | ZEBRA_TOOL)) = active_tool
+        {
+            let display = if tool == CURVATURE_TOOL {
+                analysis::Display::Curvature {
+                    measure: analysis::Measure::Gaussian,
+                    limit: 0.0,
+                }
+            } else {
+                analysis::Display::Zebra {
+                    stripes: analysis::DEFAULT_STRIPES,
+                    axis: analysis::StripeAxis::Z,
+                }
+            };
+            let painted = Self::selected_body(ctx)
+                .ok_or_else(|| "Select a body to paint".to_string())
+                .and_then(|body| self.analyse(ctx, body, display));
+            if let Err(why) = painted {
+                ctx.log_warn(why);
+            }
+            return InputResult::consumed();
+        }
+        if let WorkbenchInputEvent::ToolActivated = event
             && let Some(tool) = active_tool
             && SurfaceFeature::for_tool(tool).is_some()
         {
@@ -774,6 +922,20 @@ impl Workbench for SurfaceWorkbench {
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.task.is_none()
+            && let Some(analysis) = &self.analysis
+        {
+            let (title, icon) = match analysis.display {
+                analysis::Display::Curvature { .. } => ("Curvature", "bspline-comb"),
+                analysis::Display::Zebra { .. } => ("Zebra stripes", "draw-style-shaded"),
+            };
+            return Some(TaskInfo {
+                title: title.into(),
+                icon,
+                confirmable: false,
+                stepwise: false,
+            });
+        }
         if self.task.is_none() && self.check.is_some() {
             return Some(TaskInfo {
                 title: "Continuity".into(),
@@ -805,6 +967,23 @@ impl Workbench for SurfaceWorkbench {
     ) -> core_document::TaskOutcome {
         use core_document::TaskOutcome;
         let Some(task) = self.task.clone() else {
+            if let Some(analysis) = &mut self.analysis {
+                if request.accept || request.cancel {
+                    self.analysis = None;
+                    return TaskOutcome::Cancelled;
+                }
+                let range = analysis.range(ctx.document, ctx.kernel, &ctx.sketch_palette);
+                if let Some(display) = panel::analysis(
+                    ui,
+                    &analysis.name,
+                    analysis.display,
+                    range,
+                    &ctx.sketch_palette,
+                ) {
+                    analysis.display = display;
+                }
+                return TaskOutcome::Open;
+            }
             if let Some(check) = &self.check {
                 if request.accept || request.cancel {
                     self.check = None;
@@ -859,12 +1038,13 @@ impl Workbench for SurfaceWorkbench {
             .iter()
             .filter_map(|(at, join)| {
                 let (x, y) = ctx.world_to_viewport(*at)?;
-                let (text, color) = if join.gap > APART_MM {
-                    (format!("gap {:.3}", join.gap), palette.conflict)
+                let text = join_label(join);
+                let color = if join.gap > APART_MM {
+                    palette.conflict
                 } else if join.angle_deg < TANGENT_DEG {
-                    ("G1".to_string(), palette.fully_constrained)
+                    palette.fully_constrained
                 } else {
-                    (format!("{:.1}°", join.angle_deg), palette.constraint)
+                    palette.constraint
                 };
                 Some(core_document::ScreenSpaceLabel {
                     pos: [x, y],
@@ -878,6 +1058,18 @@ impl Workbench for SurfaceWorkbench {
             .collect()
     }
 
+    fn get_overlay_meshes(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::OverlayMesh> {
+        self.analysis
+            .as_ref()
+            .and_then(|a| a.overlay(ctx.document, ctx.kernel, &ctx.sketch_palette))
+            .into_iter()
+            .collect()
+    }
+
     fn editing_feature(&self) -> Option<FeatureId> {
         self.task.as_ref().map(|t| t.feature)
     }
@@ -886,7 +1078,9 @@ impl Workbench for SurfaceWorkbench {
         let shaped = |body: BodyId| ctx.document.imported_brep_blob(body).is_some();
         match tool_id {
             SKETCH_TOOL => true,
-            CHECK_TOOL => Self::selected_body(ctx).is_some_and(shaped),
+            CHECK_TOOL | CURVATURE_TOOL | ZEBRA_TOOL => {
+                Self::selected_body(ctx).is_some_and(shaped)
+            }
             "surface.sew" | "surface.mirror" => Self::selected_body(ctx)
                 .is_some_and(|b| build::is_surface_body(ctx.document, b) && shaped(b)),
             tool => match SurfaceFeature::for_tool(tool) {
@@ -967,6 +1161,7 @@ impl Workbench for SurfaceWorkbench {
     ) -> CommandResult {
         match id {
             CHECK_TOOL => self.check_by_command(args, ctx),
+            CURVATURE_TOOL | ZEBRA_TOOL => self.analyse_by_command(id, args, ctx),
             SET_COMMAND => set_by_command(args, ctx),
             _ => self.create_by_command(id, args, ctx),
         }
@@ -1010,7 +1205,7 @@ mod tests {
     fn every_tool_names_an_icon_the_set_has() {
         let mut context = WorkbenchContext::default();
         SurfaceWorkbench::default().configure(&mut context);
-        assert_eq!(context.tools().len(), KINDS.len() + 2);
+        assert_eq!(context.tools().len(), KINDS.len() + 4);
         #[cfg(feature = "egui")]
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -1042,11 +1237,13 @@ mod tests {
                     point: [1.0, 0.0, 0.0],
                     gap: 0.0,
                     angle_deg: 90.0,
+                    curvature: None,
                 },
                 kernel_api::EdgeContinuity {
                     point: [2.0, 0.0, 0.0],
                     gap: 0.0,
                     angle_deg: 0.1,
+                    curvature: Some(0.2),
                 },
             ])
         }
@@ -1073,6 +1270,109 @@ mod tests {
         assert_eq!(joins[0].0, [1.0, 0.0, 0.0], "placed where the body sits");
         bench.check = None;
         assert!(bench.task(&ctx).is_none());
+    }
+
+    #[test]
+    fn a_join_reads_g2_only_when_tangent_and_bending_alike() {
+        let join = |angle_deg, curvature| kernel_api::EdgeContinuity {
+            point: [0.0; 3],
+            gap: 0.0,
+            angle_deg,
+            curvature,
+        };
+        assert_eq!(join_label(&join(0.1, Some(1e-5))), "G2");
+        assert_eq!(join_label(&join(0.1, Some(0.2))), "G1");
+        assert_eq!(join_label(&join(0.1, None)), "G1", "unread is not G2");
+        assert_eq!(join_label(&join(90.0, Some(0.0))), "90.0°");
+    }
+
+    /// A kernel that reads every point as bending 1/5 one way: a tube's.
+    struct Tube;
+
+    impl kernel_api::KernelQueries for Tube {
+        fn project_edge(
+            &self,
+            _brep: &[u8],
+            _near: [f64; 3],
+            _plane: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("project_edge".into()))
+        }
+
+        fn curvature(
+            &self,
+            _brep: &[u8],
+            faces: &[kernel_api::FacePoints],
+        ) -> kernel_api::KernelResult<Vec<Vec<Option<[f64; 2]>>>> {
+            Ok(faces
+                .iter()
+                .map(|(_, points)| points.iter().map(|_| Some([0.0, -0.2])).collect())
+                .collect())
+        }
+    }
+
+    /// The curvature map paints the selected body until its task closes,
+    /// and the zebra takes its place.
+    #[test]
+    fn the_curvature_map_paints_the_body_until_closed() {
+        static KERNEL: Tube = Tube;
+        let mut document = Document::new("t");
+        let body = document.create_body(Some("Sheet".into()));
+        let mesh = kernel_api::TriMesh {
+            positions: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            faces: vec![0],
+            ..kernel_api::TriMesh::default()
+        };
+        document.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(mesh),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        document.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
+        let mut bench = SurfaceWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.kernel = Some(&KERNEL);
+        ctx.selected_body_id = Some(body.0);
+        let result = bench
+            .run_command(
+                CURVATURE_TOOL,
+                &serde_json::from_value(json!({"body": body.0.to_string(), "measure": "mean"}))
+                    .unwrap(),
+                &mut ctx,
+            )
+            .unwrap();
+        assert_eq!(result["low"], json!(-0.1));
+        assert_eq!(result["high"], json!(-0.1));
+        assert_eq!(bench.task(&ctx).map(|t| t.title), Some("Curvature".into()));
+        let painted = bench.get_overlay_meshes(&ctx, None);
+        assert_eq!(painted.len(), 1);
+        assert_eq!(painted[0].mesh.indices.len(), 6, "both sides");
+        let low = ctx.sketch_palette.analysis_low;
+        assert!(
+            painted[0].mesh.colors.iter().all(|c| *c == low),
+            "every point at the low end of its own range"
+        );
+        bench.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some(ZEBRA_TOOL),
+            &mut ctx,
+        );
+        assert_eq!(
+            bench.task(&ctx).map(|t| t.title),
+            Some("Zebra stripes".into())
+        );
+        assert_eq!(bench.get_overlay_meshes(&ctx, None).len(), 1);
+        bench.analysis = None;
+        assert!(bench.get_overlay_meshes(&ctx, None).is_empty());
     }
 
     #[test]

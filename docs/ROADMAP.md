@@ -28,8 +28,6 @@ Not yet filed:
 
 ## Surfaces
 
-- [ ] Curvature analysis (in ogeom 0.7.0, ogeom-rs#115): curvature and
-  zebra displays, and G2 in Check continuity.
 - [ ] Fillets between two separate surfaces (`fillet_faces`, in ogeom
   0.7.0), guide curves for lofts and two-rail sweeps (in ogeom 0.7.0).
 - [ ] Picked edges of other bodies as curves (the body's own only today).

@@ -6,6 +6,9 @@ version first.
 
 ## 0.7.0
 
+### Surfaces
+- A curvature map (Gaussian, mean, largest or smallest) and zebra stripes paint a body with how its surfaces bend, and Check continuity tells curvature continuous joins (G2) from tangent ones.
+
 ### Sketcher
 - An ellipse showing its foci drags through a circle: a minor radius pulled past the major makes it the major, the foci sliding through the centre onto the new axis.
 ### Design

@@ -473,6 +473,108 @@ pub fn continuity(
         });
 }
 
+/// An analysis's settings and, for a curvature map, its legend; the
+/// display changed, when it did.
+pub fn analysis(
+    ui: &mut Ui,
+    body: &str,
+    display: crate::analysis::Display,
+    range: Option<(f64, f64)>,
+    palette: &core_document::SketchPalette,
+) -> Option<crate::analysis::Display> {
+    use crate::analysis::{Display, Measure, StripeAxis};
+    let mut next = display;
+    match &mut next {
+        Display::Curvature { measure, limit } => {
+            hint(
+                ui,
+                &format!(
+                    "{body}, painted by how its surfaces bend: negative where they bulge \
+                     out, positive in a hollow; a saddle's Gaussian curvature is negative."
+                ),
+            );
+            row(ui, "Curvature", |ui| {
+                let options: Vec<(Measure, &str)> =
+                    Measure::ALL.iter().map(|m| (*m, m.label())).collect();
+                select_field(ui, "surface_curvature_measure", measure, &options, FIELD)
+            });
+            let mut auto = *limit <= 0.0;
+            if check_row(ui, &mut auto, "Colour range from the body").changed() {
+                *limit = if auto {
+                    0.0
+                } else {
+                    range.map_or(0.1, |(lo, hi)| lo.abs().max(hi.abs()).max(1e-6))
+                };
+            }
+            if !auto {
+                let mut value = *limit as f32;
+                if row(ui, "Colours reach", |ui| {
+                    QtyField::new(&mut value)
+                        .unit(measure.unit())
+                        .range(1e-6..=1e3)
+                        .show(ui)
+                }) {
+                    *limit = f64::from(value);
+                }
+            }
+            ui.add_space(SPACE_1);
+            ui.horizontal(|ui| {
+                for (color, text) in [
+                    (palette.analysis_low, "−"),
+                    (palette.analysis_mid, "0"),
+                    (palette.analysis_high, "+"),
+                ] {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(SPACE_3, SPACE_3), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, RADIUS_SM, color32(color));
+                    ui.label(RichText::new(text).font(ui_kit::mono(FONT_XS)).color(TEXT2));
+                }
+            });
+            if let Some((low, high)) = range {
+                hint(
+                    ui,
+                    &format!(
+                        "From {low:.4} to {high:.4} {} over the body.",
+                        measure.unit()
+                    ),
+                );
+            } else {
+                hint(ui, "The kernel read no curvature of the body.");
+            }
+        }
+        Display::Zebra { stripes, axis } => {
+            hint(
+                ui,
+                &format!(
+                    "{body}, striped by the way its surfaces face. A stripe kinks where \
+                     faces meet at a crease (G0), bends sharply where they meet tangent \
+                     (G1), and runs on smoothly where they bend alike (G2)."
+                ),
+            );
+            let mut count = *stripes as f32;
+            if row(ui, "Stripes", |ui| {
+                QtyField::new(&mut count).range(1.0..=64.0).show(ui)
+            }) {
+                *stripes = count.round().clamp(1.0, 64.0) as u32;
+            }
+            row(ui, "Along", |ui| {
+                let options: Vec<(StripeAxis, &str)> =
+                    StripeAxis::ALL.iter().map(|a| (*a, a.label())).collect();
+                select_field(ui, "surface_zebra_axis", axis, &options, FIELD)
+            });
+        }
+    }
+    (next != display).then_some(next)
+}
+
+fn color32(c: [f32; 3]) -> egui::Color32 {
+    egui::Color32::from_rgb(
+        (c[0] * 255.0).round() as u8,
+        (c[1] * 255.0).round() as u8,
+        (c[2] * 255.0).round() as u8,
+    )
+}
+
 /// The Surface preferences page.
 pub fn settings(ui: &mut Ui, options: &mut Options, filter: &str) {
     pref_group(

@@ -1890,19 +1890,42 @@ pub struct RecognizedHole {
 /// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
 /// How two faces of a shape meet across an edge they share: a point
 /// halfway along it, in the shape's own frame, the largest gap between the
-/// edge and the faces, and the largest angle between the faces' normals
-/// along it (zero where they meet tangent).
+/// edge and the faces, the largest angle between the faces' normals along
+/// it (zero where they meet tangent), and the largest difference in how
+/// sharply they bend square to it (1/mm; zero where they meet curvature
+/// continuous, `None` where it could not be read).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EdgeContinuity {
     pub point: [f64; 3],
     pub gap: f64,
     pub angle_deg: f64,
+    #[serde(default)]
+    pub curvature: Option<f64>,
 }
+
+/// A face of a shape, named by a point inside it, and points on it, each
+/// with the normal its curvature is signed against.
+pub type FacePoints = ([f64; 3], Vec<([f64; 3], [f64; 3])>);
 
 pub trait KernelQueries: Send + Sync {
     /// Every edge two faces of `brep` share, with how they meet there.
     fn continuity(&self, _brep: &[u8]) -> KernelResult<Vec<EdgeContinuity>> {
         Err(KernelError::Unsupported("continuity".into()))
+    }
+
+    /// The principal curvatures of `brep`'s faces at points on them. Each
+    /// entry names a face by a point inside it (the face nearest that
+    /// point) and lists points on it, each with the normal it is signed
+    /// against, in the shape's own frame; the answer gives, per point, the
+    /// largest and the smallest normal curvature (1/mm): negative where the
+    /// face bulges toward that normal, positive where it hollows away.
+    /// `None` where the surface has no normal (a pole, an apex).
+    fn curvature(
+        &self,
+        _brep: &[u8],
+        _faces: &[FacePoints],
+    ) -> KernelResult<Vec<Vec<Option<[f64; 2]>>>> {
+        Err(KernelError::Unsupported("curvature".into()))
     }
 
     /// The edges bounding the face of `brep` nearest `near`: a point on

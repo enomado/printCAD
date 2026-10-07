@@ -32,8 +32,8 @@ Create sketch starts a sketch in the selected surface body (or a new
 one); finishing it comes back to Surface with the sketch selected, ready
 for a tool. The tools that build from curves stay dim until a sketch is
 selected in the tree or edges are picked; Sew and Mirror until a surface
-body with a shape is selected, and Check continuity until any body with a
-shape is. A tool takes what is selected when it is clicked; in its task,
+body with a shape is selected, and Check continuity, the curvature map
+and zebra stripes until any body with a shape is. A tool takes what is selected when it is clicked; in its task,
 "Add the selection" takes what is selected now, and the cross by a row
 takes it out.
 
@@ -70,11 +70,28 @@ given.
 ## Checking how faces meet
 
 Check continuity measures every edge where two faces of the selected body
-meet, a surface body or a solid: the gap between them, and the angle of
-the crease (none where they meet tangent). Each edge is labelled in the
-view: G1 for a tangent join, the crease angle, or the gap where the faces
-are apart; the task lists them from the sharpest crease down. Close puts
-the labels away.
+meet, a surface body or a solid: the gap between them, the angle of the
+crease (none where they meet tangent), and how far apart their curvatures
+are square to the edge. Each edge is labelled in the view: G2 where the
+faces meet tangent and bend alike, G1 for a tangent join whose curvature
+jumps (a flat wall running into a round), the crease angle, or the gap
+where the faces are apart; the task lists them from the sharpest crease
+down. Close puts the labels away.
+
+The curvature map paints the selected body by how sharply its surfaces
+bend, read from the exact surfaces at every point of its mesh: the
+Gaussian curvature (positive on a dome or in a bowl, negative on a
+saddle, nothing on a plane or on what unrolls flat, such as a cylinder),
+the mean, or the largest or smallest. Values are negative where a surface
+bulges out and positive in a hollow; the colours run from the low end
+through green at none to the high end, reaching their ends at the range
+the task sets, by default the size most of the body stays within.
+
+Zebra stripes paint the body with bands of the way its surfaces face,
+turned about X, Y or Z. Across a crease the stripes break; across a
+tangent join they run on but bend sharply; across a curvature continuous
+join they run on smoothly. The task sets the number of stripes and their
+axis. Either display stays until its task closes.
 
 ## When a step fails
 
@@ -100,7 +117,9 @@ command's notes and a working example are in the scripting reference.
 `pc.surface.set{feature = id, length = 8}` changes a step after it is
 made, its curves too (`sketches`); `pc.surface.check{body = id}` returns
 how the body's faces meet at each shared edge (`point`, `gap`,
-`angle_deg`) and labels them in the view; `pc.sketch.new{body = id}`
+`angle_deg`, `curvature`, `join`) and labels them in the view;
+`pc.surface.curvature{body = id, measure = "mean"}` paints the curvature
+map and returns its range, `pc.surface.zebra{body = id}` the stripes; `pc.sketch.new{body = id}`
 starts a sketch in a surface body, as Create sketch does.
 
 ```lua
