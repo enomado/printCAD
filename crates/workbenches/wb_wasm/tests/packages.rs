@@ -16,6 +16,9 @@ fn guests() -> &'static Path {
     BUILT.get_or_init(|| {
         let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk");
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        // Its own target folder, whatever CARGO_TARGET_DIR the tests run
+        // with, so the components are where they are read from.
+        let target = sdk.join("target");
         let status = std::process::Command::new(cargo)
             .current_dir(&sdk)
             .args([
@@ -30,6 +33,8 @@ fn guests() -> &'static Path {
                 "-p",
                 "probe",
             ])
+            .arg("--target-dir")
+            .arg(&target)
             .env_remove("RUSTFLAGS")
             .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .status()
@@ -38,7 +43,7 @@ fn guests() -> &'static Path {
             status.success(),
             "the SDK's packages build for wasm32-wasip2"
         );
-        sdk.join("target/wasm32-wasip2/release")
+        target.join("wasm32-wasip2/release")
     })
 }
 
