@@ -294,6 +294,12 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
                 List,
                 "In place of `sketches`: each {Sketch = id}",
             ),
+            (
+                "guides",
+                List,
+                "Curves the surface follows between the sections, each {Sketch = id} or \
+                 {Edge = {point, direction}}, crossing every section once",
+            ),
         ],
         "surface.sweep" => &[
             (
@@ -305,6 +311,12 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
                 "path",
                 List,
                 "In place of `sketches`: the path, each {Sketch = id}",
+            ),
+            (
+                "second_rail",
+                List,
+                "A second rail, each {Sketch = id}: the profile runs from the path to it and \
+                 rides both",
             ),
         ],
         "surface.offset" => &[
@@ -353,6 +365,25 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
                 "The edges to round, each {point, direction}, as pc.doc.edges lists an edge",
             ),
             ("radius", Number, "mm (2)"),
+        ],
+        "surface.fillet_faces" => &[
+            (
+                "first",
+                Any,
+                "A face of the body, {point, normal} as pc.doc.faces lists a face",
+            ),
+            ("second", Any, "Another face of the body, the same way"),
+            ("radius", Number, "mm (2)"),
+            (
+                "flip_first",
+                Bool,
+                "Roll the round on the first face's other side",
+            ),
+            (
+                "flip_second",
+                Bool,
+                "Roll the round on the second face's other side",
+            ),
         ],
         "surface.thicken" => &[
             (
@@ -524,6 +555,13 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                  runs on from the last back to the first. Sections may differ: a square to a \
                  circle gives a face per side.",
             )
+            .note(
+                "`guides` shape the surface between the sections: each crosses every section \
+                 once, all in the same order, and the sections' ends or middles alike. A \
+                 guided loft is one face through sections of one curve each; it does not \
+                 close (\"a loft that follows guides does not close\"), and a guide missing a \
+                 section fails at rebuild.",
+            )
             .see_also("surface.ruled")
             .example(
                 "A bulge through three circles",
@@ -539,6 +577,26 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 assert(#pc.doc.faces{body = body} == 1)
                 local m = pc.doc.measure{body = body}
                 assert(math.abs(m.max[1] - 8) < 1e-3 and math.abs(m.max[3] - 20) < 1e-6)
+
+                -- Two lines, bowed between them by two arched guides.
+                local function edge(z)
+                  local s = pc.sketch.new{body = body, plane = "XY", offset = z}
+                  pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+                  return s
+                end
+                local function guide(x)
+                  -- Through (0, 0), (3, 5) and (0, 10) on YZ: y, then z.
+                  local s = pc.sketch.new{body = body, plane = "YZ", offset = x}
+                  local r, a = 17 / 3, math.deg(math.atan(5, 8 / 3))
+                  pc.sketch.arc{sketch = s, x = 3 - r, y = 5, radius = r, start = -a, ["end"] = a}
+                  return {Sketch = s}
+                end
+                local bowed = pc.surface.loft{body = body, sketches = {edge(0), edge(10)},
+                  guides = {guide(0), guide(10)}}
+                assert(#pc.doc.rebuild() == 0)
+                local faces = pc.doc.faces{body = body}
+                assert(#faces == 2, "the bulge and the bowed sheet")
+                assert(math.abs(pc.doc.measure{body = body}.max[2] - 8) < 1e-3)
                 "#,
             ),
         "surface.sweep" => spec
@@ -546,6 +604,13 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 "`sketches` is the profile's sketch, then the path's. A closed path fails at \
                  rebuild (\"a sweep surface along a closed spine is not built\"), which is \
                  what a circle profile and its path given the other way round meet.",
+            )
+            .note(
+                "With `second_rail` the path is the first rail: the profile, an open chain, \
+                 runs from the path's start to the second rail's, and at every point along \
+                 them is turned and scaled so its ends ride the rails. Ends off the rails' \
+                 starts fail at rebuild (\"the profile's ends must sit on the rails' \
+                 starts\").",
             )
             .see_also("surface.loft")
             .example(
@@ -560,6 +625,21 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 local m = pc.doc.measure{body = pc.doc.feature{id = tube}.body}
                 assert(math.abs(m.area - 2 * math.pi * 2 * 20) < 1e-3, m.area)
                 assert(math.abs(m.max[3] - 20) < 1e-6)
+
+                -- An arch between two rails that spread from 10 apart to 14.
+                local arch = pc.sketch.new{plane = "XZ"}
+                pc.sketch.arc{sketch = arch, x = 5, y = 0, radius = 5, start = 0, ["end"] = 180}
+                local body = pc.doc.feature{id = arch}.body
+                local left = pc.sketch.new{body = body, plane = "XY"}
+                pc.sketch.line{sketch = left, x1 = 10, y1 = 0, x2 = 14, y2 = 20}
+                local right = pc.sketch.new{body = body, plane = "XY"}
+                pc.sketch.line{sketch = right, x1 = 0, y1 = 0, x2 = 0, y2 = 20}
+                pc.surface.sweep{body = body, sketches = {arch, left},
+                  second_rail = {{Sketch = right}}}
+                assert(#pc.doc.rebuild() == 0)
+                m = pc.doc.measure{body = body}
+                assert(math.abs(m.max[1] - 14) < 1e-2 and math.abs(m.max[3] - 7) < 2e-2,
+                  "wider and taller at the far end")
                 "#,
             ),
         "surface.offset" => spec
@@ -738,6 +818,44 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 assert(#pc.doc.faces{body = body} == 3, "two walls and the round")
                 local area = pc.doc.measure{body = body}.area
                 assert(math.abs(area - (100 - 4 * 5 + math.pi * 5)) < 1e-3, area)
+                "#,
+            ),
+        "surface.fillet_faces" => spec
+            .note(
+                "`first` and `second` are faces of the body as `pc.doc.faces` lists them, that \
+                 need share no edge: two separate surfaces. Each is cut back to where the \
+                 round touches it and the three are sewn into one sheet; `radius` is 2 mm \
+                 when left out.",
+            )
+            .note(
+                "The round rolls on the side each face's normal points to; `flip_first` or \
+                 `flip_second` rolls it on that face's other side. A side the ball cannot \
+                 reach both faces from fails at rebuild (\"rounding between the faces \
+                 failed\").",
+            )
+            .see_also("surface.fillet")
+            .see_also("doc.faces")
+            .example(
+                "Two walls of an L that stop short of the corner, rounded together",
+                r#"
+                local a = pc.sketch.new{plane = "XY"}
+                pc.sketch.line{sketch = a, x1 = 2, y1 = 0, x2 = 10, y2 = 0}
+                local body = pc.doc.feature{id = pc.surface.extrude{sketches = {a}, length = 5}}.body
+                local b = pc.sketch.new{body = body, plane = "XY"}
+                pc.sketch.line{sketch = b, x1 = 0, y1 = 10, x2 = 0, y2 = 2}
+                pc.surface.extrude{body = body, sketches = {b}, length = 5}
+                assert(#pc.doc.rebuild() == 0)
+                local first, second
+                for _, f in ipairs(pc.doc.faces{body = body}) do
+                  if math.abs(f.point[2]) < 1e-6 then first = f else second = f end
+                end
+                pc.surface.fillet_faces{body = body, first = first, second = second, radius = 3,
+                  flip_first = true, flip_second = true}
+                assert(#pc.doc.rebuild() == 0)
+                assert(#pc.doc.faces{body = body} == 3, "two walls and the round")
+                assert(#pc.surface.check{body = body} == 2, "one sheet")
+                local area = pc.doc.measure{body = body}.area
+                assert(math.abs(area - (2 * 7 * 5 + math.pi * 3 / 2 * 5)) < 1e-2, area)
                 "#,
             ),
         "surface.thicken" => spec

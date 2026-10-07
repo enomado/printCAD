@@ -1,6 +1,6 @@
 //! Surface steps: sheets made from curves and added to the body beside what
 //! is there, and the body's faces sewn, trimmed, split, extended, offset,
-//! thickened, rounded or mirrored.
+//! thickened, rounded (along an edge, or between two faces) or mirrored.
 //!
 //! A body built from surface steps holds a compound of its sheets (and of
 //! the solids sewing or thickening makes). Curves come from sketches (open
@@ -19,7 +19,7 @@ use ogeom::geom::{PlaneSurface, SurfaceGeometry};
 use ogeom::math::{Axis, Direction, Point, Transform, Vector};
 use ogeom::offset::{
     FillBoundary, PipeLaw, make_filling_n, make_loft_surface, make_ruled, make_sweep_surface,
-    make_thick_sheet, offset_sheet,
+    make_sweep_two_rails, make_thick_sheet, offset_sheet,
 };
 use ogeom::topo::{Model, Shape, ShapeType, explore_unique};
 
@@ -51,6 +51,12 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
                 continuity,
             } => extend(model, base, edges, *length, *continuity)?,
             SurfaceOp::Fillet { edges, radius } => fillet(model, base, edges, *radius)?,
+            SurfaceOp::FilletFaces {
+                first,
+                second,
+                radius,
+                flip,
+            } => fillet_between(model, base, first, second, *radius, *flip)?,
             _ => unreachable!("constructive steps are handled below"),
         };
         return Ok(Made { shape, sheet: None });
@@ -81,6 +87,12 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
                 .map_err(|e| format!("the ruled surface failed: {e}"))?
         }
         SurfaceOp::Loft { sections, closed } => loft(model, base, sections, *closed)?,
+        SurfaceOp::GuidedLoft { sections, guides } => guided_loft(model, base, sections, guides)?,
+        SurfaceOp::SweepTwoRails {
+            profile,
+            first_rail,
+            second_rail,
+        } => sweep_two_rails(model, base, profile, first_rail, second_rail)?,
         SurfaceOp::Sweep {
             profile,
             path,
@@ -363,6 +375,114 @@ fn loft(
     make_loft_surface(model, &shapes, closed, &[], false, tol())
         .map(|built| built.shape)
         .map_err(|e| format!("the loft failed: {e}"))
+}
+
+/// A surface through the sections that follows the guides, one face.
+fn guided_loft(
+    model: &mut Model,
+    base: Option<&Shape>,
+    sections: &[CurveSource],
+    guides: &[CurveSource],
+) -> Result<Shape, String> {
+    let sections = shapes_of(model, base, sections)?;
+    let guides = shapes_of(model, base, guides)?;
+    make_loft_surface(model, &sections, false, &guides, false, tol())
+        .map(|built| built.shape)
+        .map_err(|e| format!("the guided loft failed: {e}"))
+}
+
+/// The curves as one chain, end to end: a path, a rail or a profile.
+fn chain(
+    model: &mut Model,
+    base: Option<&Shape>,
+    curves: &[CurveSource],
+    what: &str,
+) -> Result<Shape, String> {
+    let edges = edges_of(model, base, curves)?;
+    if edges.len() == 1 {
+        return Ok(edges[0].clone());
+    }
+    let ordered = ogeom::algo::order_edges(model, &edges, tol())
+        .map_err(|e| format!("the {what} does not run end to end: {e}"))?;
+    make_wire(model, &ordered, tol())
+        .map(|built| built.shape)
+        .map_err(|e| format!("the {what} is not one chain: {e}"))
+}
+
+/// A profile swept between two rails, its ends riding them.
+fn sweep_two_rails(
+    model: &mut Model,
+    base: Option<&Shape>,
+    profile: &[CurveSource],
+    first_rail: &[CurveSource],
+    second_rail: &[CurveSource],
+) -> Result<Shape, String> {
+    let profile = chain(model, base, profile, "profile")?;
+    let first = chain(model, base, first_rail, "first rail")?;
+    let second = chain(model, base, second_rail, "second rail")?;
+    make_sweep_two_rails(model, &profile, &first, &second, tol())
+        .map(|built| built.shape)
+        .map_err(|e| format!("the two-rail sweep failed: {e}"))
+}
+
+/// A round of `radius` between two faces of the body that need share no
+/// edge, each cut back to where the round meets it: the two faces and the
+/// round are one sheet after it, sewn to what their sheets held besides.
+fn fillet_between(
+    model: &mut Model,
+    base: &Shape,
+    first: &FaceProbe,
+    second: &FaceProbe,
+    radius: f64,
+    flip: [bool; 2],
+) -> Result<Shape, String> {
+    let a = picked_face(model, base, first)?;
+    let b = picked_face(model, base, second)?;
+    if a.is_same(&b) {
+        return Err("pick two different faces to round between".into());
+    }
+    let side = |face: &Shape, flip: bool| if flip { face.reversed() } else { face.clone() };
+    let built = ogeom::fillet::fillet_faces(
+        model,
+        &side(&a, flip[0]),
+        &side(&b, flip[1]),
+        radius,
+        true,
+        tol(),
+    )
+    .map_err(|e| format!("rounding between the faces failed: {e}"))?;
+    crate::naming::record(&built.history);
+    let rounded = explore_unique(model, &built.shape, ShapeType::Face)
+        .map_err(|e| format!("reading the round's faces failed: {e}"))?;
+    // The sheets holding the two faces give up those faces; what is left of
+    // them is sewn to the rounded sheet.
+    let mut pieces = Vec::new();
+    let mut joined = rounded;
+    for sheet in sheets_of(model, base) {
+        let faces = explore_unique(model, &sheet, ShapeType::Face)
+            .map_err(|e| format!("reading a sheet's faces failed: {e}"))?;
+        if !faces.iter().any(|f| f.is_same(&a) || f.is_same(&b)) {
+            pieces.push(sheet);
+            continue;
+        }
+        joined.extend(
+            faces
+                .into_iter()
+                .filter(|f| !f.is_same(&a) && !f.is_same(&b)),
+        );
+    }
+    let sewn = sew(model, &joined, tol()).map_err(|e| format!("joining the round failed: {e}"))?;
+    crate::naming::record(&sewn.history);
+    pieces.extend(sewn.shells);
+    for piece in pieces_of(model, base) {
+        if !matches!(
+            model.kind_of(&piece),
+            Ok(ShapeType::Face | ShapeType::Shell | ShapeType::Compound)
+        ) {
+            pieces.push(piece);
+        }
+    }
+    one_or_compound(model, pieces)
 }
 
 /// Each profile curve swept along the path, turning about it as `frame`

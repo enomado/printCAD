@@ -1283,3 +1283,130 @@ fn curvature_is_read_at_points_on_the_faces() {
         );
     }
 }
+
+/// A loft between two straight sections that follows two arched guides:
+/// the sheet passes through the guides' crowns.
+#[test]
+fn a_loft_follows_its_guides() {
+    let section = |z: f64| sketch(xy(z), vec![line([0.0, 0.0], [10.0, 0.0])]);
+    // In a plane square to X at `x`: along Z, bulging toward +Y.
+    let guide = |x: f64| {
+        sketch(
+            plane([x, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+            vec![arc([0.0, 0.0], [5.0, 3.0], [10.0, 0.0])],
+        )
+    };
+    let result = build(vec![SurfaceOp::GuidedLoft {
+        sections: vec![section(0.0), section(10.0)],
+        guides: vec![guide(0.0), guide(10.0)],
+    }])
+    .unwrap();
+    assert_eq!(census(&result), (1, 0), "one face");
+    let (lo, hi) = bounds(&result);
+    assert!((hi[1] - 3.0).abs() < 1e-2, "through the crowns: {hi:?}");
+    assert!(
+        lo[1].abs() < 1e-2 && (hi[2] - 10.0).abs() < 1e-3,
+        "{lo:?} {hi:?}"
+    );
+}
+
+/// A guide that misses a section is refused by name.
+#[test]
+fn a_guide_that_misses_its_sections_is_refused() {
+    let section = |z: f64| sketch(xy(z), vec![line([0.0, 0.0], [10.0, 0.0])]);
+    let stray = sketch(
+        plane([0.0, 5.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+        vec![line([0.0, 0.0], [10.0, 0.0])],
+    );
+    let error = build(vec![SurfaceOp::GuidedLoft {
+        sections: vec![section(0.0), section(10.0)],
+        guides: vec![stray],
+    }])
+    .unwrap_err();
+    assert!(error.message.contains("guided loft"), "{error:?}");
+}
+
+/// An arch swept between two rails that spread apart: it widens with
+/// them, and stands taller as it does.
+#[test]
+fn a_profile_sweeps_between_two_rails() {
+    let arch = sketch(
+        plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        vec![arc([0.0, 0.0], [5.0, 3.0], [10.0, 0.0])],
+    );
+    let result = build(vec![SurfaceOp::SweepTwoRails {
+        profile: vec![arch],
+        first_rail: vec![line_3d([0.0, 0.0, 0.0], [0.0, 20.0, 0.0])],
+        second_rail: vec![line_3d([10.0, 0.0, 0.0], [14.0, 20.0, 0.0])],
+    }])
+    .unwrap();
+    assert_eq!(census(&result), (1, 0));
+    let (lo, hi) = bounds(&result);
+    assert!(
+        (hi[0] - 14.0).abs() < 1e-2 && (hi[1] - 20.0).abs() < 1e-3,
+        "{hi:?}"
+    );
+    assert!(
+        (hi[2] - 3.0 * 1.4).abs() < 2e-2,
+        "scaled with the width: {hi:?}"
+    );
+    assert!(lo[2].abs() < 1e-3);
+}
+
+/// Two walls of an L that stop short of its corner, separate sheets:
+/// the round between them meets each, cutting both back to where it
+/// touches, and the three are one sheet. Rolled on the faces' other sides
+/// (their normals face out of the L) the ball cannot reach both.
+#[test]
+fn a_round_joins_two_separate_walls() {
+    let ops = |flip| {
+        vec![
+            SurfaceOp::Extrude {
+                curves: vec![sketch(xy(0.0), vec![line([2.0, 0.0], [10.0, 0.0])])],
+                direction: [0.0, 0.0, 1.0],
+                length: 5.0,
+                symmetric: false,
+            },
+            SurfaceOp::Extrude {
+                curves: vec![sketch(xy(0.0), vec![line([0.0, 10.0], [0.0, 2.0])])],
+                direction: [0.0, 0.0, 1.0],
+                length: 5.0,
+                symmetric: false,
+            },
+            SurfaceOp::FilletFaces {
+                first: kernel_api::FaceProbe {
+                    point: [6.0, 0.0, 2.5],
+                    normal: [0.0; 3],
+                    name: 0,
+                },
+                second: kernel_api::FaceProbe {
+                    point: [0.0, 6.0, 2.5],
+                    normal: [0.0; 3],
+                    name: 0,
+                },
+                radius: 3.0,
+                flip,
+            },
+        ]
+    };
+    let result = build(ops([true, true])).unwrap();
+    assert_eq!(census(&result), (3, 0), "two walls and the round");
+    assert_eq!(shells(&result), 1, "one sheet");
+    let (lo, hi) = bounds(&result);
+    assert!(lo[0].abs() < 1e-3 && lo[1].abs() < 1e-3, "{lo:?}");
+    assert!((hi[0] - 10.0).abs() < 1e-3 && (hi[1] - 10.0).abs() < 1e-3);
+    let joins = {
+        use kernel_api::KernelQueries;
+        kernel_ogeom::QUERIES.continuity(&result.brep_blob).unwrap()
+    };
+    assert_eq!(joins.len(), 2, "{joins:?}");
+    assert!(
+        joins.iter().all(|j| j.angle_deg < 0.1),
+        "tangent: {joins:?}"
+    );
+    let error = build(ops([false, false])).unwrap_err();
+    assert!(
+        error.message.contains("rounding between the faces"),
+        "{error:?}"
+    );
+}

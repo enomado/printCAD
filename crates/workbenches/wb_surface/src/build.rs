@@ -229,7 +229,11 @@ pub fn op_of(
                 second: one(second, "second")?,
             }
         }
-        SurfaceFeature::Loft { sections, closed } => {
+        SurfaceFeature::Loft {
+            sections,
+            closed,
+            guides,
+        } => {
             let mut chains = Vec::with_capacity(sections.len());
             for section in sections {
                 let mut got = sources(document, body, std::slice::from_ref(section))?;
@@ -241,16 +245,39 @@ pub fn op_of(
                 }
                 chains.push(got.remove(0));
             }
-            SurfaceOp::Loft {
-                sections: chains,
-                closed: *closed,
+            if guides.is_empty() {
+                SurfaceOp::Loft {
+                    sections: chains,
+                    closed: *closed,
+                }
+            } else if *closed {
+                return Err("a loft that follows guides does not close; turn Closed off".into());
+            } else {
+                SurfaceOp::GuidedLoft {
+                    sections: chains,
+                    guides: curves(guides)?,
+                }
             }
         }
-        SurfaceFeature::Sweep { profile, path } => SurfaceOp::Sweep {
-            profile: curves(profile)?,
-            path: curves(path)?,
-            frame: Default::default(),
-        },
+        SurfaceFeature::Sweep {
+            profile,
+            path,
+            second_rail,
+        } => {
+            if second_rail.is_empty() {
+                SurfaceOp::Sweep {
+                    profile: curves(profile)?,
+                    path: curves(path)?,
+                    frame: Default::default(),
+                }
+            } else {
+                SurfaceOp::SweepTwoRails {
+                    profile: curves(profile)?,
+                    first_rail: curves(path)?,
+                    second_rail: curves(second_rail)?,
+                }
+            }
+        }
         SurfaceFeature::Offset { faces, distance } => SurfaceOp::Offset {
             faces: faces.iter().map(face_probe).collect(),
             distance: f64::from(*distance),
@@ -286,6 +313,18 @@ pub fn op_of(
         SurfaceFeature::Fillet { edges, radius } => SurfaceOp::Fillet {
             edges: edges.iter().map(edge_probe).collect(),
             radius: f64::from(*radius),
+        },
+        SurfaceFeature::FilletFaces {
+            first,
+            second,
+            radius,
+            flip_first,
+            flip_second,
+        } => SurfaceOp::FilletFaces {
+            first: face_probe(&first.ok_or("pick the first face")?),
+            second: face_probe(&second.ok_or("pick the second face")?),
+            radius: f64::from(*radius),
+            flip: [*flip_first, *flip_second],
         },
         SurfaceFeature::Thicken {
             thickness,

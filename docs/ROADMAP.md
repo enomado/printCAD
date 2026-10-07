@@ -28,8 +28,6 @@ Not yet filed:
 
 ## Surfaces
 
-- [ ] Fillets between two separate surfaces (`fillet_faces`, in ogeom
-  0.7.0), guide curves for lofts and two-rail sweeps (in ogeom 0.7.0).
 - [ ] Picked edges of other bodies as curves (the body's own only today).
 - [ ] A pick of a face's edges by clicking the face, as external geometry
   does in the sketcher.

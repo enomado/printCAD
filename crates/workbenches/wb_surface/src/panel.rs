@@ -97,17 +97,38 @@ pub fn editor(
             changed |= one_curve(ui, ctx, "First curve", first, &picked);
             changed |= one_curve(ui, ctx, "Second curve", second, &picked);
         }
-        SurfaceFeature::Loft { sections, closed } => {
+        SurfaceFeature::Loft {
+            sections,
+            closed,
+            guides,
+        } => {
             hint(
                 ui,
                 "One curve per section, in the order the surface passes them.",
             );
             changed |= curve_list(ui, ctx, "Sections", sections, &picked);
+            hint(
+                ui,
+                "Guides shape the surface between the sections: each crosses every \
+                 section once, in order. A guided loft is one face, through sections of \
+                 one curve each, and does not close.",
+            );
+            changed |= curve_list(ui, ctx, "Guides", guides, &picked);
             changed |= check_row(ui, closed, "Closed back to the first").changed();
         }
-        SurfaceFeature::Sweep { profile, path } => {
+        SurfaceFeature::Sweep {
+            profile,
+            path,
+            second_rail,
+        } => {
             changed |= curve_list(ui, ctx, "Profile", profile, &picked);
             changed |= curve_list(ui, ctx, "Path", path, &picked);
+            hint(
+                ui,
+                "With a second rail, the profile runs from the path's start to the \
+                 rail's and rides both, scaled to the width between them.",
+            );
+            changed |= curve_list(ui, ctx, "Second rail", second_rail, &picked);
         }
         SurfaceFeature::Offset { faces: f, distance } => {
             changed |= face_list(ui, "Faces", f, &faces);
@@ -148,6 +169,27 @@ pub fn editor(
         SurfaceFeature::Fillet { edges, radius } => {
             hint(ui, "Edges where two faces of the body's surfaces meet.");
             changed |= edge_list(ui, "Edges", edges, &picked);
+            changed |= length_row(ui, "Radius", radius);
+        }
+        SurfaceFeature::FilletFaces {
+            first,
+            second,
+            radius,
+            flip_first,
+            flip_second,
+        } => {
+            hint(
+                ui,
+                "Two faces that share no edge, such as two separate surfaces. The round \
+                 rolls on the side each face's normal points to; flip a face to roll it on \
+                 the other.",
+            );
+            changed |= one_face(ui, "First face", first, &faces);
+            changed |= check_row(ui, flip_first, "Round on its other side").changed();
+            // The second slot offers the face picked last.
+            let last: Vec<FacePick> = faces.iter().rev().copied().collect();
+            changed |= one_face(ui, "Second face", second, &last);
+            changed |= check_row(ui, flip_second, "Round on its other side").changed();
             changed |= length_row(ui, "Radius", radius);
         }
         SurfaceFeature::Thicken {
@@ -413,6 +455,17 @@ fn one_edge(ui: &mut Ui, title: &str, slot: &mut Option<EdgePick>, picked: &[Cur
         .collect();
     let before = items.clone();
     if list(ui, title, &mut items, &first, edge_name) {
+        *slot = items.last().copied();
+    }
+    items != before
+}
+
+/// A single face slot, filled from the first of `picked`.
+fn one_face(ui: &mut Ui, title: &str, slot: &mut Option<FacePick>, picked: &[FacePick]) -> bool {
+    let mut items: Vec<FacePick> = slot.iter().copied().collect();
+    let first: Vec<FacePick> = picked.iter().take(1).copied().collect();
+    let before = items.clone();
+    if list(ui, title, &mut items, &first, |_| "Face".to_string()) {
         *slot = items.last().copied();
     }
     items != before

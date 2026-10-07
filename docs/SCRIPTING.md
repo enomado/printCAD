@@ -4459,6 +4459,7 @@ assert(math.abs(area - 10 * math.sqrt(34)) < 1e-3, area)
 - `sketches` (list, optional): The sections, a sketch each, in order: two or more
 - `closed` (boolean, optional): Run on from the last section back to the first
 - `sections` (list, optional): In place of `sketches`: each {Sketch = id}
+- `guides` (list, optional): Curves the surface follows between the sections, each {Sketch = id} or {Edge = {point, direction}}, crossing every section once
 - Returns The new feature's id
 
 Notes:
@@ -4466,6 +4467,7 @@ Notes:
 - It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
 - An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
 - Two sections or more, a sketch each, passed through in order; `closed = true` runs on from the last back to the first. Sections may differ: a square to a circle gives a face per side.
+- `guides` shape the surface between the sections: each crosses every section once, all in the same order, and the sections' ends or middles alike. A guided loft is one face through sections of one curve each; it does not close ("a loft that follows guides does not close"), and a guide missing a section fails at rebuild.
 
 See also `pc.sketch.new`, `pc.surface.ruled`.
 
@@ -4483,6 +4485,26 @@ local body = pc.doc.feature{id = loft}.body
 assert(#pc.doc.faces{body = body} == 1)
 local m = pc.doc.measure{body = body}
 assert(math.abs(m.max[1] - 8) < 1e-3 and math.abs(m.max[3] - 20) < 1e-6)
+
+-- Two lines, bowed between them by two arched guides.
+local function edge(z)
+  local s = pc.sketch.new{body = body, plane = "XY", offset = z}
+  pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
+  return s
+end
+local function guide(x)
+  -- Through (0, 0), (3, 5) and (0, 10) on YZ: y, then z.
+  local s = pc.sketch.new{body = body, plane = "YZ", offset = x}
+  local r, a = 17 / 3, math.deg(math.atan(5, 8 / 3))
+  pc.sketch.arc{sketch = s, x = 3 - r, y = 5, radius = r, start = -a, ["end"] = a}
+  return {Sketch = s}
+end
+local bowed = pc.surface.loft{body = body, sketches = {edge(0), edge(10)},
+  guides = {guide(0), guide(10)}}
+assert(#pc.doc.rebuild() == 0)
+local faces = pc.doc.faces{body = body}
+assert(#faces == 2, "the bulge and the bowed sheet")
+assert(math.abs(pc.doc.measure{body = body}.max[2] - 8) < 1e-3)
 ```
 
 `pc.surface.sweep`: Sweep a profile along a path into a surface.
@@ -4492,6 +4514,7 @@ assert(math.abs(m.max[1] - 8) < 1e-3 and math.abs(m.max[3] - 20) < 1e-6)
 - `sketches` (list, optional): The profile's sketch, then the path's
 - `profile` (list, optional): In place of `sketches`: the profile, each {Sketch = id}
 - `path` (list, optional): In place of `sketches`: the path, each {Sketch = id}
+- `second_rail` (list, optional): A second rail, each {Sketch = id}: the profile runs from the path to it and rides both
 - Returns The new feature's id
 
 Notes:
@@ -4499,6 +4522,7 @@ Notes:
 - It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
 - An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
 - `sketches` is the profile's sketch, then the path's. A closed path fails at rebuild ("a sweep surface along a closed spine is not built"), which is what a circle profile and its path given the other way round meet.
+- With `second_rail` the path is the first rail: the profile, an open chain, runs from the path's start to the second rail's, and at every point along them is turned and scaled so its ends ride the rails. Ends off the rails' starts fail at rebuild ("the profile's ends must sit on the rails' starts").
 
 See also `pc.sketch.new`, `pc.surface.loft`.
 
@@ -4514,6 +4538,21 @@ assert(#pc.doc.rebuild() == 0)
 local m = pc.doc.measure{body = pc.doc.feature{id = tube}.body}
 assert(math.abs(m.area - 2 * math.pi * 2 * 20) < 1e-3, m.area)
 assert(math.abs(m.max[3] - 20) < 1e-6)
+
+-- An arch between two rails that spread from 10 apart to 14.
+local arch = pc.sketch.new{plane = "XZ"}
+pc.sketch.arc{sketch = arch, x = 5, y = 0, radius = 5, start = 0, ["end"] = 180}
+local body = pc.doc.feature{id = arch}.body
+local left = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.line{sketch = left, x1 = 10, y1 = 0, x2 = 14, y2 = 20}
+local right = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.line{sketch = right, x1 = 0, y1 = 0, x2 = 0, y2 = 20}
+pc.surface.sweep{body = body, sketches = {arch, left},
+  second_rail = {{Sketch = right}}}
+assert(#pc.doc.rebuild() == 0)
+m = pc.doc.measure{body = body}
+assert(math.abs(m.max[1] - 14) < 1e-2 and math.abs(m.max[3] - 7) < 2e-2,
+  "wider and taller at the far end")
 ```
 
 `pc.surface.offset`: Copy faces at a distance along their normals.
@@ -4722,6 +4761,48 @@ assert(#pc.doc.rebuild() == 0)
 assert(#pc.doc.faces{body = body} == 3, "two walls and the round")
 local area = pc.doc.measure{body = body}.area
 assert(math.abs(area - (100 - 4 * 5 + math.pi * 5)) < 1e-3, area)
+```
+
+`pc.surface.fillet_faces`: Round between two faces that share no edge.
+
+- `body` (id): The surface body it works on, or a feature in it
+- `name` (string, optional): Its name in the tree
+- `first` (any, optional): A face of the body, {point, normal} as pc.doc.faces lists a face
+- `second` (any, optional): Another face of the body, the same way
+- `radius` (number, optional): mm (2)
+- `flip_first` (boolean, optional): Roll the round on the first face's other side
+- `flip_second` (boolean, optional): Roll the round on the second face's other side
+- Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- `first` and `second` are faces of the body as `pc.doc.faces` lists them, that need share no edge: two separate surfaces. Each is cut back to where the round touches it and the three are sewn into one sheet; `radius` is 2 mm when left out.
+- The round rolls on the side each face's normal points to; `flip_first` or `flip_second` rolls it on that face's other side. A side the ball cannot reach both faces from fails at rebuild ("rounding between the faces failed").
+
+See also `pc.surface.fillet`, `pc.doc.faces`.
+
+Example: Two walls of an L that stop short of the corner, rounded together.
+
+```lua
+local a = pc.sketch.new{plane = "XY"}
+pc.sketch.line{sketch = a, x1 = 2, y1 = 0, x2 = 10, y2 = 0}
+local body = pc.doc.feature{id = pc.surface.extrude{sketches = {a}, length = 5}}.body
+local b = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.line{sketch = b, x1 = 0, y1 = 10, x2 = 0, y2 = 2}
+pc.surface.extrude{body = body, sketches = {b}, length = 5}
+assert(#pc.doc.rebuild() == 0)
+local first, second
+for _, f in ipairs(pc.doc.faces{body = body}) do
+  if math.abs(f.point[2]) < 1e-6 then first = f else second = f end
+end
+pc.surface.fillet_faces{body = body, first = first, second = second, radius = 3,
+  flip_first = true, flip_second = true}
+assert(#pc.doc.rebuild() == 0)
+assert(#pc.doc.faces{body = body} == 3, "two walls and the round")
+assert(#pc.surface.check{body = body} == 2, "one sheet")
+local area = pc.doc.measure{body = body}.area
+assert(math.abs(area - (2 * 7 * 5 + math.pi * 3 / 2 * 5)) < 1e-2, area)
 ```
 
 `pc.surface.thicken`: Thicken the body's surfaces into solids.

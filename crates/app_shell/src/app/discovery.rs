@@ -174,7 +174,7 @@ mod tests {
         ("cut a sketch into the body", &["design.pocket"]),
         ("revolve a profile", &["design.revolve", "surface.revolve"]),
         ("lathe", &["design.revolve", "surface.revolve"]),
-        ("sweep along a path", &["design.pipe"]),
+        ("sweep along a path", &["design.pipe", "surface.sweep"]),
         ("repeat in a circle", &["design.polar_pattern"]),
         ("repeat a feature along a line", &["design.linear_pattern"]),
         ("array elements in rows", &["sketch.array"]),

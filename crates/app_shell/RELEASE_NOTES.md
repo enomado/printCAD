@@ -8,6 +8,7 @@ version first.
 
 ### Surfaces
 - A curvature map (Gaussian, mean, largest or smallest) and zebra stripes paint a body with how its surfaces bend, and Check continuity tells curvature continuous joins (G2) from tangent ones.
+- Fillet between surfaces rounds between two faces that share no edge, lofts follow guide curves, and a sweep can ride two rails.
 
 ### Sketcher
 - An ellipse showing its foci drags through a circle: a minor radius pulled past the major makes it the major, the foci sliding through the centre onto the new axis.

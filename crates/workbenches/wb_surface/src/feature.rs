@@ -125,10 +125,18 @@ pub enum SurfaceFeature {
         sections: Vec<CurveRef>,
         #[serde(default)]
         closed: bool,
+        /// Curves the surface follows between the sections, each crossing
+        /// every section once.
+        #[serde(default)]
+        guides: Vec<CurveRef>,
     },
     Sweep {
         profile: Vec<CurveRef>,
         path: Vec<CurveRef>,
+        /// A second rail: the profile runs from the path to it and is
+        /// swept along both, scaled to the width between them.
+        #[serde(default)]
+        second_rail: Vec<CurveRef>,
     },
     Offset {
         faces: Vec<FacePick>,
@@ -161,6 +169,18 @@ pub enum SurfaceFeature {
     Fillet {
         edges: Vec<EdgePick>,
         radius: f32,
+    },
+    /// A round of `radius` between two faces of the body that need share
+    /// no edge, each cut back to where the round meets it. The ball rolls
+    /// on the side a face's normal points to, the other when flipped.
+    FilletFaces {
+        first: Option<FacePick>,
+        second: Option<FacePick>,
+        radius: f32,
+        #[serde(default)]
+        flip_first: bool,
+        #[serde(default)]
+        flip_second: bool,
     },
     Thicken {
         thickness: f32,
@@ -289,6 +309,13 @@ pub const KINDS: &[Kind] = &[
         waits: None,
     },
     Kind {
+        tool: "surface.fillet_faces",
+        label: "Fillet between surfaces",
+        summary: "Round between two faces that share no edge",
+        icon: "fillet",
+        waits: None,
+    },
+    Kind {
         tool: "surface.thicken",
         label: "Thicken",
         summary: "Thicken the body's surfaces into solids",
@@ -339,10 +366,12 @@ impl SurfaceFeature {
             "surface.loft" => SurfaceFeature::Loft {
                 sections: Vec::new(),
                 closed: false,
+                guides: Vec::new(),
             },
             "surface.sweep" => SurfaceFeature::Sweep {
                 profile: Vec::new(),
                 path: Vec::new(),
+                second_rail: Vec::new(),
             },
             "surface.offset" => SurfaceFeature::Offset {
                 faces: Vec::new(),
@@ -366,6 +395,13 @@ impl SurfaceFeature {
             "surface.fillet" => SurfaceFeature::Fillet {
                 edges: Vec::new(),
                 radius: 2.0,
+            },
+            "surface.fillet_faces" => SurfaceFeature::FilletFaces {
+                first: None,
+                second: None,
+                radius: 2.0,
+                flip_first: false,
+                flip_second: false,
             },
             "surface.thicken" => SurfaceFeature::Thicken {
                 thickness: 2.0,
@@ -400,6 +436,7 @@ impl SurfaceFeature {
             SurfaceFeature::Split { .. } => "surface.split",
             SurfaceFeature::Sew { .. } => "surface.sew",
             SurfaceFeature::Fillet { .. } => "surface.fillet",
+            SurfaceFeature::FilletFaces { .. } => "surface.fillet_faces",
             SurfaceFeature::Thicken { .. } => "surface.thicken",
             SurfaceFeature::Trim { .. } => "surface.trim",
             SurfaceFeature::Mirror { .. } => "surface.mirror",
@@ -422,13 +459,22 @@ impl SurfaceFeature {
             | SurfaceFeature::PlanarFill { curves }
             | SurfaceFeature::Split { curves, .. } => curves.clone(),
             SurfaceFeature::Fill { boundary, .. } => boundary.clone(),
-            SurfaceFeature::Loft { sections, .. } => sections.clone(),
+            SurfaceFeature::Loft {
+                sections, guides, ..
+            } => sections.iter().chain(guides).copied().collect(),
             SurfaceFeature::Ruled { first, second } => {
                 first.iter().chain(second).copied().collect()
             }
-            SurfaceFeature::Sweep { profile, path } => {
-                profile.iter().chain(path).copied().collect()
-            }
+            SurfaceFeature::Sweep {
+                profile,
+                path,
+                second_rail,
+            } => profile
+                .iter()
+                .chain(path)
+                .chain(second_rail)
+                .copied()
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -469,20 +515,31 @@ impl SurfaceFeature {
             | Self::PlanarFill { curves }
             | Self::Split { curves, .. } => curves.clear(),
             Self::Fill { boundary, .. } => boundary.clear(),
-            Self::Loft { sections, .. } => sections.clear(),
+            Self::Loft {
+                sections, guides, ..
+            } => {
+                sections.clear();
+                guides.clear();
+            }
             Self::Ruled { first, second } => {
                 *first = None;
                 *second = None;
             }
-            Self::Sweep { profile, path } => {
+            Self::Sweep {
+                profile,
+                path,
+                second_rail,
+            } => {
                 profile.clear();
                 path.clear();
+                second_rail.clear();
             }
             Self::Offset { .. }
             | Self::Extend { .. }
             | Self::Blend { .. }
             | Self::Sew { .. }
             | Self::Fillet { .. }
+            | Self::FilletFaces { .. }
             | Self::Thicken { .. }
             | Self::Trim { .. }
             | Self::Mirror { .. } => {}
@@ -506,7 +563,7 @@ impl SurfaceFeature {
             Self::Loft { sections, .. } => {
                 (sections.len() < 2).then_some("`sketches`: two sections or more, in order")
             }
-            Self::Sweep { profile, path } => (profile.is_empty() || path.is_empty())
+            Self::Sweep { profile, path, .. } => (profile.is_empty() || path.is_empty())
                 .then_some("`sketches`: the profile, then the path"),
             Self::Offset { faces, .. } => {
                 faces.is_empty().then_some("`faces`: the faces to offset")
@@ -518,6 +575,8 @@ impl SurfaceFeature {
                 .is_empty()
                 .then_some("`edges`: the edges to extend past"),
             Self::Fillet { edges, .. } => edges.is_empty().then_some("`edges`: the edges to round"),
+            Self::FilletFaces { first, second, .. } => (first.is_none() || second.is_none())
+                .then_some("`first` and `second`: the two faces to round between"),
             Self::Blend { first, second, .. } => (first.is_none() || second.is_none())
                 .then_some("`first` and `second`: the two edges to bridge"),
             Self::Sew { .. } | Self::Thicken { .. } | Self::Trim { .. } | Self::Mirror { .. } => {
@@ -533,6 +592,7 @@ impl SurfaceFeature {
             self,
             SurfaceFeature::Sew { .. }
                 | SurfaceFeature::Fillet { .. }
+                | SurfaceFeature::FilletFaces { .. }
                 | SurfaceFeature::Thicken { .. }
                 | SurfaceFeature::Trim { .. }
                 | SurfaceFeature::Mirror { .. }
@@ -587,6 +647,42 @@ mod tests {
         }
     }
 
+    /// A loft or sweep saved before guides and second rails reads with
+    /// none.
+    #[test]
+    fn an_older_loft_and_sweep_read_with_no_guides_or_rail() {
+        let id = FeatureId::new();
+        let loft = serde_json::json!({"Loft": {"sections": [{"Sketch": id}], "closed": false}});
+        assert!(matches!(
+            SurfaceFeature::from_json(&loft).unwrap(),
+            SurfaceFeature::Loft { guides, .. } if guides.is_empty()
+        ));
+        let sweep = serde_json::json!({"Sweep": {"profile": [], "path": []}});
+        assert!(matches!(
+            SurfaceFeature::from_json(&sweep).unwrap(),
+            SurfaceFeature::Sweep { second_rail, .. } if second_rail.is_empty()
+        ));
+    }
+
+    /// A guide and a second rail are curves the step reads, so their
+    /// sketches are what it depends on.
+    #[test]
+    fn guides_and_rails_are_read_curves() {
+        let (a, b, g) = (FeatureId::new(), FeatureId::new(), FeatureId::new());
+        let loft = SurfaceFeature::Loft {
+            sections: vec![CurveRef::Sketch(a), CurveRef::Sketch(b)],
+            closed: false,
+            guides: vec![CurveRef::Sketch(g)],
+        };
+        assert_eq!(loft.dependencies(), vec![a, b, g]);
+        let sweep = SurfaceFeature::Sweep {
+            profile: vec![CurveRef::Sketch(a)],
+            path: vec![CurveRef::Sketch(b)],
+            second_rail: vec![CurveRef::Sketch(g)],
+        };
+        assert_eq!(sweep.dependencies(), vec![a, b, g]);
+    }
+
     #[test]
     fn a_step_depends_on_the_sketches_it_reads_once_each() {
         let a = FeatureId::new();
@@ -598,6 +694,7 @@ mod tests {
                 CurveRef::Sketch(a),
             ],
             closed: false,
+            guides: Vec::new(),
         };
         assert_eq!(loft.dependencies(), vec![a, b]);
     }

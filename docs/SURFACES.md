@@ -46,8 +46,8 @@ takes it out.
 | Planar surface | The flat face closed loops bound, a loop inside another a hole; or the face picked edges closing a flat loop bound. |
 | Filling | The surface curves meeting end to end bound, three or more. A side picked on a surface meets that surface touching (G0), tangent (G1) or curvature continuous (G2); a sketch's curve is touched. |
 | Ruled surface | Straight lines between two curves, end to end, one face per pair of pieces. |
-| Lofted surface | A surface through section curves, one per sketch, in order; closed back to the first if asked. |
-| Swept surface | A profile moved along a path, straight or curved, turning with it. |
+| Lofted surface | A surface through section curves, one per sketch, in order; closed back to the first if asked. Guide curves, each crossing every section once, shape it between the sections. |
+| Swept surface | A profile moved along a path, straight or curved, turning with it. With a second rail, the profile runs from the path to the rail and rides both, scaled to the width between them. |
 | Offset surface | Picked faces copied at a distance along their normals. |
 | Blend surface | A surface bridging two picked edges, meeting each edge's face touching, tangent or curvature continuous. |
 
@@ -61,6 +61,7 @@ given.
 | --- | --- |
 | Sew | Joins the body's surfaces where their edges meet, or come within a gap you set. A shell that closes becomes a solid. |
 | Surface fillet | Rounds picked edges where two faces of a surface meet. |
+| Fillet between surfaces | Rounds between two picked faces that share no edge, such as two separate surfaces: each is cut back to where the round touches it, and the three become one sheet. The round rolls on the side each face's normal points to; flip a face to roll it on the other. |
 | Extend surface | Grows faces past picked edges: on their own surface (G2), straight on tangent (G1), or straight on (G0). |
 | Split surface | Cuts picked faces along curves: a sketch lands on the face as seen square to its plane, and must cross the face from edge to edge. |
 | Trim by plane | Keeps what of the body lies on one side of a plane. |
@@ -105,7 +106,7 @@ Every tool that builds has a command: `pc.surface.extrude`,
 `pc.surface.revolve`, `pc.surface.planar`, `pc.surface.fill`,
 `pc.surface.ruled`, `pc.surface.loft`, `pc.surface.sweep`,
 `pc.surface.offset`, `pc.surface.blend`, `pc.surface.sew`,
-`pc.surface.fillet`, `pc.surface.extend`, `pc.surface.split`,
+`pc.surface.fillet`, `pc.surface.fillet_faces`, `pc.surface.extend`, `pc.surface.split`,
 `pc.surface.trim`, `pc.surface.thicken` and `pc.surface.mirror`. They
 take `sketches` (a list, in order), `body` (a body, or any feature in it)
 and any field of the step by name; the steps that work on a body's

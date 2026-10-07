@@ -1445,6 +1445,20 @@ pub enum SurfaceOp {
         #[serde(default)]
         frame: PipeFrame,
     },
+    /// A surface through section curves in order that also follows guide
+    /// curves, each crossing every section once: one face.
+    GuidedLoft {
+        sections: Vec<CurveSource>,
+        guides: Vec<CurveSource>,
+    },
+    /// A profile running from the first rail's start to the second's,
+    /// swept along both: at each point along them it is turned and scaled
+    /// so its ends ride the rails.
+    SweepTwoRails {
+        profile: Vec<CurveSource>,
+        first_rail: Vec<CurveSource>,
+        second_rail: Vec<CurveSource>,
+    },
     /// Faces carried off along their normals by `distance`, as new faces.
     Offset {
         faces: Vec<FaceProbe>,
@@ -1480,6 +1494,17 @@ pub enum SurfaceOp {
     /// A round of `radius` along picked edges where two faces of a sheet
     /// meet.
     Fillet { edges: Vec<EdgeProbe>, radius: f64 },
+    /// A round of `radius` between two faces of the body that need share
+    /// no edge, such as two separate surfaces, each cut back to where it
+    /// meets the round. The ball rolls on the side each face's normal
+    /// points to, on the other where `flip` says so.
+    FilletFaces {
+        first: FaceProbe,
+        second: FaceProbe,
+        radius: f64,
+        #[serde(default)]
+        flip: [bool; 2],
+    },
     /// The body's sheets given `thickness` along their normals (both ways
     /// by half when `both_sides`): a solid.
     Thicken {
@@ -1502,6 +1527,7 @@ impl SurfaceOp {
             self,
             SurfaceOp::Sew { .. }
                 | SurfaceOp::Fillet { .. }
+                | SurfaceOp::FilletFaces { .. }
                 | SurfaceOp::Thicken { .. }
                 | SurfaceOp::TrimByPlane { .. }
                 | SurfaceOp::Mirror { .. }

@@ -714,7 +714,7 @@ mod panel_free {
                 *first = it.next();
                 *second = it.next();
             }
-            SurfaceFeature::Sweep { profile, path } => {
+            SurfaceFeature::Sweep { profile, path, .. } => {
                 let mut it = curves.iter().copied();
                 profile.extend(it.next());
                 path.extend(it);
@@ -734,6 +734,11 @@ mod panel_free {
                 *second = it.next();
             }
             SurfaceFeature::Fillet { edges: e, .. } => e.extend(edges()),
+            SurfaceFeature::FilletFaces { first, second, .. } => {
+                let mut it = faces.iter().copied();
+                *first = it.next();
+                *second = it.next();
+            }
             SurfaceFeature::Sew { .. }
             | SurfaceFeature::Thicken { .. }
             | SurfaceFeature::Trim { .. }
@@ -825,10 +830,15 @@ impl Workbench for SurfaceWorkbench {
         );
         for kind in KINDS {
             let category = match kind.tool {
-                "surface.sew" | "surface.fillet" | "surface.thicken" | "surface.trim"
-                | "surface.mirror" | "surface.offset" | "surface.extend" | "surface.split" => {
-                    "modify"
-                }
+                "surface.sew"
+                | "surface.fillet"
+                | "surface.fillet_faces"
+                | "surface.thicken"
+                | "surface.trim"
+                | "surface.mirror"
+                | "surface.offset"
+                | "surface.extend"
+                | "surface.split" => "modify",
                 _ => "create",
             };
             let mut tool =
@@ -1132,7 +1142,9 @@ impl Workbench for SurfaceWorkbench {
             SurfaceFeature::Thicken { .. } => {
                 vec![field("thickness", "Thickness", Dim::LENGTH, "thickness")]
             }
-            SurfaceFeature::Fillet { .. } => vec![field("radius", "Radius", Dim::LENGTH, "radius")],
+            SurfaceFeature::Fillet { .. } | SurfaceFeature::FilletFaces { .. } => {
+                vec![field("radius", "Radius", Dim::LENGTH, "radius")]
+            }
             SurfaceFeature::Sew { .. } => vec![field("gap", "Gap", Dim::LENGTH, "gap")],
             SurfaceFeature::Trim { .. } | SurfaceFeature::Mirror { .. } => {
                 vec![field("offset", "Offset", Dim::LENGTH, "offset")]
@@ -1270,6 +1282,29 @@ mod tests {
         assert_eq!(joins[0].0, [1.0, 0.0, 0.0], "placed where the body sits");
         bench.check = None;
         assert!(bench.task(&ctx).is_none());
+    }
+
+    /// Two faces picked fill a fillet between surfaces, first and second
+    /// in the order picked.
+    #[test]
+    fn two_picked_faces_go_to_a_fillet_between_them() {
+        let face = |x: f32| FacePick {
+            point: [x, 0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        };
+        let mut feature = SurfaceFeature::for_tool("surface.fillet_faces").unwrap();
+        assert!(feature.missing().is_some());
+        panel_free::take_selection(&mut feature, &[], &[face(1.0), face(2.0)]);
+        let SurfaceFeature::FilletFaces { first, second, .. } = &feature else {
+            panic!()
+        };
+        assert_eq!(
+            (first.unwrap().point[0], second.unwrap().point[0]),
+            (1.0, 2.0)
+        );
+        assert!(feature.missing().is_none());
+        assert!(feature.needs_body() && !feature.constructs());
     }
 
     #[test]
