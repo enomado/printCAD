@@ -419,13 +419,7 @@ END-ISO-10303-21;
 /// features.
 #[test]
 fn face_triangulations_stay_inside_their_boundaries() {
-    let sample =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/drive_frame_upper.step");
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
-    let imported = kernel
-        .import_step(&sample, &TessellationSettings::default())
-        .expect("import fixture");
+    let imported = crate::real_part();
 
     // The two parts' true extent: every real feature fits inside the body
     // bounds reported from the B-rep. A triangle escaping those bounds by
@@ -505,11 +499,7 @@ fn triangles_know_their_faces_and_a_curved_face_is_whole() {
     ids.dedup();
     assert_eq!(ids.len(), 6, "a box has six faces");
 
-    let sample =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/drive_frame_upper.step");
-    let imported = kernel
-        .import_step(&sample, &TessellationSettings::default())
-        .expect("import fixture");
+    let imported = crate::real_part();
     let mesh = &imported.bodies[0].mesh;
     assert_eq!(mesh.faces.len(), mesh.indices.len() / 3);
 

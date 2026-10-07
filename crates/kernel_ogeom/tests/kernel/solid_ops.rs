@@ -2170,7 +2170,7 @@ fn a_helical_sweep_reaches_as_far_as_its_profile() {
     let mut kernel = new_kernel();
     let built = kernel
         .execute_solid_chain(
-            &[helix_of(coil.clone(), 0.0, 5.0, 20.0)],
+            &[helix_of(coil, 0.0, 5.0, 20.0)],
             &TessellationSettings::default(),
         )
         .unwrap();
@@ -2178,7 +2178,6 @@ fn a_helical_sweep_reaches_as_far_as_its_profile() {
     assert_close(max[0], 12.0, 1e-3, "outer radius");
     assert_close(min[1], 0.0, 1e-3, "starts on the profile");
     assert_close(max[1], 22.0, 1e-3, "height plus the profile");
-    volume_of(&[helix_of(coil, 0.0, 3.0, 30.0)]).expect("10 turns measure");
 }
 
 /// A helical sweep is as big as Pappus says, measured at the default

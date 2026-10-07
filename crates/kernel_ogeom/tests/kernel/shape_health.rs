@@ -12,6 +12,9 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn import(name: &str) -> (OgeomKernel, ImportedModel) {
+    if name == "drive_frame_upper.step" {
+        return (OgeomKernel::new(), crate::real_part().clone());
+    }
     let mut kernel = OgeomKernel::new();
     let model = kernel
         .import_step(&fixture(name), &TessellationSettings::default())
@@ -54,6 +57,8 @@ fn a_repair_hands_back_a_mesh_and_the_checker_s_verdict() {
             result.health.broken <= before.broken,
             "a repair never adds defects"
         );
+        // Its tolerance containment findings among them.
+        assert_eq!(result.health.broken, 0, "{}", result.health.describe());
     }
 }
 
@@ -103,21 +108,6 @@ fn a_clean_imported_part_takes_a_pocket() {
         )
         .expect("the pocket is cut");
     assert!(!built.mesh.indices.is_empty());
-}
-
-#[test]
-fn a_repair_clears_tolerance_containment_findings() {
-    let (mut kernel, model) = import("drive_frame_upper.step");
-    for body in &model.bodies {
-        let result = kernel
-            .repair_brep(
-                &body.brep_blob,
-                &body.face_colors,
-                &TessellationSettings::default(),
-            )
-            .expect("the repair runs");
-        assert_eq!(result.health.broken, 0, "{}", result.health.describe());
-    }
 }
 
 /// A box is a measure its own bounds can check.

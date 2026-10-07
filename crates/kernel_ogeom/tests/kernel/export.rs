@@ -128,7 +128,7 @@ fn the_format_follows_the_file_name() {
 
 #[test]
 fn a_real_part_written_as_3mf_is_closed() {
-    let source = import(&fixture("drive_frame_upper.step"));
+    let source = crate::real_part();
     let bodies: Vec<ExportBody<'_>> = source
         .bodies
         .iter()
