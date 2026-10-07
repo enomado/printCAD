@@ -96,6 +96,37 @@ pub fn draw_screen_space_images(
     }
 }
 
+/// Draw filled polygons, beneath the lines: each a fan of triangles from
+/// its first point.
+pub fn draw_screen_space_polygons(
+    ctx: &Context,
+    viewport_rect: egui::Rect,
+    polygons: &[core_document::ScreenSpacePolygon],
+) {
+    if polygons.is_empty() {
+        return;
+    }
+    let ppp = ctx.pixels_per_point();
+    let painter = viewport_painter(ctx, viewport_rect, "screen_space_polygons");
+    for polygon in polygons {
+        let color = rgb(polygon.color, polygon.alpha);
+        let mut mesh = egui::Mesh::default();
+        for point in &polygon.points {
+            mesh.colored_vertex(
+                egui::pos2(
+                    viewport_rect.min.x + point[0] / ppp,
+                    viewport_rect.min.y + point[1] / ppp,
+                ),
+                color,
+            );
+        }
+        for i in 1..polygon.points.len().saturating_sub(1) as u32 {
+            mesh.add_triangle(0, i, i + 1);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    }
+}
+
 /// Draw constant-thickness lines in the viewport area.
 pub fn draw_screen_space_overlays(
     ctx: &Context,

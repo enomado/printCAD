@@ -243,8 +243,43 @@ fn a_body_its_joints_place_shows_its_place_without_fields() {
     let panel = widgets(&wb, &mut doc);
     assert!(field(&panel, "x").is_none());
     assert!(field(&panel, "home").is_none());
+    assert!(
+        field(&panel, "handles").is_none(),
+        "its handles do not show"
+    );
     assert!(words(&panel).contains("Placed by its joints"));
     assert!(words(&panel).contains("Position X: "));
+    draws(&mut wb, &mut doc);
+}
+
+/// The Move panel's choice switches the handles between moving and turning,
+/// recording nothing: it changes what the view shows, not the document.
+#[test]
+fn the_move_panel_switches_its_handles_between_moving_and_turning() {
+    let (mut doc, _, part) = scene();
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Move {
+            body: part,
+            placements: Vec::new(),
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    let selected =
+        |wb: &AssemblyWorkbench, doc: &mut Document| match field(&widgets(wb, doc), "handles") {
+            Some(Widget::Choice {
+                options, selected, ..
+            }) => (options.clone(), *selected),
+            other => panic!("{other:?}"),
+        };
+    assert_eq!(
+        selected(&wb, &mut doc),
+        (vec!["Move".into(), "Turn".into()], 0)
+    );
+    let before = doc.body_placement(part);
+    let (outcome, recorded) = send(&mut wb, &mut doc, choose("handles", 1));
+    assert!(outcome.is_none() && recorded.is_empty());
+    assert_eq!(selected(&wb, &mut doc).1, 1);
+    assert_eq!(doc.body_placement(part), before);
     draws(&mut wb, &mut doc);
 }
 

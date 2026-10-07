@@ -347,6 +347,7 @@ impl UiLayer {
             pick_filter,
             scene_bounds,
             screen_space_overlays,
+            screen_space_polygons,
             screen_space_images,
             screen_space_marks,
             screen_space_labels,
@@ -945,6 +946,11 @@ impl UiLayer {
                 viewport_rect_logical,
                 screen_space_images,
                 &mut self.image_textures,
+            );
+            overlays::draw_screen_space_polygons(
+                ui.ctx(),
+                viewport_rect_logical,
+                screen_space_polygons,
             );
             overlays::draw_screen_space_overlays(
                 ui.ctx(),
