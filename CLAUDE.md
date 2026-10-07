@@ -532,7 +532,13 @@ Export for printing walks it on the pocketed example. File › Send to
 slicer writes the visible bodies to `$TMPDIR/printcad/slicer/` in the
 format of `PrintingSettings::slicer_format` and runs
 `slicer_command` on it (`{file}` places the path, else it goes last;
-empty uses `xdg-open`). A save carries a
+empty uses `xdg-open`). File › Print layout (`app/print_layout.rs`, a
+task) lays each part on its largest face it stands on and packs the
+copies on the bed, plate after plate, without moving the bodies; the
+counts come from `Workbench::print_parts` (the Assembly's parts list),
+and export, the slicer and `doc.print_layout` take the layout. The
+parts list's print counts, volume and filament mass are in
+`docs/PRINTING.md`, with the Hole's nut trap. A save carries a
 CPU-rendered preview (`thumbnail.rs`, in the save worker) as the
 container's first entry, `thumbnail.png`, which
 `Document::read_thumbnail` reads without unpacking the rest; the recent
@@ -1049,7 +1055,7 @@ bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;
 `PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
 the way a click on its tree row would, so a capture shows the selection
-overlay; `PRINTCAD_BENCH_TASK=appearance|placement|history` opens that
+overlay; `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout` opens that
 application task on the first body; `PRINTCAD_BENCH_PREFS=<page label>`
 opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the
