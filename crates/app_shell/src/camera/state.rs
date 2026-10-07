@@ -8,6 +8,10 @@ use settings::{CameraSettings, ProjectionMode};
 use crate::camera::math::{axis_basis, control_horizontal_vec};
 
 pub const MAX_PITCH_RAD: f32 = 89.9_f32.to_radians();
+/// The corner a new or framed view looks from: turned 45° about the
+/// vertical, and above the scene looking down 35°.
+pub const CORNER_YAW_RAD: f32 = 45.0_f32.to_radians();
+pub const CORNER_PITCH_RAD: f32 = -35.0_f32.to_radians();
 
 /// Internal camera state; distances are in **world units (mm)** using `f64` for stability.
 #[derive(Debug, Clone)]
@@ -31,8 +35,8 @@ impl CadCameraState {
         let fd = (settings.min_focal_distance as f64).max(150.0);
         let h = settings.fov_degrees as f64 * std::f64::consts::PI / 180.0;
         let preset_axes = axes::AxisSystem::from(settings.axis_preset);
-        let yaw = 45.0_f32.to_radians();
-        let pitch = 35.0_f32.to_radians();
+        let yaw = CORNER_YAW_RAD;
+        let pitch = CORNER_PITCH_RAD;
         let orientation = orbit_basis_yaw_pitch(&preset_axes, yaw, pitch).normalize();
         let tmp = Self {
             eye: DVec3::ZERO,

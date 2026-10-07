@@ -146,6 +146,11 @@ pub(crate) struct DocumentSession {
     /// the document, and this keeps the whole solid to put back and the
     /// feature's tool drawn over it.
     pub previews: std::collections::HashMap<core_document::BodyId, BodyPreview>,
+    /// The view frames the opened document once the workspace's viewport
+    /// is laid out and its bodies have geometry, which a file's meshes
+    /// reach after the open; a press or a wheel turn in the view first
+    /// leaves the view as the user puts it.
+    pub fit_on_layout: bool,
     /// Bodies whose repair the kernel worker is running.
     pub repairs_in_flight: std::collections::HashSet<Uuid>,
     /// Bodies whose refine the kernel worker is running.
@@ -314,6 +319,7 @@ impl DocumentSession {
             links: Default::default(),
             preview_feature: None,
             previews: Default::default(),
+            fit_on_layout: false,
             physical: Default::default(),
             selected_edges: Vec::new(),
             earlier_faces: Vec::new(),

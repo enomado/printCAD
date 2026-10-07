@@ -974,6 +974,11 @@ impl PrintCadApp {
     /// Frame the camera around the imported geometry (or the default box).
     fn fit_view_to_scene(&mut self) {
         app_log::info("Fit View requested");
+        self.frame_scene();
+    }
+
+    /// [`Self::fit_view_to_scene`] without the log line.
+    pub(crate) fn frame_scene(&mut self) {
         if let Some(aabb) = document_imported_aabb(&self.session.document) {
             let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
             self.session.camera.reset_to_fit(

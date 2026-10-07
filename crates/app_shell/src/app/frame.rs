@@ -688,6 +688,16 @@ impl PrintCadApp {
         // Every tab takes its turn: a background tab's save completes, its
         // peers' edits land and its solids rebuild while another is on
         // screen.
+        // The workspace drawn last frame laid the viewport out: the opened
+        // document is framed in it once its bodies have geometry.
+        if self.session.fit_on_layout
+            && self.session.screen == crate::ui::Screen::Workspace
+            && document_imported_aabb(&self.session.document).is_some()
+        {
+            self.session.fit_on_layout = false;
+            self.frame_scene();
+            self.redraw_needed = true;
+        }
         self.drain_kernel_responses();
         self.for_each_tab(|app| {
             app.drain_document_saves();

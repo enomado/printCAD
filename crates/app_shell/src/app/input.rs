@@ -87,6 +87,18 @@ impl PrintCadApp {
             }
             _ => {}
         }
+        if self.cursor_in_viewport.is_some()
+            && matches!(
+                event,
+                WindowEvent::MouseWheel { .. }
+                    | WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        ..
+                    }
+            )
+        {
+            self.session.fit_on_layout = false;
+        }
         if matches!(
             event,
             WindowEvent::CursorMoved { .. }

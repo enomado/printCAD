@@ -214,8 +214,8 @@ pub fn fit_sphere(
 
     state.orientation = crate::camera::state::orientation_from_yaw_pitch(
         axes,
-        45.0_f32.to_radians(),
-        35.0_f32.to_radians(),
+        crate::camera::state::CORNER_YAW_RAD,
+        crate::camera::state::CORNER_PITCH_RAD,
     );
     state.rederive_eye_from_focal(
         DVec3::new(focal.x as f64, focal.y as f64, focal.z as f64),

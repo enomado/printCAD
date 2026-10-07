@@ -786,3 +786,27 @@ fn a_swallowed_release_does_not_turn_a_pan_into_a_roll() {
     );
     assert_eq!(cam.orientation(), turn, "a pan, not a roll");
 }
+
+/// A new view looks down on the scene from above, at a corner, as a model
+/// is first seen: never up at it from below.
+#[test]
+fn a_new_view_looks_down_from_above() {
+    use super::CameraController;
+    let settings = CameraSettings::default();
+    let cam = CameraController::new(&settings, (800, 600));
+    let (forward, up) = cam.view_basis();
+    assert!(forward.z < -0.3, "looks down: forward {forward}");
+    assert!(up.z > 0.5, "Z stands up on screen: up {up}");
+}
+
+/// Framing the scene looks at it from the same corner, from above.
+#[test]
+fn a_framed_view_looks_down_from_above() {
+    use super::CameraController;
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.reset_to_fit(glam::Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+    let (forward, up) = cam.view_basis();
+    assert!(forward.z < -0.3, "looks down: forward {forward}");
+    assert!(up.z > 0.5, "Z stands up on screen: up {up}");
+}

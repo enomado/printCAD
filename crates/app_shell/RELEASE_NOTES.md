@@ -32,6 +32,7 @@ version first.
 - doc.faces and doc.edges give a moved body's faces and edges in its own frame too (frame = "body"), as features take them.
 
 ### View
+- A new view, and Fit all, look at the model from above at a corner; they looked up at it from below. An opened document is framed once its bodies have their shapes, and its saved preview is drawn from above too.
 - A mouse release a panel, a dialog or a bench took no longer leaves a drag held, which turned the next right-button pan into a roll.
 
 ## 0.6.0
