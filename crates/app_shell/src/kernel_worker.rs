@@ -25,6 +25,7 @@ use tracing::info;
 use uuid::Uuid;
 
 /// Job submitted from the UI thread to the kernel worker.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum KernelRequest {
     /// Read a model file and return its bodies, meshed as they are read,
     /// for the UI to register.
@@ -76,6 +77,7 @@ pub enum KernelRequest {
 }
 
 /// A body's build, for the build threads.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct BuildRequest {
     body_id: Uuid,
     ops: Vec<SolidOp>,
@@ -97,13 +99,14 @@ struct BuildRequest {
 /// decremented when one is drained, so spurious extras would skew the
 /// status bar's busy state and job count.
 /// Where a body's build stopped, and what it left out.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BuildFailure {
     pub feature: Option<Uuid>,
     pub error: String,
     pub unbuilt: Vec<Uuid>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum KernelResponse {
     StepImported {
         path: PathBuf,
@@ -276,38 +279,15 @@ pub struct KernelWorker {
     builds: Arc<BuildShared>,
     /// The serial the next build gets.
     next_serial: u64,
-    /// A browser page has one thread: the worker's requests and the builds
-    /// run here, one a frame, from [`Self::drain`].
+    /// A browser page: the worker's requests and the builds go to kernel
+    /// workers of the page's own (see `pool`).
     #[cfg(target_arch = "wasm32")]
-    local: Local,
-}
-
-/// The worker and a build thread's work, run where the page asks for it.
-#[cfg(target_arch = "wasm32")]
-struct Local {
-    kernel: OgeomKernel,
-    requests: Receiver<KernelRequest>,
-    builds: Arc<Mutex<Receiver<BuildRequest>>>,
-    responses: Sender<KernelResponse>,
-    activity: Arc<Mutex<Activity>>,
-    build_activity: Arc<Mutex<Activity>>,
+    pool: pool::Pool,
 }
 
 #[cfg(target_arch = "wasm32")]
-impl Local {
-    /// Run one waiting job, a request before a build. Whether one ran.
-    fn run_one(&mut self, shared: &BuildShared) -> bool {
-        let response = if let Ok(request) = self.requests.try_recv() {
-            serve_request(&mut self.kernel, &self.activity, request)
-        } else if let Ok(request) = lock(&self.builds).try_recv() {
-            serve_build(&mut self.kernel, shared, &self.build_activity, request)
-        } else {
-            return false;
-        };
-        let _ = self.responses.send(response);
-        true
-    }
-}
+#[path = "kernel_pool.rs"]
+mod pool;
 
 impl KernelWorker {
     /// Spawn the worker thread. The thread owns its own [`OgeomKernel`] for
@@ -341,7 +321,9 @@ impl KernelWorker {
             })
             .collect();
         #[cfg(target_arch = "wasm32")]
-        let build_activities = vec![Arc::new(Mutex::new(Activity::default()))];
+        let build_activities: Vec<_> = (0..pool::build_workers())
+            .map(|_| Arc::new(Mutex::new(Activity::default())))
+            .collect();
 
         #[cfg(not(target_arch = "wasm32"))]
         thread::Builder::new()
@@ -349,14 +331,13 @@ impl KernelWorker {
             .spawn(move || worker_loop(req_rx, resp_tx, worker_activity))
             .expect("failed to spawn kernel worker thread");
         #[cfg(target_arch = "wasm32")]
-        let local = Local {
-            kernel: OgeomKernel::new(),
-            requests: req_rx,
-            builds: build_rx,
-            responses: resp_tx,
-            activity: worker_activity,
-            build_activity: Arc::clone(&build_activities[0]),
-        };
+        let pool = pool::Pool::new(
+            req_rx,
+            build_rx,
+            resp_tx,
+            worker_activity,
+            &build_activities,
+        );
 
         Self {
             tx: req_tx,
@@ -368,7 +349,7 @@ impl KernelWorker {
             builds,
             next_serial: 0,
             #[cfg(target_arch = "wasm32")]
-            local,
+            pool,
         }
     }
 
@@ -547,10 +528,9 @@ impl KernelWorker {
     /// Pop every response that has arrived since the last call. The caller
     /// is responsible for any document/UI bookkeeping the responses imply.
     pub fn drain(&mut self) -> Vec<KernelResponse> {
-        // A browser page runs one job a frame, so the window still draws
-        // between them.
+        // A browser page hands waiting work to its free kernel workers.
         #[cfg(target_arch = "wasm32")]
-        self.local.run_one(&self.builds);
+        self.pool.pump(&self.builds);
         let mut out = Vec::new();
         while let Ok(resp) = self.rx.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
@@ -593,6 +573,12 @@ impl KernelWorker {
     /// past half of `usual` (the body's last build time), so that a stream
     /// of edits still shows a shape now and then. Whether it was dropped.
     pub fn drop_build(&self, serial: u64, usual: Option<Duration>) -> bool {
+        // A page's kernel worker cannot be reached while it builds.
+        #[cfg(target_arch = "wasm32")]
+        if self.pool.is_running(serial) {
+            let _ = usual;
+            return false;
+        }
         let mut book = lock(&self.builds.book);
         match book.running.get(&serial) {
             Some((since, canceller)) => {
@@ -612,6 +598,10 @@ impl KernelWorker {
     /// Ask the running jobs to stop. Each ends at the kernel's next
     /// checkpoint with a cancelled error; queued jobs are unaffected.
     pub fn cancel_current(&self) {
+        // A page's kernel workers hear nothing while they work: the busy
+        // ones are stopped and started afresh.
+        #[cfg(target_arch = "wasm32")]
+        self.pool.cancel_busy();
         for activity in self.activities() {
             if let Some(canceller) = lock(activity).canceller.as_ref() {
                 canceller.cancel();
@@ -653,6 +643,9 @@ fn watch_for(activity: &Arc<Mutex<Activity>>) -> Watch {
                 }
             }
         }
+        // In a page's kernel worker, the page's status bar hears of it.
+        #[cfg(target_arch = "wasm32")]
+        pool::stage_changed(&activity);
     })
 }
 

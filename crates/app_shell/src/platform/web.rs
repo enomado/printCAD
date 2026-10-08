@@ -136,3 +136,9 @@ pub(crate) fn pick(accept: &str, many: bool, done: impl FnOnce(Vec<PathBuf>) + '
     on_cancel.forget();
     input.click();
 }
+
+/// Hold `bytes` as the file at `path`: a picked file handed to a kernel
+/// worker, which has a store of its own.
+pub(crate) fn put(path: &Path, bytes: Vec<u8>) {
+    FILES.with(|files| files.borrow_mut().insert(path.to_path_buf(), bytes));
+}

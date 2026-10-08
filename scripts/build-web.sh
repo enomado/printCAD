@@ -27,6 +27,6 @@ mkdir -p "$out"
 [[ "${WASM_OPT:-1}" == 0 ]] || wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
   --enable-mutable-globals --enable-reference-types --enable-multivalue \
   "$out/printcad_bg.wasm" -o "$out/printcad_bg.wasm"
-cp "$root/web/index.html" "$out/"
+cp "$root/web/index.html" "$root/web/kernel-worker.js" "$out/"
 cp "$root/crates/app_shell/assets/icon/printcad.svg" "$out/"
 echo "built $out ($(du -h "$out/printcad_bg.wasm" | cut -f1) of WebAssembly)"

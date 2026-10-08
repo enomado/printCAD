@@ -192,6 +192,11 @@ fn loaded_settings(store: &SettingsStore) -> UserSettings {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use winit::platform::web::EventLoopExtWebSys;
+    // In a kernel worker the module only serves the kernel
+    // (`kernel_worker_main`); the app is the page's.
+    if web_sys::window().is_none() {
+        return;
+    }
     console_error_panic_hook::set_once();
     tracing_wasm::set_as_global_default_with_config(
         tracing_wasm::WASMLayerConfigBuilder::new()
