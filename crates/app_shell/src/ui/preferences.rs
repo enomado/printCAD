@@ -185,6 +185,9 @@ pub struct PreferencesInputs<'a> {
     pub gpus: &'a [String],
     pub gpu_name: Option<&'a str>,
     pub graphics_api: Option<&'a str>,
+    /// The connected 6-DoF mouse's name; `None` when there is none.
+    #[cfg(target_arch = "wasm32")]
+    pub nav_device: Option<&'a str>,
     /// How many buttons the connected 6-DoF mouse has, so the page offers a
     /// row per button it actually owns. Zero when none is connected.
     pub nav_buttons: u32,
@@ -2454,6 +2457,30 @@ fn input_page(
             );
         }
         1 => {
+            // A page reaches a device only once the user picks it in the
+            // browser's chooser.
+            #[cfg(target_arch = "wasm32")]
+            {
+                let mut choose = false;
+                let connected = inputs.nav_device.unwrap_or("None").to_string();
+                pref_group(
+                    ui,
+                    "Device",
+                    vec![
+                        PrefRow::new("Connected", |ui| {
+                            let button = ui_kit::widgets::small_secondary_button(ui, "Choose…");
+                            choose = button.clicked();
+                            ui.label(RichText::new(&connected).font(sans(FONT_SM)).color(TEXT1));
+                            false
+                        })
+                        .hint("The browser lists the pucks plugged in; one chosen is found again"),
+                    ],
+                    filter,
+                );
+                if choose {
+                    state.package_request = Some(super::UiCommand::ChooseNavDevice);
+                }
+            }
             let device = &mut draft.sixdof;
             pref_group(
                 ui,

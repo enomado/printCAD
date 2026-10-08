@@ -229,6 +229,9 @@ pub enum UiCommand {
     RunScriptFile(std::path::PathBuf),
     /// Ask for a workbench package archive and install it.
     InstallPackage,
+    /// Open the browser's chooser for a 6-DoF mouse (a page's WebHID).
+    #[cfg(target_arch = "wasm32")]
+    ChooseNavDevice,
     /// Remove the installed workbench package with this id.
     RemovePackage(String),
     /// Install the package a GitHub repository or release address

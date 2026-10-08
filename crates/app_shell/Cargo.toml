@@ -41,15 +41,15 @@ serde_json.workspace = true
 serde.workspace = true
 surface_texture = { path = "../surface_texture" }
 web-time.workspace = true
+sixdof = { workspace = true }
 
 # What a desktop build has and a browser page cannot: the document server,
-# the Lua console, the 6-DoF mouse, log files and native dialogs.
+# the Lua engine, log files and native dialogs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit.workspace = true
 doc_server = { path = "../doc_server" }
 scripting = { path = "../scripting" }
 tracing-appender.workspace = true
-sixdof = { workspace = true }
 rfd = "0.17"
 
 # A browser page: started from JavaScript, logging to its console, files

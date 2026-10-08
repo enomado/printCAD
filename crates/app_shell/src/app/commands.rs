@@ -304,6 +304,8 @@ impl PrintCadApp {
                 UiCommand::InstallPackage => {
                     self.start_file_dialog(crate::app::doc_io::FileDialogKind::InstallPackage)
                 }
+                #[cfg(target_arch = "wasm32")]
+                UiCommand::ChooseNavDevice => self.nav_device.choose_device(),
                 UiCommand::RemovePackage(id) => self.remove_package(&id),
                 UiCommand::InstallPackageFromGithub(text) => self.install_package_from_github(text),
                 UiCommand::CheckPackageUpdates => self.check_package_updates(),

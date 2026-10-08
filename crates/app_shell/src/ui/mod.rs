@@ -610,6 +610,8 @@ impl UiLayer {
                         gpus,
                         gpu_name,
                         graphics_api,
+                        #[cfg(target_arch = "wasm32")]
+                        nav_device: nav_device.as_deref(),
                         nav_buttons,
                         scripts,
                         packages,
@@ -928,6 +930,8 @@ impl UiLayer {
                     gpus,
                     gpu_name,
                     graphics_api,
+                    #[cfg(target_arch = "wasm32")]
+                    nav_device: nav_device.as_deref(),
                     nav_buttons,
                     scripts,
                     packages,

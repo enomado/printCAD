@@ -113,8 +113,11 @@ cargo fmt --all                   # CI enforces --check
   (`third_party/wasmoon`) in a worker of its own (`web/lua-worker.js`,
   `scripting/src/thread_web.rs`, `web_prelude.lua`: JSON both ways, a
   script awaiting each command's answer, Stop ending the worker and its
-  globals). Packages (`wb_wasm`'s `runtime`), agents' sockets, the document daemon,
-  the 6-DoF mouse and the command line are desktop-only. `egui-winit` is
+  globals). The 6-DoF mouse comes through WebHID (`app/sixdof/web.rs`:
+  devices granted before open at start, Preferences › Input › 6-DoF mouse
+  opens the browser's chooser, each report decoded by
+  `sixdof::hid::Decoder`). Packages (`wb_wasm`'s `runtime`), agents'
+  sockets, the document daemon and the command line are desktop-only. `egui-winit` is
   patched (`third_party/egui-winit/PATCHED.md`) until a release builds for
   the browser.
 - The website (GitHub Pages) is `site/` (a hand-written landing page,
