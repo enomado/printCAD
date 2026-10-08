@@ -1,13 +1,17 @@
-mod core;
-mod debug;
-mod mesh;
-mod picking;
-mod surface;
-mod util;
+//! printCAD's renderer, on wgpu: one renderer for Vulkan, Metal and
+//! DirectX 12, and a path to the web's WebGPU. The app hands it a
+//! [`FrameSubmission`] each frame through [`RenderBackend`] and gets pixels:
+//! the shaded scene, its edges and overlays, GPU picking with an
+//! asynchronous readback, a picture of the scene on request, and egui on
+//! top.
 
+mod core;
+mod mesh;
+mod readback;
+
+pub use egui_wgpu::wgpu;
 pub use mesh::{DrawStats, GpuLight, LightingData};
 
-use ash::vk;
 use egui::{ClippedPrimitive, TexturesDelta};
 use kernel_api::TriMesh;
 use std::fmt;
@@ -19,31 +23,6 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 use core::RendererCore;
 
-const MAX_FRAMES_IN_FLIGHT: usize = 2;
-const VALIDATION_LAYER: &str = "VK_LAYER_KHRONOS_validation";
-const MESH_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mesh.vert.spv"));
-const MESH_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mesh.frag.spv"));
-const EDGE_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/edge.vert.spv"));
-const EDGE_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/edge.frag.spv"));
-const PICK_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pick.vert.spv"));
-const PICK_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pick.frag.spv"));
-
-fn map_egui_err(err: egui_ash_renderer::RendererError) -> RenderError {
-    RenderError::Initialization(format!("egui renderer error: {err}"))
-}
-
-fn is_srgb_format(format: vk::Format) -> bool {
-    matches!(
-        format,
-        vk::Format::B8G8R8A8_SRGB
-            | vk::Format::R8G8B8A8_SRGB
-            | vk::Format::A8B8G8R8_SRGB_PACK32
-            | vk::Format::BC1_RGBA_SRGB_BLOCK
-            | vk::Format::BC2_SRGB_BLOCK
-            | vk::Format::BC3_SRGB_BLOCK
-    )
-}
-
 fn identity_matrix() -> [[f32; 4]; 4] {
     [
         [1.0, 0.0, 0.0, 0.0],
@@ -53,72 +32,24 @@ fn identity_matrix() -> [[f32; 4]; 4] {
     ]
 }
 
-fn msaa_samples_to_vk(samples: u8) -> vk::SampleCountFlags {
-    match samples {
-        1 => vk::SampleCountFlags::TYPE_1,
-        2 => vk::SampleCountFlags::TYPE_2,
-        4 => vk::SampleCountFlags::TYPE_4,
-        8 => vk::SampleCountFlags::TYPE_8,
-        _ => vk::SampleCountFlags::TYPE_4,
-    }
-}
-
-fn find_supported_format(
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-    candidates: &[vk::Format],
-    tiling: vk::ImageTiling,
-    features: vk::FormatFeatureFlags,
-) -> Option<vk::Format> {
-    for &format in candidates {
-        let props =
-            unsafe { instance.get_physical_device_format_properties(physical_device, format) };
-        let supported = match tiling {
-            vk::ImageTiling::LINEAR => props.linear_tiling_features.contains(features),
-            vk::ImageTiling::OPTIMAL => props.optimal_tiling_features.contains(features),
-            _ => false,
-        };
-        if supported {
-            return Some(format);
-        }
-    }
-    None
-}
-
-fn find_depth_format(
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-) -> Option<vk::Format> {
-    find_supported_format(
-        instance,
-        physical_device,
-        &[
-            vk::Format::D32_SFLOAT,
-            vk::Format::D32_SFLOAT_S8_UINT,
-            vk::Format::D24_UNORM_S8_UINT,
-        ],
-        vk::ImageTiling::OPTIMAL,
-        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
-    )
-}
-
-fn get_max_usable_sample_count(
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-) -> vk::SampleCountFlags {
-    let props = unsafe { instance.get_physical_device_properties(physical_device) };
-    let counts =
-        props.limits.framebuffer_color_sample_counts & props.limits.framebuffer_depth_sample_counts;
-
-    if counts.contains(vk::SampleCountFlags::TYPE_8) {
-        vk::SampleCountFlags::TYPE_8
-    } else if counts.contains(vk::SampleCountFlags::TYPE_4) {
-        vk::SampleCountFlags::TYPE_4
-    } else if counts.contains(vk::SampleCountFlags::TYPE_2) {
-        vk::SampleCountFlags::TYPE_2
-    } else {
-        vk::SampleCountFlags::TYPE_1
-    }
+/// The world point drawn at window pixel `(screen_x, screen_y)` at `depth`.
+///
+/// Window coordinates span the whole window; `viewport` is where the 3D view
+/// sits in it. The camera's `view_proj` maps to a framebuffer whose Y runs
+/// down, so NDC runs Y-down here too: the top of the viewport is NDC -1.
+pub(crate) fn unproject(
+    screen_x: f32,
+    screen_y: f32,
+    depth: f32,
+    viewport: &ViewportRect,
+    view_proj: [[f32; 4]; 4],
+) -> [f32; 3] {
+    let ndc_x = ((screen_x - viewport.x as f32) / viewport.width as f32) * 2.0 - 1.0;
+    let ndc_y = ((screen_y - viewport.y as f32) / viewport.height as f32) * 2.0 - 1.0;
+    let inverse = glam::Mat4::from_cols_array_2d(&view_proj).inverse();
+    let world = inverse * glam::Vec4::new(ndc_x, ndc_y, depth, 1.0);
+    let world = world / world.w;
+    [world.x, world.y, world.z]
 }
 
 /// The depths the pick pass drew in a small window around the cursor, and
@@ -152,7 +83,7 @@ impl DepthWindow {
         if depth >= 1.0 {
             return None;
         }
-        Some(picking::PickRenderer::unproject(
+        Some(unproject(
             x as f32 + 0.5,
             y as f32 + 0.5,
             depth,
@@ -186,21 +117,22 @@ pub trait RenderBackend {
     fn initialize(&mut self, window: &Window) -> Result<(), RenderError>;
     /// Draws the frame. The egui texture deltas are taken out of the
     /// submission here and held until a frame actually applies them, so a
-    /// frame skipped for an out-of-date swapchain loses no upload.
+    /// frame skipped for an out-of-date surface loses no upload.
     fn render(&mut self, frame: &mut FrameSubmission) -> Result<(), RenderError>;
     fn resize(&mut self, new_size: PhysicalSize<u32>);
     /// Most recent GPU pick readback. Picks are requested via
-    /// `VulkanRenderer::request_pick` and resolved during `render` once the
-    /// frame that recorded them is fence-waited, so the result trails the
-    /// request by `MAX_FRAMES_IN_FLIGHT` frames.
+    /// [`Renderer::request_pick`] and resolved during `render` once the
+    /// frame that recorded them is done, so the result trails the request
+    /// by a frame or two.
     fn latest_pick_result(&self) -> PickResult;
 }
 
 /// Basic configuration knobs for the renderer.
 #[derive(Debug, Clone)]
 pub struct RenderSettings {
+    /// The graphics API's validation, where it has one.
     pub prefer_validation_layers: bool,
-    /// Preferred GPU name substring; None = automatic first suitable device
+    /// Preferred GPU name substring; None = automatic choice
     pub preferred_gpu: Option<String>,
     /// MSAA sample count (1, 2, 4, or 8)
     pub msaa_samples: u8,
@@ -210,9 +142,10 @@ impl Default for RenderSettings {
     fn default() -> Self {
         Self {
             // Validation is a development tool: on in debug builds, off in
-            // release, where it taxes every frame and every teardown check.
-            // PRINTCAD_VULKAN_VALIDATION=1 turns it on for a release run.
+            // release, where it taxes every frame. PRINTCAD_GPU_VALIDATION=1
+            // (PRINTCAD_VULKAN_VALIDATION=1 is read too) turns it on.
             prefer_validation_layers: cfg!(debug_assertions)
+                || std::env::var_os("PRINTCAD_GPU_VALIDATION").is_some()
                 || std::env::var_os("PRINTCAD_VULKAN_VALIDATION").is_some(),
             preferred_gpu: None,
             msaa_samples: 4,
@@ -361,19 +294,20 @@ impl fmt::Debug for EguiSubmission {
     }
 }
 
-/// Vulkan-backed renderer that owns the full GPU stack.
-pub struct VulkanRenderer {
+/// The renderer: owns the GPU, the window's surface and everything drawn.
+pub struct Renderer {
     settings: RenderSettings,
     core: Option<RendererCore>,
-    pending_extent: Option<vk::Extent2D>,
+    /// A size the surface must take before the next frame.
+    pending_size: Option<(u32, u32)>,
 }
 
-impl VulkanRenderer {
+impl Renderer {
     pub fn new(settings: RenderSettings) -> Self {
         Self {
             settings,
             core: None,
-            pending_extent: None,
+            pending_size: None,
         }
     }
 
@@ -385,53 +319,54 @@ impl VulkanRenderer {
         self.core.as_ref().map(|c| c.available_gpus())
     }
 
-    fn ensure_swapchain(&mut self) -> Result<(), RenderError> {
+    fn apply_pending_size(&mut self) -> Result<(), RenderError> {
         let core = self.core.as_mut().ok_or(RenderError::NotReady)?;
-        if let Some(extent) = self.pending_extent {
-            if extent.width == 0 || extent.height == 0 {
+        if let Some((width, height)) = self.pending_size {
+            if width == 0 || height == 0 {
                 // Wayland can report zero-sized surfaces when minimized.
                 return Ok(());
             }
-            core.recreate_swapchain(extent)?;
-            self.pending_extent = None;
+            core.resize((width, height));
+            self.pending_size = None;
         }
         Ok(())
     }
 }
 
-impl RenderBackend for VulkanRenderer {
+impl RenderBackend for Renderer {
     fn initialize(&mut self, window: &Window) -> Result<(), RenderError> {
         if self.core.is_some() {
             return Ok(());
         }
-
-        let extent = to_extent(window.inner_size()).ok_or(RenderError::SurfaceTooSmall)?;
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return Err(RenderError::SurfaceTooSmall);
+        }
         info!(
-            "Initializing Vulkan renderer (validation_layers={})",
+            "Initializing the wgpu renderer (validation={})",
             self.settings.prefer_validation_layers
         );
-        let core = RendererCore::new(window, extent, self.settings.clone())?;
+        let core = RendererCore::new(window, (size.width, size.height), self.settings.clone())?;
         self.core = Some(core);
         Ok(())
     }
 
     fn render(&mut self, frame: &mut FrameSubmission) -> Result<(), RenderError> {
         if let Some(ui) = &frame.egui {
-            let texture_ops = ui.textures_delta.set.len() + ui.textures_delta.free.len();
             debug!(
                 "egui output: {} primitives, {} texture ops",
                 ui.primitives.len(),
-                texture_ops
+                ui.textures_delta.set.len() + ui.textures_delta.free.len()
             );
         }
-        self.ensure_swapchain()?;
+        self.apply_pending_size()?;
         let core = self.core.as_mut().ok_or(RenderError::NotReady)?;
         if let Some(ui) = frame.egui.as_mut() {
             core.take_textures(std::mem::take(&mut ui.textures_delta));
         }
         match core.draw_frame(frame) {
             Err(RenderError::SwapchainOutOfDate) => {
-                self.pending_extent = Some(core.swapchain_extent());
+                self.pending_size = Some(core.surface_size());
                 Ok(())
             }
             Err(RenderError::SurfaceTooSmall) => Ok(()),
@@ -440,7 +375,7 @@ impl RenderBackend for VulkanRenderer {
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        self.pending_extent = to_extent(new_size);
+        self.pending_size = Some((new_size.width, new_size.height));
     }
 
     fn latest_pick_result(&self) -> PickResult {
@@ -451,7 +386,7 @@ impl RenderBackend for VulkanRenderer {
     }
 }
 
-impl VulkanRenderer {
+impl Renderer {
     /// Whether the last frame re-rendered the 3D scene or reused the cached
     /// scene image under fresh UI.
     pub fn scene_redrawn_last_frame(&self) -> bool {
@@ -496,60 +431,85 @@ impl VulkanRenderer {
     }
 }
 
-fn to_extent(size: PhysicalSize<u32>) -> Option<vk::Extent2D> {
-    if size.width == 0 || size.height == 0 {
-        None
-    } else {
-        Some(vk::Extent2D {
-            width: size.width,
-            height: size.height,
-        })
-    }
-}
-
-fn create_shader_module(
-    device: &ash::Device,
-    bytes: &[u8],
-) -> Result<vk::ShaderModule, RenderError> {
-    // SPIR-V is a stream of 32-bit words, but our `bytes` may not be
-    // properly aligned for a direct bytemuck cast on all platforms.
-    // To avoid `cast_slice` panics, manually assemble a Vec<u32>.
-    if !bytes.len().is_multiple_of(4) {
-        return Err(RenderError::Initialization(
-            "SPIR-V bytecode length is not a multiple of 4".into(),
-        ));
-    }
-
-    let words: Vec<u32> = bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|chunk| u32::from_le_bytes(*chunk))
-        .collect();
-
-    let info = vk::ShaderModuleCreateInfo::default().code(&words);
-    let module = unsafe { device.create_shader_module(&info, None) }.map_err(RenderError::from)?;
-    Ok(module)
-}
-
 #[derive(Debug, Error)]
 pub enum RenderError {
     #[error("renderer has not been initialized")]
     NotReady,
-    #[error("surface is too small to create a swapchain")]
+    #[error("surface is too small to draw on")]
     SurfaceTooSmall,
-    #[error("swapchain out of date")]
+    #[error("surface out of date")]
     SwapchainOutOfDate,
     #[error("surface creation not supported: {0}")]
     UnsupportedPlatform(String),
     #[error("initialization failed: {0}")]
     Initialization(String),
-    #[error("vulkan error: {0:?}")]
-    Vk(vk::Result),
+    #[error("surface error: {0}")]
+    Surface(String),
 }
 
-impl From<vk::Result> for RenderError {
-    fn from(err: vk::Result) -> Self {
-        RenderError::Vk(err)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn validate(name: &str, source: &str) {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
+    }
+
+    #[test]
+    fn the_shaders_parse_and_validate_for_every_backend() {
+        validate("scene.wgsl", include_str!("../shaders/scene.wgsl"));
+        validate("blit.wgsl", include_str!("../shaders/blit.wgsl"));
+    }
+
+    #[test]
+    fn a_point_unprojects_where_the_camera_put_it() {
+        let viewport = ViewportRect {
+            x: 100,
+            y: 50,
+            width: 200,
+            height: 100,
+        };
+        // A camera that scales x by 2, so the viewport spans x in -0.5..0.5.
+        let m = [
+            [2.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let p = unproject(300.0, 50.0, 0.5, &viewport, m);
+        assert!(
+            (p[0] - 0.5).abs() < 1e-6 && (p[1] + 1.0).abs() < 1e-6,
+            "{p:?}"
+        );
+        assert!((p[2] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_depth_window_answers_only_inside_itself() {
+        let window = DepthWindow {
+            x: 10,
+            y: 10,
+            width: 2,
+            height: 1,
+            depths: vec![0.5, 1.0],
+            view_proj: identity_matrix(),
+            viewport: ViewportRect {
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 20,
+            },
+        };
+        assert!(window.covers(11, 10) && !window.covers(12, 10));
+        assert!(window.world_at(10, 10).is_some());
+        assert!(window.world_at(11, 10).is_none(), "nothing drawn there");
+        assert!(window.world_at(9, 10).is_none());
     }
 }

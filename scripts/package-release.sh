@@ -3,7 +3,7 @@
 #
 #   scripts/package-release.sh linux   <version>        # built for the host
 #   scripts/package-release.sh windows <version>
-#   scripts/package-release.sh macos   <version> <MoltenVK dylib>
+#   scripts/package-release.sh macos   <version>
 #
 # Linux and Windows read target/release; macOS reads
 # target/{aarch64,x86_64}-apple-darwin/release and joins them into one
@@ -59,18 +59,15 @@ windows)
   ;;
 
 macos)
-  moltenvk="$3"
   name="printcad-$version-macos-universal"
   app="$stage/dmg/printCAD.app"
-  mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
   for program in printcad printcad-serverd; do
     lipo -create \
       "$root/target/aarch64-apple-darwin/release/$program" \
       "$root/target/x86_64-apple-darwin/release/$program" \
       -output "$app/Contents/MacOS/$program"
   done
-  # The renderer loads Vulkan from here when the system has none.
-  cp "$moltenvk" "$app/Contents/Frameworks/libMoltenVK.dylib"
   cp "$root/crates/app_shell/assets/icon/printcad.icns" "$app/Contents/Resources/"
   for doc in "${docs[@]}"; do cp "$root/$doc" "$app/Contents/Resources/"; done
   cat > "$app/Contents/Info.plist" <<EOF

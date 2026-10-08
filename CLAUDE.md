@@ -1,7 +1,7 @@
 # printCAD: agent notes
 
 Linux-native parametric CAD app aimed at FDM/SLA printing.
-Rust workspace + Vulkan (ash) + egui + the pure-Rust ogeom B-rep kernel
+Rust workspace + wgpu (Vulkan, Metal, DirectX 12) + egui + the pure-Rust ogeom B-rep kernel
 (crates.io, `Cargo.lock` holds the exact version).
 
 **Never name the tools or systems this project draws on** (FreeCAD, X11,
@@ -17,7 +17,7 @@ mention outside that section.)
 ## Commands
 
 ```bash
-cargo run -p app_shell            # launch the app (needs Vulkan + Wayland/X11)
+cargo run -p app_shell            # launch the app (needs a Vulkan, Metal or DX12 GPU)
 cargo run --release -p app_shell  # for real STEP files; see the profile note
 cargo test --workspace            # full suite (~1500 tests)
 node scripts/test-budget.mjs      # the same, timed against its budget (what CI runs)
@@ -84,7 +84,7 @@ cargo fmt --all                   # CI enforces --check
   app's version in `crates/app_shell/Cargo.toml`, its section in
   `RELEASE_NOTES.md`, and a tag `vX.Y.Z`: `.github/workflows/release.yml`
   builds Linux (Ubuntu 22.04, `.tar.gz`), Windows (`.zip`) and macOS (one
-  universal `.app` in a `.dmg`, carrying MoltenVK, ad-hoc signed) through
+  universal `.app` in a `.dmg`, ad-hoc signed) through
   `scripts/package-release.sh` and publishes them as a GitHub release.
   The Linux archive carries `install.sh` (`scripts/linux-install.sh`: a
   per-user install with its menu entry and icon). The application icon is
@@ -118,8 +118,9 @@ cargo fmt --all                   # CI enforces --check
   still ~1.4x slower than release, so use `--release` when timing anything.
 - `crates/kernel_ogeom/examples/import_bench.rs` prints the phase breakdown of
   an import; reference timings live in the import-performance memory.
-- Vulkan validation layers, when installed, are routed into `tracing`
-  (target `printcad.vulkan`). Keep the app validation-clean.
+- wgpu's validation errors are routed into `tracing` (target
+  `printcad.gpu`), with the graphics API's own validation under them where
+  it is installed. Keep the app validation-clean.
 
 ## Crate map / dataflow
 
@@ -408,13 +409,18 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   where each solve starts; `place_bodies` stores the new count
   (`counted_couplings`) with every solve, drag and sweep that crosses the
   wrap.
-- `render_vk`: data-only renderer (`FrameSubmission` in, pixels out). GPU
-  picking with async readback; per-body mesh cache keyed by (id, revision).
-  The Vulkan library is loaded at run time (`load_vulkan`; on macOS the
-  loader or MoltenVK, then a bundle's `Frameworks`), kept as the renderer's
-  last field so it outlives every call; surfaces come from `ash-window`,
-  and portability enumeration and the portability subset are turned on
-  where the driver offers them (Vulkan over Metal).
+- `render_wgpu`: data-only renderer (`FrameSubmission` in, pixels out) on
+  wgpu: Vulkan, Metal or DirectX 12, the first the platform offers
+  (`WGPU_BACKEND` picks one), the GPU chosen by `preferred_gpu` or for
+  performance. Shaders are WGSL (`shaders/`), validated by naga in its
+  tests. GPU picking with async readback (`readback.rs`: a buffer per pick
+  or picture, mapped once its frame is done); per-body mesh cache keyed by
+  (id, revision). Edges are instanced screen-space quads (`vs_edge`), any
+  width on any backend; the clipping plane discards per fragment. The pick
+  pass writes depth into a colour target as well, since a depth texture
+  cannot be copied in part. The window takes a plain format, as egui
+  blends for; the scene draws into an sRGB texture that the blit encodes
+  onto it.
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,
@@ -960,14 +966,12 @@ hacks, no silently degraded feature). Instead:
 ## Invariants: violate these and things break subtly
 
 - **`app/gfx.rs` field order IS the teardown contract** (struct fields drop in
-  *declaration* order): renderer before window. Do not reorder. Inside the
-  renderer the same rule bites: anything that frees device objects in its own
-  `Drop` (the egui renderer) must be `take()`n and dropped in
-  `RendererCore::drop` BEFORE `destroy_device`, or it runs on a dead device:
-  a hang or segfault at exit plus a wall of "leaked objects".
-- **Vulkan validation layers default to debug builds only**
-  (`RenderSettings::default`); `PRINTCAD_VULKAN_VALIDATION=1` enables them for
-  a release run. `PRINTCAD_EXIT_AFTER_MS` quits through the real exit path
+  *declaration* order): renderer before window. Do not reorder: the
+  surface is made from the window's raw handles (`create_surface_unsafe`)
+  and must go first.
+- **GPU validation defaults to debug builds only**
+  (`RenderSettings::default`); `PRINTCAD_GPU_VALIDATION=1` (or
+  `PRINTCAD_VULKAN_VALIDATION=1`) enables it for a release run. `PRINTCAD_EXIT_AFTER_MS` quits through the real exit path
   after a delay (keeps the loop awake) so teardown can be timed on a loaded
   document.
 - **UiLayer must never own state the host mutates.** `active_tool` and
@@ -1030,15 +1034,17 @@ hacks, no silently degraded feature). Instead:
   (`profile::loose_ends` names what was left out).
 - **Pocket/Groove cut AGAINST the sketch normal by default** (a face
   sketch's normal points out of the material, so the default digs in).
-- **NDC is Y-down**: the camera bakes the Vulkan Y flip into `view_proj`.
+- **NDC is Y-down**: the camera bakes a Y flip into `view_proj`, and the
+  renderer's vertex shaders flip it back to the GPU's Y-up clip space.
   Transform helpers live in `core_document::runtime` (ctx methods + free
   functions); mirror them, never re-derive with a different convention.
 - **Camera orientation is preset-relative** (`q·(−depth)=forward`,
   `q·vertical=up` in the active axis preset, default Z-up). Never build
   orientation quats against a hardcoded XYZ basis.
-- Renderer hot path has **no `queue_wait_idle`/`device_wait_idle`**: picking
-  uses per-in-flight staging slots resolved after the fence wait; buffer
-  destruction goes through the `MeshCache` retire queue. Keep it that way.
+- Renderer hot path **never waits on the GPU**: picks and pictures are
+  buffers mapped asynchronously and collected after a non-blocking poll at
+  the top of the next frames; wgpu keeps a replaced buffer alive until the
+  GPU is done with it. Keep it that way.
 - Serde compatibility: new fields on persisted types (features, sketch) take
   `#[serde(default)]` so old `.prtcad` files keep loading.
 - Persisted shape blobs (`brep/<uuid>.bin` in `.prtcad`, `SolidOp::Boolean`
@@ -1094,7 +1100,7 @@ same orbit before assuming the pass costs anything.
 
 **The 3D scene is cached between changes.** The scene pass resolves into a
 persistent scene image and runs only when `scene_fingerprint(frame)`
-(`render_vk/src/core.rs`) changes; every frame copies that image under the
+(`render_wgpu/src/core.rs`) changes; every frame copies that image under the
 UI pass. UI-only frames (hover, panels, typing) therefore cost ~2 ms on any
 model. **Completeness of the fingerprint is the contract**: anything the
 scene pass reads (camera, viewport, lighting, per-body id/revision/mesh
@@ -1195,7 +1201,7 @@ on the start page (`Screen::Start`); the recent list lives in
 - Solver/geometry math is unit-tested next to the code. Assert geometric
   properties (bounds, tangency, closure), not implementation details.
 - Before committing: fmt, clippy (zero warnings), full test suite, and a
-  short `cargo run` smoke check watching for `printcad.vulkan` output. For
+  short `cargo run` smoke check watching for `printcad.gpu` output. For
   UI work, a headless capture of the release build (`PRINTCAD_BENCH_SKETCH=pad
   PRINTCAD_EXIT_AFTER_MS=…`, `grim`, `ydotool` for keys) is the smoke
   check; verify on a small STEP, never the huge assembly files.

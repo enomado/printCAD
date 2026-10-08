@@ -20,7 +20,7 @@ scripting = { path = "../scripting" }
 agents = { path = "../agents" }
 base64.workspace = true
 core_document = { path = "../core_document", features = ["egui"] }
-render_vk = { path = "../render_vk" }
+render_wgpu = { path = "../render_wgpu" }
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true

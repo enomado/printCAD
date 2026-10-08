@@ -190,7 +190,7 @@ pub(crate) struct DocumentSession {
     pub shapes_failed: std::collections::HashMap<Uuid, Uuid>,
     /// The depths the pick pass drew around the cursor, and the camera it
     /// drew them with: which edges near the cursor are in view.
-    pub pick_depths: Option<render_vk::DepthWindow>,
+    pub pick_depths: Option<render_wgpu::DepthWindow>,
     /// The face under the cursor, when no edge takes the hover.
     pub hovered_face: Option<crate::app::input::FaceHover>,
     /// Each body with faces coloured on their own, as drawn: the mesh

@@ -43,7 +43,7 @@ pub use tab_bar::TabInfo;
 use core_document::WorkbenchId;
 use egui::Context;
 use egui_winit::{State, egui as egui_core};
-use render_vk::EguiSubmission;
+use render_wgpu::EguiSubmission;
 use settings::ProjectionMode;
 use winit::{event::WindowEvent, window::Window};
 

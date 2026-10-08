@@ -25,8 +25,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   TAG: ${{ inputs.tag || github.ref_name }}
-  # MoltenVK, carried in the macOS application: Vulkan over Metal.
-  MOLTENVK: v1.4.2
 
 jobs:
   version:
@@ -55,9 +53,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
-      # This release of Ubuntu packages no shader compiler, so shaderc builds
-      # from its sources (CMake and Python are on the runner); it is only
-      # used while building.
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p app_shell -p doc_server
@@ -91,10 +86,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
-      - name: Install the shader compiler
-        run: |
-          brew install shaderc
-          echo "SHADERC_LIB_DIR=$(brew --prefix shaderc)/lib" >> "$GITHUB_ENV"
       - run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -106,17 +97,7 @@ jobs:
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
             cargo build --release --target "$target" -p app_shell -p doc_server
           done
-      - name: Fetch MoltenVK
-        run: |
-          curl -fsSL -o moltenvk.tar \
-            "https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK/MoltenVK-macos.tar"
-          mkdir moltenvk
-          tar -xf moltenvk.tar -C moltenvk
-          { find moltenvk -name libMoltenVK.dylib -path '*dynamic*'
-            find moltenvk -name libMoltenVK.dylib; } | head -1 > moltenvk.path
-          cat moltenvk.path
-          test -s moltenvk.path
-      - run: scripts/package-release.sh macos ${{ needs.version.outputs.version }} "$(cat moltenvk.path)"
+      - run: scripts/package-release.sh macos ${{ needs.version.outputs.version }}
       - uses: actions/upload-artifact@v7
         with:
           name: macos

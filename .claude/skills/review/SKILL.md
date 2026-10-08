@@ -36,7 +36,7 @@ Sensitive paths always get `full`:
 
 - the document and its ops: `crates/core_document/src/{lib.rs,op.rs,history.rs,undo.rs,server.rs}`, persistence (`.prtcad` reading and writing);
 - the document server: `crates/doc_server/`;
-- teardown and the renderer core: `crates/app_shell/src/app/gfx.rs`, `crates/render_vk/src/core.rs`;
+- teardown and the renderer core: `crates/app_shell/src/app/gfx.rs`, `crates/render_wgpu/src/core.rs`;
 - the package sandbox and installs: `crates/workbenches/wb_wasm/src/{host,guest,jobs,package,remote,store}.rs`, `crates/app_shell/src/app/packages.rs`;
 - agents and scripts: `crates/agents/`, `crates/scripting/`, `crates/app_shell/src/app/{mcp,agent_context,scripts,chats}.rs`;
 - file readers on untrusted input: `crates/kernel_ogeom/src/{import,mesh,annotations}.rs`, the DXF, image and tar readers;

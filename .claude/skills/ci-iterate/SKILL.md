@@ -96,7 +96,7 @@ remain (the owner pushes, tags and approves).
    X, reached by Y"). Search sibling call sites for the same defect and
    fix all of them. A platform-only failure is read from the log, then
    reasoned from the code (`local_ipc`, path and process handling, the
-   Vulkan loader, line endings); there is no local reproduction.
+   graphics backend, line endings); there is no local reproduction.
 
 5. Flake suspected: measure before you believe it.
 

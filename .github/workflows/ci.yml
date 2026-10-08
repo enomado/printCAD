@@ -14,14 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        # glslc/libshaderc: render_vk's build.rs compiles GLSL via shaderc.
-        # Vulkan itself is loaded at run time, so nothing links it.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            glslc libshaderc-dev
-
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install
 
@@ -47,9 +39,7 @@ jobs:
         run: "! git grep -nE 'wb_design|wb_sketch|\"wb\\.(design|part|sketch)\"|core\\.datum' -- crates/app_shell/src ':!crates/app_shell/src/app/seam_lint.rs'"
 
   platforms:
-    # Windows and macOS: the same build, lints and tests as Linux. The shader
-    # compiler comes from Homebrew on macOS and is built from its sources on
-    # Windows (slow the first time, then cached).
+    # Windows and macOS: the same build, lints and tests as Linux.
     strategy:
       fail-fast: false
       matrix:
@@ -57,12 +47,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install the shader compiler (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install shaderc
-          echo "SHADERC_LIB_DIR=$(brew --prefix shaderc)/lib" >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install

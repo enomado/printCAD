@@ -1,6 +1,6 @@
 # printCAD
 
-Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust and Vulkan.
+Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust and wgpu.
 
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.98%2B-orange)
@@ -62,12 +62,11 @@ takes it away). The macOS and Windows builds are not signed yet, so the
 first launch needs right-click › Open on macOS, and "Run anyway" on
 Windows.
 
-To build it you need Rust 1.98 or later and a GPU with Vulkan drivers. On
-macOS Vulkan runs over Metal through MoltenVK (`brew install molten-vk`);
-the released app carries its own. The shaders are compiled with shaderc:
-`glslc`/`libshaderc` from your distribution on Linux, `brew install shaderc`
-on macOS (then set `SHADERC_LIB_DIR=$(brew --prefix shaderc)/lib`); on
-Windows it builds from source, which needs CMake and Python.
+To build it you need Rust 1.98 or later. It draws through wgpu: Vulkan on
+Linux, Metal on macOS, and DirectX 12 or Vulkan on Windows, so any GPU with
+current drivers for one of those runs it. Nothing else needs installing:
+the shaders are WGSL, compiled by wgpu as the app starts. `WGPU_BACKEND`
+(`vulkan`, `metal`, `dx12` or `gl`) picks one for a test.
 
 ```bash
 git clone https://github.com/gilbertorconde/printCAD.git
@@ -293,7 +292,7 @@ Preferences (Ctrl+,).
 | `doc_server` | The document server and its client |
 | `kernel_api` | The geometry interface: meshes, profiles, solid operations (on crates.io as `printcad-kernel-api`) |
 | `kernel_ogeom` | That interface implemented with ogeom |
-| `render_vk` | Vulkan renderer |
+| `render_wgpu` | The renderer (wgpu: Vulkan, Metal, DirectX 12) |
 | `settings` | User settings |
 | `ui_kit` | Colours, widgets, icons and fonts |
 | `surface_texture` | Patterns pressed into faces for printing |

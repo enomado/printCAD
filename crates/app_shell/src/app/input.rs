@@ -8,7 +8,7 @@ use winit::{
     window::WindowId,
 };
 
-use render_vk::RenderBackend;
+use render_wgpu::RenderBackend;
 use std::time::Instant;
 use uuid::Uuid;
 

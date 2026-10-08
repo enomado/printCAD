@@ -20,7 +20,7 @@ use core_document::{Document, DocumentService, WorkbenchId};
 use kernel_api::TessellationSettings;
 use kernel_worker::KernelWorker;
 use log_panel as app_log;
-use render_vk::{FrameSubmission, RenderBackend, RenderSettings, VulkanRenderer};
+use render_wgpu::{FrameSubmission, RenderBackend, RenderSettings, Renderer};
 use settings::{SettingsStore, UserSettings};
 use std::path::PathBuf;
 
@@ -339,7 +339,7 @@ struct PrintCadApp {
     /// tab opens again.
     closed_files: Vec<PathBuf>,
     /// A picture of the view that arrived from the renderer, to be saved.
-    picture: Option<render_vk::CapturedImage>,
+    picture: Option<render_wgpu::CapturedImage>,
     /// When the documents were last autosaved.
     autosaved_at: std::time::Instant,
     /// Each tab's document as last autosaved, by its mutation seq.
@@ -648,7 +648,7 @@ impl PrintCadApp {
             }
         };
 
-        let mut renderer = VulkanRenderer::new(self.settings.clone());
+        let mut renderer = Renderer::new(self.settings.clone());
         if let Err(err) = renderer.initialize(&window) {
             error!("failed to initialize renderer: {err}");
             event_loop.exit();

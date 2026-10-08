@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
-use render_vk::{
+use render_wgpu::{
     BodySubmission, GpuLight, HighlightState, LightingData, RenderBackend,
     ViewportRect as RenderViewportRect,
 };
