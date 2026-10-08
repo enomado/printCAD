@@ -1102,6 +1102,8 @@ impl PrintCadApp {
             self.clear_view_selection();
         }
         self.session.plane_session_open = editing;
+        let pixels_per_point = self.pixels_per_point();
+        self.session.camera.set_pixels_per_point(pixels_per_point);
         self.session.camera.set_orbit_lock(editing);
         self.session
             .camera

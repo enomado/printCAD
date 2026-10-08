@@ -295,6 +295,11 @@ impl UiLayer {
         self.swallowed_keys.push(key);
     }
 
+    /// Physical pixels per logical UI pixel, including the UI's zoom.
+    pub fn pixels_per_point(&self) -> f32 {
+        self.ctx.pixels_per_point()
+    }
+
     /// Drop keyboard focus (a click landed on the viewport, not a widget).
     pub fn release_focus(&self) {
         self.ctx.memory_mut(|m| {

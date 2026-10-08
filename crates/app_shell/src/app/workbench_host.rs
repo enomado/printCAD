@@ -49,6 +49,13 @@ pub(crate) enum HookSite {
 }
 
 impl PrintCadApp {
+    /// Physical pixels per logical UI pixel, with the UI's zoom applied.
+    pub(crate) fn pixels_per_point(&self) -> f32 {
+        self.gfx
+            .as_ref()
+            .map_or(1.0, |gfx| gfx.ui_layer.pixels_per_point())
+    }
+
     /// Close the current undo step, after working out the formulas and
     /// letting every bench follow values they moved, so an edit and what
     /// it moves are one step.

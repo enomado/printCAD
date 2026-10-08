@@ -1,6 +1,6 @@
 //! Zoom‑to‑cursor: keep the world point under the cursor stable after zoom (`docs/CAMERA.md`, Navigation).
 
-use glam::{DVec3, Vec2, Vec3, Vec4};
+use glam::{Vec2, Vec3, Vec4};
 use settings::{CameraSettings, ProjectionMode};
 
 use crate::camera::state::CadCameraState;
@@ -40,6 +40,7 @@ pub fn viewport_ray(
     Some((near_w, dir))
 }
 
+#[cfg(test)]
 pub fn intersect_focal_plane_world(
     state: &CadCameraState,
     axes: &axes::AxisSystem,
@@ -84,53 +85,38 @@ pub fn apply_zoom_wheels(
     if settings.invert_zoom {
         lines = -lines;
     }
-    let factor = settings.wheel_zoom_factor.powf(lines);
-    if !factor.is_finite() || factor <= 0.0 {
-        return;
-    }
-
     let cursor = if settings.zoom_to_cursor {
         viewport_cursor
     } else {
         None
     };
 
-    let w0 = cursor.and_then(|p| intersect_focal_plane_world(state, axes, p));
-
-    match state.projection {
-        ProjectionMode::Perspective => {
-            let forward = state.forward_world(axes);
-            if forward.length_squared() < 1e-12 {
-                return;
-            }
-            let forward = forward.normalize();
-            let fd0 = state.focal_distance;
-            let step = fd0 * (1.0 - factor as f64);
-
-            let lo = settings.min_focal_distance as f64;
-            let hi = settings.max_focal_distance as f64;
-            let fd_clamped = (fd0 - step).clamp(lo, hi);
-            let step_actual = fd0 - fd_clamped;
-
-            state.eye += DVec3::new(
-                forward.x as f64 * step_actual,
-                forward.y as f64 * step_actual,
-                forward.z as f64 * step_actual,
-            );
-            state.focal_distance = fd_clamped;
-        }
-        ProjectionMode::Orthographic => {
-            state.ortho_height = (state.ortho_height * factor as f64).max(1e-9);
-        }
-    }
-
-    if let (Some(p), Some(w_before)) = (cursor, w0) {
-        let w_after = intersect_focal_plane_world(state, axes, p);
-        if let Some(wa) = w_after {
-            let corr = w_before - wa;
-            state.eye += DVec3::new(corr.x as f64, corr.y as f64, corr.z as f64);
-        }
-    }
-
-    state.clip_dirty = true;
+    let log_factor = lines * settings.wheel_zoom_factor.ln();
+    let log_factor = match state.projection {
+        ProjectionMode::Perspective => log_factor.clamp(
+            (f64::from(settings.min_focal_distance) / state.focal_distance).ln() as f32,
+            (f64::from(settings.max_focal_distance) / state.focal_distance).ln() as f32,
+        ),
+        ProjectionMode::Orthographic => log_factor.clamp(
+            (1e-9 / state.ortho_height).ln() as f32,
+            (1e12 / state.ortho_height).ln() as f32,
+        ),
+    };
+    let origin = state.eye;
+    let mut camera = super::core::configured(state, axes, settings, origin);
+    // At the focal plane a cursor anchor has the same axial depth as the
+    // centre; the shared zoom therefore obeys the host's focal limits.
+    let anchor = cursor
+        .and_then(|point| camera.view().screen_ray(point))
+        .and_then(|ray| {
+            intersect_ray_plane(
+                ray.origin,
+                ray.direction,
+                camera.pivot(),
+                camera.pose().forward(),
+            )
+        })
+        .unwrap_or(camera.pivot());
+    camera.zoom_by(log_factor.exp(), anchor);
+    super::core::apply(state, axes, origin, camera);
 }
