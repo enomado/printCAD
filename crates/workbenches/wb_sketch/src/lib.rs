@@ -37,7 +37,8 @@ mod tools;
 mod walls;
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use core_document::{
     BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, KeyCode, MenuItem, MenuScope,

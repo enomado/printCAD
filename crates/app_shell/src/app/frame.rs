@@ -1,7 +1,8 @@
 //! Per-frame work: pacing, scene submission assembly, UI run, render, pick.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use glam::Vec3;
 use render_wgpu::{

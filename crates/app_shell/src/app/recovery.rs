@@ -32,7 +32,8 @@ pub(crate) struct Recoverable {
 
 /// Where copies go: the app's data folder, else the temp folder.
 fn dir() -> PathBuf {
-    settings::recovery_dir().unwrap_or_else(|| std::env::temp_dir().join("printcad-recovery"))
+    settings::recovery_dir()
+        .unwrap_or_else(|| crate::platform::temp_dir().join("printcad-recovery"))
 }
 
 fn copy_of(tab: Uuid) -> PathBuf {
@@ -44,8 +45,8 @@ fn note_of(copy: &Path) -> PathBuf {
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
@@ -67,7 +68,7 @@ pub(crate) fn keep(
     let note = Note {
         name: name.to_string(),
         file: file.map(Path::to_path_buf),
-        pid: std::process::id(),
+        pid: crate::platform::process_id(),
         saved_ms: now_ms(),
     };
     std::fs::write(note_of(&copy), serde_json::to_vec_pretty(&note)?)
@@ -86,7 +87,7 @@ pub(crate) fn remove(copy: &Path) {
 
 /// Whether process `pid` still runs, as far as the system says.
 fn running(pid: u32) -> bool {
-    if pid == std::process::id() {
+    if pid == crate::platform::process_id() {
         return true;
     }
     #[cfg(target_os = "linux")]

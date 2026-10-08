@@ -25,6 +25,7 @@ pub(crate) mod recovery;
 pub(crate) mod scripts;
 #[cfg(test)]
 mod seam_lint;
+pub(crate) mod server;
 pub(crate) mod session;
 pub(crate) mod sixdof;
 pub(crate) mod step_import;

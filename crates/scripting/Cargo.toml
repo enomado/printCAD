@@ -9,6 +9,12 @@ description = "Lua scripts run against the application's commands."
 [dependencies]
 agents = { path = "../agents" }
 core_document = { path = "../core_document" }
-mlua.workspace = true
+mlua = { workspace = true, optional = true }
 serde_json.workspace = true
 uuid.workspace = true
+
+[features]
+# The Lua engine (C, built from source). Without it the runner takes single
+# commands only, as a browser build needs.
+default = ["lua"]
+lua = ["dep:mlua"]

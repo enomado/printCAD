@@ -85,7 +85,7 @@ pub(crate) struct RendererCore {
 }
 
 impl RendererCore {
-    pub(crate) fn new(
+    pub(crate) async fn new(
         window: &Window,
         display: OwnedDisplayHandle,
         (width, height): (u32, u32),
@@ -98,15 +98,25 @@ impl RendererCore {
         }
         .with_env();
         // WGPU_BACKEND picks one (vulkan, metal, dx12, gl) for a test.
+        #[cfg(not(target_arch = "wasm32"))]
         let backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY);
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // A browser: WebGPU where it gives an adapter, WebGL2 where not.
+        #[cfg(target_arch = "wasm32")]
+        let backends = wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL;
+        let descriptor = wgpu::InstanceDescriptor {
             backends,
             flags,
             memory_budget_thresholds: Default::default(),
             backend_options: Default::default(),
             // Only the GL backend reads it, and needs it to draw on the window.
             display: Some(Box::new(display)),
-        });
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let instance = wgpu::Instance::new(descriptor);
+        // A browser that names WebGPU but cannot give an adapter for it
+        // (no GPU, or turned off) falls back to WebGL2 here.
+        #[cfg(target_arch = "wasm32")]
+        let instance = wgpu::util::new_instance_with_webgpu_detection(descriptor).await;
         // SAFETY: the handles are the live window's, which outlives the
         // surface: the app drops the renderer before the window (`Gfx`).
         let surface = unsafe {
@@ -116,11 +126,12 @@ impl RendererCore {
         }
         .map_err(|e| RenderError::UnsupportedPlatform(e.to_string()))?;
 
-        let adapters: Vec<wgpu::Adapter> =
-            pollster::block_on(instance.enumerate_adapters(backends))
-                .into_iter()
-                .filter(|a| a.is_surface_supported(&surface))
-                .collect();
+        let adapters: Vec<wgpu::Adapter> = instance
+            .enumerate_adapters(backends)
+            .await
+            .into_iter()
+            .filter(|a| a.is_surface_supported(&surface))
+            .collect();
         let available_gpus: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
         let preferred = settings.preferred_gpu.as_deref().and_then(|pref| {
             let pref = pref.to_lowercase();
@@ -134,13 +145,15 @@ impl RendererCore {
         });
         let adapter = match preferred {
             Some(adapter) => adapter,
-            None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: Some(&surface),
-                apply_limit_buckets: false,
-            }))
-            .map_err(|e| RenderError::Initialization(format!("no suitable GPU: {e}")))?,
+            None => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    force_fallback_adapter: false,
+                    compatible_surface: Some(&surface),
+                    apply_limit_buckets: false,
+                })
+                .await
+                .map_err(|e| RenderError::Initialization(format!("no suitable GPU: {e}")))?,
         };
         let info = adapter.get_info();
         info!(
@@ -163,17 +176,19 @@ impl RendererCore {
             wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             adapter_formats,
         );
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("printCAD"),
-            required_features,
-            // Everything the GPU offers: a big assembly's buffers outgrow
-            // the portable defaults.
-            required_limits: adapter.limits(),
-            experimental_features: Default::default(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: Default::default(),
-        }))
-        .map_err(|e| RenderError::Initialization(format!("GPU device: {e}")))?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("printCAD"),
+                required_features,
+                // Everything the GPU offers: a big assembly's buffers outgrow
+                // the portable defaults.
+                required_limits: adapter.limits(),
+                experimental_features: Default::default(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: Default::default(),
+            })
+            .await
+            .map_err(|e| RenderError::Initialization(format!("GPU device: {e}")))?;
         device.on_uncaptured_error(Arc::new(|error| {
             // The description holds the detail; the summary alone says only
             // "Validation Error".
@@ -672,7 +687,7 @@ impl RendererCore {
 
 impl Drop for RendererCore {
     fn drop(&mut self) {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         // Let the GPU finish before its resources go.
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let _ = &self.adapter;

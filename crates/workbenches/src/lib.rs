@@ -14,6 +14,37 @@ core_document::define_workbenches!(
 );
 
 pub use core_document::registration::REGISTERED_WORKBENCHES;
+
+/// What fetches packages and store indexes: HTTPS on a desktop.
+#[cfg(not(target_arch = "wasm32"))]
+fn network() -> wb_wasm::remote::Http {
+    wb_wasm::remote::Http::default()
+}
+
+/// Packages run in the desktop application: a browser page has no
+/// runtime for them, so nothing is fetched to install.
+#[cfg(target_arch = "wasm32")]
+fn network() -> DesktopOnly {
+    DesktopOnly
+}
+
+/// What a browser build answers for anything to do with packages.
+#[cfg(target_arch = "wasm32")]
+const DESKTOP_ONLY: &str = "workbench packages run in the desktop application";
+
+#[cfg(target_arch = "wasm32")]
+struct DesktopOnly;
+
+#[cfg(target_arch = "wasm32")]
+impl wb_wasm::remote::Fetch for DesktopOnly {
+    fn json(&self, _url: &str) -> Result<serde_json::Value, String> {
+        Err(DESKTOP_ONLY.into())
+    }
+
+    fn bytes(&self, _url: &str, _limit: u64) -> Result<Vec<u8>, String> {
+        Err(DESKTOP_ONLY.into())
+    }
+}
 pub use wb_wasm::remote::Source;
 pub use wb_wasm::store::{Index as StoreIndex, Listing};
 pub use wb_wasm::{Capabilities, Package, package::ARCHIVE_EXTENSION};
@@ -120,9 +151,17 @@ pub fn prepare_package(
     package: &Package,
     granted: &Capabilities,
 ) -> Result<Box<dyn Workbench>, String> {
-    // A package reads a sketch's closed loops as a feature's profile.
-    wb_wasm::set_profile_source(wb_sketch::profile::closed_profile);
-    wb_wasm::load(package, granted).map(|bench| Box::new(bench) as Box<dyn Workbench>)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // A package reads a sketch's closed loops as a feature's profile.
+        wb_wasm::set_profile_source(wb_sketch::profile::closed_profile);
+        wb_wasm::load(package, granted).map(|bench| Box::new(bench) as Box<dyn Workbench>)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (package, granted);
+        Err(DESKTOP_ONLY.into())
+    }
 }
 
 /// Add a prepared package's workbench to the registry and the lists the
@@ -166,12 +205,12 @@ pub fn install_package(
 /// Install the package a GitHub repository or release address publishes.
 /// It reaches the network; call it away from the window.
 pub fn install_from_github(text: &str, root: &std::path::Path) -> Result<Package, String> {
-    wb_wasm::remote::install_from_github(&wb_wasm::remote::Http::default(), text, root)
+    wb_wasm::remote::install_from_github(&network(), text, root)
 }
 
 /// The workbench store's index at `url`. It reaches the network.
 pub fn fetch_store(url: &str) -> Result<StoreIndex, String> {
-    wb_wasm::store::fetch_index(&wb_wasm::remote::Http::default(), url)
+    wb_wasm::store::fetch_index(&network(), url)
 }
 
 /// An index the app kept, from its text.
@@ -182,7 +221,7 @@ pub fn read_store(text: &str) -> Result<StoreIndex, String> {
 /// Install a package listed in the store, checked against the index. It
 /// reaches the network.
 pub fn install_listed(listing: &Listing, root: &std::path::Path) -> Result<Package, String> {
-    wb_wasm::store::install_listed(&wb_wasm::remote::Http::default(), listing, root)
+    wb_wasm::store::install_listed(&network(), listing, root)
 }
 
 /// Whether release `latest` is newer than the one installed (`tag`, with
@@ -197,7 +236,7 @@ pub fn latest_release(
     repo: &str,
     version: &str,
 ) -> Result<(wb_wasm::remote::Latest, bool), String> {
-    let latest = wb_wasm::remote::latest(&wb_wasm::remote::Http::default(), repo)?;
+    let latest = wb_wasm::remote::latest(&network(), repo)?;
     let newer = wb_wasm::remote::newer(&latest.tag, "", version);
     Ok((latest, newer))
 }
@@ -205,7 +244,7 @@ pub fn latest_release(
 /// Every package installed from GitHub under `root`, each with the newer
 /// release's tag when there is one. It reaches the network.
 pub fn check_updates(root: &std::path::Path) -> Vec<(String, Result<Option<String>, String>)> {
-    let http = wb_wasm::remote::Http::default();
+    let http = network();
     wb_wasm::discover(root)
         .into_iter()
         .flatten()
@@ -221,7 +260,7 @@ pub fn check_updates(root: &std::path::Path) -> Vec<(String, Result<Option<Strin
 /// keeping its data. It reaches the network.
 pub fn update_package(root: &std::path::Path, id: &str) -> Result<Package, String> {
     let package = Package::read(&root.join(id))?;
-    let http = wb_wasm::remote::Http::default();
+    let http = network();
     match wb_wasm::remote::check(&http, &package)? {
         Some(release) => wb_wasm::remote::update(&http, &package, &release),
         None => Err(format!("{} is up to date", package.manifest.name)),

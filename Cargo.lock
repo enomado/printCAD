@@ -134,12 +134,14 @@ dependencies = [
  "axes",
  "base64 0.23.1",
  "bench_fixtures",
+ "console_error_panic_hook",
  "core_document",
  "doc_server",
  "egui",
  "egui-winit",
  "gif",
  "glam 0.33.7",
+ "js-sys",
  "kernel_ogeom",
  "local_ipc",
  "png",
@@ -157,9 +159,14 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "tracing-wasm",
  "ui_kit",
  "usvg",
  "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "winit",
  "winresource",
  "workbenches",
@@ -561,6 +568,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -659,6 +676,7 @@ dependencies = [
  "tracing",
  "ui_kit",
  "uuid",
+ "web-time",
  "zstd 0.14.0",
 ]
 
@@ -1118,8 +1136,6 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.36.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98466000559d66ba4db786a30448b01483946add4188e7f10f522a27b4fb89cc"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -2073,6 +2089,7 @@ dependencies = [
  "wb_design",
  "wb_sketch",
  "wb_surface",
+ "web-time",
 ]
 
 [[package]]
@@ -3636,6 +3653,8 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "uuid",
+ "web-time",
+ "wgpu",
  "winit",
 ]
 
@@ -3980,6 +3999,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "web-sys",
+ "web-time",
 ]
 
 [[package]]
@@ -4639,6 +4660,17 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "tracing-wasm"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4575c663a174420fa2d78f4108ff68f65bf2fbb7dd89f33749b6e826b3626e07"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -5498,6 +5530,7 @@ dependencies = [
  "serde_json",
  "ui_kit",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -5532,6 +5565,7 @@ dependencies = [
  "ttf-parser",
  "ui_kit",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -6316,6 +6350,7 @@ name = "workbenches"
 version = "0.1.0"
 dependencies = [
  "core_document",
+ "serde_json",
  "tracing",
  "wb_assembly",
  "wb_design",

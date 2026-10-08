@@ -19,13 +19,23 @@
 //! A change waits for the user's OK when the chat that asked for it (or,
 //! for a client outside any chat, the Preferences) says to ask first.
 
+#[cfg(not(target_arch = "wasm32"))]
 use local_ipc::Listener as UnixListener;
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, Sender};
 
-use agents::mcp::{Content, Prompt, Resource, ServerInfo, Tool, ToolAnswer, ToolHost};
-use serde_json::{Value, json};
+#[cfg(not(target_arch = "wasm32"))]
+use agents::mcp::Tool;
+use agents::mcp::{Content, ToolAnswer};
+#[cfg(not(target_arch = "wasm32"))]
+use agents::mcp::{Prompt, Resource, ServerInfo, ToolHost};
+use serde_json::Value;
+#[cfg(not(target_arch = "wasm32"))]
+use serde_json::json;
 
 use crate::PrintCadApp;
 use crate::app::scripts::{RunKind, command_specs};
@@ -60,12 +70,14 @@ impl Drop for McpServer {
 }
 
 /// Where this process's socket goes.
+#[cfg(not(target_arch = "wasm32"))]
 fn socket_path() -> PathBuf {
     local_ipc::runtime_dir().join(format!("mcp-{}.sock", std::process::id()))
 }
 
 /// The socket of a running application, for `printcad --mcp`: the one
 /// `PRINTCAD_MCP_SOCKET` names, else the newest that answers.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn find_socket() -> Option<PathBuf> {
     if let Some(named) = std::env::var_os("PRINTCAD_MCP_SOCKET") {
         return Some(PathBuf::from(named));
@@ -89,6 +101,7 @@ pub(crate) fn find_socket() -> Option<PathBuf> {
 
 impl McpServer {
     /// Listen for clients; `wake` is called when a tool call is waiting.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn start(wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let socket = socket_path();
         if let Some(dir) = socket.parent() {
@@ -116,6 +129,7 @@ impl McpServer {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn serve_client(
     stream: local_ipc::Stream,
     tx: Sender<ToolRequest>,
@@ -135,6 +149,7 @@ fn serve_client(
     agents::mcp::serve(reader, writer, &server_info(), &mut host);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn server_info() -> ServerInfo {
     ServerInfo {
         name: "printCAD".to_string(),
@@ -148,15 +163,18 @@ fn server_info() -> ServerInfo {
 const ASK_INSTRUCTIONS: &str = "(instructions)";
 const ASK_RULES: &str = "(rules)";
 /// How long a connection waits for the UI thread to answer an `ask`.
+#[cfg(not(target_arch = "wasm32"))]
 const ASK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// A connection's side: each call goes to the UI thread, and waits.
+#[cfg(not(target_arch = "wasm32"))]
 struct Relay {
     chat: Option<String>,
     tx: Sender<ToolRequest>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Relay {
     /// Something only the UI thread knows (the rules, the context, the
     /// instructions), asked as a request no client can name: `tools/call`
@@ -194,6 +212,7 @@ impl Relay {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ToolHost for Relay {
     fn tools(&self) -> Vec<Tool> {
         tools()
@@ -231,11 +250,13 @@ impl ToolHost for Relay {
 }
 
 /// What a call's `description` argument is for.
+#[cfg(not(target_arch = "wasm32"))]
 const DESCRIBE: &str = "A few words on what this does, such as \"Pocket the bolt holes\": \
                         the user sees it as the call's title in the chat";
 
 /// The tools, every one loaded by the agent from the start: they are few,
 /// and an agent that has to search for them first loses turns doing it.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn tools() -> Vec<Tool> {
     vec![
         Tool {
@@ -380,6 +401,7 @@ pub(crate) fn tools() -> Vec<Tool> {
 impl PrintCadApp {
     /// Open the MCP server's socket. Without it chats still talk, but their
     /// agents cannot reach the document; the log says why.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn start_agent_server(&mut self) {
         match McpServer::start(self.waker.clone()) {
             Ok(server) => {
@@ -676,6 +698,7 @@ pub(crate) fn agent_check(
 
 /// `printcad --mcp [--chat <id>]`: relay stdio to the running
 /// application. What the command line asked, if it asked for this.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn relay_from_args(words: &[String]) -> Option<std::io::Result<()>> {
     if words.first().map(String::as_str) != Some("--mcp") {
         return None;

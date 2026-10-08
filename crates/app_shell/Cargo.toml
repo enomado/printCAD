@@ -15,24 +15,19 @@ winresource = "0.1"
 [dependencies]
 local_ipc = { path = "../local_ipc" }
 anyhow.workspace = true
-doc_server = { path = "../doc_server" }
-scripting = { path = "../scripting" }
 agents = { path = "../agents" }
 base64.workspace = true
 core_document = { path = "../core_document", features = ["egui"] }
 render_wgpu = { path = "../render_wgpu" }
 tracing.workspace = true
-tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 winit.workspace = true
 egui.workspace = true
-egui-winit.workspace = true
 workbenches = { path = "../workbenches" }
 bench_fixtures = { path = "../workbenches/fixtures" }
 kernel_api.workspace = true
 kernel_ogeom = { path = "../kernel_ogeom" }
 settings = { path = "../settings" }
-sixdof = { workspace = true }
 ui_kit = { path = "../ui_kit" }
 glam.workspace = true
 uuid.workspace = true
@@ -42,7 +37,32 @@ usvg = "0.48"
 tiny-skia = "0.12"
 png = "0.18"
 gif = "0.14"
-rfd = "0.17"
 serde_json.workspace = true
 serde.workspace = true
 surface_texture = { path = "../surface_texture" }
+web-time.workspace = true
+
+# What a desktop build has and a browser page cannot: the document server,
+# the Lua console, the 6-DoF mouse, log files and native dialogs.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-winit.workspace = true
+doc_server = { path = "../doc_server" }
+scripting = { path = "../scripting" }
+tracing-appender.workspace = true
+sixdof = { workspace = true }
+rfd = "0.17"
+
+# A browser page: started from JavaScript, logging to its console, files
+# through the page's own pickers and downloads.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+scripting = { path = "../scripting", default-features = false }
+egui-winit = { version = "0.36", default-features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+tracing-wasm = "0.2"
+web-sys = { version = "0.3", features = [
+    "Blob", "BlobPropertyBag", "Document", "Element", "File", "FileList", "HtmlAnchorElement",
+    "HtmlCanvasElement", "HtmlElement", "HtmlInputElement", "Storage", "Url", "Window",
+] }
+js-sys = "0.3"

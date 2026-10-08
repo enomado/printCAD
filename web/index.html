@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>printCAD</title>
+  <link rel="icon" href="printcad.svg" type="image/svg+xml">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e12; color: #9aa5b1; }
+    body { font: 15px system-ui, sans-serif; }
+    /* winit appends the app's canvas to the body; it fills the page. */
+    canvas { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; outline: none; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; }
+    #loading img { width: 56px; height: 56px; display: block; margin: 0 auto 14px; }
+    #loading.failed { color: #e86e6e; }
+  </style>
+</head>
+<body>
+  <div id="loading"><div><img src="printcad.svg" alt=""><span>Loading printCAD…</span></div></div>
+  <script type="module">
+    import init from "./printcad.js";
+    const loading = document.querySelector("#loading");
+    // The app puts its canvas on the page once it starts; the note goes then.
+    new MutationObserver((_, watch) => {
+      if (document.querySelector("canvas")) {
+        loading.remove();
+        watch.disconnect();
+      }
+    }).observe(document.body, { childList: true });
+    init().catch((error) => {
+      loading.classList.add("failed");
+      loading.querySelector("span").textContent = `printCAD could not start: ${error}`;
+    });
+  </script>
+</body>
+</html>

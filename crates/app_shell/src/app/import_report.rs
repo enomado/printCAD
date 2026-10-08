@@ -3,7 +3,7 @@
 //! then every line.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use kernel_api::ImportReport;
 
@@ -17,7 +17,9 @@ pub(crate) fn write(
     // The temp dir, not state: a report is read once and sent once, and the
     // system clears temp on its own instead of collecting one per import
     // forever.
-    let dir = std::env::temp_dir().join("printcad").join("import-reports");
+    let dir = crate::platform::temp_dir()
+        .join("printcad")
+        .join("import-reports");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

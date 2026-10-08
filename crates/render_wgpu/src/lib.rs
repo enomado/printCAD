@@ -116,7 +116,9 @@ pub struct PickResult {
 pub trait RenderBackend {
     /// `display` is the connection to the window system the event loop
     /// holds; the GL backend draws through it and refuses a window's
-    /// surface without it (on Wayland especially).
+    /// surface without it (on Wayland especially). A browser page, which
+    /// may not block, awaits [`Renderer::initialize_async`] instead.
+    #[cfg(not(target_arch = "wasm32"))]
     fn initialize(
         &mut self,
         window: &Window,
@@ -310,6 +312,40 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Creates the device and the window's surface: what
+    /// [`RenderBackend::initialize`] waits for on a desktop, and what a
+    /// browser page awaits, since it may not block.
+    pub async fn initialize_async(
+        &mut self,
+        window: &Window,
+        display: OwnedDisplayHandle,
+    ) -> Result<(), RenderError> {
+        if self.core.is_some() {
+            return Ok(());
+        }
+        let size = window.inner_size();
+        // A page's canvas may not be laid out yet: it starts at a texel and
+        // takes its size from the resize that follows.
+        #[cfg(target_arch = "wasm32")]
+        let size = PhysicalSize::new(size.width.max(1), size.height.max(1));
+        if size.width == 0 || size.height == 0 {
+            return Err(RenderError::SurfaceTooSmall);
+        }
+        info!(
+            "Initializing the wgpu renderer (validation={})",
+            self.settings.prefer_validation_layers
+        );
+        let core = RendererCore::new(
+            window,
+            display,
+            (size.width, size.height),
+            self.settings.clone(),
+        )
+        .await?;
+        self.core = Some(core);
+        Ok(())
+    }
+
     pub fn new(settings: RenderSettings) -> Self {
         Self {
             settings,
@@ -346,30 +382,13 @@ impl Renderer {
 }
 
 impl RenderBackend for Renderer {
+    #[cfg(not(target_arch = "wasm32"))]
     fn initialize(
         &mut self,
         window: &Window,
         display: OwnedDisplayHandle,
     ) -> Result<(), RenderError> {
-        if self.core.is_some() {
-            return Ok(());
-        }
-        let size = window.inner_size();
-        if size.width == 0 || size.height == 0 {
-            return Err(RenderError::SurfaceTooSmall);
-        }
-        info!(
-            "Initializing the wgpu renderer (validation={})",
-            self.settings.prefer_validation_layers
-        );
-        let core = RendererCore::new(
-            window,
-            display,
-            (size.width, size.height),
-            self.settings.clone(),
-        )?;
-        self.core = Some(core);
-        Ok(())
+        pollster::block_on(self.initialize_async(window, display))
     }
 
     fn render(&mut self, frame: &mut FrameSubmission) -> Result<(), RenderError> {

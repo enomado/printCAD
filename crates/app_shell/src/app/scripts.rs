@@ -2102,7 +2102,7 @@ impl PrintCadApp {
     /// while the window keeps drawing.
     pub(crate) fn drive_scripts(&mut self, event_loop: &ActiveEventLoop) {
         const BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         loop {
             if self.script_rebuild.is_some() {
                 self.answer_rebuild();
@@ -2262,7 +2262,7 @@ impl PrintCadApp {
         });
         self.script_rebuild = Some(RebuildWait {
             reply,
-            deadline: std::time::Instant::now()
+            deadline: web_time::Instant::now()
                 + std::time::Duration::from_secs_f64(timeout.max(0.0)),
         });
     }
@@ -2278,7 +2278,7 @@ impl PrintCadApp {
                 .in_script_tab(|app| rebuild_failures(&app.session.document))
                 .unwrap_or_default();
             Ok(Value::Array(errors))
-        } else if std::time::Instant::now() > wait.deadline {
+        } else if web_time::Instant::now() > wait.deadline {
             Err(CommandError::failed(
                 "the kernel was still working at the timeout",
             ))
@@ -2354,7 +2354,7 @@ impl PrintCadApp {
         if !due {
             return;
         }
-        self.script_library_read = Some(std::time::Instant::now());
+        self.script_library_read = Some(web_time::Instant::now());
         self.script_library = settings::scripts_dir()
             .map(|dir| crate::script_library::scan(&dir))
             .unwrap_or_default();
@@ -2762,7 +2762,7 @@ fn short_json(value: &Value) -> String {
 /// A `doc.rebuild` waiting on the kernel.
 pub(crate) struct RebuildWait {
     reply: std::sync::mpsc::Sender<CommandResult>,
-    deadline: std::time::Instant,
+    deadline: web_time::Instant,
 }
 
 /// `doc.picture`: the request in `args` drawn by `draw` and written to
@@ -3026,7 +3026,7 @@ pub(crate) fn document_command(
         "doc.replace_shape" => {
             let body = body_arg(document, &a)?;
             let path = a.string("path")?;
-            let bytes = std::fs::read(path)
+            let bytes = crate::platform::read(std::path::Path::new(path))
                 .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
             if !document.replace_body_shape(body, path, bytes) {
                 return Err(CommandError::bad(

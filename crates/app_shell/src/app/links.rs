@@ -29,7 +29,7 @@ pub(crate) struct Links {
     /// Linked parts their file could not give a shape: not asked again
     /// until reloaded.
     failed: std::collections::HashSet<BodyId>,
-    checked: Option<std::time::Instant>,
+    checked: Option<web_time::Instant>,
 }
 
 impl Links {
@@ -49,11 +49,9 @@ pub(crate) fn stamp(path: &Path) -> u64 {
 
 fn read(path: PathBuf) -> Receiver<Result<Document, String>> {
     let (send, answer) = channel();
-    let spawned = std::thread::Builder::new()
-        .name("printcad-link".into())
-        .spawn(move || {
-            let _ = send.send(Document::load_from_file(&path).map_err(|e| e.to_string()));
-        });
+    let spawned = crate::platform::spawn("printcad-link", move || {
+        let _ = send.send(Document::load_from_file(&path).map_err(|e| e.to_string()));
+    });
     if let Err(err) = spawned {
         app_log::error(format!("Could not read the linked file: {err}"));
     }
@@ -145,7 +143,7 @@ impl PrintCadApp {
             .checked
             .is_none_or(|t| t.elapsed() >= CHECK_EVERY);
         if due {
-            self.session.links.checked = Some(std::time::Instant::now());
+            self.session.links.checked = Some(web_time::Instant::now());
             let linked: Vec<(BodyId, FileLink)> = self
                 .session
                 .document

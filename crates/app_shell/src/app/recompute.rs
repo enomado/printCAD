@@ -93,7 +93,7 @@ impl PrintCadApp {
                             *waiting = Some(build);
                             self.session
                                 .moving
-                                .insert(body_id.0, std::time::Instant::now());
+                                .insert(body_id.0, web_time::Instant::now());
                             self.drop_build_out(body_id.0);
                         }
                         None => self.submit_build(body_id.0, build),
@@ -439,18 +439,18 @@ impl PrintCadApp {
                 .file_name()
                 .map(|n| n.to_owned())
                 .unwrap_or_else(|| format!("{asset}.step").into());
-            let dir = std::env::temp_dir().join("printcad").join("shapes");
-            let path = dir.join(name);
-            if let Err(e) =
-                std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &*bytes))
-            {
-                self.session.shapes_failed.insert(body.0, asset);
-                app_log::error(format!(
-                    "Could not stage the new shape of `{}`: {e}",
-                    self.body_name(body)
-                ));
-                continue;
-            }
+            let path =
+                match crate::platform::scratch_file("shapes", &name.to_string_lossy(), &bytes) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        self.session.shapes_failed.insert(body.0, asset);
+                        app_log::error(format!(
+                            "Could not stage the new shape of `{}`: {e}",
+                            self.body_name(body)
+                        ));
+                        continue;
+                    }
+                };
             self.session.shapes_in_flight.insert(body.0);
             app_log::info(format!(
                 "Reading the new shape of `{}`…",

@@ -187,6 +187,7 @@ pub(crate) fn capabilities(grant: PackageGrant) -> Capabilities {
 
 /// Load every installed package the user has not turned off, after the
 /// built-in benches.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn register(
     registry: &mut core_document::DocumentService,
     settings: &PackageSettings,
@@ -242,11 +243,9 @@ impl PrintCadApp {
     pub(crate) fn package_thread(&mut self, work: impl FnOnce() -> PackageNews + Send + 'static) {
         let tx = self.package_work.tx.clone();
         self.package_work.pending += 1;
-        let started = std::thread::Builder::new()
-            .name("printcad-packages".into())
-            .spawn(move || {
-                let _ = tx.send(work());
-            });
+        let started = crate::platform::spawn("printcad-packages", move || {
+            let _ = tx.send(work());
+        });
         if let Err(e) = started {
             self.package_work.pending -= 1;
             app_log::error(format!("Could not start the package work: {e}"));

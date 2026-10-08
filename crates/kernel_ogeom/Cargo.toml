@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+web-time.workspace = true
 kernel_api.workspace = true
 ogeom = { workspace = true }
 anyhow = { workspace = true }

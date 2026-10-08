@@ -180,6 +180,7 @@ fn arguments() -> Vec<(&'static str, ParamKind, Value, &'static str)> {
 }
 
 /// The `view` tool's input schema.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn schema() -> Value {
     let properties: Map<String, Value> = arguments()
         .into_iter()

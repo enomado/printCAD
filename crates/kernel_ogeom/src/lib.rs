@@ -9,6 +9,7 @@ mod annotations;
 mod chain;
 pub mod dxf;
 pub mod export;
+pub mod files;
 mod health;
 mod holes;
 mod import;

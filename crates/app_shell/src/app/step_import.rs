@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use anyhow::Result;
 use core_document::{BodyId, ImportedGeometry, Unit};
@@ -509,8 +510,8 @@ impl PrintCadApp {
         // Identities are resolved here, before any document write, so the
         // whole import can land as ONE op with the derived geometry keyed
         // to the same ids afterwards.
-        let import_epoch_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let import_epoch_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let mut unnamed_index = self.session.document.bodies().len();

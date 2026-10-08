@@ -322,8 +322,8 @@ pub fn draw_release_notice(
 /// over dialogs too: an install finishing in Preferences shows there.
 pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
     const SHOW_FOR_SECS: u64 = 6;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let now = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let recent: Vec<crate::log_panel::LogEntry> = crate::log_panel::entries()

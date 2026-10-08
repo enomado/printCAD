@@ -1220,7 +1220,7 @@ impl PrintCadApp {
         index: usize,
         path: &std::path::Path,
     ) {
-        let bytes = match std::fs::read(path) {
+        let bytes = match crate::platform::read(path) {
             Ok(bytes) => bytes,
             Err(err) => {
                 app_log::error(format!("Could not read {}: {err}", path.display()));

@@ -230,7 +230,7 @@ impl PrintCadApp {
             app_log::warn("Nothing to send: no visible body has geometry");
             return;
         }
-        let folder = std::env::temp_dir().join("printcad").join("slicer");
+        let folder = crate::platform::temp_dir().join("printcad").join("slicer");
         if let Err(err) = std::fs::create_dir_all(&folder) {
             app_log::error(format!("Could not make {}: {err}", folder.display()));
             return;
@@ -264,13 +264,13 @@ impl PrintCadApp {
             if bodies.len() == 1 { "body" } else { "bodies" },
             path.display()
         ));
-        std::thread::spawn(move || {
+        let started = crate::platform::spawn("printcad-export", move || {
             let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
             let borrowed = borrowed(&bodies, &finishes);
             let result = export(&borrowed, draft.format, &draft.detail)
                 .map_err(|e| e.to_string())
                 .and_then(|exported| {
-                    std::fs::write(&path, &exported.bytes)
+                    crate::platform::write(&path, &exported.bytes)
                         .map(|()| exported)
                         .map_err(|e| format!("could not write the file: {e}"))
                 });
@@ -280,6 +280,9 @@ impl PrintCadApp {
                 open_with,
             });
         });
+        if let Err(err) = started {
+            crate::app_log::error(format!("Could not start the export: {err}"));
+        }
     }
 
     /// Log a finished export, if one has finished.

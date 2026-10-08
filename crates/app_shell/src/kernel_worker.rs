@@ -12,8 +12,10 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use std::sync::{Arc, Mutex};
 
@@ -226,6 +228,7 @@ struct BuildShared {
 
 /// How many bodies build at once: a few, each build's own work going wide
 /// on the kernel's threads besides.
+#[cfg(not(target_arch = "wasm32"))]
 fn build_threads() -> usize {
     std::thread::available_parallelism()
         .map(|n| (n.get() / 4).clamp(2, 4))
@@ -273,6 +276,37 @@ pub struct KernelWorker {
     builds: Arc<BuildShared>,
     /// The serial the next build gets.
     next_serial: u64,
+    /// A browser page has one thread: the worker's requests and the builds
+    /// run here, one a frame, from [`Self::drain`].
+    #[cfg(target_arch = "wasm32")]
+    local: Local,
+}
+
+/// The worker and a build thread's work, run where the page asks for it.
+#[cfg(target_arch = "wasm32")]
+struct Local {
+    kernel: OgeomKernel,
+    requests: Receiver<KernelRequest>,
+    builds: Arc<Mutex<Receiver<BuildRequest>>>,
+    responses: Sender<KernelResponse>,
+    activity: Arc<Mutex<Activity>>,
+    build_activity: Arc<Mutex<Activity>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Local {
+    /// Run one waiting job, a request before a build. Whether one ran.
+    fn run_one(&mut self, shared: &BuildShared) -> bool {
+        let response = if let Ok(request) = self.requests.try_recv() {
+            serve_request(&mut self.kernel, &self.activity, request)
+        } else if let Ok(request) = lock(&self.builds).try_recv() {
+            serve_build(&mut self.kernel, shared, &self.build_activity, request)
+        } else {
+            return false;
+        };
+        let _ = self.responses.send(response);
+        true
+    }
 }
 
 impl KernelWorker {
@@ -289,6 +323,7 @@ impl KernelWorker {
         let (build_tx, build_rx) = channel::<BuildRequest>();
         let build_rx = Arc::new(Mutex::new(build_rx));
         let builds = Arc::new(BuildShared::default());
+        #[cfg(not(target_arch = "wasm32"))]
         let build_activities: Vec<_> = (0..build_threads())
             .map(|n| {
                 let activity = Arc::new(Mutex::new(Activity::default()));
@@ -305,11 +340,23 @@ impl KernelWorker {
                 activity
             })
             .collect();
+        #[cfg(target_arch = "wasm32")]
+        let build_activities = vec![Arc::new(Mutex::new(Activity::default()))];
 
+        #[cfg(not(target_arch = "wasm32"))]
         thread::Builder::new()
             .name("printcad-kernel-worker".to_string())
             .spawn(move || worker_loop(req_rx, resp_tx, worker_activity))
             .expect("failed to spawn kernel worker thread");
+        #[cfg(target_arch = "wasm32")]
+        let local = Local {
+            kernel: OgeomKernel::new(),
+            requests: req_rx,
+            builds: build_rx,
+            responses: resp_tx,
+            activity: worker_activity,
+            build_activity: Arc::clone(&build_activities[0]),
+        };
 
         Self {
             tx: req_tx,
@@ -320,6 +367,8 @@ impl KernelWorker {
             build_activities,
             builds,
             next_serial: 0,
+            #[cfg(target_arch = "wasm32")]
+            local,
         }
     }
 
@@ -498,6 +547,10 @@ impl KernelWorker {
     /// Pop every response that has arrived since the last call. The caller
     /// is responsible for any document/UI bookkeeping the responses imply.
     pub fn drain(&mut self) -> Vec<KernelResponse> {
+        // A browser page runs one job a frame, so the window still draws
+        // between them.
+        #[cfg(target_arch = "wasm32")]
+        self.local.run_one(&self.builds);
         let mut out = Vec::new();
         while let Ok(resp) = self.rx.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
@@ -691,6 +744,7 @@ impl Chains {
 }
 
 /// A build thread: takes the next build from the queue, one at a time.
+#[cfg(not(target_arch = "wasm32"))]
 fn build_loop(
     rx: &Mutex<Receiver<BuildRequest>>,
     tx: &Sender<KernelResponse>,
@@ -702,20 +756,30 @@ fn build_loop(
         let Ok(request) = lock(rx).recv() else {
             return;
         };
-        let watch = watch_for(activity);
-        *lock(activity) = Activity {
-            canceller: Some(watch.canceller()),
-            ..Activity::default()
-        };
-        let serial = request.serial;
-        let response =
-            kernel_ogeom::watched(&watch, || build(&mut kernel, shared, &watch, request));
-        lock(&shared.book).running.remove(&serial);
-        *lock(activity) = Activity::default();
+        let response = serve_build(&mut kernel, shared, activity, request);
         if tx.send(response).is_err() {
             return;
         }
     }
+}
+
+/// One build on a build thread, watched as a worker request is.
+fn serve_build(
+    kernel: &mut OgeomKernel,
+    shared: &BuildShared,
+    activity: &Arc<Mutex<Activity>>,
+    request: BuildRequest,
+) -> KernelResponse {
+    let watch = watch_for(activity);
+    *lock(activity) = Activity {
+        canceller: Some(watch.canceller()),
+        ..Activity::default()
+    };
+    let serial = request.serial;
+    let response = kernel_ogeom::watched(&watch, || build(kernel, shared, &watch, request));
+    lock(&shared.book).running.remove(&serial);
+    *lock(activity) = Activity::default();
+    response
 }
 
 /// Build one body's solid: from the solids kept when it was built alike
@@ -889,6 +953,7 @@ fn run_chain(
     outcome.map(|result| (result, false))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn worker_loop(
     rx: Receiver<KernelRequest>,
     tx: Sender<KernelResponse>,
@@ -896,9 +961,24 @@ fn worker_loop(
 ) {
     let mut kernel = OgeomKernel::new();
     while let Ok(request) = rx.recv() {
-        let watch = watch_for(&activity);
+        let response = serve_request(&mut kernel, &activity, request);
+        if tx.send(response).is_err() {
+            return;
+        }
+    }
+}
+
+/// One request on the worker: watched, so the status bar shows its stages
+/// and Cancel reaches it.
+fn serve_request(
+    kernel: &mut OgeomKernel,
+    activity: &Arc<Mutex<Activity>>,
+    request: KernelRequest,
+) -> KernelResponse {
+    {
+        let watch = watch_for(activity);
         {
-            let mut activity = lock(&activity);
+            let mut activity = lock(activity);
             *activity = Activity {
                 canceller: Some(watch.canceller()),
                 ..Activity::default()
@@ -914,7 +994,7 @@ fn worker_loop(
                     Ok(model) => {
                         let kernel_ms = k0.elapsed();
                         let r0 = Instant::now();
-                        match std::fs::read(&path) {
+                        match crate::platform::read(&path) {
                             Ok(raw_bytes) => {
                                 let read_ms = r0.elapsed();
                                 let worker_total = started.elapsed();
@@ -1046,10 +1126,8 @@ fn worker_loop(
             }
         });
 
-        *lock(&activity) = Activity::default();
-        if tx.send(response).is_err() {
-            return;
-        }
+        *lock(activity) = Activity::default();
+        response
     }
 }
 

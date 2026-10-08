@@ -1,5 +1,6 @@
 [toolchain]
 channel = "1.98"
 components = ["rustfmt", "clippy"]
-# Workbench packages (`sdk/`) build for it, and wb_wasm's tests build them.
-targets = ["wasm32-wasip2"]
+# Workbench packages (`sdk/`) build for wasip2, and wb_wasm's tests build
+# them; the browser build of the app (`scripts/build-web.sh`) for unknown.
+targets = ["wasm32-wasip2", "wasm32-unknown-unknown"]

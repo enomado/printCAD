@@ -31,8 +31,8 @@ cargo fmt --all                   # CI enforces --check
   workspace: `-p app_shell` alone leaves `target/release/printcad-serverd`
   missing and the app falls back to direct file I/O with a warning.
 - No system CAD libraries needed: the ogeom kernel is pure Rust, released to
-  crates.io. Bump it with `cargo update -p ogeom`; a commented
-  `[patch.crates-io]` in the workspace `Cargo.toml` points at a local checkout
+  crates.io. Bump it with `cargo update -p ogeom`; a commented line in the
+  workspace `Cargo.toml`'s `[patch.crates-io]` points at a local checkout
   for kernel dev.
 - 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate
   (crates.io, this project's own), consumed by version exactly as the kernel
@@ -95,6 +95,24 @@ cargo fmt --all                   # CI enforces --check
   `winresource`), the macOS bundle's, and the desktop entry's, which the
   window finds through its app id `printcad`.
   The CI's `platforms` job runs clippy and the tests on Windows and macOS.
+- The app also builds for a browser page: `scripts/build-web.sh` (the
+  release build for `wasm32-unknown-unknown`, wasm-bindgen at the version
+  `Cargo.lock` pins, `wasm-opt`; `web/index.html` starts it) writes
+  `web/dist`. Everything that differs sits behind `cfg(target_arch =
+  "wasm32")`, so a desktop build compiles exactly what it did:
+  `app_shell/src/platform.rs` (`spawn` runs work at once on the page,
+  `read`/`write` are the picked files held in memory and downloads,
+  `temp_dir`, `scratch_file`, `ask_unsaved`, `warn`; `platform/web.rs` the
+  page's picker and downloads), `app/server.rs` (`BrowserFiles` in place
+  of the daemon), the kernel worker running one job a frame from `drain`
+  (`Local`), the renderer awaited (`Renderer::initialize_async`; WebGPU,
+  else WebGL2), settings in the page's storage, `kernel_ogeom::files` (the
+  reader imports go through), and `web_time` for every clock (the
+  standard one panics on that target). Lua (`scripting`'s `lua` feature),
+  packages (`wb_wasm`'s `runtime`), agents' sockets, the document daemon,
+  the 6-DoF mouse and the command line are desktop-only. `egui-winit` is
+  patched (`third_party/egui-winit/PATCHED.md`) until a release builds for
+  the browser.
 - The website (GitHub Pages) is `site/` (a hand-written landing page,
   `index.html`, `style.css` and `main.js` over a small WebGL2 viewer,
   `gl.js`, drawing the parts in `site/assets/models.bin`, which

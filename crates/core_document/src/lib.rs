@@ -3829,8 +3829,8 @@ fn decode_face_colors_blob(data: &[u8]) -> Option<Vec<[f32; 3]>> {
 /// Milliseconds since the epoch, resolved at op-capture time so replay
 /// carries the moment rather than re-asking the clock.
 fn epoch_ms_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
