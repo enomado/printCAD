@@ -68,7 +68,7 @@ $endif$
       button.type = "button";
       button.textContent = "Copy";
       button.addEventListener("click", () => {
-        navigator.clipboard.writeText(pre.innerText).then(() => {
+        navigator.clipboard.writeText((pre.querySelector("code") ?? pre).innerText).then(() => {
           button.textContent = "Copied";
           setTimeout(() => (button.textContent = "Copy"), 1500);
         });

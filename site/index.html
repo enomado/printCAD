@@ -21,13 +21,13 @@
   <nav class="ruler" aria-label="Sections">
     <div class="ruler-track"><div class="ruler-fill"></div></div>
     <ol>
-      <li><a href="#top" data-label="Features"></a></li>
-      <li><a href="#surfaces" data-label="Surfaces"></a></li>
-      <li><a href="#check" data-label="Check"></a></li>
-      <li><a href="#print" data-label="Print"></a></li>
-      <li><a href="#script" data-label="Script"></a></li>
-      <li><a href="#community" data-label="Community"></a></li>
-      <li><a href="#get" data-label="Download"></a></li>
+      <li><a href="#top" data-label="Features" aria-label="Features"></a></li>
+      <li><a href="#surfaces" data-label="Surfaces" aria-label="Surfaces"></a></li>
+      <li><a href="#check" data-label="Check" aria-label="Check"></a></li>
+      <li><a href="#print" data-label="Print" aria-label="Print"></a></li>
+      <li><a href="#script" data-label="Script" aria-label="Script"></a></li>
+      <li><a href="#community" data-label="Community" aria-label="Community"></a></li>
+      <li><a href="#get" data-label="Download" aria-label="Download"></a></li>
     </ol>
   </nav>
 
@@ -88,7 +88,7 @@
           </div>
         </div>
         <div class="story-stage">
-          <canvas class="stage" id="story-stage" aria-label="A part being modeled, step by step"></canvas>
+          <canvas class="stage" role="img" id="story-stage" aria-label="A part being modeled, step by step"></canvas>
           <div class="labels" id="story-labels"></div>
           <div class="stage-steps">
             <span data-step="1">Sketch</span><span data-step="2">Pad</span><span data-step="3">Finish</span><span data-step="4">Print</span>
@@ -98,10 +98,10 @@
       </div>
     </section>
 
-    <div class="marquee" aria-label="File formats">
+    <div class="marquee" role="region" aria-label="File formats">
       <div class="marquee-track">
         <span>STEP</span><span>IGES</span><span>STL</span><span>3MF</span><span>OBJ</span><span>PLY</span><span>glTF</span><span>VRML</span><span>DXF</span><span>.prtcad</span>
-        <span>STEP</span><span>IGES</span><span>STL</span><span>3MF</span><span>OBJ</span><span>PLY</span><span>glTF</span><span>VRML</span><span>DXF</span><span>.prtcad</span>
+        <span aria-hidden="true">STEP</span><span aria-hidden="true">IGES</span><span aria-hidden="true">STL</span><span aria-hidden="true">3MF</span><span aria-hidden="true">OBJ</span><span aria-hidden="true">PLY</span><span aria-hidden="true">glTF</span><span aria-hidden="true">VRML</span><span aria-hidden="true">DXF</span><span aria-hidden="true">.prtcad</span>
       </div>
     </div>
 
@@ -112,14 +112,14 @@
         surfaces, sewn into solids or thickened. Then paint the result by its curvature, or run zebra
         stripes over it, to see how smoothly its faces meet.</p>
       <figure class="viewer wide reveal">
-        <canvas class="stage" id="surface-stage" aria-label="A bottle turned from a spline, shown three ways"></canvas>
+        <canvas class="stage" role="img" id="surface-stage" aria-label="A bottle turned from a spline, shown three ways"></canvas>
         <div class="modes" id="surface-modes">
           <button type="button" data-mode="0">Shaded</button>
           <button type="button" data-mode="2" class="on">Curvature</button>
           <button type="button" data-mode="1">Zebra</button>
         </div>
         <div class="legend" id="curv-legend"><i></i><span>saddle</span><span>flat</span><span>dome</span></div>
-        <figcaption><span>A bottle: a spline profile, revolved</span><span class="tools-list">Loft · Sweep · Fill · Blend · Fillet · Sew · Thicken</span></figcaption>
+        <figcaption><span>A bottle: a spline profile, revolved</span><span class="tools-list long">Loft · Sweep · Fill · Blend · Fillet · Sew · Thicken</span></figcaption>
       </figure>
     </section>
 
@@ -129,7 +129,7 @@
       <p class="sub reveal">Cut through any part with a clipping plane, measure lengths, radii and angles,
         and check that parts in an assembly do not collide.</p>
       <figure class="viewer wide reveal">
-        <canvas class="stage" id="section-stage" aria-label="A plate cut through four holes"></canvas>
+        <canvas class="stage" role="img" id="section-stage" aria-label="A plate cut through four holes"></canvas>
         <figcaption>
           <span>A plate cut through a plain hole, a counterbore, a countersink and a modeled thread</span>
           <label class="slider">Cut <input type="range" id="section-cut" min="0" max="1" step="0.001" value="0.5"></label>
@@ -142,7 +142,7 @@
       <h2 class="big reveal">Made for the printer.</h2>
       <div class="duo">
         <figure class="viewer reveal">
-          <canvas class="stage" id="texture-stage" aria-label="A grip with a texture pressed into it"></canvas>
+          <canvas class="stage" role="img" id="texture-stage" aria-label="A grip with a texture pressed into it"></canvas>
           <div class="modes" id="texture-modes">
             <button type="button" data-pattern="knurl" class="on">Knurl</button>
             <button type="button" data-pattern="ribs">Ribs</button>
@@ -156,7 +156,7 @@
           </figcaption>
         </figure>
         <figure class="viewer reveal">
-          <canvas class="stage" id="nut-stage" aria-label="A nut trap under a hole, cut through"></canvas>
+          <canvas class="stage" role="img" id="nut-stage" aria-label="A nut trap under a hole, cut through"></canvas>
           <figcaption><span>A nut trap, sized from the nut's standard</span><span class="tools-list">M5 · ISO 4032</span></figcaption>
         </figure>
       </div>
@@ -172,7 +172,7 @@
 
     <section class="block" id="script">
       <p class="eyebrow reveal">Script</p>
-      <h2 class="big reveal">Every tool is a command.<br><span class="dim-text">Script it, or let an agent.</span></h2>
+      <h2 class="big reveal">Every tool is a command.<br><span class="dim-text">Script it, or let an&nbsp;agent.</span></h2>
       <div class="term-row">
         <div class="term reveal" id="term">
           <div class="term-bar"><i></i><i></i><i></i><span>console · Lua 5.4</span><b class="term-state">ready</b></div>

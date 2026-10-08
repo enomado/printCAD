@@ -150,9 +150,9 @@ const script = [
 ];
 const answer = [
   ["c", "\n> run\n"],
-  ["ok", "✓ "], ["", "sketch   fully constrained\n"],
-  ["ok", "✓ "], ["", "pad      60 × 40 × 8 mm\n"],
-  ["ok", "✓ "], ["", "rebuilt  nothing failed, one undo step\n"],
+  ["ok", "ok  "], ["", "sketch   fully constrained\n"],
+  ["ok", "ok  "], ["", "pad      60 × 40 × 8 mm\n"],
+  ["ok", "ok  "], ["", "rebuilt  nothing failed, one undo step\n"],
 ];
 {
   const term = document.querySelector("#term");
@@ -220,7 +220,8 @@ const categoryIcon = (cats = []) => CATEGORY_ICONS[cats.find((c) => CATEGORY_ICO
         title.append(h3, ver);
         head.append(badge, title);
         const desc = document.createElement("p");
-        desc.textContent = p.description ?? "";
+        const text = (p.description ?? "").trim();
+        desc.textContent = text && !/[.!?]$/.test(text) ? `${text}.` : text;
         const tagsEl = document.createElement("div");
         tagsEl.className = "tags";
         for (const c of p.categories ?? []) {
@@ -318,7 +319,7 @@ const models = await loadModels();
       d5a: tags.add("5", [foot + 6, 0, t / 2], "dim"),
       d5b: tags.add("5", [t / 2, 0, height + 6], "dim"),
       ok: tags.add("fully constrained", [foot * 0.62, 0, height * 0.72], "ok"),
-      perp: tags.add("perpendicular", [t + 9, 0, t + 9], "ok"),
+      perp: tags.add("perpendicular", [t + 7, 0, t + 6], "ok"),
       horiz: tags.add("horizontal", [foot * 0.74, 0, t + 4], "ok"),
       dots: profile.map((p) => tags.add("", p, "dot")),
       pad: tags.add("Pad · 30 mm", [foot, w / 2, t + 2], "feat"),
@@ -383,7 +384,7 @@ const models = await loadModels();
       // The camera eases from the sketch's plane to the part, then the bed.
       const want = {
         target: T < 3.9 ? [20, 15, 12] : [lerp(20, 50, bed), lerp(15, -25, bed), lerp(12, -6, bed)],
-        distance: lerp(T < 2 ? 135 : 150, 480, bed),
+        distance: lerp(T < 2 ? 135 : 150, 540, bed),
         pitch: lerp(lerp(0.2, 0.5, smooth(1.8, 2.8, T)), 0.95, bed),
         yaw: lerp(lerp(-1.7, -2.35, smooth(1.8, 3.4, T)), -2.15, bed),
       };
@@ -431,7 +432,7 @@ const models = await loadModels();
     const ghost = stage.addMesh(models.plate, { color: [0.31, 0.64, 0.9], alpha: 0.07, edges: 0 });
     const cut = document.querySelector("#section-cut");
     stage.onFrame = (time) => {
-      const y = Number(cut.value) * 30;
+      const y = 3 + Number(cut.value) * 24;
       plate.clip = [0, -1, 0, y];
       ghost.clip = [0, 1, 0, -y];
       if (!stage.drag) stage.cam.yaw = -1.3 + Math.sin(time * 0.3) * 0.22;
@@ -453,9 +454,10 @@ const PATTERNS = {
     const r = Math.max(1 - Math.hypot(fr(u) - 0.5, fr(v) - 0.5) / 0.38, 0);
     return Math.sqrt(r * (2 - r));
   },
+  // Regular cells: the tile is one cell across and two rows (√3) down.
   hex: (u, v) => {
     const s3 = Math.sqrt(3);
-    const x = fr(u), y = fr(v) * s3;
+    const x = fr(u), y = fr(v / s3) * s3;
     let first = Infinity, second = Infinity;
     for (const [cx, cy] of [[0, 0], [1, 0], [0.5, s3 / 2], [0, s3], [1, s3]]) {
       const d = Math.hypot(x - cx, y - cy);
@@ -466,11 +468,17 @@ const PATTERNS = {
   },
   waves: (u) => 0.5 + 0.5 * Math.sin(2 * Math.PI * u),
 };
+// Tiles around the grip, and how far each row of tiles shifts round per
+// tile up, per pattern: hexagons larger so their grooves stay finer than
+// the mesh, waves sheared into a spiral (a shear, unlike a turn, still
+// meets itself all the way round).
+const LAYOUT = { hex: { tiles: 12, shear: 0 }, waves: { tiles: 14, shear: 0.6 } };
 
 // A cylinder 20 mm across and 30 tall, its side pressed by `pattern` to
 // `depth` mm, the ends kept flat as the app keeps a rim.
 function grip(pattern, depth) {
-  const R = 10, H = 30, AROUND = 360, UP = 150, TILES = 20, FLAT = 2;
+  const R = 10, H = 30, AROUND = 360, UP = 150, FLAT = 2;
+  const { tiles: TILES, shear } = LAYOUT[pattern] ?? { tiles: 20, shear: 0 };
   const tile = (2 * Math.PI * R) / TILES;
   const side = (AROUND + 1) * (UP + 1);
   const pos = new Float32Array((side + 2 * (AROUND + 2)) * 3);
@@ -479,7 +487,8 @@ function grip(pattern, depth) {
   const at = (i, j) => {
     const a = (i / AROUND) * 2 * Math.PI, z = (j / UP) * H;
     const keep = smoothRim(z, H, FLAT);
-    const r = R + depth * keep * h((i / AROUND) * TILES, z / tile);
+    const u = (i / AROUND) * TILES, v = z / tile;
+    const r = R + depth * keep * h(u + v * shear, v);
     return [r * Math.cos(a), r * Math.sin(a), z];
   };
   for (let j = 0; j <= UP; j++)
@@ -561,7 +570,6 @@ function gripIndices() {
       b.addEventListener("click", () => {
         buttons.forEach((x) => x.classList.toggle("on", x === b));
         next = b.dataset.pattern;
-        want = 0;
       });
     }
     slider.addEventListener("input", () => (want = Number(slider.value)));
@@ -572,12 +580,12 @@ function gripIndices() {
       obs.disconnect();
     }, { threshold: 0.4 }).observe(stage.canvas);
     let shown = -1;
+    // A new pattern waits for the old one to flatten out, then presses in.
     stage.onFrame = () => {
-      depth += (want - depth) * (still ? 1 : 0.12);
+      depth += ((next ? 0 : want) - depth) * (still ? 1 : 0.12);
       if (next && depth < 0.02) {
         pattern = next;
         next = null;
-        want = Number(slider.value);
       }
       if (Math.abs(depth - shown) > 0.002) {
         const g = grip(pattern, depth);

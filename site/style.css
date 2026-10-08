@@ -11,7 +11,7 @@
   --line2: #2c3541;
   --text: #e6ebf0;
   --text2: #9aa5b1;
-  --text3: #5f6a78;
+  --text3: #7c8796;
   --accent: #4fa3e6;
   --accent2: #6fd3c9;
   --warm: #e6a44f;
@@ -32,6 +32,9 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 "Ple
 ::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background: var(--accent); }
 a { color: inherit; text-decoration: none; }
 p, li, figcaption { text-wrap: pretty; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.button:focus-visible, .dl:focus-visible, .pkg:focus-visible, .pill:focus-visible, .modes button:focus-visible { border-radius: inherit; }
+input[type="range"]:focus-visible { outline-offset: 8px; }
 code { font-family: var(--mono); font-size: 0.9em; color: var(--accent2); }
 
 /* ---- Framing ----------------------------------------------------------- */
@@ -309,7 +312,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
   .make { padding: 24px; gap: 24px; }
   .viewer figcaption { flex-wrap: wrap; }
   .viewer figcaption > span:first-child { flex: 1 1 100%; }
-  .legend { bottom: auto; top: 322px; right: 14px; }
+  .legend { position: static; justify-content: start; margin: 0 18px 12px; }
+  .tools-list.long { display: none; }
+  .story-text { margin-top: 16px; }
+  .slider { flex: 1; }
+  .slider input[type="range"], .duo input[type="range"] { flex: 1; width: auto; }
   #section-stage { height: 260px; }
   .feature { border-right: 0; }
   .feature:nth-last-child(-n + 3) { border-bottom: 1px solid var(--line); }
@@ -325,9 +332,15 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 @media (min-width: 640px) and (max-width: 1000px) {
   .features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .feature { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .feature:nth-child(3n) { border-right: 1px solid var(--line); }
+  .feature:nth-last-child(-n + 3) { border-bottom: 1px solid var(--line); }
   .feature:nth-child(2n) { border-right: 0; }
   .feature:nth-last-child(-n + 2) { border-bottom: 0; }
   .downloads { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .make-links .button { flex: 1 1 100%; justify-content: center; }
+  .foot .brand { flex-basis: 100%; }
 }
 @media (max-width: 420px) {
   .eyebrow { letter-spacing: 0.1em; }

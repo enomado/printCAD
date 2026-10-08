@@ -34,7 +34,7 @@
   --border-strong: #2c3541;
   --text1: #e6ebf0;
   --text2: #9aa5b1;
-  --text3: #667180;
+  --text3: #7c8796;
   --accent: #4fa3e6;
   --accent-hover: #6db5ec;
   --accent-text: #0b1520;
@@ -47,6 +47,12 @@
 
 * {
   box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
 }
 
 html {
@@ -260,6 +266,9 @@ footer .brand img {
   max-height: calc(100vh - 100px);
   overflow-y: auto;
   font-size: 14px;
+  padding-bottom: 32px;
+  /* The list fades at its foot while there is more of it to scroll. */
+  mask-image: linear-gradient(180deg, #000 calc(100% - 48px), transparent);
 }
 .docs nav.side h4 {
   margin: 18px 0 6px;
@@ -376,6 +385,8 @@ article blockquote {
   .docs nav.side {
     position: static;
     max-height: none;
+    padding-bottom: 0;
+    mask-image: none;
   }
   .docs nav.side summary {
     display: flex;
@@ -422,7 +433,8 @@ article blockquote {
 /* Code in the guides: pandoc marks each token with a class. The colours
    are the app's own (sketch and status palette). */
 
-div.sourceCode {
+div.sourceCode,
+article pre {
   position: relative;
   margin: 16px 0;
 }
@@ -499,6 +511,11 @@ code span.wa {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.15s;
+}
+@media (hover: none) {
+  .copy {
+    opacity: 1;
+  }
 }
 div.sourceCode:hover .copy,
 pre:hover .copy,
