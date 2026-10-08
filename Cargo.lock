@@ -5614,6 +5614,7 @@ dependencies = [
  "egui",
  "flate2",
  "glam 0.33.7",
+ "js-sys",
  "kernel_ogeom",
  "local_ipc",
  "printcad-bench-api",
@@ -5628,9 +5629,12 @@ dependencies = [
  "ui_kit",
  "ureq",
  "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasmtime",
  "wasmtime-wasi",
  "wb_sketch",
+ "web-sys",
 ]
 
 [[package]]

@@ -116,8 +116,14 @@ cargo fmt --all                   # CI enforces --check
   globals). The 6-DoF mouse comes through WebHID (`app/sixdof/web.rs`:
   devices granted before open at start, Preferences › Input › 6-DoF mouse
   opens the browser's chooser, each report decoded by
-  `sixdof::hid::Decoder`). Packages (`wb_wasm`'s `runtime`), agents'
-  sockets, the document daemon and the command line are desktop-only. `egui-winit` is
+  `sixdof::hid::Decoder`). Packages run through `wb_wasm`'s `web.rs` with
+  jco (`third_party/jco`, `scripts/vendor-jco.sh`); the page keeps each
+  installed archive in IndexedDB (`app/packages_web.rs`, a `Package` held
+  in memory, `Package::from_archive`), installs from a file or a store's
+  `mirror` (the registry's own copy, since a release's download refuses a
+  page; `store::listed_package`), and has no GitHub installs or update
+  checks. Agents' sockets, the document daemon and the command line are
+  desktop-only. `egui-winit` is
   patched (`third_party/egui-winit/PATCHED.md`) until a release builds for
   the browser.
 - The website (GitHub Pages) is `site/` (a hand-written landing page,
@@ -169,13 +175,19 @@ cargo fmt --all                   # CI enforces --check
 - `workbenches/wb_wasm`: workbench packages (`docs/PLUGINS.md`, RFC 0001).
   One wasmtime engine (`engine.rs`: an epoch ticker that runs only while a
   call or job does, 25 ms for frame and input calls, 1 s otherwise; the
-  compiled component cached beside `bench.wasm`), `host.rs` (the store's
-  `State`: what the call in progress may reach, `Access::None/Read/Write`,
+  compiled component cached beside `bench.wasm`), `exports.rs` (the
+  guest's exports as the `Exports` trait, whichever runtime holds the
+  instance, `Budget`, `Fault`), `host.rs` (`Reach`, the host's side of an
+  instance: what the call in progress may reach, `Access::None/Read/Write`,
   a raw pointer valid for that one synchronous call; the `doc.*` calls a
   package makes on its own kinds only, recorded like any edit), `guest.rs`
-  (instantiate with WASI, the package's `data/` preopened as `/data`, the
-  network only when granted, a memory cap; a trap or overrun replaces the
-  instance, three turn the bench off), `jobs.rs` (a job in its own
+  (wasmtime's bindings and store; instantiate with WASI, the package's
+  `data/` preopened as `/data`, the network only when granted, a memory
+  cap; a trap or overrun replaces the instance, three turn the bench off),
+  `web.rs` (the same on a browser page: jco transpiles the component in
+  `web/package-worker.js`, the instance runs on the page and is called as
+  wasmtime's, with no budget, no `/data` and no network; `web/jobs.rs` a
+  job in a worker of its own, stopped by ending it), `jobs.rs` (a job in its own
   instance on its own thread, progress and cancel, native helpers under
   the `helper` grant), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
   over the guest, frame cached by document seq, selection and events,

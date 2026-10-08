@@ -17,8 +17,8 @@ use core_document::{
 use serde::de::DeserializeOwned;
 
 use crate::convert::{self, intern};
-use crate::engine::Budget;
-use crate::guest::{Aftermath, Guest, Loaded};
+use crate::exports::{Aftermath, Answer, Budget, Exports};
+use crate::guest::Guest;
 use crate::host::{Access, PackageInfo};
 use crate::package::Package;
 
@@ -47,27 +47,49 @@ struct Inner {
 }
 
 /// Load `package`, allowing it `granted` of what it asks for.
+#[cfg(feature = "runtime")]
 pub fn load(package: &Package, granted: &bench_api::Capabilities) -> Result<WasmWorkbench, String> {
     let manifest = &package.manifest;
-    let component =
-        crate::engine::component(&package.wasm(), &package.compiled_dir(), &manifest.id)?;
-    let info = Arc::new(PackageInfo {
+    // A package held in memory has no folder to keep anything in.
+    let on_disk = package.held.is_none();
+    let component = crate::engine::component(
+        &package.component()?,
+        on_disk.then(|| package.compiled_dir()).as_deref(),
+        &manifest.id,
+    )?;
+    let info = Arc::new(package_info(package, granted));
+    let loaded = Arc::new(crate::guest::Loaded::new(
+        component,
+        info.clone(),
+        on_disk.then(|| package.data_dir()),
+        manifest.memory_mb as usize * 1024 * 1024,
+    )?);
+    assemble(package, info, Guest::new(loaded)?)
+}
+
+/// What `package` is to its instances, allowed `granted` of what it asks.
+pub(crate) fn package_info(package: &Package, granted: &bench_api::Capabilities) -> PackageInfo {
+    let manifest = &package.manifest;
+    PackageInfo {
         id: manifest.id.clone(),
         version: manifest.version.clone(),
         kinds: manifest.feature_kinds.clone(),
         granted: manifest.capabilities.and(granted),
-        helpers: crate::jobs::helpers_dir(&package.dir),
+        helpers: crate::package::helpers_dir(&package.dir),
         source: crate::remote::source_of(package).map(|s| s.repo),
-    });
-    let loaded = Arc::new(Loaded::new(
-        component,
-        info.clone(),
-        package.data_dir(),
-        manifest.memory_mb as usize * 1024 * 1024,
-    )?);
-    let mut guest = Guest::new(loaded)?;
+    }
+}
+
+/// The workbench of a package whose instance runs: it describes itself,
+/// and its icons are registered.
+pub(crate) fn assemble(
+    package: &Package,
+    info: Arc<PackageInfo>,
+    mut guest: Guest,
+) -> Result<WasmWorkbench, String> {
+    let manifest = &package.manifest;
     let registration: bench_api::Registration = guest
-        .call(Budget::Long, Access::None, |b, s| b.call_describe(s))
+        .call(Budget::Long, Access::None, |b| b.describe())
         .map(|(json, _)| json)
         .ok_or_else(|| format!("{} did not describe itself", manifest.id))
         .and_then(|json| {
@@ -192,7 +214,7 @@ impl WasmWorkbench {
         if inner.settings_panel.is_none() {
             let panel = inner
                 .guest
-                .call(Budget::Long, Access::None, |b, s| b.call_settings_panel(s))
+                .call(Budget::Long, Access::None, |b| b.settings_panel())
                 .and_then(|(json, _)| parse::<Vec<Widget>>(self.id(), "the settings page", &json))
                 .unwrap_or_default();
             inner.settings_panel = Some(panel);
@@ -234,10 +256,7 @@ impl WasmWorkbench {
         inner: &mut Inner,
         ctx: &mut WorkbenchRuntimeContext,
         budget: Budget,
-        f: impl FnOnce(
-            &crate::host::BenchExports,
-            &mut wasmtime::Store<crate::host::State>,
-        ) -> wasmtime::Result<R>,
+        f: impl FnOnce(&mut dyn Exports) -> Answer<R>,
     ) -> Option<R> {
         let access = Access::Write(
             (ctx as *mut WorkbenchRuntimeContext<'_>).cast::<WorkbenchRuntimeContext<'static>>(),
@@ -254,10 +273,7 @@ impl WasmWorkbench {
         inner: &mut Inner,
         document: &Document,
         budget: Budget,
-        f: impl FnOnce(
-            &crate::host::BenchExports,
-            &mut wasmtime::Store<crate::host::State>,
-        ) -> wasmtime::Result<R>,
+        f: impl FnOnce(&mut dyn Exports) -> Answer<R>,
     ) -> Option<R> {
         let (value, aftermath) =
             inner
@@ -289,9 +305,9 @@ impl WasmWorkbench {
             inner.frame_key = Some(key);
             let id = self.id().to_string();
             let pointer = serde_json::to_string(&convert::pointer(ctx, None)).unwrap_or_default();
-            if let Some(json) = self.read_call(inner, ctx.document, Budget::Frame, |b, s| {
-                b.call_frame(s, &pointer)
-            }) && let Some(frame) = parse::<Frame>(&id, "the frame", &json)
+            if let Some(json) =
+                self.read_call(inner, ctx.document, Budget::Frame, |b| b.frame(&pointer))
+                && let Some(frame) = parse::<Frame>(&id, "the frame", &json)
             {
                 inner.frame = frame;
             }
@@ -321,7 +337,7 @@ impl WasmWorkbench {
         let Ok(json) = serde_json::to_string(&input) else {
             return false;
         };
-        self.write_call(inner, ctx, budget, |b, s| b.call_input(s, &json))
+        self.write_call(inner, ctx, budget, |b| b.input(&json))
             .unwrap_or(false)
     }
 
@@ -336,7 +352,7 @@ impl WasmWorkbench {
             let Ok(json) = serde_json::to_string(&input) else {
                 continue;
             };
-            let _ = self.write_call(inner, ctx, Budget::Long, |b, s| b.call_input(s, &json));
+            let _ = self.write_call(inner, ctx, Budget::Long, |b| b.input(&json));
         }
     }
 
@@ -506,9 +522,7 @@ impl Workbench for WasmWorkbench {
         let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
         let answer = inner
             .guest
-            .call(Budget::Frame, Access::None, |b, s| {
-                b.call_feature_info(s, &json)
-            })
+            .call(Budget::Frame, Access::None, |b| b.feature_info(&json))
             .and_then(|(json, _)| {
                 parse::<bench_api::FeatureInfo>(self.id(), "feature info", &json)
             });
@@ -551,9 +565,7 @@ impl Workbench for WasmWorkbench {
             return Vec::new();
         };
         let mut inner = self.inner();
-        let answer = self.read_call(&mut inner, document, Budget::Frame, |b, s| {
-            b.call_menu_items(s, &json)
-        });
+        let answer = self.read_call(&mut inner, document, Budget::Frame, |b| b.menu_items(&json));
         answer
             .and_then(|json| parse::<Vec<bench_api::MenuItem>>(self.id(), "menu items", &json))
             .unwrap_or_default()
@@ -584,8 +596,8 @@ impl Workbench for WasmWorkbench {
             return false;
         };
         let mut inner = self.inner();
-        self.write_call(&mut inner, ctx, Budget::Long, |b, s| {
-            b.call_menu_command(s, id, &scope)
+        self.write_call(&mut inner, ctx, Budget::Long, |b| {
+            b.menu_command(id, &scope)
         })
         .unwrap_or(false)
     }
@@ -599,9 +611,7 @@ impl Workbench for WasmWorkbench {
         let args = serde_json::to_string(args).map_err(|e| CommandError::failed(e.to_string()))?;
         let mut inner = self.inner();
         let answer = self
-            .write_call(&mut inner, ctx, Budget::Long, |b, s| {
-                b.call_run_command(s, id, &args)
-            })
+            .write_call(&mut inner, ctx, Budget::Long, |b| b.run_command(id, &args))
             .ok_or_else(|| CommandError::failed(format!("the workbench {} failed", self.id())))?;
         match answer {
             Ok(json) if json.trim().is_empty() => Ok(serde_json::Value::Null),
@@ -623,9 +633,7 @@ impl Workbench for WasmWorkbench {
         let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
         let params: Vec<Parameter> = inner
             .guest
-            .call(Budget::Frame, Access::None, |b, s| {
-                b.call_parameters(s, &json)
-            })
+            .call(Budget::Frame, Access::None, |b| b.parameters(&json))
             .and_then(|(json, _)| {
                 parse::<Vec<bench_api::Parameter>>(self.id(), "parameters", &json)
             })
@@ -669,7 +677,7 @@ impl Workbench for WasmWorkbench {
         let mut inner = self.inner();
         if let Some((json, _)) = inner
             .guest
-            .call(Budget::Long, Access::None, |b, s| b.call_settle(s, &json))
+            .call(Budget::Long, Access::None, |b| b.settle(&json))
             && let Some(settled) = parse::<serde_json::Value>(self.id(), "settled data", &json)
         {
             *values = settled;
@@ -742,9 +750,7 @@ impl Workbench for WasmWorkbench {
             return Vec::new();
         };
         let mut inner = self.inner();
-        let answer = self.read_call(&mut inner, document, Budget::Long, |b, s| {
-            b.call_rebuild(s, &json)
-        });
+        let answer = self.read_call(&mut inner, document, Budget::Long, |b| b.rebuild(&json));
         let Some(rebuilds) = answer.and_then(|json| {
             parse::<Vec<bench_api::Rebuild>>(self.id(), "the rebuild plans", &json)
         }) else {
@@ -913,8 +919,8 @@ impl Workbench for WasmWorkbench {
             let Ok(json) = serde_json::to_string(&event) else {
                 continue;
             };
-            let _ = self.write_call(&mut inner, ctx, Budget::Long, |b, s| {
-                b.call_panel_event(s, "task", &json)
+            let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+                b.panel_event("task", &json)
             });
         }
         if request.accept || request.cancel {
@@ -924,8 +930,8 @@ impl Workbench for WasmWorkbench {
                 .as_ref()
                 .map(|t| t.title.clone())
                 .unwrap_or_default();
-            let label = self.write_call(&mut inner, ctx, Budget::Long, |b, s| {
-                b.call_task_close(s, request.accept)
+            let label = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+                b.task_close(request.accept)
             });
             return if request.accept {
                 TaskOutcome::Accepted {
@@ -957,8 +963,8 @@ impl Workbench for WasmWorkbench {
             let Ok(json) = serde_json::to_string(&event) else {
                 continue;
             };
-            let _ = inner.guest.call(Budget::Long, Access::None, |b, s| {
-                b.call_panel_event(s, "settings", &json)
+            let _ = inner.guest.call(Budget::Long, Access::None, |b| {
+                b.panel_event("settings", &json)
             });
         }
         if changed {
@@ -1046,7 +1052,7 @@ impl Workbench for WasmWorkbench {
         let mut inner = self.inner();
         let (json, _) = inner
             .guest
-            .call(Budget::Long, Access::None, |b, s| b.call_settings(s))?;
+            .call(Budget::Long, Access::None, |b| b.settings())?;
         let json = json?;
         inner.guest.settings = Some(json.clone());
         serde_json::from_str(&json).ok()
@@ -1057,9 +1063,9 @@ impl Workbench for WasmWorkbench {
         let mut inner = self.inner();
         inner.guest.settings = Some(json.clone());
         inner.settings_panel = None;
-        let _ = inner.guest.call(Budget::Long, Access::None, |b, s| {
-            b.call_apply_settings(s, &json)
-        });
+        let _ = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.apply_settings(&json));
     }
 
     fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
@@ -1067,7 +1073,7 @@ impl Workbench for WasmWorkbench {
         inner.stale = true;
         let (state, _) = inner
             .guest
-            .call(Budget::Long, Access::None, |b, s| b.call_suspend(s))?;
+            .call(Budget::Long, Access::None, |b| b.suspend())?;
         state.map(|bytes| Box::new(bytes) as Box<dyn std::any::Any + Send>)
     }
 
@@ -1075,9 +1081,9 @@ impl Workbench for WasmWorkbench {
         let bytes = state.and_then(|s| s.downcast::<Vec<u8>>().ok()).map(|b| *b);
         let mut inner = self.inner();
         inner.stale = true;
-        let _ = inner.guest.call(Budget::Long, Access::None, |b, s| {
-            b.call_resume(s, bytes.as_deref())
-        });
+        let _ = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.resume(bytes.as_deref()));
     }
 
     fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
@@ -1085,9 +1091,7 @@ impl Workbench for WasmWorkbench {
         let body = ctx.document.get_feature_meta(id).and_then(|n| n.body);
         let mut inner = self.inner();
         let handled = self
-            .write_call(&mut inner, ctx, Budget::Long, |b, s| {
-                b.call_delete_feature(s, &text)
-            })
+            .write_call(&mut inner, ctx, Budget::Long, |b| b.delete_feature(&text))
             .unwrap_or(false);
         if handled {
             return ctx.document.get_feature_meta(id).is_none();

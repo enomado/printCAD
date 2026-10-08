@@ -131,6 +131,7 @@ pub struct PreferencesState {
     /// An install or a removal the packages page asked for, for the host.
     pub package_request: Option<super::UiCommand>,
     /// The GitHub address typed on the packages page.
+    #[cfg(not(target_arch = "wasm32"))]
     package_repo: String,
     /// What the store's list is narrowed to: the words typed, and the
     /// category picked (0 for every one).
@@ -156,6 +157,7 @@ impl Default for PreferencesState {
             just_opened: false,
             recording: None,
             package_request: None,
+            #[cfg(not(target_arch = "wasm32"))]
             package_repo: String::new(),
             store_query: String::new(),
             store_category: 0,
@@ -1720,44 +1722,50 @@ fn packages_page(
         ui.add_space(SPACE_1);
     }
     ui.add_space(SPACE_2);
-    ui.label(
-        RichText::new("Install from GitHub")
-            .font(sans_semibold(FONT_SM))
-            .color(TEXT1),
-    );
-    ui.label(
-        RichText::new(
-            "A repository whose releases carry a .pcbench file: its address takes the latest \
-             release, a release's address that one.",
-        )
-        .font(sans(FONT_XS))
-        .color(TEXT3),
-    );
-    ui.horizontal(|ui| {
-        let field = ui.add(
-            egui::TextEdit::singleline(&mut state.package_repo)
-                .hint_text("https://github.com/owner/repo")
-                .font(mono(FONT_SM))
-                .desired_width(320.0),
+    // GitHub's downloads refuse a page's requests: a page installs from a
+    // file or a store.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui.label(
+            RichText::new("Install from GitHub")
+                .font(sans_semibold(FONT_SM))
+                .color(TEXT1),
         );
-        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let typed = !state.package_repo.trim().is_empty();
-        let click = ui
-            .add_enabled_ui(typed, |ui| secondary_button(ui, "Install"))
-            .inner
-            .clicked();
-        if typed && (click || enter) {
-            state.package_request = Some(super::UiCommand::InstallPackageFromGithub(
-                std::mem::take(&mut state.package_repo),
-            ));
-        }
-    });
+        ui.label(
+            RichText::new(
+                "A repository whose releases carry a .pcbench file: its address takes the latest \
+                 release, a release's address that one.",
+            )
+            .font(sans(FONT_XS))
+            .color(TEXT3),
+        );
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut state.package_repo)
+                    .hint_text("https://github.com/owner/repo")
+                    .font(mono(FONT_SM))
+                    .desired_width(320.0),
+            );
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let typed = !state.package_repo.trim().is_empty();
+            let click = ui
+                .add_enabled_ui(typed, |ui| secondary_button(ui, "Install"))
+                .inner
+                .clicked();
+            if typed && (click || enter) {
+                state.package_request = Some(super::UiCommand::InstallPackageFromGithub(
+                    std::mem::take(&mut state.package_repo),
+                ));
+            }
+        });
+    }
     ui.add_space(SPACE_1);
     ui.horizontal(|ui| {
         if primary_button(ui, "Install from a file…").clicked() {
             state.package_request = Some(super::UiCommand::InstallPackage);
         }
-        if packages.iter().any(|p| p.source.is_some())
+        if !cfg!(target_arch = "wasm32")
+            && packages.iter().any(|p| p.source.is_some())
             && secondary_button(ui, "Check for updates").clicked()
         {
             state.package_request = Some(super::UiCommand::CheckPackageUpdates);

@@ -207,18 +207,24 @@ pub(crate) fn download(fetch: &dyn Fetch, release: &Release) -> Result<Vec<u8>, 
     if let Some(digest) = &release.digest
         && let Some(want) = digest.strip_prefix("sha256:")
     {
-        let got: String = Sha256::digest(&bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        if !got.eq_ignore_ascii_case(want) {
-            return Err(format!(
-                "{} did not arrive whole (its checksum differs); nothing was installed",
-                release.asset
-            ));
-        }
+        check_sha256(&bytes, want, &release.asset)?;
     }
     Ok(bytes)
+}
+
+/// Refuse `bytes` of `asset` unless their sha256 is `want` (hex).
+pub(crate) fn check_sha256(bytes: &[u8], want: &str, asset: &str) -> Result<(), String> {
+    let got: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if got.eq_ignore_ascii_case(want) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{asset} did not arrive whole (its checksum differs); nothing was installed"
+        ))
+    }
 }
 
 /// Install the package that `text` (a repository or release address)
@@ -247,6 +253,9 @@ pub(crate) fn write_source(package: &Package, source: &Source) -> Result<(), Str
 
 /// Where `package` came from, when it was installed from GitHub.
 pub fn source_of(package: &Package) -> Option<Source> {
+    if let Some(held) = &package.held {
+        return serde_json::from_slice(held.file(SOURCE)?).ok();
+    }
     let text = std::fs::read_to_string(package.dir.join(SOURCE)).ok()?;
     serde_json::from_str(&text).ok()
 }

@@ -232,13 +232,18 @@ fn main() {
         msaa_samples: user_settings.rendering.msaa_samples,
         ..RenderSettings::default()
     };
-    let app = PrintCadApp::new(
+    let check_stores = user_settings.packages.check_updates;
+    let mut app = PrintCadApp::new(
         render_settings,
         settings_store,
         user_settings,
         registry,
         event_loop.create_proxy(),
     );
+    app.start_page_packages();
+    if check_stores {
+        app.look_at_stores(true);
+    }
     event_loop.spawn_app(app);
 }
 

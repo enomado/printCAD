@@ -1,10 +1,13 @@
 //! Workbench packages on disk: a folder holding `bench.toml`, `bench.wasm`
 //! and `icons/`, installed from a `.pcbench` archive (a tar file, gzipped
-//! or not, of the same files).
+//! or not, of the same files). Where there are no folders (a browser
+//! page), a package is its archive's files held in memory.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bench_api::Manifest;
 
@@ -17,6 +20,27 @@ pub const ARCHIVE_EXTENSION: &str = "pcbench";
 pub struct Package {
     pub dir: PathBuf,
     pub manifest: Manifest,
+    /// Its files when they are held in memory rather than in `dir`.
+    pub held: Option<Arc<Held>>,
+}
+
+/// A package's files held in memory, by their path in the archive.
+#[derive(Clone, PartialEq, Default)]
+pub struct Held {
+    files: BTreeMap<String, Vec<u8>>,
+}
+
+impl std::fmt::Debug for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.files.keys()).finish()
+    }
+}
+
+impl Held {
+    /// The file at `path` in the package.
+    pub fn file(&self, path: &str) -> Option<&[u8]> {
+        self.files.get(path).map(Vec::as_slice)
+    }
 }
 
 impl Package {
@@ -32,11 +56,64 @@ impl Package {
         Ok(Package {
             dir: dir.to_path_buf(),
             manifest,
+            held: None,
         })
+    }
+
+    /// The package in an archive's bytes, held in memory and checked as
+    /// [`Package::read`] checks one on disk. Its `dir` names it only.
+    pub fn from_archive(bytes: &[u8]) -> Result<Package, String> {
+        let mut files = BTreeMap::new();
+        each_entry(bytes, |path, entry| {
+            let mut data = Vec::new();
+            entry
+                .read_to_end(&mut data)
+                .map_err(|e| format!("the archive is damaged: {e}"))?;
+            let name = path
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            files.insert(name, data);
+            Ok(())
+        })?;
+        let text = files
+            .get(MANIFEST)
+            .ok_or_else(|| format!("the archive has no {MANIFEST}"))?;
+        let manifest = parse_manifest(&String::from_utf8_lossy(text))?;
+        if !files.contains_key(COMPONENT) {
+            return Err(format!("{} has no {COMPONENT}", manifest.id));
+        }
+        Ok(Package {
+            dir: PathBuf::from(&manifest.id),
+            manifest,
+            held: Some(Arc::new(Held { files })),
+        })
+    }
+
+    /// The same package with `bytes` held as its file `path`, beside what
+    /// its archive brought.
+    pub fn holding(mut self, path: &str, bytes: Vec<u8>) -> Package {
+        let mut held = self.held.as_deref().cloned().unwrap_or_default();
+        held.files.insert(path.to_string(), bytes);
+        self.held = Some(Arc::new(held));
+        self
     }
 
     pub fn wasm(&self) -> PathBuf {
         self.dir.join(COMPONENT)
+    }
+
+    /// The component's bytes.
+    pub fn component(&self) -> Result<Vec<u8>, String> {
+        match &self.held {
+            Some(held) => held
+                .file(COMPONENT)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| format!("{} has no {COMPONENT}", self.manifest.id)),
+            None => fs::read(self.wasm())
+                .map_err(|e| format!("cannot read {}: {e}", self.wasm().display())),
+        }
     }
 
     /// Where the app keeps the package's compiled component: beside the
@@ -52,6 +129,21 @@ impl Package {
 
     /// The package's icons: `icons/<name>.svg`, by name.
     pub fn icons(&self) -> Vec<(String, String)> {
+        if let Some(held) = &self.held {
+            return held
+                .files
+                .iter()
+                .filter_map(|(path, bytes)| {
+                    let name = path.strip_prefix("icons/")?.strip_suffix(".svg")?;
+                    (!name.contains('/')).then(|| {
+                        (
+                            name.to_string(),
+                            String::from_utf8_lossy(bytes).into_owned(),
+                        )
+                    })
+                })
+                .collect();
+        }
         let Ok(entries) = fs::read_dir(self.dir.join("icons")) else {
             return Vec::new();
         };
@@ -69,6 +161,15 @@ impl Package {
         icons.sort();
         icons
     }
+}
+
+/// The folder of a package's helpers for this system.
+pub(crate) fn helpers_dir(package: &Path) -> PathBuf {
+    package.join("helpers").join(format!(
+        "{}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ))
 }
 
 /// A manifest from its text, checked.
@@ -170,6 +271,24 @@ pub fn install_bytes(bytes: &[u8], root: &Path, expect: Option<&str>) -> Result<
 }
 
 fn unpack(bytes: &[u8], into: &Path) -> Result<(), String> {
+    each_entry(bytes, |_, entry| {
+        // `unpack_in` refuses a path that would land outside `into`.
+        let inside = entry
+            .unpack_in(into)
+            .map_err(|e| format!("cannot unpack: {e}"))?;
+        if !inside {
+            return Err("the archive reaches outside its folder".into());
+        }
+        Ok(())
+    })
+}
+
+/// Hand `take` each file of an archive that belongs in a package, with its
+/// path; folders and anything else are passed over.
+fn each_entry(
+    bytes: &[u8],
+    mut take: impl FnMut(&Path, &mut tar::Entry<'_, Box<dyn Read + '_>>) -> Result<(), String>,
+) -> Result<(), String> {
     let reader: Box<dyn Read + '_> = if bytes.starts_with(&[0x1f, 0x8b]) {
         Box::new(flate2::read::GzDecoder::new(bytes))
     } else {
@@ -192,13 +311,10 @@ fn unpack(bytes: &[u8], into: &Path) -> Result<(), String> {
         if !belongs_in_package(&path) {
             continue;
         }
-        // `unpack_in` refuses a path that would land outside `into`.
-        let inside = entry
-            .unpack_in(into)
-            .map_err(|e| format!("cannot unpack: {e}"))?;
-        if !inside {
-            return Err("the archive reaches outside its folder".into());
+        if kind.is_dir() {
+            continue;
         }
+        take(&path, &mut entry)?;
     }
     Ok(())
 }
