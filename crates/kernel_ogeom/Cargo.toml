@@ -14,6 +14,11 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 serde_json.workspace = true
 
+# A browser page's clock (`performance.now()`), so the kernel's timings read
+# true there.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ogeom = { workspace = true, features = ["web"] }
+
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 core_document = { path = "../core_document" }
