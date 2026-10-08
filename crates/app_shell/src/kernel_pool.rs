@@ -89,6 +89,18 @@ pub(super) fn build_workers() -> usize {
     cores.saturating_sub(2).clamp(1, 3)
 }
 
+/// Threads each kernel worker's parallel stages may use: the machine's
+/// cores shared among the workers, on a page built with them.
+fn threads_per_worker() -> usize {
+    if !cfg!(target_feature = "atomics") {
+        return 1;
+    }
+    let cores = web_sys::window()
+        .map(|w| w.navigator().hardware_concurrency() as usize)
+        .unwrap_or(2);
+    (cores / (1 + build_workers())).max(1)
+}
+
 /// One worker, as the page sees it.
 struct Slot {
     worker: web_sys::Worker,
@@ -107,7 +119,18 @@ impl Slot {
     fn start(responses: &Sender<KernelResponse>, activity: &Arc<Mutex<Activity>>) -> Self {
         let options = web_sys::WorkerOptions::new();
         options.set_type(web_sys::WorkerType::Module);
-        let worker = web_sys::Worker::new_with_options(WORKER_SCRIPT, &options)
+        // The worker loads the same build as the page, and starts a pool of
+        // threads when it has them.
+        let build = if cfg!(target_feature = "atomics") {
+            "threads"
+        } else {
+            "plain"
+        };
+        let script = format!(
+            "{WORKER_SCRIPT}?build={build}&threads={}",
+            threads_per_worker()
+        );
+        let worker = web_sys::Worker::new_with_options(&script, &options)
             .expect("the page starts a kernel worker");
         let state = Rc::new(RefCell::new(SlotState::default()));
         let on_message = {
@@ -384,10 +407,17 @@ pub(super) fn stage_changed(activity: &Activity) {
     });
 }
 
+// Linked for the export that starts the threads a kernel worker's pool
+// runs on (`initThreadPool`), which its script calls before
+// `kernel_worker_main`.
+#[cfg(target_feature = "atomics")]
+use wasm_bindgen_rayon as _;
+
 /// A kernel worker's start: the page's worker script calls it once the
-/// module is loaded. The worker builds and answers until the page stops it.
+/// module is loaded, with the threads its pool has (1 for none). The
+/// worker builds and answers until the page stops it.
 #[wasm_bindgen]
-pub fn kernel_worker_main() {
+pub fn kernel_worker_main(threads: usize) {
     console_error_panic_hook::set_once();
     tracing_wasm::set_as_global_default_with_config(
         tracing_wasm::WASMLayerConfigBuilder::new()
@@ -395,6 +425,14 @@ pub fn kernel_worker_main() {
             .build(),
     );
     kernel_ogeom::files::set_reader(crate::platform::read);
+    // The pool the worker's script started, lent to the kernel.
+    #[cfg(target_feature = "atomics")]
+    if threads > 1 {
+        let workers = kernel_ogeom::threads::lend_rayon();
+        tracing::info!("kernel worker: {workers} threads");
+    }
+    #[cfg(not(target_feature = "atomics"))]
+    let _ = threads;
     let scope: web_sys::DedicatedWorkerGlobalScope = js_sys::global().unchecked_into();
     WORKER.with(|w| *w.borrow_mut() = Some((scope.clone(), web_time::Instant::now())));
 

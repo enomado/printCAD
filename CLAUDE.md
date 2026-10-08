@@ -97,12 +97,24 @@ cargo fmt --all                   # CI enforces --check
   The CI's `platforms` job runs clippy and the tests on Windows and macOS.
 - The app also builds for a browser page: `scripts/build-web.sh` (the
   release build for `wasm32-unknown-unknown`, wasm-bindgen at the version
-  `Cargo.lock` pins, `wasm-opt`; `web/index.html` starts it) writes
-  `web/dist`. Everything that differs sits behind `cfg(target_arch =
+  `Cargo.lock` pins, `wasm-opt`; `web/index.html` starts it, showing the
+  module's download) writes `web/dist`, and a second build with atomics and
+  shared memory into `threads/` (the standard library rebuilt,
+  `RUSTC_BOOTSTRAP`; `WEB_THREADS=0` skips it), which the page loads when
+  cross-origin isolated (`third_party/coi-serviceworker` gives a static host
+  the headers): each kernel worker then starts a `wasm-bindgen-rayon` pool
+  and lends it to the kernel (`kernel_ogeom::threads::lend_rayon`,
+  `parallel::set_pool`). A release builds it (`release.yml`'s `web` job,
+  `printcad-web-X.Y.Z.tar.gz`) and `pages.yml` puts the latest release's
+  under the site's `app/`; CI clippies the browser target. Everything that differs sits behind `cfg(target_arch =
   "wasm32")`, so a desktop build compiles exactly what it did:
   `app_shell/src/platform.rs` (`spawn` runs work at once on the page,
-  `read`/`write` are the picked files held in memory and downloads,
-  `temp_dir`, `scratch_file`, `ask_unsaved`, `warn`; `platform/web.rs` the
+  `read`/`write` are the picked files held in memory and downloads, and
+  under `/printcad` the files the page keeps (documents, the recent list,
+  autosaved copies; IndexedDB, read back before the app starts), `remove`,
+  `list`, `exists`, `kept_dir`, `ON_PAGE` and `offers` (the commands a page
+  leaves out of its menus, palette and keys), `set_unsaved` (the page asks
+  before it is left), `temp_dir`, `scratch_file`, `ask_unsaved`, `warn`; `platform/web.rs` the
   page's picker and downloads), `app/server.rs` (`BrowserFiles` in place
   of the daemon), the kernel's jobs in the page's workers
   (`kernel_pool.rs`, `web/kernel-worker.js`: one for requests, more for

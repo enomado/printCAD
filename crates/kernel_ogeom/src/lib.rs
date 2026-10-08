@@ -26,6 +26,8 @@ mod reuse;
 pub use queries::{OgeomQueries, QUERIES};
 pub mod progress;
 mod tess;
+#[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+pub mod threads;
 
 pub use progress::CONTEXT_PREFIX;
 // The host installs a progress watch around each job; re-exported here so

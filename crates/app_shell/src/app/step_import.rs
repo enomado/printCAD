@@ -440,9 +440,14 @@ impl PrintCadApp {
         // file, whole, which is what gets sent to a developer; otherwise one
         // line says how many there were and where the switch is.
         if !report.is_clean() && !self.user_settings.diagnostics.import_report {
+            // A page writes no report, so it names no switch.
+            let switch = if crate::platform::ON_PAGE {
+                ""
+            } else {
+                " (Preferences › General › Diagnostics writes them to a file)"
+            };
             app_log::warn(format!(
-                "{} import read with {} warnings and {} untrimmed faces \
-                 (Preferences › General › Diagnostics writes them to a file)",
+                "{} import read with {} warnings and {} untrimmed faces{switch}",
                 format_of(path),
                 report.warnings.len(),
                 report.untrimmed_faces.len()
