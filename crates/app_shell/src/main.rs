@@ -215,6 +215,7 @@ struct PrintCadApp {
     last_frame_time: Option<Instant>,
     current_fps: f32,
     gpu_name: Option<String>,
+    graphics_api: Option<&'static str>,
     available_gpus: Vec<String>,
     fps_accum_time: f32,
     fps_frame_count: u32,
@@ -439,6 +440,7 @@ impl PrintCadApp {
             last_frame_time: None,
             current_fps: 0.0,
             gpu_name: None,
+            graphics_api: None,
             available_gpus: Vec::new(),
             fps_accum_time: 0.0,
             fps_frame_count: 0,
@@ -649,7 +651,7 @@ impl PrintCadApp {
         };
 
         let mut renderer = Renderer::new(self.settings.clone());
-        if let Err(err) = renderer.initialize(&window) {
+        if let Err(err) = renderer.initialize(&window, event_loop.owned_display_handle()) {
             error!("failed to initialize renderer: {err}");
             event_loop.exit();
             return;
@@ -657,6 +659,7 @@ impl PrintCadApp {
 
         let ui_layer = UiLayer::new(&window);
         self.gpu_name = renderer.gpu_name().map(|s| s.to_string());
+        self.graphics_api = renderer.graphics_api();
         if let Some(list) = renderer.available_gpus() {
             self.available_gpus = list.to_vec();
         }

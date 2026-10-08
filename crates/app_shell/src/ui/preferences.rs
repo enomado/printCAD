@@ -184,6 +184,7 @@ pub struct PreferencesInputs<'a> {
     pub registry: &'a mut DocumentService,
     pub gpus: &'a [String],
     pub gpu_name: Option<&'a str>,
+    pub graphics_api: Option<&'a str>,
     /// How many buttons the connected 6-DoF mouse has, so the page offers a
     /// row per button it actually owns. Zero when none is connected.
     pub nav_buttons: u32,
@@ -944,6 +945,10 @@ fn general_page(
                         format!("printCAD {} · dev", env!("CARGO_PKG_VERSION")),
                     ),
                     PrefRow::text("GPU", inputs.gpu_name.unwrap_or("Unknown").to_string()),
+                    PrefRow::text(
+                        "Graphics API",
+                        inputs.graphics_api.unwrap_or("Unknown").to_string(),
+                    ),
                     PrefRow::text("Geometry kernel", "ogeom (pure Rust)".to_string()),
                 ],
                 filter,

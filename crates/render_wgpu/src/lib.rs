@@ -19,7 +19,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info};
 use uuid::Uuid;
-use winit::{dpi::PhysicalSize, window::Window};
+use winit::{dpi::PhysicalSize, event_loop::OwnedDisplayHandle, window::Window};
 
 use core::RendererCore;
 
@@ -114,7 +114,14 @@ pub struct PickResult {
 
 /// Trait used by the app shell to talk to any renderer implementation.
 pub trait RenderBackend {
-    fn initialize(&mut self, window: &Window) -> Result<(), RenderError>;
+    /// `display` is the connection to the window system the event loop
+    /// holds; the GL backend draws through it and refuses a window's
+    /// surface without it (on Wayland especially).
+    fn initialize(
+        &mut self,
+        window: &Window,
+        display: OwnedDisplayHandle,
+    ) -> Result<(), RenderError>;
     /// Draws the frame. The egui texture deltas are taken out of the
     /// submission here and held until a frame actually applies them, so a
     /// frame skipped for an out-of-date surface loses no upload.
@@ -315,6 +322,11 @@ impl Renderer {
         self.core.as_ref().map(|c| c.gpu_name())
     }
 
+    /// The graphics API in use: Vulkan, Metal, DirectX 12 or OpenGL.
+    pub fn graphics_api(&self) -> Option<&'static str> {
+        self.core.as_ref().map(|c| c.graphics_api())
+    }
+
     pub fn available_gpus(&self) -> Option<&[String]> {
         self.core.as_ref().map(|c| c.available_gpus())
     }
@@ -334,7 +346,11 @@ impl Renderer {
 }
 
 impl RenderBackend for Renderer {
-    fn initialize(&mut self, window: &Window) -> Result<(), RenderError> {
+    fn initialize(
+        &mut self,
+        window: &Window,
+        display: OwnedDisplayHandle,
+    ) -> Result<(), RenderError> {
         if self.core.is_some() {
             return Ok(());
         }
@@ -346,7 +362,12 @@ impl RenderBackend for Renderer {
             "Initializing the wgpu renderer (validation={})",
             self.settings.prefer_validation_layers
         );
-        let core = RendererCore::new(window, (size.width, size.height), self.settings.clone())?;
+        let core = RendererCore::new(
+            window,
+            display,
+            (size.width, size.height),
+            self.settings.clone(),
+        )?;
         self.core = Some(core);
         Ok(())
     }

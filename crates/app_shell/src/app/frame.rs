@@ -834,6 +834,7 @@ impl PrintCadApp {
                         fps: (!self.fps_display_idle).then_some(self.current_fps),
                         scene_redraws_per_s: self.scene_redraws_per_s,
                         gpu_name: self.gpu_name.as_deref(),
+                        graphics_api: self.graphics_api,
                         gpus: &self.available_gpus,
                         hovered_point: self.session.hovered_world_pos,
                         pivot_screen_pos,

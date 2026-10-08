@@ -7,6 +7,7 @@ use std::sync::Arc;
 use egui_wgpu::wgpu;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
 use crate::mesh::{
@@ -72,6 +73,8 @@ pub(crate) struct RendererCore {
     /// The scene image's format: the window's, in sRGB.
     scene_format: wgpu::TextureFormat,
     gpu_name: String,
+    /// The graphics API wgpu drives the GPU through.
+    graphics_api: &'static str,
     available_gpus: Vec<String>,
     config: wgpu::SurfaceConfiguration,
     surface: wgpu::Surface<'static>,
@@ -84,6 +87,7 @@ pub(crate) struct RendererCore {
 impl RendererCore {
     pub(crate) fn new(
         window: &Window,
+        display: OwnedDisplayHandle,
         (width, height): (u32, u32),
         settings: RenderSettings,
     ) -> Result<Self, RenderError> {
@@ -100,8 +104,8 @@ impl RendererCore {
             flags,
             memory_budget_thresholds: Default::default(),
             backend_options: Default::default(),
-            // Only the GL backend reads it; the primary backends need none.
-            display: None,
+            // Only the GL backend reads it, and needs it to draw on the window.
+            display: Some(Box::new(display)),
         });
         // SAFETY: the handles are the live window's, which outlives the
         // surface: the app drops the renderer before the window (`Gfx`).
@@ -148,13 +152,20 @@ impl RendererCore {
         let polygon_line = adapter
             .features()
             .contains(wgpu::Features::POLYGON_MODE_LINE);
+        // Sample counts beyond the portable ones (8x MSAA) are the
+        // adapter's own and usable only with this feature turned on.
+        let adapter_formats = adapter
+            .features()
+            .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+        let mut required_features = wgpu::Features::empty();
+        required_features.set(wgpu::Features::POLYGON_MODE_LINE, polygon_line);
+        required_features.set(
+            wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+            adapter_formats,
+        );
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("printCAD"),
-            required_features: if polygon_line {
-                wgpu::Features::POLYGON_MODE_LINE
-            } else {
-                wgpu::Features::empty()
-            },
+            required_features,
             // Everything the GPU offers: a big assembly's buffers outgrow
             // the portable defaults.
             required_limits: adapter.limits(),
@@ -219,13 +230,17 @@ impl RendererCore {
         surface.configure(&device, &config);
         info!("Surface: {format:?}, {present_mode:?}");
 
-        // MSAA, clamped to what both the colour and depth formats support.
+        // MSAA, clamped to what both the colour and depth formats support
+        // on this device: the adapter's counts with its format features on,
+        // the portable ones otherwise.
         let supported = |n: u32| {
             [scene_format, DEPTH_FORMAT].iter().all(|f| {
-                adapter
-                    .get_texture_format_features(*f)
-                    .flags
-                    .sample_count_supported(n)
+                let features = if adapter_formats {
+                    adapter.get_texture_format_features(*f)
+                } else {
+                    f.guaranteed_format_features(device.features())
+                };
+                features.flags.sample_count_supported(n)
             })
         };
         let requested = u32::from(settings.msaa_samples.max(1));
@@ -286,6 +301,7 @@ impl RendererCore {
             last_draw_stats: DrawStats::default(),
             msaa_samples,
             scene_format,
+            graphics_api: api_name(info.backend),
             gpu_name: info.name,
             available_gpus,
             config,
@@ -318,6 +334,10 @@ impl RendererCore {
 
     pub(crate) fn gpu_name(&self) -> &str {
         &self.gpu_name
+    }
+
+    pub(crate) fn graphics_api(&self) -> &'static str {
+        self.graphics_api
     }
 
     pub(crate) fn available_gpus(&self) -> &[String] {
@@ -473,8 +493,14 @@ impl RendererCore {
                             depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                // Nothing drawn reads as the far plane.
-                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                // Nothing drawn reads as the far plane: the
+                                // bits of a depth of 1.
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: f64::from(1.0f32.to_bits()),
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 0.0,
+                                }),
                                 store: wgpu::StoreOp::Store,
                             },
                         }),
@@ -655,6 +681,18 @@ impl Drop for RendererCore {
             ms = started.elapsed().as_millis() as u64,
             "renderer torn down"
         );
+    }
+}
+
+/// The name people know a backend's graphics API by.
+fn api_name(backend: wgpu::Backend) -> &'static str {
+    match backend {
+        wgpu::Backend::Vulkan => "Vulkan",
+        wgpu::Backend::Metal => "Metal",
+        wgpu::Backend::Dx12 => "DirectX 12",
+        wgpu::Backend::Gl => "OpenGL",
+        wgpu::Backend::BrowserWebGpu => "WebGPU",
+        wgpu::Backend::Noop => "None",
     }
 }
 

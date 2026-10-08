@@ -239,10 +239,11 @@ fn vs_pick(@location(0) position: vec3<f32>) -> PickOut {
 
 struct PickTexel {
     @location(0) id: vec4<u32>,
-    // The fragment's depth again, in a colour target: a depth texture
-    // cannot be copied in part, and the readback wants only the cursor's
-    // neighbourhood.
-    @location(1) depth: f32,
+    // The fragment's depth again, its bits in a colour target: a depth
+    // texture cannot be copied in part, and the readback wants only the
+    // cursor's neighbourhood. An integer target, since GL hardware cannot
+    // render to a float one.
+    @location(1) depth: u32,
 }
 
 // The body's id and its depth; the depth test keeps the nearest.
@@ -253,6 +254,6 @@ fn fs_pick(in: PickOut) -> PickTexel {
     }
     var texel: PickTexel;
     texel.id = draw.object_id;
-    texel.depth = in.position.z;
+    texel.depth = bitcast<u32>(in.position.z);
     return texel;
 }

@@ -519,9 +519,10 @@ pub(crate) struct MeshRenderer {
     draw_stride: u64,
 }
 
-/// The pick pass's attachments: the id, and the depth as a colour.
+/// The pick pass's attachments: the id, and the depth's bits as a colour.
+/// Both integer formats, which every backend renders to.
 pub(crate) const PICK_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
-pub(crate) const PICK_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+pub(crate) const PICK_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 impl MeshRenderer {

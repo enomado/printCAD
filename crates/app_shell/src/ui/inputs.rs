@@ -51,6 +51,8 @@ pub struct UiFrameInputs<'a> {
     /// being reused under fresh UI frames.
     pub scene_redraws_per_s: u32,
     pub gpu_name: Option<&'a str>,
+    /// The graphics API the renderer runs on.
+    pub graphics_api: Option<&'a str>,
     pub gpus: &'a [String],
     pub hovered_point: Option<[f32; 3]>,
     pub pivot_screen_pos: Option<(f32, f32)>,
