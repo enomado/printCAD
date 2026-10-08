@@ -910,8 +910,8 @@ impl Default for CameraSettings {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum OrbitYawAxis {
-    WorldUp,
     #[default]
+    WorldUp,
     CameraUp,
 }
 

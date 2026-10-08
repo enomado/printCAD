@@ -84,6 +84,7 @@ impl PrintCadApp {
             WindowEvent::Focused(false) => {
                 self.mouse_buttons_down = 0;
                 self.held_buttons = [false; 3];
+                self.session.camera.forget_released([false; 3]);
                 let wb_id = self.active_workbench_id();
                 let params = self.interaction_ctx_params();
                 if let Some(((), outcome)) = self.with_workbench_ctx(&wb_id, params, |wb, ctx| {
