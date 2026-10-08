@@ -21,6 +21,7 @@ import sys
 from collections import defaultdict
 
 CREASE_DEG = 30.0
+SMOOTH_PASSES = 4
 
 
 def read_stl(path):
@@ -123,6 +124,17 @@ def pack(tris, flag_of=None):
             angle_sum[i] += math.acos(max(-1.0, min(1.0, dot(u, w))))
             area_sum[i] += area / 3
     gauss = {i: (2 * math.pi - angle_sum[i]) / area_sum[i] if area_sum[i] > 1e-12 else 0.0 for i in angle_sum}
+    # A few passes of averaging with the points around: a single point's
+    # deficit is noisy where the surface turns from dome to saddle, which
+    # draws as a dotted ring rather than a band.
+    neighbours = defaultdict(set)
+    for a, b, c in faces:
+        neighbours[a].update((b, c))
+        neighbours[b].update((a, c))
+        neighbours[c].update((a, b))
+    for _ in range(SMOOTH_PASSES):
+        gauss = {i: 0.5 * k + 0.5 * sum(gauss[j] for j in neighbours[i]) / len(neighbours[i]) if neighbours[i] else k
+                 for i, k in gauss.items()}
     out_pos, out_nrm, out_flag, out_idx, out_curv = [], [], [], [], []
     made = {}
     for f, tri in enumerate(faces):

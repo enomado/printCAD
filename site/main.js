@@ -42,13 +42,20 @@ const chips = [...document.querySelectorAll(".stage-steps span")];
 let storyT = 0;
 
 function onScroll() {
-  const max = root.scrollHeight - innerHeight;
-  fill.style.height = `${(max > 0 ? scrollY / max : 0) * 100}%`;
   header.classList.toggle("scrolled", scrollY > 30);
+  // The section across the middle of the window is the current one; the
+  // fill runs to its dot and on toward the next as that one comes up.
+  const mid = innerHeight * 0.5;
+  const tops = sections.map((s) => (s ? s.getBoundingClientRect().top + sectionLead(s) : Infinity));
   let current = 0;
-  sections.forEach((s, i) => {
-    if (s && s.getBoundingClientRect().top < innerHeight * 0.45) current = i;
+  tops.forEach((t, i) => {
+    if (t < mid) current = i;
   });
+  const last = root.scrollHeight - innerHeight - scrollY < 4;
+  if (last) current = sections.length - 1;
+  const next = tops[current + 1];
+  const part = next === undefined || last ? 0 : clamp((mid - tops[current]) / (next - tops[current]));
+  fill.style.height = `${((current + part) / (marks.length - 1)) * 100}%`;
   marks.forEach((m, i) => m.classList.toggle("on", i === current));
 
   const box = story.getBoundingClientRect();
@@ -64,6 +71,11 @@ function onScroll() {
     c.classList.toggle("done", n < at);
   });
 }
+// Where a section's own heading starts, below its padding.
+function sectionLead(s) {
+  const first = s.querySelector(".eyebrow");
+  return first ? first.getBoundingClientRect().top - s.getBoundingClientRect().top : 0;
+}
 // The app's picture under the downloads drifts up a little as it comes in.
 const shot = document.querySelector(".app-shot");
 addEventListener("scroll", () => {
@@ -73,6 +85,22 @@ addEventListener("scroll", () => {
 }, { passive: true });
 addEventListener("scroll", onScroll, { passive: true });
 addEventListener("resize", onScroll);
+// On a narrow screen the story's words sit under the model: their box is
+// as tall as the longest step needs, and the model takes the rest.
+const storyText = document.querySelector(".story-text");
+function fitStoryText() {
+  if (innerWidth > 1000) return storyText.style.removeProperty("--text-h");
+  const heights = panels.map((p) => {
+    p.style.bottom = "auto";
+    const h = p.offsetHeight;
+    p.style.bottom = "";
+    return h;
+  });
+  storyText.style.setProperty("--text-h", `${Math.max(...heights) + 8}px`);
+}
+addEventListener("resize", fitStoryText);
+document.fonts.ready.then(fitStoryText);
+fitStoryText();
 onScroll();
 
 for (const el of document.querySelectorAll(".spot")) {
@@ -100,21 +128,146 @@ function labels(stage, container) {
     update() {
       for (const l of list) {
         const [x, y, z] = stage.project(l.at);
-        l.el.style.left = `${x}px`;
-        l.el.style.top = `${y}px`;
+        // Kept inside the stage, so a label near its edge is never cut.
+        const half = l.el.offsetWidth / 2 + 6, halfH = l.el.offsetHeight / 2 + 6;
+        l.el.style.left = `${clamp(x, half, stage.cssW - half)}px`;
+        l.el.style.top = `${clamp(y, halfH, stage.cssH - halfH)}px`;
         l.el.style.opacity = z < 1 ? l.show : 0;
       }
     },
   };
 }
 
+// ---- The console types a script, then runs it --------------------------------
+
+const script = [
+  ["c", "-- a plate with a hole, from the console\n"],
+  ["k", "local "], ["", "s = pc.sketch.new{plane = "], ["s", '"XY"'], ["", "}\n"],
+  ["", "pc.sketch.rect{sketch = s, width = "], ["n", "60"], ["", ", height = "], ["n", "40"], ["", "}\n"],
+  ["", "pc.sketch.circle{sketch = s, x = "], ["n", "30"], ["", ", y = "], ["n", "20"], ["", ", radius = "], ["n", "6"], ["", "}\n"],
+  ["k", "local "], ["", "pad = pc.design.pad{sketch = s, length = "], ["n", "8"], ["", "}\n"],
+  ["k", "return "], ["", "pc.doc.rebuild()\n"],
+];
+const answer = [
+  ["c", "\n> run\n"],
+  ["ok", "✓ "], ["", "sketch   fully constrained\n"],
+  ["ok", "✓ "], ["", "pad      60 × 40 × 8 mm\n"],
+  ["ok", "✓ "], ["", "rebuilt  nothing failed, one undo step\n"],
+];
+{
+  const term = document.querySelector("#term");
+  const code = term.querySelector("code");
+  const state = term.querySelector(".term-state");
+  const type = async (parts, speed) => {
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    for (const [kind, text] of parts) {
+      const span = document.createElement("span");
+      if (kind) span.className = kind;
+      code.append(span);
+      span.after(caret);
+      for (const ch of text) {
+        span.textContent += ch;
+        if (!still) await new Promise((r) => setTimeout(r, speed + Math.random() * speed));
+      }
+    }
+    caret.remove();
+  };
+  new IntersectionObserver(async (entries, obs) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    obs.disconnect();
+    state.textContent = "typing";
+    await type(script, 12);
+    state.textContent = "running";
+    await new Promise((r) => setTimeout(r, still ? 0 : 450));
+    await type(answer, 5);
+    state.textContent = "done";
+  }, { threshold: 0.4 }).observe(term);
+}
+
+// ---- The store's packages ------------------------------------------------------
+
+// A package's badge: the icon of its first category the page knows.
+const CATEGORY_ICONS = {
+  fasteners: "hole", parts: "workbench-part-design", printing: "print-bed", "import-export": "file-document",
+  utilities: "script", assembly: "workbench-assembly", surfaces: "workbench-surface", sketch: "workbench-sketcher",
+  mesh: "workbench-mesh", generators: "involute-gear", analysis: "measure",
+};
+const categoryIcon = (cats = []) => CATEGORY_ICONS[cats.find((c) => CATEGORY_ICONS[c])] ?? "workbench-part-design";
+
+{
+  const store = document.querySelector("#store");
+  store.innerHTML = '<div class="pkg skeleton"></div>'.repeat(3);
+  fetch("https://gilbertorconde.github.io/PrintCAD-wb-repo/index.json")
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((index) => {
+      store.innerHTML = "";
+      for (const p of index.packages ?? []) {
+        const card = document.createElement("a");
+        card.className = "pkg reveal";
+        card.href = `https://github.com/${p.repository}`;
+        const head = document.createElement("div");
+        head.className = "head";
+        const badge = document.createElement("i");
+        badge.className = "badge";
+        badge.style.setProperty("--i", `url(assets/icons/${categoryIcon(p.categories)}.svg)`);
+        const title = document.createElement("div");
+        const h3 = document.createElement("h3");
+        h3.textContent = p.name;
+        const ver = document.createElement("span");
+        ver.className = "ver";
+        ver.textContent = p.release ? `v${p.release.version}` : "";
+        title.append(h3, ver);
+        head.append(badge, title);
+        const desc = document.createElement("p");
+        desc.textContent = p.description ?? "";
+        const tagsEl = document.createElement("div");
+        tagsEl.className = "tags";
+        for (const c of p.categories ?? []) {
+          const s = document.createElement("span");
+          s.textContent = c;
+          tagsEl.append(s);
+        }
+        const by = document.createElement("span");
+        by.className = "by";
+        by.textContent = `${p.repository}`;
+        card.append(head, desc, tagsEl, by);
+        store.append(card);
+        watch(card);
+      }
+    })
+    .catch(() => {
+      store.innerHTML = '<p class="note">The store could not be reached; browse it from inside printCAD.</p>';
+    });
+}
+
+// ---- Downloads -------------------------------------------------------------------
+
+{
+  const os = /Win/.test(navigator.platform) ? "windows" : /Mac/.test(navigator.platform) ? "macos" : "linux";
+  document.querySelector(`.dl[data-platform="${os}"]`)?.classList.add("mine");
+  fetch("https://api.github.com/repos/gilbertorconde/printCAD/releases/latest")
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((release) => {
+      const ends = { linux: "linux-x86_64.tar.gz", windows: "windows-x86_64.zip", macos: "macos-universal.dmg" };
+      for (const a of document.querySelectorAll(".dl")) {
+        const asset = release.assets.find((x) => x.name.endsWith(ends[a.dataset.platform]));
+        if (asset) a.href = asset.browser_download_url;
+      }
+      document.querySelector("#release-line").textContent =
+        `Version ${release.tag_name.replace(/^v/, "")} · built in Rust on Vulkan, with a pure-Rust geometry kernel`;
+    })
+    .catch(() => {});
+}
+
 // ---- The story ------------------------------------------------------------
 
+// The 3D below waits for the models; everything above runs without them.
 const models = await loadModels();
 
 {
   const canvas = document.querySelector("#story-stage");
-  const stage = new Stage(canvas, { target: [20, 15, 12], distance: 150, yaw: -1.95, pitch: 0.42, fov: 0.42 });
+  const stage = new Stage(canvas, { target: [20, 15, 12], distance: 150, yaw: -1.95, pitch: 0.42, fov: 0.42, fit: 1.05 });
   if (stage.gl) {
     stage.spin = 0;
     const tags = labels(stage, document.querySelector("#story-labels"));
@@ -150,19 +303,27 @@ const models = await loadModels();
       { mesh: models.sprocket, at: [16, -48, 0] },
       { mesh: models.nut, at: [55, -62, 0] },
     ].map((o, i) => ({ ...o, i, item: stage.addMesh(o.mesh, { alpha: 0, show: false }) }));
+    // Each part's shadow on the bed, a little wider than its footprint.
+    const shadowOf = (m, at) => {
+      const s = stage.addShadow((m.hi[0] - m.lo[0]) * 0.62, (m.hi[1] - m.lo[1]) * 0.62);
+      s.model = mat4.translate(at[0] + (m.lo[0] + m.hi[0]) / 2, at[1] + (m.lo[1] + m.hi[1]) / 2, 0);
+      return s;
+    };
+    const partShadow = shadowOf(models.bracket, [0, 0, 0]);
+    for (const o of others) o.shadow = shadowOf(o.mesh, o.at);
 
     const L = {
       d40: tags.add("40", [foot / 2, 0, -6], "dim"),
       d30: tags.add("30", [-6, 0, height / 2], "dim"),
-      d5a: tags.add("5", [foot + 9, 0, t / 2], "dim"),
-      d5b: tags.add("5", [t / 2, 0, height + 9], "dim"),
+      d5a: tags.add("5", [foot + 6, 0, t / 2], "dim"),
+      d5b: tags.add("5", [t / 2, 0, height + 6], "dim"),
       ok: tags.add("fully constrained", [foot * 0.62, 0, height * 0.72], "ok"),
       perp: tags.add("perpendicular", [t + 9, 0, t + 9], "ok"),
       horiz: tags.add("horizontal", [foot * 0.74, 0, t + 4], "ok"),
       dots: profile.map((p) => tags.add("", p, "dot")),
       pad: tags.add("Pad · 30 mm", [foot, w / 2, t + 2], "feat"),
-      hole: tags.add("Hole ⌀5 × 3", [27, 15, t + 3], "feat"),
-      fillet: tags.add("Fillet R4", [t + 2, w * 0.75, t + 9], "feat"),
+      hole: tags.add("3 × Hole ⌀5", [27, 15, t + 3], "feat"),
+      fillet: tags.add("Fillet R4", [t + 4, 2, t + 4], "feat"),
       bed: tags.add("4 parts · one plate", [50, -95, 0], "ok"),
     };
 
@@ -214,13 +375,15 @@ const models = await loadModels();
         o.item.show = s > 0;
         o.item.alpha = s > 0 ? Math.min(1, s * 1.6) : 0;
         o.item.model = mat4.translate(o.at[0], o.at[1], o.at[2] + (1 - ease(s)) * 50);
+        o.shadow.alpha = ease(s) * 0.85;
       }
       L.bed.show = smooth(4.6, 4.8, T);
+      partShadow.alpha = bed * 0.85;
 
       // The camera eases from the sketch's plane to the part, then the bed.
       const want = {
-        target: T < 3.9 ? [20, 15, 12] : [lerp(20, 50, bed), lerp(15, -25, bed), lerp(12, 0, bed)],
-        distance: lerp(T < 2 ? 135 : 150, 330, bed),
+        target: T < 3.9 ? [20, 15, 12] : [lerp(20, 50, bed), lerp(15, -25, bed), lerp(12, -6, bed)],
+        distance: lerp(T < 2 ? 135 : 150, 480, bed),
         pitch: lerp(lerp(0.2, 0.5, smooth(1.8, 2.8, T)), 0.95, bed),
         yaw: lerp(lerp(-1.7, -2.35, smooth(1.8, 3.4, T)), -2.15, bed),
       };
@@ -242,7 +405,7 @@ const models = await loadModels();
 // ---- Surfaces: a bottle, shaded, by curvature, or in zebra stripes -----------
 
 {
-  const stage = new Stage(document.querySelector("#surface-stage"), { target: [0, 0, 36], distance: 210, yaw: -0.9, pitch: 0.32, fov: 0.5 });
+  const stage = new Stage(document.querySelector("#surface-stage"), { target: [0, 0, 39], distance: 188, yaw: -0.9, pitch: 0.26, fov: 0.5, fit: 1.0 });
   if (stage.gl) {
     stage.spin = still ? 0 : 0.15;
     const vase = stage.addMesh(models.vase, { mode: 2, edges: 0.3, stripes: 12 });
@@ -261,7 +424,7 @@ const models = await loadModels();
 // ---- Check: a section to drag through a plate ------------------------------
 
 {
-  const stage = new Stage(document.querySelector("#section-stage"), { target: [50, 15, 4], distance: 150, yaw: -1.3, pitch: 0.42, fov: 0.5 });
+  const stage = new Stage(document.querySelector("#section-stage"), { target: [50, 15, 4], distance: 118, yaw: -1.3, pitch: 0.55, fov: 0.5, fit: 1.9 });
   if (stage.gl) {
     stage.spin = 0;
     const plate = stage.addMesh(models.plate, { color: [0.6, 0.64, 0.7], edges: 0.4 });
@@ -374,7 +537,7 @@ function gripIndices() {
 }
 
 {
-  const stage = new Stage(document.querySelector("#texture-stage"), { target: [0, 0, 15], distance: 95, yaw: -0.7, pitch: 0.38, fov: 0.5 });
+  const stage = new Stage(document.querySelector("#texture-stage"), { target: [0, 0, 17], distance: 100, yaw: -0.7, pitch: 0.38, fov: 0.5, fit: 0.8 });
   if (stage.gl) {
     stage.spin = still ? 0 : 0.2;
     let pattern = "knurl", depth = 0, want = 0;
@@ -426,7 +589,7 @@ function gripIndices() {
 }
 
 {
-  const stage = new Stage(document.querySelector("#nut-stage"), { target: [15, 10, 5], distance: 52, yaw: -1.25, pitch: 0.5, fov: 0.6 });
+  const stage = new Stage(document.querySelector("#nut-stage"), { target: [15, 8, 8], distance: 64, yaw: -1.25, pitch: 0.5, fov: 0.6, fit: 1.2 });
   if (stage.gl) {
     stage.spin = 0;
     stage.addMesh(models.nut, { clip: [0, -1, 0, 10], edges: 0.45 });
@@ -435,118 +598,4 @@ function gripIndices() {
       if (!stage.drag) stage.cam.yaw = -1.25 + Math.sin(time * 0.35) * 0.3;
     };
   }
-}
-
-// ---- The console types a script, then runs it --------------------------------
-
-const script = [
-  ["c", "-- a plate with a hole, from the console\n"],
-  ["k", "local "], ["", "s = pc.sketch.new{plane = "], ["s", '"XY"'], ["", "}\n"],
-  ["", "pc.sketch.rect{sketch = s, width = "], ["n", "60"], ["", ", height = "], ["n", "40"], ["", "}\n"],
-  ["", "pc.sketch.circle{sketch = s, x = "], ["n", "30"], ["", ", y = "], ["n", "20"], ["", ", radius = "], ["n", "6"], ["", "}\n"],
-  ["k", "local "], ["", "pad = pc.design.pad{sketch = s, length = "], ["n", "8"], ["", "}\n"],
-  ["k", "return "], ["", "pc.doc.rebuild()\n"],
-];
-const answer = [
-  ["c", "\n> run\n"],
-  ["ok", "✓ "], ["", "sketch   fully constrained\n"],
-  ["ok", "✓ "], ["", "pad      60 × 40 × 8 mm\n"],
-  ["ok", "✓ "], ["", "rebuilt  nothing failed, one undo step\n"],
-];
-{
-  const term = document.querySelector("#term");
-  const code = term.querySelector("code");
-  const state = term.querySelector(".term-state");
-  const type = async (parts, speed) => {
-    const caret = document.createElement("span");
-    caret.className = "caret";
-    for (const [kind, text] of parts) {
-      const span = document.createElement("span");
-      if (kind) span.className = kind;
-      code.append(span);
-      span.after(caret);
-      for (const ch of text) {
-        span.textContent += ch;
-        if (!still) await new Promise((r) => setTimeout(r, speed + Math.random() * speed));
-      }
-    }
-    caret.remove();
-  };
-  new IntersectionObserver(async (entries, obs) => {
-    if (!entries.some((e) => e.isIntersecting)) return;
-    obs.disconnect();
-    state.textContent = "typing";
-    await type(script, 12);
-    state.textContent = "running";
-    await new Promise((r) => setTimeout(r, still ? 0 : 450));
-    await type(answer, 5);
-    state.textContent = "done";
-  }, { threshold: 0.4 }).observe(term);
-}
-
-// ---- The store's packages ------------------------------------------------------
-
-{
-  const store = document.querySelector("#store");
-  store.innerHTML = '<div class="pkg skeleton"></div>'.repeat(3);
-  fetch("https://gilbertorconde.github.io/PrintCAD-wb-repo/index.json")
-    .then((r) => (r.ok ? r.json() : Promise.reject()))
-    .then((index) => {
-      store.innerHTML = "";
-      for (const p of index.packages ?? []) {
-        const card = document.createElement("a");
-        card.className = "pkg reveal";
-        card.href = `https://github.com/${p.repository}`;
-        const head = document.createElement("div");
-        head.className = "head";
-        const badge = document.createElement("span");
-        badge.className = "badge";
-        badge.textContent = (p.name ?? "?").slice(0, 1);
-        const title = document.createElement("div");
-        const h3 = document.createElement("h3");
-        h3.textContent = p.name;
-        const ver = document.createElement("span");
-        ver.className = "ver";
-        ver.textContent = p.release ? `v${p.release.version}` : "";
-        title.append(h3, ver);
-        head.append(badge, title);
-        const desc = document.createElement("p");
-        desc.textContent = p.description ?? "";
-        const tagsEl = document.createElement("div");
-        tagsEl.className = "tags";
-        for (const c of p.categories ?? []) {
-          const s = document.createElement("span");
-          s.textContent = c;
-          tagsEl.append(s);
-        }
-        const by = document.createElement("span");
-        by.className = "by";
-        by.textContent = `${p.repository}`;
-        card.append(head, desc, tagsEl, by);
-        store.append(card);
-        watch(card);
-      }
-    })
-    .catch(() => {
-      store.innerHTML = '<p class="note">The store could not be reached; browse it from inside printCAD.</p>';
-    });
-}
-
-// ---- Downloads -------------------------------------------------------------------
-
-{
-  const os = /Win/.test(navigator.platform) ? "windows" : /Mac/.test(navigator.platform) ? "macos" : "linux";
-  document.querySelector(`.dl[data-platform="${os}"]`)?.classList.add("mine");
-  fetch("https://api.github.com/repos/gilbertorconde/printCAD/releases/latest")
-    .then((r) => (r.ok ? r.json() : Promise.reject()))
-    .then((release) => {
-      const ends = { linux: "linux-x86_64.tar.gz", windows: "windows-x86_64.zip", macos: "macos-universal.dmg" };
-      for (const a of document.querySelectorAll(".dl")) {
-        const asset = release.assets.find((x) => x.name.endsWith(ends[a.dataset.platform]));
-        if (asset) a.href = asset.browser_download_url;
-      }
-      document.querySelector("#release-line").textContent =
-        `Version ${release.tag_name.replace(/^v/, "")} · MIT or Apache-2.0 · Rust, Vulkan and a pure-Rust kernel`;
-    })
-    .catch(() => {});
 }

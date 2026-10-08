@@ -31,14 +31,16 @@ void main() {
   vec3 n = normalize(vNrm);
   vec3 v = normalize(uEye - vWorld);
   if (!gl_FrontFacing) {
-    // The inside, seen through a section: the cut, flat and darker.
-    frag = vec4(uColor * 0.42, uAlpha);
+    // The inside, seen through a section: the cut, flat, darker and blue.
+    frag = vec4(mix(uColor * 0.36, vec3(0.2, 0.42, 0.62), 0.45), uAlpha);
     return;
   }
   vec3 col = uColor;
   if (uMode == 1) {
+    // Stripes from the reflected view, their edges smoothed over a pixel.
     vec3 r = reflect(-v, n);
-    float s = smoothstep(0.42, 0.58, fract((r.x * 0.5 + 0.5) * uStripes));
+    float x = (r.x * 0.5 + 0.5) * uStripes;
+    float s = clamp(0.5 + (abs(fract(x) - 0.5) - 0.25) / max(fwidth(x), 1e-4), 0.0, 1.0);
     col = mix(vec3(0.07, 0.08, 0.1), vec3(0.93), s);
   } else if (uMode == 2) {
     // The curvature map's colours for Gaussian curvature: blue on a
@@ -52,7 +54,7 @@ void main() {
   vec3 fill = normalize(vec3(-0.6, 0.4, 0.3));
   float diff = max(dot(n, key), 0.0) * 0.62 + max(dot(n, fill), 0.0) * 0.18;
   float hemi = mix(0.26, 0.42, n.z * 0.5 + 0.5);
-  float spec = pow(max(dot(reflect(-key, n), v), 0.0), 40.0) * 0.18;
+  float spec = uMode == 0 ? pow(max(dot(reflect(-key, n), v), 0.0), 40.0) * 0.18 : 0.0;
   float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.22;
   vec3 lit = col * (hemi + diff) + spec + rim * vec3(0.45, 0.7, 1.0);
   float glow = vFlag > 1.5 ? uGlow2 : (vFlag > 0.5 ? uGlow1 : 0.0);
@@ -89,6 +91,26 @@ void main() {
   float a = uColor.a;
   if (uFade > 0.0) a *= clamp(1.0 - distance(vWorld.xy, uFadeAt.xy) / uFade, 0.0, 1.0);
   frag = vec4(uColor.rgb, a);
+}`;
+
+// A soft shadow on the ground: a disc darkest at its middle.
+const SHADOW_VS = `#version 300 es
+in vec3 aPos; in float aT;
+uniform mat4 uModel, uViewProj;
+out float vEdge;
+void main() {
+  vEdge = aT;
+  gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+}`;
+
+const SHADOW_FS = `#version 300 es
+precision highp float;
+in float vEdge;
+uniform float uAlpha;
+out vec4 frag;
+void main() {
+  float a = 1.0 - smoothstep(0.0, 1.0, vEdge);
+  frag = vec4(0.0, 0.0, 0.0, a * a * uAlpha);
 }`;
 
 // ---- Matrices (column-major) ------------------------------------------
@@ -172,15 +194,18 @@ export async function loadModels(base = "assets/") {
 // ---- A stage: one canvas, a camera, things to draw ----------------------
 
 export class Stage {
-  constructor(canvas, { target = [0, 0, 0], distance = 120, yaw = -0.6, pitch = 0.5, fov = 0.5 } = {}) {
+  // `fit` is the canvas shape (width over height) the camera was set for:
+  // a narrower canvas moves the camera back so the model keeps its width.
+  constructor(canvas, { target = [0, 0, 0], distance = 120, yaw = -0.6, pitch = 0.5, fov = 0.5, fit = 0 } = {}) {
     this.canvas = canvas;
     const gl = canvas.getContext("webgl2", { antialias: true, alpha: true, premultipliedAlpha: false });
     this.gl = gl;
     if (!gl) return;
     this.solid = program(gl, SOLID_VS, SOLID_FS);
     this.line = program(gl, LINE_VS, LINE_FS);
+    this.shade = program(gl, SHADOW_VS, SHADOW_FS);
     this.items = [];
-    this.cam = { target, distance, yaw, pitch, fov };
+    this.cam = { target, distance, yaw, pitch, fov, fit };
     this.spin = 0.12;
     this.drag = null;
     this.visible = true;
@@ -266,6 +291,27 @@ export class Stage {
     return item;
   }
 
+  // A shadow on z = 0 under a part: an ellipse `rx` by `ry` mm about the
+  // origin, moved with `model` like a mesh.
+  addShadow(rx, ry, opts = {}) {
+    const gl = this.gl;
+    const SIDES = 48;
+    const pos = [0, 0, 0.05], edge = [0];
+    for (let i = 0; i <= SIDES; i++) {
+      const a = (i / SIDES) * 2 * Math.PI;
+      pos.push(rx * Math.cos(a), ry * Math.sin(a), 0.05);
+      edge.push(1);
+    }
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    attrib(gl, this.shade.prog, "aPos", new Float32Array(pos), 3, gl.FLOAT, false);
+    attrib(gl, this.shade.prog, "aT", new Float32Array(edge), 1, gl.FLOAT, false);
+    gl.bindVertexArray(null);
+    const item = { kind: "shadow", vao, count: SIDES + 2, model: mat4.identity(), alpha: 0, show: true, ...opts };
+    this.items.push(item);
+    return item;
+  }
+
   makeLines(data, t, ref, floats = false) {
     const gl = this.gl;
     const vao = gl.createVertexArray();
@@ -299,14 +345,15 @@ export class Stage {
     if (!this.drag && this.spin) this.cam.yaw += this.spin * 0.016;
     if (this.onFrame) this.onFrame(time);
     const c = this.cam;
+    const d = c.distance * (c.fit ? Math.max(1, c.fit / (w / h)) : 1);
     const eye = [
-      c.target[0] + c.distance * Math.cos(c.pitch) * Math.cos(c.yaw),
-      c.target[1] + c.distance * Math.cos(c.pitch) * Math.sin(c.yaw),
-      c.target[2] + c.distance * Math.sin(c.pitch),
+      c.target[0] + d * Math.cos(c.pitch) * Math.cos(c.yaw),
+      c.target[1] + d * Math.cos(c.pitch) * Math.sin(c.yaw),
+      c.target[2] + d * Math.sin(c.pitch),
     ];
     this.eye = eye;
     // Near and far follow the distance, so depth keeps its precision.
-    this.viewProj = mat4.mul(mat4.perspective(c.fov, w / h, c.distance * 0.25, c.distance * 6), mat4.lookAt(eye, c.target, [0, 0, 1]));
+    this.viewProj = mat4.mul(mat4.perspective(c.fov, w / h, d * 0.25, d * 6), mat4.lookAt(eye, c.target, [0, 0, 1]));
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -317,6 +364,18 @@ export class Stage {
     const solids = this.items.filter((i) => i.kind === "mesh" && i.show);
     for (const it of solids.filter((i) => i.alpha >= 1)) this.drawSolid(it);
     for (const it of solids) if (it.edges > 0 && it.alpha > 0.05) this.drawLines(it.lines, it, [...it.edgeColor, it.edges * Math.min(it.alpha * 1.5, 1)]);
+    // Shadows on the ground, under what stands on it.
+    gl.depthMask(false);
+    for (const it of this.items.filter((i) => i.kind === "shadow" && i.show && i.alpha > 0.01)) {
+      const p = this.shade;
+      gl.useProgram(p.prog);
+      gl.uniformMatrix4fv(p.u.uModel, false, it.model);
+      gl.uniformMatrix4fv(p.u.uViewProj, false, this.viewProj);
+      gl.uniform1f(p.u.uAlpha, it.alpha);
+      gl.bindVertexArray(it.vao);
+      gl.drawArrays(gl.TRIANGLE_FAN, 0, it.count);
+    }
+    gl.depthMask(true);
     // Overlay lines (sketches, dimensions, a bed) never hide what is
     // behind them: they write no depth, and are skipped while invisible.
     gl.depthMask(false);
