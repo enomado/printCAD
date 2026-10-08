@@ -29,9 +29,41 @@ pub(crate) fn document_name_from_file_name(file_name: &str) -> &str {
 
 /// The on-disk recent list; missing or unreadable means empty.
 pub(crate) fn load_recent() -> settings::recent::RecentStore {
+    if let Some(path) = page_recent_path() {
+        let mut recent = crate::platform::read(&path)
+            .map(|bytes| settings::recent::RecentStore::from_json(&String::from_utf8_lossy(&bytes)))
+            .unwrap_or_default();
+        // The list is every document the page keeps.
+        recent
+            .files
+            .retain(|entry| crate::platform::exists(&entry.path));
+        if let Some(dir) = page_documents() {
+            for path in crate::platform::list(&dir) {
+                if !recent.files.iter().any(|entry| entry.path == path) {
+                    let size = crate::platform::read(&path).map_or(0, |b| b.len() as u64);
+                    recent.files.push(settings::recent::RecentEntry {
+                        path,
+                        last_opened_ms: 0,
+                        size_bytes: size,
+                    });
+                }
+            }
+        }
+        return recent;
+    }
     settings::SettingsStore::recent_file_path()
         .map(|p| settings::recent::RecentStore::load(&p))
         .unwrap_or_default()
+}
+
+/// Where a page keeps its recent list, beside the documents it keeps.
+fn page_recent_path() -> Option<PathBuf> {
+    crate::platform::kept_dir().map(|kept| kept.join("recent.json"))
+}
+
+/// Where a page keeps the documents saved in it.
+pub(crate) fn page_documents() -> Option<PathBuf> {
+    crate::platform::kept_dir().map(|kept| kept.join("documents"))
 }
 
 /// A parsed document on its way back from the open worker.
@@ -163,7 +195,15 @@ impl PrintCadApp {
 
     /// Front the recent list with `path` and write it out.
     pub(crate) fn touch_recent(&mut self, path: &Path) {
-        self.recent.touch(path);
+        if crate::platform::ON_PAGE {
+            let size = crate::platform::read(path).map_or(0, |b| b.len() as u64);
+            let now = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            self.recent.touch_at(path, now, size);
+        } else {
+            self.recent.touch(path);
+        }
         self.save_recent();
     }
 
@@ -180,6 +220,15 @@ impl PrintCadApp {
     }
 
     fn save_recent(&self) {
+        if let Some(path) = page_recent_path() {
+            let written = serde_json::to_vec_pretty(&self.recent)
+                .map_err(std::io::Error::other)
+                .and_then(|json| crate::platform::write(&path, &json));
+            if let Err(err) = written {
+                app_log::error(format!("Failed to keep the recent list: {err}"));
+            }
+            return;
+        }
         if let Ok(recent_path) = settings::SettingsStore::recent_file_path()
             && let Err(err) = self.recent.save(&recent_path)
         {
@@ -833,13 +882,45 @@ impl PrintCadApp {
         }
     }
 
+    /// Hand the document on screen to the browser as a `.prtcad` download,
+    /// named after its file or its name.
+    pub(crate) fn download_document(&mut self) {
+        let name = self
+            .session
+            .current_file
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.session.document.name().to_string());
+        // What a save writes: the preview's whole solid and a picture.
+        let mut document = self.session.document.clone();
+        for (body, preview) in &self.session.previews {
+            crate::app::recompute::store_built_solid(&mut document, *body, preview.full.clone());
+        }
+        let (forward, up) = self.session.camera.view_basis();
+        document.set_thumbnail(crate::thumbnail::render(
+            &self.thumbnail_shapes(),
+            forward,
+            up,
+        ));
+        let bytes = document.save_to_bytes(core_document::Compression::Zstd);
+        let downloaded = bytes.map_err(|e| e.to_string()).and_then(|bytes| {
+            crate::platform::write(Path::new(&format!("{name}.prtcad")), &bytes)
+                .map_err(|e| e.to_string())
+        });
+        match downloaded {
+            Ok(()) => app_log::info(format!("Downloading {name}.prtcad")),
+            Err(err) => app_log::error(format!("Could not download the document: {err}")),
+        }
+    }
+
     /// Bring back a copy a crash left, as an untitled document in a tab
     /// of its own: saving it says where it goes.
     pub(crate) fn recover_document(&mut self, copy: PathBuf) {
         let Some(entry) = self.recoverable.iter().find(|r| r.copy == copy).cloned() else {
             return;
         };
-        let document = std::fs::read(&copy)
+        let document = crate::platform::read(&copy)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| Self::parse_document_bytes(&copy, bytes));
         let document = match document {
@@ -1019,11 +1100,29 @@ impl PrintCadApp {
         {
             let _ = recent_dir;
             let named = |name: String| vec![std::path::Path::new("/browser").join(name)];
+            // A document is kept by the page, under a name asked for once;
+            // a picked file is a copy, kept the same way when saved.
+            let keep = |stem: &str| -> Vec<PathBuf> {
+                let Some(dir) = page_documents() else {
+                    return Vec::new();
+                };
+                crate::platform::ask_name("Save the document in this browser as", stem)
+                    .map(|name| {
+                        let name: String = name
+                            .chars()
+                            .map(|c| if matches!(c, '/' | '\\') { '-' } else { c })
+                            .collect();
+                        let name = name.strip_suffix(".prtcad").unwrap_or(&name).to_string();
+                        vec![dir.join(format!("{name}.prtcad"))]
+                    })
+                    .unwrap_or_default()
+            };
             let paths = match &kind {
-                FileDialogKind::Save => current_path
-                    .map(|p| vec![p])
-                    .unwrap_or_else(|| named("untitled.prtcad".into())),
-                FileDialogKind::SaveAs => named(format!("{stem}.prtcad")),
+                FileDialogKind::Save => match current_path {
+                    Some(path) if crate::platform::web::is_kept(&path) => vec![path],
+                    _ => keep(&stem),
+                },
+                FileDialogKind::SaveAs => keep(&stem),
                 FileDialogKind::Export(format) => named(format!("{stem}.{}", format.extension())),
                 FileDialogKind::SaveFile(file) => {
                     let name = if file.name.ends_with(&format!(".{}", file.extension)) {
@@ -1039,10 +1138,12 @@ impl PrintCadApp {
                 }
                 _ => {
                     let offered: Vec<String> = match &kind {
+                        // A printCAD file's parts come in linked to it,
+                        // read again by its path, which a page cannot.
                         FileDialogKind::ImportStep => {
                             let mut any: Vec<String> = [
                                 "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
-                                "gltf", "wrl", "vrml", "prtcad",
+                                "gltf", "wrl", "vrml",
                             ]
                             .map(String::from)
                             .to_vec();

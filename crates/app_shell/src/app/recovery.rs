@@ -32,8 +32,11 @@ pub(crate) struct Recoverable {
 
 /// Where copies go: the app's data folder, else the temp folder.
 fn dir() -> PathBuf {
-    settings::recovery_dir()
-        .unwrap_or_else(|| crate::platform::temp_dir().join("printcad-recovery"))
+    match crate::platform::kept_dir() {
+        Some(kept) => kept.join("recovery"),
+        None => settings::recovery_dir()
+            .unwrap_or_else(|| crate::platform::temp_dir().join("printcad-recovery")),
+    }
 }
 
 fn copy_of(tab: Uuid) -> PathBuf {
@@ -59,19 +62,23 @@ pub(crate) fn keep(
     file: Option<&Path>,
     bytes: &[u8],
 ) -> std::io::Result<()> {
-    let dir = dir();
-    std::fs::create_dir_all(&dir)?;
     let copy = copy_of(tab);
-    let partial = copy.with_extension("partial");
-    std::fs::write(&partial, bytes)?;
-    std::fs::rename(&partial, &copy)?;
+    // A page keeps a file whole or not at all.
+    if crate::platform::ON_PAGE {
+        crate::platform::write(&copy, bytes)?;
+    } else {
+        std::fs::create_dir_all(dir())?;
+        let partial = copy.with_extension("partial");
+        std::fs::write(&partial, bytes)?;
+        std::fs::rename(&partial, &copy)?;
+    }
     let note = Note {
         name: name.to_string(),
         file: file.map(Path::to_path_buf),
         pid: crate::platform::process_id(),
         saved_ms: now_ms(),
     };
-    std::fs::write(note_of(&copy), serde_json::to_vec_pretty(&note)?)
+    crate::platform::write(&note_of(&copy), &serde_json::to_vec_pretty(&note)?)
 }
 
 /// Take tab `tab`'s copy away: it was saved, closed, or the app quits.
@@ -81,8 +88,8 @@ pub(crate) fn forget(tab: Uuid) {
 
 /// Take a copy and its note away.
 pub(crate) fn remove(copy: &Path) {
-    let _ = std::fs::remove_file(copy);
-    let _ = std::fs::remove_file(note_of(copy));
+    crate::platform::remove(copy);
+    crate::platform::remove(&note_of(copy));
 }
 
 /// Whether process `pid` still runs, as far as the system says.
@@ -106,17 +113,14 @@ pub(crate) fn left_behind() -> Vec<Recoverable> {
 }
 
 fn left_behind_in(dir: &Path) -> Vec<Recoverable> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<Recoverable> = entries
-        .flatten()
-        .map(|e| e.path())
+    let mut found: Vec<Recoverable> = crate::platform::list(dir)
+        .into_iter()
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
         .filter_map(|note_path| {
-            let note: Note = serde_json::from_slice(&std::fs::read(&note_path).ok()?).ok()?;
+            let note: Note =
+                serde_json::from_slice(&crate::platform::read(&note_path).ok()?).ok()?;
             let copy = note_path.with_extension("prtcad");
-            (copy.is_file() && !running(note.pid)).then_some(Recoverable {
+            (crate::platform::exists(&copy) && !running(note.pid)).then_some(Recoverable {
                 copy,
                 name: note.name,
                 file: note.file,

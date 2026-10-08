@@ -1,5 +1,8 @@
 //! A browser page's files: the ones its user picked, held in memory under
-//! a path of their own, and downloads for what the app writes.
+//! a path of their own; the ones the app keeps (documents, autosaved
+//! copies), under [`KEPT`], held in memory and in the page's database
+//! (IndexedDB), read back before the app starts; and downloads for
+//! anything else the app writes.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -7,9 +10,54 @@ use std::path::{Path, PathBuf};
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen::prelude::*;
 
 /// Where picked files appear to live: a folder no desktop path starts with.
 const ROOT: &str = "/browser";
+
+/// The folder of the files the page keeps between visits.
+pub(crate) const KEPT: &str = "/printcad";
+
+#[wasm_bindgen(inline_js = r#"
+const DB = "printcad-files";
+const STORE = "files";
+
+function open() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(STORE, { keyPath: "path" });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function within(mode, work) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, mode);
+    const request = work(tx.objectStore(STORE));
+    tx.oncomplete = () => resolve(request.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export function kept_files() {
+  return within("readonly", (store) => store.getAll());
+}
+
+export function keep_file(path, bytes) {
+  return within("readwrite", (store) => store.put({ path, bytes }));
+}
+
+export function drop_file(path) {
+  return within("readwrite", (store) => store.delete(path));
+}
+"#)]
+extern "C" {
+    fn kept_files() -> js_sys::Promise;
+    fn keep_file(path: &str, bytes: &js_sys::Uint8Array) -> js_sys::Promise;
+    fn drop_file(path: &str) -> js_sys::Promise;
+}
 
 thread_local! {
     /// Every file picked this session, by the path it was given.
@@ -21,6 +69,106 @@ pub(crate) fn keep(name: &str, bytes: Vec<u8>) -> PathBuf {
     let path = Path::new(ROOT).join(name);
     FILES.with(|files| files.borrow_mut().insert(path.clone(), bytes));
     path
+}
+
+/// Read the files the page kept back into memory; before the app starts,
+/// so its reads find them at once.
+pub(crate) async fn load_kept() {
+    let kept = match wasm_bindgen_futures::JsFuture::from(kept_files()).await {
+        Ok(kept) => kept,
+        Err(e) => {
+            tracing::warn!("the page's kept files did not read: {e:?}");
+            return;
+        }
+    };
+    FILES.with(|files| {
+        let mut files = files.borrow_mut();
+        for record in js_sys::Array::from(&kept).iter() {
+            let field = |key: &str| js_sys::Reflect::get(&record, &key.into()).unwrap_or_default();
+            if let Some(path) = field("path").as_string() {
+                let bytes = js_sys::Uint8Array::new(&field("bytes")).to_vec();
+                files.insert(PathBuf::from(path), bytes);
+            }
+        }
+    });
+}
+
+/// Whether `path` is one the page keeps between visits.
+pub(crate) fn is_kept(path: &Path) -> bool {
+    path.starts_with(KEPT)
+}
+
+/// Keep `bytes` as the file at `path`, under [`KEPT`]: at once in memory,
+/// and in the page's database as soon as it takes them.
+pub(crate) fn keep_at(path: &Path, bytes: &[u8]) {
+    FILES.with(|files| {
+        files
+            .borrow_mut()
+            .insert(path.to_path_buf(), bytes.to_vec())
+    });
+    let written = keep_file(&path.to_string_lossy(), &js_sys::Uint8Array::from(bytes));
+    let path = path.to_path_buf();
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = wasm_bindgen_futures::JsFuture::from(written).await {
+            crate::log_panel::warn(format!("The page could not keep {}: {e:?}", path.display()));
+        }
+    });
+}
+
+/// Take the file at `path` away.
+pub(crate) fn remove(path: &Path) {
+    FILES.with(|files| files.borrow_mut().remove(path));
+    if is_kept(path) {
+        let dropped = drop_file(&path.to_string_lossy());
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = wasm_bindgen_futures::JsFuture::from(dropped).await;
+        });
+    }
+}
+
+/// The files directly in folder `dir`.
+pub(crate) fn list(dir: &Path) -> Vec<PathBuf> {
+    FILES.with(|files| {
+        files
+            .borrow()
+            .keys()
+            .filter(|path| path.parent() == Some(dir))
+            .cloned()
+            .collect()
+    })
+}
+
+/// Whether there is a file at `path`.
+pub(crate) fn exists(path: &Path) -> bool {
+    FILES.with(|files| files.borrow().contains_key(path))
+}
+
+thread_local! {
+    /// Whether a document has edits not saved, as the app last said.
+    static UNSAVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Ask before the page is closed or left while a document has edits not
+/// saved: the browser's own question, which is all a page may ask then.
+pub(crate) fn guard_unsaved() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let ask = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(
+        |event: web_sys::BeforeUnloadEvent| {
+            if UNSAVED.with(std::cell::Cell::get) {
+                event.prevent_default();
+                event.set_return_value("You have unsaved changes");
+            }
+        },
+    );
+    let _ = window.add_event_listener_with_callback("beforeunload", ask.as_ref().unchecked_ref());
+    // The page keeps the handler for its whole life.
+    ask.forget();
+}
+
+pub(crate) fn set_unsaved(any: bool) {
+    UNSAVED.with(|unsaved| unsaved.set(any));
 }
 
 /// The bytes of a picked file.

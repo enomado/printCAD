@@ -150,6 +150,8 @@ pub enum UiCommand {
     DiscardRecovery(std::path::PathBuf),
     /// Open again the file of the last tab closed.
     ReopenTab,
+    /// Hand the document on screen to the browser as a download.
+    DownloadDocument,
     CloseTab(uuid::Uuid),
     SelectTab(uuid::Uuid),
     /// The next (`1`) or previous (`-1`) tab, wrapping.

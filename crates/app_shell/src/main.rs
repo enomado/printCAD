@@ -233,18 +233,24 @@ fn main() {
         ..RenderSettings::default()
     };
     let check_stores = user_settings.packages.check_updates;
-    let mut app = PrintCadApp::new(
-        render_settings,
-        settings_store,
-        user_settings,
-        registry,
-        event_loop.create_proxy(),
-    );
-    app.start_page_packages();
-    if check_stores {
-        app.look_at_stores(true);
-    }
-    event_loop.spawn_app(app);
+    platform::web::guard_unsaved();
+    // The files the page kept (documents, autosaved copies) are read back
+    // first, so the start page finds them.
+    wasm_bindgen_futures::spawn_local(async move {
+        platform::web::load_kept().await;
+        let mut app = PrintCadApp::new(
+            render_settings,
+            settings_store,
+            user_settings,
+            registry,
+            event_loop.create_proxy(),
+        );
+        app.start_page_packages();
+        if check_stores {
+            app.look_at_stores(true);
+        }
+        event_loop.spawn_app(app);
+    });
 }
 
 /// What a background thread needs the event loop to notice.

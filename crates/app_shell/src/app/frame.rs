@@ -721,6 +721,11 @@ impl PrintCadApp {
         self.drive_chats();
         self.drive_picture();
         self.drive_autosave();
+        crate::platform::set_unsaved(
+            std::iter::once(&self.session)
+                .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()))
+                .any(|session| session.document.metadata().dirty()),
+        );
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();

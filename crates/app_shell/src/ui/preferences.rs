@@ -60,9 +60,11 @@ impl PrefGroup {
             PrefGroup::Units,
             PrefGroup::ImportExport,
             PrefGroup::Printing,
-            PrefGroup::Ai,
-            PrefGroup::Updates,
         ]);
+        // A page runs no agents and is always the latest release.
+        if !crate::platform::ON_PAGE {
+            groups.extend([PrefGroup::Ai, PrefGroup::Updates]);
+        }
         groups
     }
 
@@ -924,21 +926,24 @@ fn general_page(
                 ],
                 filter,
             );
-            pref_group(
-                ui,
-                "Diagnostics",
-                vec![
-                    PrefRow::toggle(
-                        "Write a report for every STEP or IGES import",
-                        &mut draft.diagnostics.import_report,
-                    )
-                    .hint(
-                        "Everything the reader had to say about the file, written to the temp \
+            // The report is written to the temp dir, which a page has not.
+            if !crate::platform::ON_PAGE {
+                pref_group(
+                    ui,
+                    "Diagnostics",
+                    vec![
+                        PrefRow::toggle(
+                            "Write a report for every STEP or IGES import",
+                            &mut draft.diagnostics.import_report,
+                        )
+                        .hint(
+                            "Everything the reader had to say about the file, written to the temp \
                          dir for sending to the kernel or printCAD developers",
-                    ),
-                ],
-                filter,
-            );
+                        ),
+                    ],
+                    filter,
+                );
+            }
         }
         _ => {
             pref_group(
@@ -1348,36 +1353,39 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         filter,
     );
     let command = &mut printing.slicer_command;
-    pref_group(
-        ui,
-        "Slicer",
-        vec![
-            PrefRow::new("Slicer command", |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(command)
-                        .hint_text("the system's app for the file")
-                        .desired_width(260.0)
-                        .font(mono(FONT_SM)),
-                )
-                .changed()
-            })
-            .hint("Send to slicer (Ctrl+P) runs this with the model's file; {file} places it"),
-            PrefRow::select(
-                "Format",
-                "prefs_slicer_format",
-                &mut printing.slicer_format,
-                &[
-                    (SlicerFormat::ThreeMf, "3MF: one named object per body"),
-                    (SlicerFormat::Stl, "STL: triangles only"),
-                ],
-            ),
-            PrefRow::toggle("Send the print layout", &mut printing.slicer_layout).hint(
-                "Each part flat on the bed, as many as the parts list prints, rather than the \
+    // A page cannot start the slicer.
+    if !crate::platform::ON_PAGE {
+        pref_group(
+            ui,
+            "Slicer",
+            vec![
+                PrefRow::new("Slicer command", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(command)
+                            .hint_text("the system's app for the file")
+                            .desired_width(260.0)
+                            .font(mono(FONT_SM)),
+                    )
+                    .changed()
+                })
+                .hint("Send to slicer (Ctrl+P) runs this with the model's file; {file} places it"),
+                PrefRow::select(
+                    "Format",
+                    "prefs_slicer_format",
+                    &mut printing.slicer_format,
+                    &[
+                        (SlicerFormat::ThreeMf, "3MF: one named object per body"),
+                        (SlicerFormat::Stl, "STL: triangles only"),
+                    ],
+                ),
+                PrefRow::toggle("Send the print layout", &mut printing.slicer_layout).hint(
+                    "Each part flat on the bed, as many as the parts list prints, rather than the \
                  bodies where they sit",
-            ),
-        ],
-        filter,
-    );
+                ),
+            ],
+            filter,
+        );
+    }
     pref_group(
         ui,
         "Print layout",

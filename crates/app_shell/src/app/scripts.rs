@@ -2368,6 +2368,19 @@ impl PrintCadApp {
     /// console ran) or else the template, and open it in the system's
     /// editor.
     pub(crate) fn new_script(&mut self, runs: Option<Vec<String>>) {
+        // A page has no scripts folder: the script is a download.
+        if crate::platform::ON_PAGE {
+            let text = match runs {
+                Some(runs) => crate::script_library::from_runs(&runs),
+                None => crate::script_library::TEMPLATE.to_string(),
+            };
+            if let Err(err) =
+                crate::platform::write(std::path::Path::new("script.lua"), text.as_bytes())
+            {
+                crate::app_log::error(format!("Could not save the script: {err}"));
+            }
+            return;
+        }
         let Some(dir) = settings::scripts_dir() else {
             crate::app_log::warn("The system names no configuration folder for scripts");
             return;

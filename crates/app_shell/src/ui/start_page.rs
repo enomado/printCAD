@@ -47,7 +47,15 @@ impl ThumbnailCache {
         {
             return texture.clone();
         }
-        let texture = core_document::Document::read_thumbnail(path)
+        // A page's documents are held in memory.
+        let png = if crate::platform::ON_PAGE {
+            crate::platform::read(path)
+                .ok()
+                .and_then(|bytes| core_document::Document::thumbnail_of_bytes(&bytes))
+        } else {
+            core_document::Document::read_thumbnail(path)
+        };
+        let texture = png
             .and_then(|png| tiny_skia::Pixmap::decode_png(&png).ok())
             .map(|pixmap| {
                 let size = [pixmap.width() as usize, pixmap.height() as usize];
@@ -580,7 +588,12 @@ pub fn draw_start_page(
                                     commands.push(UiCommand::OpenRecent(entry.path.clone()));
                                 }
                                 response.context_menu(|ui| {
-                                    if ui.button("Remove from recent").clicked() {
+                                    let remove = if crate::platform::ON_PAGE {
+                                        "Delete from this browser"
+                                    } else {
+                                        "Remove from recent"
+                                    };
+                                    if ui.button(remove).clicked() {
                                         commands.push(UiCommand::RemoveRecent(entry.path.clone()));
                                         ui.close();
                                     }

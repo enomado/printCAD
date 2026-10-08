@@ -7,7 +7,7 @@
 //! no file system, so work runs where it is asked for and files are the
 //! ones the user picked, held in memory, and downloads.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod web;
@@ -38,6 +38,19 @@ impl Job {
 /// a browser page, which has one thread, now. Either way its answer goes
 /// where the caller arranged (a channel read on a later frame), so the
 /// caller's side is the same.
+/// Whether the app runs on a browser page, which leaves out what needs the
+/// machine itself: running other programs, the AI agents, its own folders.
+pub(crate) const ON_PAGE: bool = cfg!(target_arch = "wasm32");
+
+/// The application's commands a page cannot carry out, kept out of its
+/// menus, palette and keys.
+const DESKTOP_ONLY: &[&str] = &["file.send_to_slicer", "app.quit", "app.assistant"];
+
+/// Whether command `id` is one this build carries out.
+pub(crate) fn offers(id: &str) -> bool {
+    !ON_PAGE || !DESKTOP_ONLY.contains(&id)
+}
+
 pub(crate) fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> std::io::Result<Job> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -69,7 +82,84 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     return std::fs::write(path, bytes);
     #[cfg(target_arch = "wasm32")]
-    web::download(path, bytes)
+    if web::is_kept(path) {
+        web::keep_at(path, bytes);
+        Ok(())
+    } else {
+        web::download(path, bytes)
+    }
+}
+
+/// Take the file at `path` away; one that is not there is no error.
+pub(crate) fn remove(path: &Path) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = std::fs::remove_file(path);
+    #[cfg(target_arch = "wasm32")]
+    web::remove(path);
+}
+
+/// The files directly in folder `dir`.
+pub(crate) fn list(dir: &Path) -> Vec<PathBuf> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return std::fs::read_dir(dir)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    #[cfg(target_arch = "wasm32")]
+    web::list(dir)
+}
+
+/// Whether there is a file at `path`.
+pub(crate) fn exists(path: &Path) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    return path.is_file();
+    #[cfg(target_arch = "wasm32")]
+    web::exists(path)
+}
+
+/// Where the app keeps its own files when the system names no folder for
+/// them: on a page, the files it keeps between visits.
+pub(crate) fn kept_dir() -> Option<PathBuf> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return None;
+    #[cfg(target_arch = "wasm32")]
+    Some(PathBuf::from(web::KEPT))
+}
+
+/// Say whether any document has edits not saved, which a page asks about
+/// before it is closed or left; a desktop asks through its own exit path.
+pub(crate) fn set_unsaved(any: bool) {
+    #[cfg(target_arch = "wasm32")]
+    web::set_unsaved(any);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = any;
+}
+
+/// Ask a yes-or-no question; true for yes.
+pub(crate) fn confirm(text: &str) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    return matches!(
+        rfd::MessageDialog::new()
+            .set_title("printCAD")
+            .set_description(text)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show(),
+        rfd::MessageDialogResult::Yes
+    );
+    #[cfg(target_arch = "wasm32")]
+    web_sys::window()
+        .and_then(|w| w.confirm_with_message(text).ok())
+        .unwrap_or(false)
+}
+
+/// Ask for a name on a page, offering `default`; `None` when the user
+/// cancels.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn ask_name(text: &str, default: &str) -> Option<String> {
+    web_sys::window()
+        .and_then(|w| w.prompt_with_message_and_default(text, default).ok())
+        .flatten()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
 }
 
 /// What the user chose about unsaved changes.
@@ -182,6 +272,13 @@ pub(crate) fn scratch_file(
 pub(crate) fn process_id() -> u32 {
     #[cfg(not(target_arch = "wasm32"))]
     return std::process::id();
+    // A page has none: one drawn for the visit tells its own autosaved
+    // copies from those an earlier visit left.
     #[cfg(target_arch = "wasm32")]
-    0
+    {
+        thread_local! {
+            static VISIT: u32 = (js_sys::Math::random() * f64::from(u32::MAX)) as u32;
+        }
+        VISIT.with(|id| *id)
+    }
 }

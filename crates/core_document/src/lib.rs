@@ -3444,6 +3444,22 @@ impl Document {
     /// without one, or one that is not a container.
     pub fn read_thumbnail(path: &Path) -> Option<Vec<u8>> {
         let (file, compression) = Self::open_container(path).ok()?;
+        Self::thumbnail_in(file, compression)
+    }
+
+    /// [`Document::read_thumbnail`] of a container held in memory.
+    pub fn thumbnail_of_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+        let compression = if bytes.starts_with(&[0x1f, 0x8b]) {
+            Compression::Gzip
+        } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+            Compression::Zstd
+        } else {
+            Compression::None
+        };
+        Self::thumbnail_in(std::io::Cursor::new(bytes.to_vec()), compression)
+    }
+
+    fn thumbnail_in<R: Read + 'static>(file: R, compression: Compression) -> Option<Vec<u8>> {
         let reader: Box<dyn Read> = match compression {
             Compression::None => Box::new(file),
             Compression::Gzip => Box::new(flate2::read::GzDecoder::new(file)),
