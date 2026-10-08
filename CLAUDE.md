@@ -104,12 +104,16 @@ cargo fmt --all                   # CI enforces --check
   `read`/`write` are the picked files held in memory and downloads,
   `temp_dir`, `scratch_file`, `ask_unsaved`, `warn`; `platform/web.rs` the
   page's picker and downloads), `app/server.rs` (`BrowserFiles` in place
-  of the daemon), the kernel worker running one job a frame from `drain`
-  (`Local`), the renderer awaited (`Renderer::initialize_async`; WebGPU,
+  of the daemon), the kernel's jobs in the page's workers
+  (`kernel_pool.rs`, `web/kernel-worker.js`: one for requests, more for
+  builds, MessagePack between them, Cancel ending the busy one), the renderer awaited (`Renderer::initialize_async`; WebGPU,
   else WebGL2), settings in the page's storage, `kernel_ogeom::files` (the
   reader imports go through), and `web_time` for every clock (the
-  standard one panics on that target). Lua (`scripting`'s `lua` feature),
-  packages (`wb_wasm`'s `runtime`), agents' sockets, the document daemon,
+  standard one panics on that target). The console's Lua is wasmoon
+  (`third_party/wasmoon`) in a worker of its own (`web/lua-worker.js`,
+  `scripting/src/thread_web.rs`, `web_prelude.lua`: JSON both ways, a
+  script awaiting each command's answer, Stop ending the worker and its
+  globals). Packages (`wb_wasm`'s `runtime`), agents' sockets, the document daemon,
   the 6-DoF mouse and the command line are desktop-only. `egui-winit` is
   patched (`third_party/egui-winit/PATCHED.md`) until a release builds for
   the browser.

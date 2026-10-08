@@ -3914,8 +3914,12 @@ dependencies = [
  "agents",
  "core_document",
  "mlua",
+ "serde",
  "serde_json",
+ "tracing",
  "uuid",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

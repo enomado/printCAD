@@ -1,10 +1,10 @@
-//! The script thread's interface without Lua, for a build that has no
-//! threads and cannot build the engine (a browser page).
+//! The script thread's interface without Lua, for a desktop build made
+//! without the engine.
 //!
 //! It keeps the holder's side unchanged: a job starts, a single command
 //! travels to the holder as an [`Event::Call`] and the job finishes with its
 //! answer once the holder replies. A console line or a script finishes at
-//! once, saying that Lua runs in the desktop application. Nothing waits:
+//! once, saying that this build has no Lua. Nothing waits:
 //! the holder drives everything through [`ScriptThread::next_event`].
 
 use std::collections::VecDeque;
@@ -13,53 +13,10 @@ use std::time::Duration;
 
 use core_document::{CommandArgs, CommandResult, CommandSpec};
 
-use crate::RunOutput;
-
-/// What to run.
-#[derive(Debug, Clone)]
-pub enum Job {
-    /// A console line: an expression answers its value.
-    Line(String),
-    /// A whole script; `name` names it in messages.
-    Script { source: String, name: String },
-    /// One command: the output's value is its answer as JSON.
-    Command {
-        id: String,
-        args: core_document::CommandArgs,
-    },
-}
-
-impl Job {
-    /// How a run of this job is named: the line itself, the script's name,
-    /// or the command's id.
-    pub fn label(&self) -> String {
-        match self {
-            Job::Line(line) => line.clone(),
-            Job::Script { name, .. } => name.clone(),
-            Job::Command { id, .. } => id.clone(),
-        }
-    }
-}
-
-/// What the runner tells its holder.
-#[derive(Debug)]
-pub enum Event {
-    /// A job began.
-    Started { label: String },
-    /// A line the script printed.
-    Printed(String),
-    /// Run a command and send its answer back on `reply`.
-    Call {
-        id: String,
-        args: CommandArgs,
-        reply: Sender<CommandResult>,
-    },
-    /// A job ended; `output.printed` repeats what came as `Printed`.
-    Finished { label: String, output: RunOutput },
-}
+use crate::{Event, Job, RunOutput};
 
 /// What a line or a script answers without the engine.
-const NO_LUA: &str = "Lua scripts run in the desktop application; this build runs single \
+const NO_LUA: &str = "this build has no Lua and runs single \
                       commands only";
 
 /// A command handed to the holder, waiting for its answer.
@@ -215,7 +172,7 @@ mod tests {
         let Some(Event::Finished { output, .. }) = runner.next_event(Duration::ZERO) else {
             panic!("the line finishes at once");
         };
-        assert!(output.error.unwrap().contains("desktop application"));
+        assert!(output.error.unwrap().contains("no Lua"));
         assert!(!runner.busy());
     }
 }

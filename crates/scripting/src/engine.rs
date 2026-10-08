@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use core_document::{CommandArgs, CommandSpec};
+use core_document::CommandArgs;
 use mlua::serde::SerializeOptions;
 use mlua::{HookTriggers, Lua, LuaSerdeExt, MultiValue, VmState};
 
-use crate::{Host, RunOutput, STOPPED, command_entry};
+use crate::{Host, RunOutput, STOPPED, list_commands, search_commands};
 
 /// How long a run may take before it is stopped, unless the caller sets
 /// another limit.
@@ -347,35 +347,4 @@ fn empty_tables_as_lists(value: &mut serde_json::Value) {
         serde_json::Value::Array(items) => items.iter_mut().for_each(empty_tables_as_lists),
         _ => {}
     }
-}
-
-/// `app.commands`: every command whose id starts with `prefix`.
-fn list_commands(commands: Vec<CommandSpec>, args: &CommandArgs) -> serde_json::Value {
-    let prefix = args.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
-    serde_json::Value::Array(
-        commands
-            .iter()
-            .filter(|c| c.id.starts_with(prefix))
-            .map(CommandSpec::to_json)
-            .collect(),
-    )
-}
-
-/// How many commands `help` lists for a word.
-const HELP_HITS: usize = 10;
-
-/// The commands that match `args.query` best, best first, as `help`
-/// lists them.
-fn search_commands(commands: Vec<CommandSpec>, args: &CommandArgs) -> serde_json::Value {
-    let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let catalog = agents::discovery::Catalog::new(commands.iter().map(command_entry).collect());
-    let found = catalog.search(&[query], HELP_HITS);
-    serde_json::Value::Array(
-        found[0]
-            .hits
-            .iter()
-            .filter_map(|h| commands.iter().find(|c| c.id == h.entry.id))
-            .map(CommandSpec::to_json)
-            .collect(),
-    )
 }

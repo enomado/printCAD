@@ -2073,7 +2073,11 @@ impl PrintCadApp {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        match std::fs::read_to_string(path) {
+        let read = crate::platform::read(path).and_then(|bytes| {
+            String::from_utf8(bytes)
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+        });
+        match read {
             Ok(source) => {
                 console::push(LineKind::Input, format!("run {name}"));
                 self.submit_script(scripting::Job::Script { source, name }, RunKind::File);
