@@ -226,6 +226,9 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 .pkg .badge::after { content: ""; position: absolute; inset: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat; }
 .pkg h3 { margin: 0; font-size: 19px; font-weight: 600; }
 .pkg .ver { font: 12px var(--mono); color: var(--text3); }
+.pkg .status { margin-left: auto; align-self: flex-start; font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 6px; color: var(--warm); border: 1px solid rgba(230, 164, 79, 0.45); background: rgba(230, 164, 79, 0.08); }
+.store-note { max-width: 720px; margin: -16px auto 28px; padding: 12px 18px; border-radius: 12px; border: 1px solid rgba(230, 164, 79, 0.35); background: rgba(230, 164, 79, 0.06); color: var(--text2); font-size: 15px; text-align: center; }
+.store-note b { color: var(--warm); font-weight: 600; }
 .pkg p { margin: 0; color: var(--text2); font-size: 15px; flex: 1; }
 .pkg .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .pkg .tags span { font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 6px; background: var(--bg2); color: var(--text2); }

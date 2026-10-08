@@ -218,7 +218,11 @@ const categoryIcon = (cats = []) => CATEGORY_ICONS[cats.find((c) => CATEGORY_ICO
         ver.className = "ver";
         ver.textContent = p.release ? `v${p.release.version}` : "";
         title.append(h3, ver);
-        head.append(badge, title);
+        // Every listed package is an example or an experiment for now.
+        const status = document.createElement("span");
+        status.className = "status";
+        status.textContent = String(p.id ?? "").startsWith("example.") ? "Example" : "Experimental";
+        head.append(badge, title, status);
         const desc = document.createElement("p");
         const text = (p.description ?? "").trim();
         desc.textContent = text && !/[.!?]$/.test(text) ? `${text}.` : text;
