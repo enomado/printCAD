@@ -252,6 +252,14 @@ impl Pool {
         self.waiting_builds = kept;
     }
 
+    /// Whether a worker has a job out.
+    pub(super) fn any_busy(&self) -> bool {
+        self.slots
+            .borrow()
+            .iter()
+            .any(|(slot, _)| slot.state.borrow().busy.is_some())
+    }
+
     /// Whether build `serial` is out on a worker.
     pub(super) fn is_running(&self, serial: u64) -> bool {
         self.slots.borrow().iter().any(

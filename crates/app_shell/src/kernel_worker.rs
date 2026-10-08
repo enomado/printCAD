@@ -564,6 +564,11 @@ impl KernelWorker {
 
     /// Whether a running job can be stopped, that is, whether one is running.
     pub fn is_cancellable(&self) -> bool {
+        // A page's worker keeps its job's canceller; a busy one is stopped.
+        #[cfg(target_arch = "wasm32")]
+        if self.pool.any_busy() {
+            return true;
+        }
         self.activities().any(|a| lock(a).canceller.is_some())
     }
 
