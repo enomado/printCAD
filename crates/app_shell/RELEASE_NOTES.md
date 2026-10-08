@@ -7,7 +7,10 @@ version first.
 ## 0.7.1
 
 ### Kernel
-- Built on ogeom 0.9.10: the interference check works again on a worm passing through a bearing.
+- Built on ogeom 0.9.13. The interference check works again on a worm passing through a bearing.
+- Thickness and shells work on solids with rounded edges and corner balls, and a drill or cut that the kernel refused on a closed shell now builds.
+- Faster across the board in the kernel's measurements: holes and cuts into large drilled parts, volume, mass and filament figures (about twice as fast), shape checks and repairs, STEP and IGES import, pipes along circular paths, thickened spline surfaces and primitives.
+- A solid saved by 0.7.0 whose seams were stored loosely is reported by the shape check and mended by Repair shape.
 - A small edit to a large part rebuilds in about half the time: the check for an edit that made the same solid no longer meshes every face, and the states a body's builds keep hold only what the solid still reaches.
 
 ## 0.7.0
