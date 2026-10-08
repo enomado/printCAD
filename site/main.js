@@ -256,11 +256,12 @@ const categoryIcon = (cats = []) => CATEGORY_ICONS[cats.find((c) => CATEGORY_ICO
     .then((release) => {
       const ends = { linux: "linux-x86_64.tar.gz", windows: "windows-x86_64.zip", macos: "macos-universal.dmg" };
       for (const a of document.querySelectorAll(".dl")) {
+        if (!(a.dataset.platform in ends)) continue;
         const asset = release.assets.find((x) => x.name.endsWith(ends[a.dataset.platform]));
         if (asset) a.href = asset.browser_download_url;
       }
       document.querySelector("#release-line").textContent =
-        `Version ${release.tag_name.replace(/^v/, "")} · built in Rust on Vulkan, with a pure-Rust geometry kernel`;
+        `Version ${release.tag_name.replace(/^v/, "")} · built in Rust on wgpu, with a pure-Rust geometry kernel`;
     })
     .catch(() => {});
 }

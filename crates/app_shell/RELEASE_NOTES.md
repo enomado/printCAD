@@ -4,6 +4,25 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.8.0
+
+### In your browser
+- printCAD runs in a web browser, with nothing to install: the website's Try in browser opens it. It draws with WebGPU where the browser has it, WebGL2 otherwise.
+- The kernel works in the page's background workers, so the page stays responsive while bodies build, several at once; where the browser allows it, each worker uses several threads.
+- The browser keeps your documents: Save keeps one under a name, the start page lists them with their previews, and a card's menu deletes one. File › Download a copy saves a document to disk, and Open reads any `.prtcad` file.
+- Autosaved copies come back on the start page after the page was closed, and leaving the page with unsaved edits asks first.
+- STEP, IGES and mesh files import, and exports, pictures and recorded scripts download.
+- The script console runs Lua, workbench packages install from a file or from the workbench store, and a 6-DoF mouse connects from Preferences › Input › 6-DoF mouse (in Chrome and Edge).
+- Left to the desktop app: Send to slicer, the AI assistant, update checks, linking parts from another printCAD file, the scripts folder, and package installs from a GitHub address. A package in the browser has no folder of its own, no network and no helpers.
+
+### Display
+- A new renderer: Vulkan on Linux, Metal on macOS, DirectX 12 or Vulkan on Windows. The scene, edges, picking and section cuts look and behave as before.
+- Edges draw at the width you set on every graphics API.
+- Preferences › General › About names the graphics API in use, and `WGPU_BACKEND=gl` runs printCAD on OpenGL where Vulkan is not available.
+
+### Kernel
+- Built on ogeom 0.9.14, which runs in a browser. Sections through shallow crossings state their error truthfully, and inside-or-outside checks answer where a ray only grazes a face.
+
 ## 0.7.1
 
 ### Kernel
