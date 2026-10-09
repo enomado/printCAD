@@ -744,6 +744,7 @@ impl PrintCadApp {
         }
         let ViewportData {
             overlays: screen_space_overlays,
+            polygons: screen_space_polygons,
             images: screen_space_images,
             marks: screen_space_marks,
             labels: screen_space_labels,
@@ -780,6 +781,7 @@ impl PrintCadApp {
         let dimensions = self.selection_dimensions();
         let physical = self.panel_physical();
         let host_params = ui::HostCtxParams {
+            pixels_per_point: self.pixels_per_point(),
             camera_position: self.session.camera.position(),
             camera_target: self.session.camera.target(),
             viewport: self
@@ -860,6 +862,7 @@ impl PrintCadApp {
                         pick_filter: self.session.pick_filter,
                         scene_bounds: self.session.camera.scene_bounds(),
                         screen_space_overlays: &screen_space_overlays,
+                        screen_space_polygons: &screen_space_polygons,
                         screen_space_images: &screen_space_images,
                         screen_space_marks: &screen_space_marks,
                         screen_space_labels: &screen_space_labels,
@@ -1435,6 +1438,7 @@ impl PrintCadApp {
         let params = self.overlay_ctx_params();
         let mut data = match self.with_workbench_ctx(&wb_id, params, |wb, ctx| ViewportData {
             overlays: wb.get_screen_space_overlays(ctx, ctx.active_document_object),
+            polygons: wb.get_screen_space_polygons(ctx, ctx.active_document_object),
             images: wb.get_screen_space_images(ctx, ctx.active_document_object),
             marks: wb.get_screen_space_marks(ctx, ctx.active_document_object),
             labels: wb.get_screen_space_labels(ctx, ctx.active_document_object),
@@ -1819,6 +1823,7 @@ impl PrintCadApp {
 #[derive(Default)]
 pub(crate) struct ViewportData {
     pub overlays: Vec<core_document::ScreenSpaceOverlay>,
+    pub polygons: Vec<core_document::ScreenSpacePolygon>,
     pub images: Vec<core_document::ScreenSpaceImage>,
     pub marks: Vec<core_document::ScreenSpaceMark>,
     pub labels: Vec<core_document::ScreenSpaceLabel>,

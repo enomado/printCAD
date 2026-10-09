@@ -3147,11 +3147,13 @@ impl AssemblyWorkbench {
         placements: &[(BodyId, BodyPlacement)],
     ) -> TaskOutcome {
         if request.cancel {
+            self.handles.reset();
             restore_placements(ctx, placements);
             self.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
+            self.handles.reset();
             let placement = ctx.document.body_placement(body);
             ctx.record(
                 "asm.place",
@@ -3182,6 +3184,14 @@ impl AssemblyWorkbench {
                 "Its joints decide where it sits. Move the body it is joined to, \
                  or delete a joint to free it.",
             ));
+        }
+        if !held {
+            widgets.push(Widget::Choice {
+                id: "handles".into(),
+                label: "Handles".into(),
+                options: crate::handles::MODES.map(String::from).to_vec(),
+                selected: self.handles.mode_index(),
+            });
         }
         let placement = ctx.document.body_placement(body);
         let angles = move_angles(&placement);
@@ -3219,13 +3229,20 @@ impl AssemblyWorkbench {
     }
 
     /// A field of the move panel changed: the body goes there as
-    /// `asm.place` puts it, and whatever is joined to it follows.
+    /// `asm.place` puts it, and whatever is joined to it follows. The
+    /// handles' choice only changes what the view shows.
     fn move_event(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         body: BodyId,
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
+        if let PanelEvent::Choice { id, index } = event
+            && id == "handles"
+        {
+            self.handles.set_mode(ctx, body, *index);
+            return None;
+        }
         let moved = match (event, number_event(event)) {
             (PanelEvent::Button { id }, _) if id == "home" => BodyPlacement::IDENTITY,
             (_, Some((field, value))) => {

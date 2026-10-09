@@ -43,8 +43,13 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Current camera target (orbit center) in world space.
     pub camera_target: [f32; 3],
 
-    /// Viewport dimensions (x, y, width, height) in pixels.
+    /// Viewport dimensions (x, y, width, height) in physical pixels.
     pub viewport: (u32, u32, u32, u32),
+
+    /// Physical pixels per logical UI pixel, including the UI's zoom. Screen
+    /// coordinates and overlays use physical pixels; constant-size tools can
+    /// divide their input by this scale and multiply their drawing by it.
+    pub pixels_per_point: f32,
 
     /// View-projection matrix for transforming 3D world coordinates to clip space.
     /// Used for projecting 3D points to screen coordinates.
@@ -399,6 +404,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             camera_position,
             camera_target,
             viewport,
+            pixels_per_point: 1.0,
             hovered_world_pos: None,
             hovered_body_id: None,
             selected_body_id: None,

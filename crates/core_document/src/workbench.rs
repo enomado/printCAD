@@ -99,6 +99,20 @@ impl ScreenSpaceOverlay {
     }
 }
 
+/// A filled polygon drawn in viewport pixels, beneath the overlay lines: a
+/// triangle fan from its first point, so it is convex or a sector seen from
+/// its centre (a handle's cone, a swept angle).
+#[derive(Debug, Clone)]
+pub struct ScreenSpacePolygon {
+    /// Corners in screen coordinates (x, y) in pixels, relative to the
+    /// viewport origin; the triangles are `(0, i, i + 1)`.
+    pub points: Vec<[f32; 2]>,
+    /// RGB color [r, g, b] in range 0.0-1.0.
+    pub color: [f32; 3],
+    /// Opacity 0..=1.
+    pub alpha: f32,
+}
+
 /// A screen-space point marker or glyph drawn in the viewport.
 #[derive(Debug, Clone)]
 pub struct ScreenSpaceMark {
@@ -837,6 +851,10 @@ pub trait Workbench: Send {
         InputResult::ignored()
     }
 
+    /// Cancel a held pointer gesture when the window loses focus. A release
+    /// outside the window may not arrive; restore the gesture's press state.
+    fn cancel_pointer_gesture(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
+
     /// Draw custom UI in the left panel, above the feature tree.
     /// Called every frame while this workbench is active.
     #[cfg(feature = "egui")]
@@ -1008,6 +1026,17 @@ pub trait Workbench: Send {
         _ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceOverlay> {
+        Vec::new()
+    }
+
+    /// Filled polygons drawn in viewport pixels beneath the overlay lines
+    /// (the Move task's handles). Same coordinate convention as
+    /// [`Self::get_screen_space_overlays`].
+    fn get_screen_space_polygons(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpacePolygon> {
         Vec::new()
     }
 

@@ -71,9 +71,9 @@ pub use workbench::{
     FeatureInfo, FeatureReference, FileImport, MarkKind, MenuItem, MenuScope, OverlayMesh, OvpRow,
     OvpWidget, PassiveGeometry, PassiveRegion, PassiveTint, PrintPart, PropertyHints,
     ReferenceChoice, ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay,
-    StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior, ToolDescriptor, ToolHint,
-    ToolVariant, ViewportHud, ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchId, base_tool_id, tool_variant,
+    ScreenSpacePolygon, StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior,
+    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
 };
 
 /// Result type for document operations.

@@ -1,38 +1,30 @@
-//! Move handles on the body the Move task has open: an arrow along each
-//! world axis to slide it and a ring about each to turn it, drawn about the
-//! middle of its box a fixed size on screen.
+//! The Move task's handles: the shared transform gizmo (`transform_gizmo`)
+//! on the body the task has open, about the middle of its box along the
+//! world axes. In Move its arrows and squares slide the body, in Turn its
+//! rings turn it; the task panel's choice and [`MODE_ACTION`] switch them.
 
-use core_document::{BodyId, BodyPlacement, ScreenSpaceOverlay, WorkbenchRuntimeContext};
-use glam::{Quat, Vec3};
+use core_document::{
+    BodyId, BodyPlacement, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay,
+    ScreenSpacePolygon, SketchPalette, WorkbenchRuntimeContext,
+};
+use emath::Pos2;
+use glam::{DQuat, DVec3, Quat, Vec3};
+use transform_gizmo::axis::Axis;
+use transform_gizmo::gizmo::{Delta, Event, Gizmo, HandleSet, Mode, Placement};
+use transform_gizmo::paint::{Ink, Paint, Shape};
+use transform_gizmo::view::GizmoView;
 
-/// How long an arrow and how wide a ring are on screen, pixels.
-const ARROW_PX: f32 = 70.0;
-const RING_PX: f32 = 45.0;
-/// How near the cursor must come to a handle to take it, pixels.
-const REACH_PX: f32 = 7.0;
-/// Segments a ring is drawn with.
-const RING_SEGMENTS: usize = 40;
+/// The action that switches the Move task's handles between moving and
+/// turning.
+pub const MODE_ACTION: &str = "asm.move_mode";
 
-const AXES: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
+/// The choices of the Move task's panel, in [`Handles::mode_index`] order.
+pub const MODES: [&str; 2] = ["Move", "Turn"];
 
-/// Which handle.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Handle {
-    Arrow(usize),
-    Ring(usize),
-}
-
-/// A handle held: the body where it was when taken, the middle it turns
-/// about, and where on the handle the cursor was.
-#[derive(Debug, Clone, Copy)]
-pub struct Held {
-    pub handle: Handle,
-    pub start: BodyPlacement,
-    pub centre: Vec3,
-    /// An arrow: how far along its axis the cursor was; a ring: the
-    /// direction from the middle to the cursor, in the ring's plane.
-    pub from: Vec3,
-}
+/// Size of an axis letter and of the value shown while dragging, logical pixels.
+const TEXT_PX: f32 = 13.0;
+/// Segments a circle of the drag's feedback is drawn with.
+const CIRCLE_SEGMENTS: usize = 32;
 
 /// The middle of `body`'s box where it sits.
 pub fn centre(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<Vec3> {
@@ -41,158 +33,341 @@ pub fn centre(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<Vec3> {
     Some((Vec3::from_array(lo) + Vec3::from_array(hi)) * 0.5)
 }
 
-/// World length that shows `px` pixels long at `at`.
-fn world_per(ctx: &WorkbenchRuntimeContext, at: Vec3, px: f32) -> Option<f32> {
-    let a = ctx.world_to_viewport(at.to_array())?;
-    // Along whichever world axis shows longest, so a view down one axis
-    // still measures.
-    let longest = AXES
-        .iter()
-        .filter_map(|axis| {
-            let b = ctx.world_to_viewport((at + *axis).to_array())?;
-            Some((b.0 - a.0).hypot(b.1 - a.1))
-        })
-        .fold(0.0f32, f32::max);
-    (longest > 1e-6).then(|| px / longest)
+/// The bench context's camera, as the gizmo asks for it.
+struct View<'v, 'a>(&'v WorkbenchRuntimeContext<'a>);
+
+impl View<'_, '_> {
+    fn logical(&self, point: Pos2) -> Pos2 {
+        let scale = self.0.pixels_per_point;
+        Pos2::new(point.x / scale, point.y / scale)
+    }
+
+    fn physical(&self, point: Pos2) -> Pos2 {
+        let scale = self.0.pixels_per_point;
+        Pos2::new(point.x * scale, point.y * scale)
+    }
+
+    fn eye(&self) -> DVec3 {
+        Vec3::from_array(self.0.camera_position).as_dvec3()
+    }
 }
 
-/// Each handle's drawing, as screen points: an arrow as its two ends, a
-/// ring as its polyline.
-pub fn shapes(ctx: &WorkbenchRuntimeContext, centre: Vec3) -> Vec<(Handle, Vec<[f32; 2]>)> {
-    let (Some(arrow), Some(ring)) = (
-        world_per(ctx, centre, ARROW_PX),
-        world_per(ctx, centre, RING_PX),
-    ) else {
-        return Vec::new();
-    };
-    let screen = |p: Vec3| ctx.world_to_viewport(p.to_array()).map(|(x, y)| [x, y]);
-    let mut out = Vec::new();
-    for (i, axis) in AXES.iter().enumerate() {
-        if let (Some(a), Some(b)) = (screen(centre), screen(centre + *axis * arrow)) {
-            out.push((Handle::Arrow(i), vec![a, b]));
-        }
-        let (u, v) = axis.any_orthonormal_pair();
-        let points: Option<Vec<[f32; 2]>> = (0..=RING_SEGMENTS)
-            .map(|k| {
-                let a = std::f32::consts::TAU * k as f32 / RING_SEGMENTS as f32;
-                screen(centre + (u * a.cos() + v * a.sin()) * ring)
-            })
-            .collect();
-        if let Some(points) = points {
-            out.push((Handle::Ring(i), points));
+impl GizmoView for View<'_, '_> {
+    fn project(&self, point: DVec3) -> Option<Pos2> {
+        let (x, y) = self.0.world_to_viewport(point.as_vec3().to_array())?;
+        Some(self.logical(Pos2::new(x, y)))
+    }
+
+    fn ray(&self, point: Pos2) -> Option<(DVec3, DVec3)> {
+        let point = self.physical(point);
+        let (origin, direction) = self.0.viewport_to_ray((point.x, point.y))?;
+        let direction = Vec3::from_array(direction).as_dvec3().try_normalize()?;
+        Some((Vec3::from_array(origin).as_dvec3(), direction))
+    }
+
+    fn forward(&self) -> DVec3 {
+        (Vec3::from_array(self.0.camera_target).as_dvec3() - self.eye())
+            .try_normalize()
+            .unwrap_or(DVec3::NEG_Z)
+    }
+
+    /// A short step across the line of sight at `point`, against the pixels
+    /// it spans there.
+    fn world_per_pixel(&self, point: DVec3) -> f64 {
+        let step = ((point - self.eye()).length() * 1e-3).max(1e-6);
+        let across = self.forward().any_orthonormal_vector() * step;
+        let pixels = self
+            .project(point)
+            .zip(self.project(point + across))
+            .map(|(a, b)| f64::from(a.distance(b)));
+        match pixels {
+            Some(pixels) if pixels > 1e-9 => step / pixels,
+            _ => 1.0,
         }
     }
-    out
 }
 
-/// The handle within reach of `at`, arrows first.
-pub fn under(ctx: &WorkbenchRuntimeContext, centre: Vec3, at: (f32, f32)) -> Option<Handle> {
-    let p = glam::Vec2::new(at.0, at.1);
-    let near = |points: &[[f32; 2]]| {
-        points
-            .windows(2)
-            .map(|w| {
-                let (a, b) = (glam::Vec2::from(w[0]), glam::Vec2::from(w[1]));
-                let ab = b - a;
-                let t = if ab.length_squared() > 0.0 {
-                    ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                (a + ab * t).distance(p)
-            })
-            .fold(f32::MAX, f32::min)
-    };
-    let all = shapes(ctx, centre);
-    all.iter()
-        .filter(|(h, _)| matches!(h, Handle::Arrow(_)))
-        .chain(all.iter().filter(|(h, _)| matches!(h, Handle::Ring(_))))
-        .find(|(_, points)| near(points) <= REACH_PX)
-        .map(|(h, _)| *h)
+/// The body where it was when its handle was taken, and the middle it turns
+/// about.
+#[derive(Debug, Clone, Copy)]
+struct Held {
+    start: BodyPlacement,
+    pivot: Vec3,
 }
 
-/// Where the cursor at `at` is on `handle`: along an arrow's axis, or the
-/// direction in a ring's plane.
-pub fn on(
-    ctx: &WorkbenchRuntimeContext,
-    handle: Handle,
-    centre: Vec3,
-    at: (f32, f32),
-) -> Option<Vec3> {
-    let (origin, dir) = ctx.viewport_to_ray(at)?;
-    let (o, d) = (
-        Vec3::from_array(origin),
-        Vec3::from_array(dir).normalize_or_zero(),
-    );
-    match handle {
-        Handle::Arrow(i) => {
-            // The point of the axis nearest the ray.
-            let e = AXES[i];
-            let w = centre - o;
-            let b = e.dot(d);
-            let denom = 1.0 - b * b;
-            if denom < 1e-6 {
-                return None;
+/// The gizmo of the Move task, between input events.
+pub struct Handles {
+    gizmo: Gizmo,
+    mode: Mode,
+    /// Where the pointer last was over the view: the handle under it lights.
+    pointer: Option<Pos2>,
+    held: Option<Held>,
+}
+
+impl Default for Handles {
+    fn default() -> Self {
+        Self {
+            gizmo: Gizmo::default(),
+            mode: Mode::Translate,
+            pointer: None,
+            held: None,
+        }
+    }
+}
+
+/// What the handles draw, in the bench seam's kinds.
+#[derive(Default)]
+pub struct Drawing {
+    pub overlays: Vec<ScreenSpaceOverlay>,
+    pub polygons: Vec<ScreenSpacePolygon>,
+    pub marks: Vec<ScreenSpaceMark>,
+    pub labels: Vec<ScreenSpaceLabel>,
+}
+
+/// The classic three world axes about `pivot`.
+fn axes(pivot: Vec3) -> HandleSet<Axis> {
+    HandleSet::placement_axes(Placement {
+        pivot: pivot.as_dvec3(),
+        orientation: DQuat::IDENTITY,
+    })
+}
+
+impl Handles {
+    /// The panel choice the handles show, in [`MODES`] order.
+    pub fn mode_index(&self) -> usize {
+        match self.mode {
+            Mode::Rotate => 1,
+            Mode::Translate | Mode::Scale => 0,
+        }
+    }
+
+    /// Show the [`MODES`] choice `index`; a handle held lets go, the body
+    /// back where it was taken.
+    pub fn set_mode(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId, index: usize) {
+        self.cancel(ctx, body);
+        self.mode = if index == 1 {
+            Mode::Rotate
+        } else {
+            Mode::Translate
+        };
+    }
+
+    /// Switch between moving and turning.
+    pub fn switch(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId) {
+        let next = 1 - self.mode_index();
+        self.set_mode(ctx, body, next);
+    }
+
+    /// A press at `at`: takes the handle under it. `false` when there is
+    /// none, so the press goes on to the rest of the bench.
+    pub fn press(&mut self, ctx: &WorkbenchRuntimeContext, body: BodyId, at: Pos2) -> bool {
+        if self.gizmo.is_dragging() {
+            return false;
+        }
+        let Some(pivot) = centre(ctx, body) else {
+            return false;
+        };
+        let view = View(ctx);
+        let at = view.logical(at);
+        let set = axes(pivot);
+        let Some(handle) = self
+            .gizmo
+            .layout(&view, &set, self.mode)
+            .hit(at, self.gizmo.style.hit_radius)
+        else {
+            return false;
+        };
+        if self
+            .gizmo
+            .press(&view, &set, self.mode, handle, at)
+            .is_none()
+        {
+            return false;
+        }
+        self.held = Some(Held {
+            start: ctx.document.body_placement(body),
+            pivot,
+        });
+        true
+    }
+
+    /// The pointer at `at`: a held handle moves the body; `false` when none
+    /// is held.
+    pub fn drag(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId, at: Pos2) -> bool {
+        let at = View(ctx).logical(at);
+        self.pointer = Some(at);
+        if !self.gizmo.is_dragging() {
+            return false;
+        }
+        let event = self.gizmo.drag(&View(ctx), Some(at), ctx.shift_down);
+        self.apply(ctx, body, event);
+        true
+    }
+
+    /// The press released: the body stays where the handle took it.
+    pub fn release(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId) -> bool {
+        if !self.gizmo.is_dragging() {
+            return false;
+        }
+        let event = self.gizmo.release();
+        self.apply(ctx, body, event);
+        self.held = None;
+        true
+    }
+
+    /// Let go of a held handle with the body back where it was taken;
+    /// `false` when none is held.
+    pub fn cancel(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId) -> bool {
+        if self.gizmo.cancel().is_none() {
+            return false;
+        }
+        if let Some(held) = self.held.take() {
+            crate::components::move_with_unit(ctx.document, body, held.start);
+        }
+        true
+    }
+
+    /// Forget a held handle, the task it was for being gone.
+    pub fn reset(&mut self) {
+        self.gizmo.cancel();
+        self.held = None;
+        self.pointer = None;
+    }
+
+    fn apply(&self, ctx: &mut WorkbenchRuntimeContext, body: BodyId, event: Event) {
+        let (Some(held), Event::Updated(delta) | Event::Finished(delta)) = (self.held, event)
+        else {
+            return;
+        };
+        let placement = match delta {
+            Delta::Translation(offset) => {
+                BodyPlacement::new(held.start.quat(), held.start.offset() + offset.as_vec3())
             }
-            let s = (b * d.dot(w) - e.dot(w)) / denom;
-            Some(e * s)
-        }
-        Handle::Ring(i) => {
-            let n = AXES[i];
-            let facing = d.dot(n);
-            if facing.abs() < 1e-6 {
-                return None;
+            Delta::Rotation { axis, angle } => {
+                let turn = Quat::from_axis_angle(axis.as_vec3(), angle as f32);
+                BodyPlacement::new(turn, held.pivot - turn * held.pivot).after(&held.start)
             }
-            let t = (centre - o).dot(n) / facing;
-            let hit = o + d * t - centre;
-            (hit.length() > 1e-6).then(|| hit.normalize())
+            Delta::Scale(_) => unreachable!("the Move task shows no scale handles"),
+        };
+        crate::components::move_with_unit(ctx.document, body, placement);
+    }
+
+    /// What the handles draw this frame, in the context's palette.
+    pub fn drawing(&self, ctx: &WorkbenchRuntimeContext, body: BodyId) -> Drawing {
+        let Some(pivot) = self.held.map(|h| h.pivot).or_else(|| centre(ctx, body)) else {
+            return Drawing::default();
+        };
+        let view = View(ctx);
+        let layout = self.gizmo.layout(&view, &axes(pivot), self.mode);
+        let lit = self.gizmo.active().or_else(|| {
+            self.pointer
+                .and_then(|p| layout.hit(p, self.gizmo.style.hit_radius))
+        });
+        let mut drawing = Drawing::default();
+        for shape in self.gizmo.shapes(&view, &layout, lit) {
+            drawing.add(shape, &ctx.sketch_palette, ctx.pixels_per_point);
         }
+        drawing
     }
 }
 
-/// The body's placement with the handle dragged from `held.from` to `now`.
-pub fn dragged(held: &Held, now: Vec3) -> BodyPlacement {
-    match held.handle {
-        Handle::Arrow(_) => {
-            BodyPlacement::new(held.start.quat(), held.start.offset() + (now - held.from))
-        }
-        Handle::Ring(i) => {
-            let axis = AXES[i];
-            let angle = held.from.cross(now).dot(axis).atan2(held.from.dot(now));
-            let turn = Quat::from_axis_angle(axis, angle);
-            let step = BodyPlacement::new(turn, held.centre - turn * held.centre);
-            step.after(&held.start)
-        }
-    }
+/// A colour role in the bench palette, with its opacity.
+fn colour(palette: &SketchPalette, paint: Paint) -> ([f32; 3], f32) {
+    let (rgb, alpha) = match paint.ink {
+        Ink::Axis(Axis::X) => (palette.axis_x, 1.0),
+        Ink::Axis(Axis::Y) => (palette.axis_y, 1.0),
+        Ink::Axis(Axis::Z) => (palette.selected, 1.0),
+        Ink::SameLetterPlane => (palette.construction, 1.0),
+        Ink::View => (palette.geometry, 1.0),
+        Ink::Highlight => (palette.preselect, 1.0),
+        Ink::Feedback => (palette.preview, 1.0),
+        Ink::Black(a) => (palette.pill_fill, f32::from(a) / 255.0),
+        Ink::White(a) => (palette.geometry, f32::from(a) / 255.0),
+    };
+    (rgb, alpha * paint.fade)
 }
 
-/// The handles as lines: X red, Y green, Z blue; the one held brighter.
-pub fn overlays(
-    ctx: &WorkbenchRuntimeContext,
-    centre: Vec3,
-    held: Option<Handle>,
-) -> Vec<ScreenSpaceOverlay> {
-    let colors = [
-        ctx.sketch_palette.axis_x,
-        ctx.sketch_palette.axis_y,
-        ctx.sketch_palette.selected,
-    ];
-    shapes(ctx, centre)
-        .into_iter()
-        .flat_map(|(handle, points)| {
-            let (i, width) = match handle {
-                Handle::Arrow(i) => (i, 3.0),
-                Handle::Ring(i) => (i, 1.5),
-            };
-            let width = if held == Some(handle) {
-                width + 1.5
-            } else {
-                width
-            };
+impl Drawing {
+    fn add(&mut self, shape: Shape, palette: &SketchPalette, scale: f32) {
+        let physical = |point: Pos2| [point.x * scale, point.y * scale];
+        let line = |points: &[Pos2], width: f32, paint: Paint, dash: Option<(f32, f32)>| {
+            let (rgb, alpha) = colour(palette, paint);
             points
                 .windows(2)
-                .map(|w| ScreenSpaceOverlay::new(w[0], w[1], colors[i], width))
+                .map(|w| {
+                    let segment =
+                        ScreenSpaceOverlay::new(physical(w[0]), physical(w[1]), rgb, width * scale)
+                            .with_alpha(alpha);
+                    match dash {
+                        Some((dash, gap)) => segment.dashed(dash * scale, gap * scale),
+                        None => segment,
+                    }
+                })
                 .collect::<Vec<_>>()
-        })
-        .collect()
+        };
+        match shape {
+            Shape::Line {
+                points,
+                stroke,
+                dash,
+            } => self.overlays.extend(line(
+                &points,
+                stroke.width,
+                stroke.paint,
+                dash.map(|d| (d.dash, d.gap)),
+            )),
+            Shape::Fan { points, paint } => {
+                let (color, alpha) = colour(palette, paint);
+                self.polygons.push(ScreenSpacePolygon {
+                    points: points.into_iter().map(physical).collect(),
+                    color,
+                    alpha,
+                });
+            }
+            Shape::Dot { at, radius, paint } => {
+                let (rgb, alpha) = colour(palette, paint);
+                self.marks.push(
+                    ScreenSpaceMark::dot(physical(at), radius * scale, rgb).with_alpha(alpha),
+                );
+            }
+            Shape::Circle { at, radius, stroke } => {
+                let points: Vec<Pos2> = (0..=CIRCLE_SEGMENTS)
+                    .map(|i| {
+                        let angle = std::f32::consts::TAU * i as f32 / CIRCLE_SEGMENTS as f32;
+                        at + emath::vec2(angle.cos(), angle.sin()) * radius
+                    })
+                    .collect();
+                self.overlays
+                    .extend(line(&points, stroke.width, stroke.paint, None));
+            }
+            Shape::Letter { at, text, paint } => {
+                let (rgb, _) = colour(palette, paint);
+                self.labels.push(ScreenSpaceLabel::new(
+                    physical(at),
+                    text,
+                    rgb,
+                    TEXT_PX * scale,
+                ));
+            }
+            Shape::Plate { at, text } => {
+                // The plate is placed by its top left; a label by its centre,
+                // and a monospace character is about 0.6 of its size wide.
+                let half = emath::vec2(text.chars().count() as f32 * 0.3, 0.5) * TEXT_PX;
+                self.labels.push(
+                    ScreenSpaceLabel::new(
+                        physical(at + half),
+                        text,
+                        palette.preselect,
+                        TEXT_PX * scale,
+                    )
+                    .mono()
+                    .pill(),
+                );
+            }
+        }
+    }
 }
+
+#[cfg(test)]
+#[path = "handles_tests.rs"]
+mod tests;

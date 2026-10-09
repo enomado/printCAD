@@ -340,6 +340,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   on `glam` and `serde`; its README describes the copy contract. The app's
   `camera/core.rs` converts preset-relative orientations, model coordinates
   and physical pixels; `camera/` owns input routing, clip planes and device input.
+- `transform_gizmo`: move, turn and scale handles without a window
+  (`gizmo::Gizmo`: layout, hit-test, press/drag/release and the delta from
+  the press; `paint::Shape`s in colour roles, `paint::Ink`, for the host to
+  draw in its palette; `hand` turns a delta into increments of the freedoms
+  a handle stands for). Plain `glam` in `f64` and `emath` at its boundary,
+  no printCAD type: it is shared with other applications, and a change goes
+  to the shared copy first (its README).
 - `surface_texture`: patterns pressed into chosen faces of a mesh for
   printing (`Texture`: pattern, projection, tile, depth, turn, inward,
   keep flat; `apply` welds, splits the chosen faces' triangles and their
@@ -548,7 +555,13 @@ active. The UI surface: `configure` registers
 `is_tool_enabled`/`tool_toggled` decide button state each frame; `task()` +
 `ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);
 `viewport_hud()`, `status_items()`, `editing_feature()`,
-`get_screen_space_overlays/marks/labels()` feed the viewport and chrome;
+`get_screen_space_overlays/polygons/marks/labels()` feed the viewport and
+chrome (polygons are filled fans drawn beneath the lines: the Assembly's
+  Move handles, `wb_assembly/src/handles.rs` over `transform_gizmo`);
+`WorkbenchRuntimeContext::pixels_per_point` carries the UI scale: input and
+overlay coordinates are physical pixels, while the transform gizmo's adapter
+converts them to and from logical pixels. `cancel_pointer_gesture()` restores
+a held pointer gesture when the window loses focus, before UI event filtering;
 `ui_settings()` draws the bench's Preferences page (a rail entry for
 each bench whose `has_settings` is true; a package's is true when its
 settings page has widgets); `feature_info`/`passive_geometry`/`pick_feature`/

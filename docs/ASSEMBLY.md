@@ -185,9 +185,19 @@ sliding off it. A body with no joints of its own drags straight across
 the view, what is joined to it following; a grounded body does not drag.
 A drag is one undo step.
 
-Move body (G) moves the selected body by numbers, or by its handles: an
-arrow along each axis slides it and a ring about each turns it about the
-middle of its box. OK keeps where it ends.
+Move body (G) moves the selected body by numbers, or by its handles about
+the middle of its box. The panel's Handles choice, or Shift+G, switches
+them between Move and Turn. In Move an arrow along each axis slides the
+body, a square between two arrows slides it in their plane and the disc
+at the middle slides it across the view; in Turn a ring about each axis
+turns it, and the outer ring turns it about the line of sight. While a
+handle is held the distance or angle shows beside it, Shift moves in
+steps (a round length that follows the zoom, 15°), and Escape puts the
+body back where the handle took it. OK keeps where it ends.
+
+Handle sizes and their picking distance follow the UI scale on every display.
+The middle disc stays in the view plane, including its steps with Shift. Losing
+window focus cancels a held handle or body drag and restores its press state.
 
 A drag stops where the body would run into another: it comes to rest
 against it. Faces that only touch, as mated faces do, never stop it, and

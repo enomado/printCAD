@@ -4704,6 +4704,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "transform_gizmo"
+version = "0.1.0"
+dependencies = [
+ "emath",
+ "glam 0.33.7",
+]
+
+[[package]]
 name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5585,11 +5593,13 @@ version = "0.1.0"
 dependencies = [
  "core_document",
  "egui",
+ "emath",
  "glam 0.33.7",
  "printcad-bench-api",
  "printcad-kernel-api",
  "serde",
  "serde_json",
+ "transform_gizmo",
  "ui_kit",
  "uuid",
  "web-time",
