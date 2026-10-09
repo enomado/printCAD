@@ -47,6 +47,7 @@ struct Targets {
 pub(crate) struct RendererCore {
     egui_renderer: egui_wgpu::Renderer,
     mesh_renderer: MeshRenderer,
+    grid_renderer: crate::grid::GridPipeline,
     /// Per-body GPU buffers shared by the scene and pick passes. Bodies only
     /// re-upload when their `BodySubmission::revision` advances.
     mesh_cache: MeshCache,
@@ -289,6 +290,7 @@ impl RendererCore {
         let blit_pipeline = blit_pipeline(&device, &blit_layout, &blit_shader, format);
         let targets = create_targets(&device, &blit_layout, &config, scene_format, msaa_samples);
         let mesh_renderer = MeshRenderer::new(&device, scene_format, msaa_samples, polygon_line);
+        let grid_renderer = crate::grid::GridPipeline::new(&device, scene_format, msaa_samples);
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
             format,
@@ -301,6 +303,7 @@ impl RendererCore {
         Ok(Self {
             egui_renderer,
             mesh_renderer,
+            grid_renderer,
             mesh_cache: MeshCache::new(),
             targets,
             blit_pipeline,
@@ -466,6 +469,9 @@ impl RendererCore {
         // frames (hover, panels, typing) reuse the cached scene image.
         let fingerprint = scene_fingerprint(frame);
         let scene_dirty = self.last_scene_fingerprint != Some(fingerprint);
+        if scene_dirty {
+            self.grid_renderer.prepare(&self.device, frame);
+        }
         self.scene_redrawn_last_frame = scene_dirty;
         let pick = self
             .pending_pick
@@ -581,9 +587,13 @@ impl RendererCore {
                 multiview_mask: None,
             });
             set_viewport(&mut pass, viewport);
-            self.last_draw_stats =
-                self.mesh_renderer
-                    .draw(&mut pass, &self.mesh_cache, frame, viewport_px);
+            self.last_draw_stats = self.mesh_renderer.draw(
+                &mut pass,
+                &self.mesh_cache,
+                frame,
+                viewport_px,
+                &self.grid_renderer,
+            );
             drop(pass);
             self.last_scene_fingerprint = Some(fingerprint);
         }
@@ -862,6 +872,32 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         f32s(&mut h, col);
     }
     f32s(&mut h, &frame.camera_pos);
+    frame.grids.len().hash(&mut h);
+    for grid in &frame.grids {
+        for value in [
+            grid.origin,
+            grid.u,
+            grid.v,
+            grid.center,
+            grid.forward,
+            grid.color,
+            grid.u_axis_color,
+            grid.v_axis_color,
+        ] {
+            f32s(&mut h, &value);
+        }
+        f32s(&mut h, &grid.depth_range);
+        f32s(
+            &mut h,
+            &[
+                grid.step,
+                grid.radius,
+                grid.minor_alpha,
+                grid.major_alpha,
+                grid.axis_alpha,
+            ],
+        );
+    }
     frame.draw_edges.hash(&mut h);
     match &frame.clip_plane {
         Some(plane) => f32s(&mut h, plane),

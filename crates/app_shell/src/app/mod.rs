@@ -24,6 +24,7 @@ pub(crate) mod packages_web;
 pub(crate) mod print_layout;
 pub(crate) mod recompute;
 pub(crate) mod recovery;
+pub(crate) mod scene_guides;
 pub(crate) mod scripts;
 #[cfg(test)]
 mod seam_lint;

@@ -482,6 +482,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   cannot be copied in part. The window takes a plain format, as egui
   blends for; the scene draws into an sRGB texture that the blit encodes
   onto it.
+  `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
+  plane whose lines `grid.wgsl` works out per pixel, three decades at once,
+  each faded by its spacing on screen, depth-tested and never picked.
+  `app/scene_guides.rs` lays out the ground grid and origin planes; View ›
+  Grid and Origin planes hide them while an edit session holds the view.
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,

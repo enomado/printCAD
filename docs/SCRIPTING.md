@@ -1596,6 +1596,10 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 
 `pc.view.annotations`: Annotations.
 
+`pc.view.grid`: Grid.
+
+`pc.view.origin_planes`: Origin planes.
+
 ### tab
 
 `pc.tab.new`: New tab.

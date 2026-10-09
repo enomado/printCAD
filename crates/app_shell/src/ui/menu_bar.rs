@@ -24,6 +24,9 @@ pub struct MenuBarInputs<'a> {
     pub show_log_panel: bool,
     /// Imported annotations are drawn over the scene.
     pub show_annotations: bool,
+    /// The ground grid and the origin's planes are drawn.
+    pub show_grid: bool,
+    pub show_origin_planes: bool,
     pub show_console: bool,
     pub show_assistant: bool,
     pub projection: ProjectionMode,
@@ -389,6 +392,17 @@ pub fn draw_menu_bar(
                                 key("view.annotations"),
                             ) {
                                 commands.push(UiCommand::ToggleAnnotations);
+                            }
+                            if choice(ui, inputs.show_grid, "Grid", key("view.grid")) {
+                                commands.push(UiCommand::ToggleGrid);
+                            }
+                            if choice(
+                                ui,
+                                inputs.show_origin_planes,
+                                "Origin planes",
+                                key("view.origin_planes"),
+                            ) {
+                                commands.push(UiCommand::ToggleOriginPlanes);
                             }
                             ui.separator();
                             ui.menu_button(RichText::new("Workbench").font(sans(FONT_SM)), |ui| {
