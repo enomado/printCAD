@@ -18,6 +18,7 @@ members = [
   "crates/scripting",
   "crates/agents",
   "crates/local_ipc",
+  "crates/viewport_camera",
 ]
 resolver = "2"
 # Workbench packages build apart, for wasm32-wasip2.

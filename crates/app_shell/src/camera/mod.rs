@@ -11,6 +11,7 @@
 
 mod animate;
 mod auto_clip;
+mod core;
 mod math;
 mod ops;
 pub(crate) mod section;
@@ -24,6 +25,7 @@ use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
 use settings::{CameraSettings, ProjectionMode, SixDofMotion, SixDofSettings};
 use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
+use viewport_camera::controller::GestureKind;
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
 
 /// Normalizes one device reading: full scale to ±1, dead zone to rest,
@@ -92,6 +94,9 @@ pub struct CameraController {
     mmb_was_down_scene: bool,
     mmb_anchor_vp: Vec2,
     mmb_dragging_scene: bool,
+    navigation_hold: Option<core::Hold>,
+    pixels_per_point: f32,
+    roll_hold: Option<(Vec2, Quat)>,
 }
 
 impl CameraController {
@@ -100,7 +105,7 @@ impl CameraController {
             state: CadCameraState::new(settings, initial_viewport),
             axes: AxisSystem::from(settings.axis_preset),
             axis_preset: settings.axis_preset,
-            tween: CameraTween::None,
+            tween: CameraTween::default(),
             scene_aabb: None,
             pending_wheel_lines: 0.0,
             last_cursor_viewport: None,
@@ -116,6 +121,9 @@ impl CameraController {
             mmb_was_down_scene: false,
             mmb_anchor_vp: Vec2::ZERO,
             mmb_dragging_scene: false,
+            navigation_hold: None,
+            pixels_per_point: 1.0,
+            roll_hold: None,
         }
     }
 
@@ -131,7 +139,20 @@ impl CameraController {
     /// Lock out-of-plane rotation (the middle-button orbit). Pan, zoom, and roll stay
     /// available: they keep the view planar. Used while editing a sketch.
     pub fn set_orbit_lock(&mut self, locked: bool) {
+        if locked != self.orbit_locked {
+            self.navigation_hold = None;
+            self.mmb_was_down_scene = false;
+            self.mmb_dragging_scene = false;
+        }
         self.orbit_locked = locked;
+    }
+
+    pub fn set_pixels_per_point(&mut self, scale: f32) {
+        assert!(scale.is_finite() && scale > 0.0);
+        if scale != self.pixels_per_point {
+            self.forget_released([false; 3]);
+            self.pixels_per_point = scale;
+        }
     }
 
     /// Let go of every drag whose button is no longer down (`[left, right,
@@ -142,18 +163,24 @@ impl CameraController {
     /// move or a press, never a release, which needs its button still held.
     pub fn forget_released(&mut self, [left, right, middle]: [bool; 3]) {
         if !left {
+            self.roll_hold = None;
             self.lmb_was_down_scene = false;
             self.lmb_dragging_scene = false;
             self.lmb_dragging_roll = false;
         }
         if !right {
+            self.roll_hold = None;
             self.rmb_dragging_scene = false;
+            if !middle {
+                self.navigation_hold = None;
+            }
         }
         if !middle {
             self.mmb_was_down_scene = false;
             self.mmb_dragging_scene = false;
         }
         if !(left || right || middle) {
+            self.navigation_hold = None;
             self.last_cursor_vp_for_drag = None;
             self.orbit_anchor_world = None;
         }
@@ -182,6 +209,7 @@ impl CameraController {
             } => {
                 self.cancel_animation();
                 self.lmb_was_down_scene = true;
+                self.navigation_hold = None;
                 self.orbit_anchor_world = None;
                 self.lmb_dragging_scene = false;
                 self.lmb_dragging_roll = false;
@@ -201,6 +229,15 @@ impl CameraController {
                 self.last_cursor_vp_for_drag = self.last_cursor_viewport;
                 if let Some(p) = self.last_cursor_viewport {
                     self.rmb_anchor_vp = p;
+                    self.navigation_hold = Some(core::Hold::begin(
+                        &self.state,
+                        &self.axes,
+                        settings,
+                        p,
+                        self.state.focal_point_dvec(&self.axes),
+                        GestureKind::Pan,
+                        self.pixels_per_point,
+                    ));
                 }
                 CameraPointerResult::Redraw
             }
@@ -216,6 +253,29 @@ impl CameraController {
                 if let Some(p) = self.last_cursor_viewport {
                     self.mmb_anchor_vp = p;
                     self.last_cursor_vp_for_drag = Some(p);
+                    let focal = self.state.focal_point_dvec(&self.axes);
+                    let anchor = if settings.orbit_pivot_pick {
+                        pick_world_under_cursor
+                            .filter(|hit| {
+                                (*hit - self.state.eye_vec3())
+                                    .dot(self.state.forward_world(&self.axes))
+                                    > 0.0
+                            })
+                            .map(|hit| hit.as_dvec3())
+                            .unwrap_or(focal)
+                    } else {
+                        focal
+                    };
+                    self.orbit_anchor_world = Some(anchor);
+                    self.navigation_hold = Some(core::Hold::begin(
+                        &self.state,
+                        &self.axes,
+                        settings,
+                        p,
+                        anchor,
+                        GestureKind::Orbit,
+                        self.pixels_per_point,
+                    ));
                 }
                 CameraPointerResult::Redraw
             }
@@ -227,6 +287,7 @@ impl CameraController {
                 let was_click = self.mmb_was_down_scene && !self.mmb_dragging_scene;
                 self.mmb_was_down_scene = false;
                 self.mmb_dragging_scene = false;
+                self.navigation_hold = None;
                 self.last_cursor_vp_for_drag = None;
                 self.orbit_anchor_world = None;
                 if was_click && self.last_cursor_viewport.is_some() {
@@ -247,6 +308,7 @@ impl CameraController {
                 self.last_cursor_vp_for_drag = None;
                 self.lmb_dragging_roll = false;
                 self.lmb_was_down_scene = false;
+                self.navigation_hold = None;
                 self.lmb_dragging_scene = false;
                 self.orbit_anchor_world = None;
 
@@ -268,9 +330,10 @@ impl CameraController {
                 self.last_cursor_vp_for_drag = None;
                 self.rmb_dragging_scene = false;
                 self.lmb_dragging_roll = false;
+                self.navigation_hold = None;
                 // A press and release in the same place is a click, not a
                 // pan, whatever few pixels the pan moved on the way.
-                let threshold = settings.click_drag_threshold_px;
+                let threshold = settings.click_drag_threshold_px * self.pixels_per_point;
                 let clicked = was_down
                     && !self.lmb_was_down_scene
                     && self.last_cursor_viewport.is_some_and(|p| {
@@ -297,14 +360,33 @@ impl CameraController {
 
                 let both_mb = self.lmb_was_down_scene && self.rmb_dragging_scene;
                 if both_mb {
+                    self.navigation_hold = None;
                     self.lmb_dragging_roll = true;
-                    ops::roll_pixels(&mut self.state, &self.axes, delta.x);
+                    let (start, orientation) =
+                        *self.roll_hold.get_or_insert((last, self.state.orientation));
+                    self.state.orientation = orientation;
+                    ops::roll_pixels(
+                        &mut self.state,
+                        &self.axes,
+                        (cur.x - start.x) / self.pixels_per_point,
+                    );
                     self.last_cursor_vp_for_drag = Some(cur);
                     return CameraPointerResult::Redraw;
                 }
 
                 if self.rmb_dragging_scene && !self.lmb_was_down_scene {
-                    ops::pan_pixels(&mut self.state, &self.axes, delta, settings);
+                    let hold = self.navigation_hold.get_or_insert_with(|| {
+                        core::Hold::begin(
+                            &self.state,
+                            &self.axes,
+                            settings,
+                            last,
+                            self.state.focal_point_dvec(&self.axes),
+                            GestureKind::Pan,
+                            self.pixels_per_point,
+                        )
+                    });
+                    hold.sample(&mut self.state, &self.axes, cur);
                     self.last_cursor_vp_for_drag = Some(cur);
                     self.state.clip_dirty = true;
                     return CameraPointerResult::Redraw;
@@ -312,27 +394,16 @@ impl CameraController {
 
                 if self.mmb_was_down_scene {
                     let thresh_sq =
-                        settings.click_drag_threshold_px * settings.click_drag_threshold_px;
+                        (settings.click_drag_threshold_px * self.pixels_per_point).powi(2);
                     let exceeds_anchor = (cur - self.mmb_anchor_vp).length_squared() >= thresh_sq;
                     if exceeds_anchor && !self.mmb_dragging_scene && !self.orbit_locked {
                         self.mmb_dragging_scene = true;
-                        if settings.orbit_pivot_pick {
-                            self.orbit_anchor_world = pick_world_under_cursor
-                                .map(|h| DVec3::new(h.x as f64, h.y as f64, h.z as f64));
-                        }
                     }
                     if self.mmb_dragging_scene {
-                        if let Some(pivot) = self.orbit_anchor_world {
-                            ops::orbit_pixels_around_world_anchor(
-                                &mut self.state,
-                                &self.axes,
-                                pivot,
-                                delta,
-                                settings,
-                            );
-                        } else {
-                            ops::orbit_pixels(&mut self.state, &self.axes, delta, settings);
-                        }
+                        let hold = self
+                            .navigation_hold
+                            .expect("middle press acquires its navigation snapshot");
+                        hold.sample(&mut self.state, &self.axes, cur);
                         self.last_cursor_vp_for_drag = Some(cur);
                         self.state.clip_dirty = true;
                         return CameraPointerResult::Redraw;
@@ -344,7 +415,7 @@ impl CameraController {
                 // doesn't count as a selection click on release.
                 if self.lmb_was_down_scene && !self.lmb_dragging_scene {
                     let thresh_sq =
-                        settings.click_drag_threshold_px * settings.click_drag_threshold_px;
+                        (settings.click_drag_threshold_px * self.pixels_per_point).powi(2);
                     if (cur - self.lmb_anchor_vp).length_squared() >= thresh_sq {
                         self.lmb_dragging_scene = true;
                     }
@@ -377,6 +448,14 @@ impl CameraController {
             return;
         }
         self.cancel_animation();
+        if let Some(hold) = self.navigation_hold
+            && let Some(pointer) = self.last_cursor_viewport
+        {
+            let hold = hold.zoomed(lines, settings);
+            hold.sample(&mut self.state, &self.axes, pointer);
+            self.navigation_hold = Some(hold);
+            return;
+        }
         zoom_cursor::apply_zoom_wheels(
             &mut self.state,
             &self.axes,
@@ -494,18 +573,9 @@ impl CameraController {
         ops::set_pivot_focal_plane_cursor(&mut self.state, &self.axes, vp, settings)
     }
 
-    pub fn update(&mut self, dt_secs: f32, settings: &CameraSettings) -> bool {
-        let mut out = (
-            self.state.eye,
-            self.state.orientation,
-            self.state.focal_distance,
-        );
-        let had = self.tween.tick(dt_secs, &mut out);
+    pub fn update(&mut self, dt_secs: f32, _settings: &CameraSettings) -> bool {
+        let had = self.tween.tick(dt_secs, &mut self.state, &self.axes);
         if had {
-            self.state.eye = out.0;
-            self.state.orientation = out.1.normalize();
-            self.state.focal_distance = out.2;
-            self.state.clamp_focal_distance(settings);
             self.state.clip_dirty = true;
             true
         } else {
@@ -514,6 +584,9 @@ impl CameraController {
     }
 
     pub fn update_viewport(&mut self, origin: (u32, u32), size: (u32, u32)) {
+        if self.state.viewport_size != size {
+            self.forget_released([false; 3]);
+        }
         self.state.viewport_origin = (origin.0 as f32, origin.1 as f32);
         self.state.viewport_size = size;
         self.state.clip_dirty = true;
@@ -568,9 +641,7 @@ impl CameraController {
 
     /// Red crosshair at orbit focal point: only while orbiting (MMB), rolling (LMB+RMB) or animating a view.
     pub fn rotation_pivot_marker_visible(&self) -> bool {
-        self.mmb_dragging_scene
-            || self.lmb_dragging_roll
-            || matches!(self.tween, CameraTween::Running { .. })
+        self.mmb_dragging_scene || self.lmb_dragging_roll || self.tween.is_active()
     }
 
     /// Physical pixel position for the red orbit pivot HUD (matches [`Self::world_to_screen`] space).
@@ -601,6 +672,7 @@ impl CameraController {
         zoom_limit_aabb: Option<(Vec3, Vec3)>,
         settings: &CameraSettings,
     ) {
+        self.forget_released([false; 3]);
         self.cancel_animation();
         ops::fit_sphere(
             &mut self.state,
@@ -651,8 +723,7 @@ impl CameraController {
         );
     }
 
-    fn after_scene_or_settings_touch(&mut self, settings: &CameraSettings) {
-        self.state.clamp_focal_distance(settings);
+    fn after_scene_or_settings_touch(&mut self, _settings: &CameraSettings) {
         self.state.clip_dirty = true;
     }
 
@@ -669,6 +740,7 @@ impl CameraController {
         if self.state.projection != ProjectionMode::Perspective {
             return;
         }
+        self.forget_released([false; 3]);
         let new = f64::from(degrees.clamp(FOV_RANGE_DEG.0, FOV_RANGE_DEG.1)).to_radians();
         let old = self.state.height_angle_rad;
         let focal = self.state.focal_point_dvec(&self.axes);
@@ -713,9 +785,11 @@ impl CameraController {
         self.rmb_dragging_scene = false;
         self.last_cursor_vp_for_drag = None;
         self.pending_wheel_lines = 0.0;
+        self.forget_released([false; 3]);
     }
 
     pub fn snap_to_view(&mut self, view: CameraSnapView, settings: &CameraSettings) {
+        self.forget_released([false; 3]);
         self.cancel_animation();
         let qc = view.orientation();
         let q_end = canonical_quat_to_world(&self.axes, qc);
@@ -724,9 +798,7 @@ impl CameraController {
         let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end.normalize());
         let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
 
-        let e0 = self.state.eye;
-        let q0 = self.state.orientation;
-        self.tween = CameraTween::begin(e0, eye_end, q0, q_end, fd, fd, settings);
+        self.tween = CameraTween::begin(&self.state, &self.axes, eye_end, q_end, fd, settings);
     }
 
     pub fn orient_to_plane(
@@ -737,6 +809,7 @@ impl CameraController {
         centre: Option<Vec3>,
         settings: &CameraSettings,
     ) {
+        self.forget_released([false; 3]);
         let normal = plane_normal.normalize();
         // Look at the plane from its +normal side, with the plane's up axis
         // (orthogonalized against the view direction) as screen-up.
@@ -773,18 +846,11 @@ impl CameraController {
         let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
 
         self.cancel_animation();
-        self.tween = CameraTween::begin(
-            self.state.eye,
-            eye_end,
-            self.state.orientation,
-            q_end,
-            fd,
-            fd,
-            settings,
-        );
+        self.tween = CameraTween::begin(&self.state, &self.axes, eye_end, q_end, fd, settings);
     }
 
     pub fn apply_rotate_delta(&mut self, delta: &RotateDelta, settings: &CameraSettings) {
+        self.forget_released([false; 3]);
         let angle = delta.degrees.to_radians();
         let current = self.state.orientation;
         let axis_world = match delta.axis {
@@ -797,7 +863,6 @@ impl CameraController {
         }
         let qdelta = Quat::from_axis_angle(axis_world.normalize(), angle);
         let q_end = (qdelta * current).normalize();
-        let e0 = self.state.eye;
         let focal = self.state.focal_point_dvec(&self.axes);
         let fd = self.state.focal_distance;
 
@@ -805,7 +870,7 @@ impl CameraController {
         let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
 
         self.cancel_animation();
-        self.tween = CameraTween::begin(e0, eye_end, current, q_end, fd, fd, settings);
+        self.tween = CameraTween::begin(&self.state, &self.axes, eye_end, q_end, fd, settings);
     }
 
     pub fn position(&self) -> [f32; 3] {
@@ -866,3 +931,6 @@ impl CameraPointerResult {
 
 #[cfg(test)]
 mod navigation_tests;
+
+#[cfg(test)]
+mod integration_tests;

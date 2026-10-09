@@ -1,5 +1,5 @@
 use axes::AxisSystem;
-use glam::{Mat3, Quat, Vec3};
+use glam::{Mat3, Vec3};
 
 pub(crate) fn axis_basis(axes: &AxisSystem) -> Mat3 {
     Mat3::from_cols(
@@ -24,12 +24,4 @@ pub(crate) fn control_horizontal_vec(axes: &AxisSystem) -> Vec3 {
         h = -h;
     }
     h
-}
-
-pub(crate) fn quat_normalized_sign_fix(a: Quat, b: Quat) -> Quat {
-    let mut tb = b;
-    if a.dot(tb) < 0.0 {
-        tb = -tb;
-    }
-    tb
 }

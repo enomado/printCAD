@@ -1,7 +1,8 @@
 # Camera
 
 How the viewport camera works. The code is in
-`crates/app_shell/src/camera/`.
+`crates/app_shell/src/camera/`. The numerical core lives in the shared
+`crates/viewport_camera` crate; the app converts its state and routes input.
 
 ## State
 
@@ -54,9 +55,29 @@ maths.
 | Set pivot | **H** | The cursor's point on the focal plane becomes the focal point |
 | Fit | **F** | Isometric view of the whole scene. The view toolbar can also fit the selection |
 
-A drag starts after 4 pixels, so a click never orbits. Perspective zoom keeps
+A drag starts after 4 logical pixels, so a click never orbits. Perspective zoom keeps
 the focal distance between the configured minimum and maximum (1 mm and
 5000 mm by default). While a sketch is open, orbit is turned off.
+
+Pan and orbit keep the camera and anchor from the press and use the total
+pointer displacement. Results are independent of event frequency, and a picked
+anchor keeps its off-centre screen position. UI scale is accounted for: orbit
+speed uses logical pixels, and pan follows the scene by the physical displacement.
+Wheel input during a hold changes its total zoom; the next pointer event keeps it.
+
+New settings use world-up orbit: yaw turns around the preset's vertical axis,
+pitch stops exactly at the top and bottom, and a saved roll does not accumulate.
+An explicit saved Camera-up setting keeps free rotation around the screen axes.
+Changing view, resizing, changing UI scale or losing focus ends the held snapshot.
+Pan, zoom and roll stay available while a sketch locks out orbit.
+
+The adapter freezes an `f64` model origin at the press and performs the hold
+in a local `f32` frame, so model coordinates do not swallow small pointer motions.
+Rendering retains the app's Vulkan projection and clipping convention.
+
+Fit accounts for the smaller viewport dimension and shows a bounding sphere
+whole in both portrait and landscape windows. View commands can frame models
+beyond the wheel's focal-distance limits; those limits govern zoom gestures.
 
 ## Near and far planes
 
@@ -72,7 +93,11 @@ Each frame the near and far planes are fitted to the scene's bounding box:
 
 Standard views, the orientation cube and entering a sketch animate over
 400 ms by default. Orientation is interpolated along the shortest rotation,
-and focal distance on a log scale. Any input stops a running animation.
+and focal distance on a log scale. A zero duration applies the endpoint on the
+next camera update. Any navigation input stops a running animation.
+
+The shared crate also provides smoothing and optional momentum primitives.
+The app uses immediate pointer navigation with no inertia tail.
 
 ## 6-DoF mouse
 

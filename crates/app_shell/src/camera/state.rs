@@ -5,7 +5,7 @@
 use glam::{DVec3, Mat3, Mat4, Quat, Vec3};
 use settings::{CameraSettings, ProjectionMode};
 
-use crate::camera::math::{axis_basis, control_horizontal_vec};
+use crate::camera::math::axis_basis;
 
 pub const MAX_PITCH_RAD: f32 = 89.9_f32.to_radians();
 /// The corner a new or framed view looks from: turned 45° about the
@@ -90,8 +90,9 @@ impl CadCameraState {
         (self.orientation * axes.vertical().vector()).normalize_or_zero()
     }
 
+    #[cfg(test)]
     pub fn right_world(&self, axes: &axes::AxisSystem) -> Vec3 {
-        let h = control_horizontal_vec(axes);
+        let h = crate::camera::math::control_horizontal_vec(axes);
         (self.orientation * h).normalize_or_zero()
     }
 
@@ -119,24 +120,26 @@ impl CadCameraState {
     pub fn set_projection_preserve_framing(
         &mut self,
         new: ProjectionMode,
-        _axes: &axes::AxisSystem,
+        axes: &axes::AxisSystem,
     ) {
         if new == self.projection {
             return;
         }
         let prev = self.projection;
-        match (prev, new) {
-            (ProjectionMode::Perspective, ProjectionMode::Orthographic) => {
-                self.ortho_height = 2.0 * self.focal_distance * (self.height_angle_rad * 0.5).tan();
+        let origin = self.eye;
+        let mut camera = super::core::camera(self, axes, origin);
+        let kind = match new {
+            ProjectionMode::Perspective => {
+                viewport_camera::controller::ProjectionKind::Perspective {
+                    vertical_fov: self.height_angle_rad as f32,
+                }
             }
-            (ProjectionMode::Orthographic, ProjectionMode::Perspective) => {
-                let tan_half = self.ortho_height / (2.0 * self.focal_distance.max(1e-9));
-                self.height_angle_rad = 2.0 * tan_half.clamp(1e-6, 1e6).atan();
+            ProjectionMode::Orthographic => {
+                viewport_camera::controller::ProjectionKind::Orthographic
             }
-            _ => {}
-        }
-        self.projection = new;
-        self.clip_dirty = true;
+        };
+        camera.set_projection(kind);
+        super::core::apply(self, axes, origin, camera);
         tracing::debug!(
             target: "printcad.camera",
             ?prev,

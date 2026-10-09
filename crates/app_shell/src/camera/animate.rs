@@ -1,92 +1,64 @@
-//! Interpolated view transitions (`docs/CAMERA.md`, Animation).
+//! The host clock and frozen model origin for shared camera transitions.
 
+use std::time::Duration;
+
+use axes::AxisSystem;
 use glam::{DVec3, Quat};
 use settings::CameraSettings;
+use viewport_camera::transition::CameraTransition;
 
-use crate::camera::math::quat_normalized_sign_fix;
+use super::core;
+use super::state::CadCameraState;
 
 #[derive(Clone, Default)]
-pub(crate) enum CameraTween {
-    #[default]
-    None,
-    Running {
-        progress: f32,
-        duration: f32,
-        start_eye: DVec3,
-        end_eye: DVec3,
-        start_q: Quat,
-        end_q: Quat,
-        start_ln_fd: f64,
-        end_ln_fd: f64,
-    },
-}
-
-fn ease_in_out(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+pub(crate) struct CameraTween {
+    running: Option<(DVec3, CameraTransition)>,
 }
 
 impl CameraTween {
     pub(crate) fn begin(
-        start_eye: DVec3,
+        state: &CadCameraState,
+        axes: &AxisSystem,
         end_eye: DVec3,
-        start_q: Quat,
         end_q: Quat,
-        start_fd: f64,
         end_fd: f64,
         settings: &CameraSettings,
     ) -> Self {
-        let eq = quat_normalized_sign_fix(start_q, end_q);
-        CameraTween::Running {
-            progress: 0.0,
-            duration: (settings.view_transition_ms / 1000.0).max(1e-3),
-            start_eye,
-            end_eye,
-            start_q,
-            end_q: eq,
-            start_ln_fd: start_fd.max(1e-9).ln(),
-            end_ln_fd: end_fd.max(1e-9).ln(),
+        let origin = state.eye;
+        let source = core::camera(state, axes, origin);
+        let mut target = state.clone();
+        target.eye = end_eye;
+        target.orientation = end_q;
+        target.focal_distance = end_fd;
+        let target = core::camera(&target, axes, origin);
+        let duration = Duration::from_secs_f32((settings.view_transition_ms / 1000.0).max(0.0));
+        Self {
+            running: Some((origin, CameraTransition::frame(source, target, duration))),
         }
     }
 
-    /// Whether a view animation is in flight (needs frames until it lands).
     pub(crate) fn is_active(&self) -> bool {
-        !matches!(self, CameraTween::None)
+        self.running.is_some()
     }
 
     pub(crate) fn cancel(&mut self) {
-        *self = CameraTween::None;
+        self.running = None;
     }
 
-    /// Advance animation; assigns `out_pose` each frame until complete.
-    /// Returns true when pose was produced (including final frame).
-    pub(crate) fn tick(&mut self, dt_secs: f32, out_pose: &mut (DVec3, Quat, f64)) -> bool {
-        match self {
-            CameraTween::None => false,
-            CameraTween::Running {
-                progress,
-                duration,
-                start_eye,
-                end_eye,
-                start_q,
-                end_q,
-                start_ln_fd,
-                end_ln_fd,
-            } => {
-                *progress += dt_secs / duration.max(1e-9);
-                let t = ease_in_out((*progress).min(1.0));
-                let eye = start_eye.lerp(*end_eye, t as f64);
-                let q = start_q.slerp(*end_q, t).normalize();
-                let ln = *start_ln_fd + (*end_ln_fd - *start_ln_fd) * t as f64;
-                let fd = ln.exp();
-
-                *out_pose = (eye, q, fd);
-
-                if *progress >= 1.0 {
-                    *self = CameraTween::None;
-                }
-                true
-            }
+    pub(crate) fn tick(
+        &mut self,
+        dt_secs: f32,
+        state: &mut CadCameraState,
+        axes: &AxisSystem,
+    ) -> bool {
+        let Some((origin, transition)) = &mut self.running else {
+            return false;
+        };
+        transition.advance(Duration::from_secs_f32(dt_secs.max(0.0)));
+        core::apply(state, axes, *origin, transition.sample());
+        if transition.is_done() {
+            self.running = None;
         }
+        true
     }
 }

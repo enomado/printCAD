@@ -84,6 +84,7 @@ impl PrintCadApp {
             WindowEvent::Focused(false) => {
                 self.mouse_buttons_down = 0;
                 self.held_buttons = [false; 3];
+                self.session.camera.forget_released([false; 3]);
             }
             _ => {}
         }

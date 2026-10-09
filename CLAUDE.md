@@ -335,6 +335,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `constrain.rs` (which constraint a toolbar action creates for the
   selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind).
+- `viewport_camera`: camera pose, projection, rays, press-relative navigation,
+  fit and timed transitions, shared with other applications. It depends only
+  on `glam` and `serde`; its README describes the copy contract. The app's
+  `camera/core.rs` converts preset-relative orientations, model coordinates
+  and physical pixels; `camera/` owns input routing, clip planes and device input.
 - `surface_texture`: patterns pressed into chosen faces of a mesh for
   printing (`Texture`: pattern, projection, tile, depth, turn, inward,
   keep flat; `apply` welds, splits the chosen faces' triangles and their
