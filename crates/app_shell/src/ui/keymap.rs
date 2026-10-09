@@ -341,7 +341,9 @@ const HOST: &[HostSpec] = {
 /// The application's commands a key can run, as `(id, label, action)`,
 /// for callers that name them rather than press them.
 pub fn host_actions() -> impl Iterator<Item = (&'static str, &'static str, HostAction)> {
-    HOST.iter().map(|spec| (spec.id, spec.label, spec.action))
+    HOST.iter()
+        .filter(|spec| crate::platform::offers(spec.id))
+        .map(|spec| (spec.id, spec.label, spec.action))
 }
 
 /// What a binding runs.
@@ -419,7 +421,7 @@ impl Keymap {
         scripts: &[crate::script_library::ScriptEntry],
     ) -> Self {
         let mut bindings = Vec::new();
-        for spec in HOST {
+        for spec in HOST.iter().filter(|spec| crate::platform::offers(spec.id)) {
             bindings.push(Binding {
                 id: spec.id.to_string(),
                 label: spec.label.to_string(),

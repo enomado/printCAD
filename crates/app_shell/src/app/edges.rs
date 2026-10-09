@@ -514,20 +514,20 @@ pub(crate) fn highlight_submission(
     body: Uuid,
     edges: &[u32],
     color: [f32; 3],
-) -> Option<render_vk::BodySubmission> {
+) -> Option<render_wgpu::BodySubmission> {
     let revision = app
         .session
         .document
         .imported_geometry(BodyId(body))
         .map(|g| g.revision)?;
     let mesh = app.edge_outline_mesh(body, edges)?;
-    Some(render_vk::BodySubmission {
+    Some(render_wgpu::BodySubmission {
         id,
         revision: highlight_revision(body, edges, revision),
         mesh: Arc::new(mesh),
         color,
         opacity: 1.0,
-        highlight: render_vk::HighlightState::None,
+        highlight: render_wgpu::HighlightState::None,
         is_wireframe: false,
         pickable: false,
         on_top: false,

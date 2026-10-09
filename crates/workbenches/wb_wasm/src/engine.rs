@@ -9,19 +9,13 @@ use std::time::{Duration, Instant};
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
 
+use crate::exports::Budget;
+
 /// How often the engine's epoch moves while a call runs.
 pub(crate) const TICK: Duration = Duration::from_millis(5);
 
-/// How long a call may run, in ticks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Budget {
-    /// Drawing and input: a frame must never wait on a bench.
-    Frame,
-    /// Commands, panel changes, rebuild plans, loading.
-    Long,
-}
-
 impl Budget {
+    /// How long a call may run, in ticks.
     pub(crate) fn ticks(self) -> u64 {
         match self {
             // 25 ms.
@@ -97,12 +91,19 @@ impl Drop for Running {
     }
 }
 
-/// The component in `wasm`, compiled once and kept in `cache` as `name`: a
-/// later start reads the compiled form back when this engine made it from
-/// the same bytes. A compiled form is native code, so `cache` is a folder
-/// the app alone writes, never one a package archive unpacks into.
-pub(crate) fn component(wasm: &Path, cache: &Path, name: &str) -> Result<Component, String> {
-    let bytes = std::fs::read(wasm).map_err(|e| format!("cannot read {}: {e}", wasm.display()))?;
+/// The component in `bytes`, compiled once and kept in `cache` as `name`:
+/// a later start reads the compiled form back when this engine made it
+/// from the same bytes. A compiled form is native code, so `cache` is a
+/// folder the app alone writes, never one a package archive unpacks into.
+/// Without a cache it is compiled each time.
+pub(crate) fn component(
+    bytes: &[u8],
+    cache: Option<&Path>,
+    name: &str,
+) -> Result<Component, String> {
+    let Some(cache) = cache else {
+        return Component::new(&ENGINE, bytes).map_err(|e| format!("{e:#}"));
+    };
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -121,7 +122,7 @@ pub(crate) fn component(wasm: &Path, cache: &Path, name: &str) -> Result<Compone
             return Ok(component);
         }
     }
-    let component = Component::new(&ENGINE, &bytes).map_err(|e| format!("{e:#}"))?;
+    let component = Component::new(&ENGINE, bytes).map_err(|e| format!("{e:#}"))?;
     if let Ok(compiled) = component.serialize()
         && std::fs::create_dir_all(cache).is_ok()
     {

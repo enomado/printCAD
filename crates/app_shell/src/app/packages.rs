@@ -19,9 +19,9 @@ use crate::ui::ActiveWorkbench;
 /// register: `None` when the user turned the package off.
 pub(crate) struct Ready {
     /// What was done, for the notice: "Installed", "Updated", "Loaded".
-    done: &'static str,
-    package: Package,
-    bench: Option<Result<Box<dyn Workbench>, String>>,
+    pub(crate) done: &'static str,
+    pub(crate) package: Package,
+    pub(crate) bench: Option<Result<Box<dyn Workbench>, String>>,
 }
 
 /// What a package thread found.
@@ -40,6 +40,17 @@ pub(crate) enum PackageNews {
         url: String,
         found: Result<workbenches::StoreIndex, String>,
         quiet: bool,
+    },
+    /// The packages a page keeps, read back; one that does not read comes
+    /// with its id and why.
+    #[cfg(target_arch = "wasm32")]
+    Kept(Vec<Result<Package, (String, String)>>),
+    /// A package a page fetched, with its archive to keep.
+    #[cfg(target_arch = "wasm32")]
+    Held {
+        done: &'static str,
+        package: Package,
+        archive: Vec<u8>,
     },
 }
 
@@ -157,9 +168,9 @@ fn keep_store(url: &str, index: &workbenches::StoreIndex) {
 
 /// The package threads' line back, and how many are out.
 pub(crate) struct PackageWork {
-    tx: mpsc::Sender<PackageNews>,
+    pub(crate) tx: mpsc::Sender<PackageNews>,
     rx: mpsc::Receiver<PackageNews>,
-    pending: usize,
+    pub(crate) pending: usize,
 }
 
 impl Default for PackageWork {
@@ -187,6 +198,7 @@ pub(crate) fn capabilities(grant: PackageGrant) -> Capabilities {
 
 /// Load every installed package the user has not turned off, after the
 /// built-in benches.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn register(
     registry: &mut core_document::DocumentService,
     settings: &PackageSettings,
@@ -218,6 +230,7 @@ pub(crate) fn register(
 
 /// `package`'s workbench, made ready as `settings` allow; `None` when
 /// they turn it off. Slow: it compiles the component.
+#[cfg(not(target_arch = "wasm32"))]
 fn prepare(
     package: &Package,
     settings: &PackageSettings,
@@ -242,11 +255,9 @@ impl PrintCadApp {
     pub(crate) fn package_thread(&mut self, work: impl FnOnce() -> PackageNews + Send + 'static) {
         let tx = self.package_work.tx.clone();
         self.package_work.pending += 1;
-        let started = std::thread::Builder::new()
-            .name("printcad-packages".into())
-            .spawn(move || {
-                let _ = tx.send(work());
-            });
+        let started = crate::platform::spawn("printcad-packages", move || {
+            let _ = tx.send(work());
+        });
         if let Err(e) = started {
             self.package_work.pending -= 1;
             app_log::error(format!("Could not start the package work: {e}"));
@@ -255,6 +266,7 @@ impl PrintCadApp {
 
     /// Put a package's files in place with `place` and make its workbench
     /// ready, away from the window.
+    #[cfg(not(target_arch = "wasm32"))]
     fn install_with(
         &mut self,
         done: &'static str,
@@ -279,27 +291,48 @@ impl PrintCadApp {
 
     /// Install the package archive at `path`.
     pub(crate) fn install_package_from(&mut self, path: &std::path::Path) {
-        let path = path.to_path_buf();
-        self.install_with("Installed", move |root| {
-            workbenches::install_package(&path, root)
-                .map_err(|e| format!("Could not install {}: {e}", path.display()))
-        });
+        #[cfg(target_arch = "wasm32")]
+        self.install_page_archive(path);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = path.to_path_buf();
+            self.install_with("Installed", move |root| {
+                workbenches::install_package(&path, root)
+                    .map_err(|e| format!("Could not install {}: {e}", path.display()))
+            });
+        }
     }
 
     /// Install what a GitHub repository or release address publishes.
     pub(crate) fn install_package_from_github(&mut self, text: String) {
-        app_log::info(format!(
-            "Fetching the workbench package from {}",
-            text.trim()
-        ));
-        self.install_with("Installed", move |root| {
-            workbenches::install_from_github(&text, root)
-                .map_err(|e| format!("Could not install the package: {e}"))
-        });
+        // GitHub's downloads refuse a page's requests.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = text;
+            app_log::error(
+                "A page installs packages from a file or a workbench store, not a GitHub address",
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app_log::info(format!(
+                "Fetching the workbench package from {}",
+                text.trim()
+            ));
+            self.install_with("Installed", move |root| {
+                workbenches::install_from_github(&text, root)
+                    .map_err(|e| format!("Could not install the package: {e}"))
+            });
+        }
     }
 
     /// Update package `id` to its repository's latest release.
     pub(crate) fn update_package(&mut self, id: String) {
+        #[cfg(target_arch = "wasm32")]
+        app_log::error(format!(
+            "A page updates {id} by installing it again from its workbench store"
+        ));
+        #[cfg(not(target_arch = "wasm32"))]
         self.install_with("Updated", move |root| {
             workbenches::update_package(root, &id)
                 .map_err(|e| format!("Could not update {id}: {e}"))
@@ -337,6 +370,9 @@ impl PrintCadApp {
             }
         }
         for url in fetch {
+            #[cfg(target_arch = "wasm32")]
+            self.look_at_page_store(url, quiet);
+            #[cfg(not(target_arch = "wasm32"))]
             self.package_thread(move || PackageNews::Store {
                 found: workbenches::fetch_store(&url),
                 url,
@@ -397,6 +433,9 @@ impl PrintCadApp {
             "Fetching {} from the workbench store",
             listing.name
         ));
+        #[cfg(target_arch = "wasm32")]
+        self.install_page_listed(listing);
+        #[cfg(not(target_arch = "wasm32"))]
         self.install_with("Installed", move |root| {
             workbenches::install_listed(&listing, root)
                 .map_err(|e| format!("Could not install {}: {e}", listing.name))
@@ -405,6 +444,10 @@ impl PrintCadApp {
 
     /// Look for newer releases of the packages installed from GitHub.
     pub(crate) fn check_package_updates(&mut self) {
+        // A page's packages update from the stores that list them.
+        if cfg!(target_arch = "wasm32") {
+            return;
+        }
         let Some(root) = root() else {
             return;
         };
@@ -424,6 +467,14 @@ impl PrintCadApp {
                 PackageNews::Checked(found) => self.take_checked(found),
                 PackageNews::AppRelease { found, quiet } => self.take_app_release(found, quiet),
                 PackageNews::Store { url, found, quiet } => self.take_store(url, found, quiet),
+                #[cfg(target_arch = "wasm32")]
+                PackageNews::Kept(found) => self.take_kept(found),
+                #[cfg(target_arch = "wasm32")]
+                PackageNews::Held {
+                    done,
+                    package,
+                    archive,
+                } => self.take_held(done, package, archive),
             }
         }
     }
@@ -611,11 +662,21 @@ impl PrintCadApp {
 
     /// Remove the installed package `id`, unloading its workbench.
     pub(crate) fn remove_package(&mut self, id: &str) {
-        let Some(root) = root() else {
-            return;
+        #[cfg(target_arch = "wasm32")]
+        let removed = {
+            self.unload_bench(&WorkbenchId::new(id));
+            self.forget_page_package(id);
+            Ok::<(), String>(())
         };
-        self.unload_bench(&WorkbenchId::new(id));
-        match workbenches::uninstall_package(&root, id) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let removed = {
+            let Some(root) = root() else {
+                return;
+            };
+            self.unload_bench(&WorkbenchId::new(id));
+            workbenches::uninstall_package(&root, id)
+        };
+        match removed {
             Ok(()) => {
                 let name = self
                     .packages
@@ -653,6 +714,12 @@ impl PrintCadApp {
                     app_log::success(format!("Turned {} off", status.name));
                 }
             } else if is && (!was || regranted) {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = dir;
+                    self.restart_page_package(&id);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
                 self.install_with("Loaded", move |_| workbenches::Package::read(&dir));
             }
         }

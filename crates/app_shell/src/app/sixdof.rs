@@ -5,7 +5,8 @@
 //! thread here blocks on whichever answered, so the UI thread never waits on
 //! it. The thread reconnects on its own, because a daemon with no device
 //! plugged in, or no daemon at all, is an ordinary state, not an error
-//! worth reporting.
+//! worth reporting. A browser page reads the device's own reports through
+//! WebHID instead (`web`), decoded as the crate decodes them elsewhere.
 //!
 //! The daemon sends a reading only when the puck's deflection *changes*, so
 //! the last reading is held until the next one arrives; letting go sends
@@ -14,15 +15,22 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use sixdof::{EventMask, Source};
 
 use crate::log_panel as app_log;
 
+#[cfg(target_arch = "wasm32")]
+mod web;
+
 /// How long a blocked read waits before the thread checks whether it should
 /// stop. Long enough that an idle device costs nothing measurable.
+#[cfg(not(target_arch = "wasm32"))]
 const READ_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Button changes kept while waiting for the UI thread to take them. A frame
@@ -31,7 +39,9 @@ const MAX_QUEUED_BUTTONS: usize = 32;
 
 /// How long to wait before looking for the daemon again, and the ceiling that
 /// backoff climbs to.
+#[cfg(not(target_arch = "wasm32"))]
 const RETRY_FIRST: Duration = Duration::from_millis(500);
+#[cfg(not(target_arch = "wasm32"))]
 const RETRY_MAX: Duration = Duration::from_secs(5);
 
 /// The puck's current deflection, in the daemon's raw units.
@@ -104,12 +114,17 @@ impl SixDofWorker {
         let shared = Arc::new(Mutex::new(Shared::default()));
         let stop = Arc::new(AtomicBool::new(false));
 
-        let worker_shared = Arc::clone(&shared);
-        let worker_stop = Arc::clone(&stop);
-        thread::Builder::new()
-            .name("printcad-6dof-mouse".to_string())
-            .spawn(move || worker_loop(&worker_shared, &worker_stop, &wake))
-            .expect("failed to spawn the 6-DoF mouse thread");
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let worker_shared = Arc::clone(&shared);
+            let worker_stop = Arc::clone(&stop);
+            thread::Builder::new()
+                .name("printcad-6dof-mouse".to_string())
+                .spawn(move || worker_loop(&worker_shared, &worker_stop, &wake))
+                .expect("failed to spawn the 6-DoF mouse thread");
+        }
+        #[cfg(target_arch = "wasm32")]
+        web::start(Arc::clone(&shared), wake);
 
         Self { shared, stop }
     }
@@ -133,6 +148,13 @@ impl SixDofWorker {
     pub fn button_count(&self) -> u32 {
         lock(&self.shared).button_count
     }
+
+    /// Asks the page for a device: the browser's chooser, which only a
+    /// click or a key opens. A device granted once is found again at start.
+    #[cfg(target_arch = "wasm32")]
+    pub fn choose_device(&self) {
+        web::choose();
+    }
 }
 
 impl Drop for SixDofWorker {
@@ -141,6 +163,7 @@ impl Drop for SixDofWorker {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn Fn()) {
     let mut retry = RETRY_FIRST;
     while !stop.load(Ordering::SeqCst) {
@@ -161,6 +184,7 @@ fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn F
 }
 
 /// Reads one connection until it fails, then leaves the device state clean.
+#[cfg(not(target_arch = "wasm32"))]
 fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn Fn()) {
     tracing::debug!(
         target: "printcad.input",
@@ -176,30 +200,8 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
     while !stop.load(Ordering::SeqCst) {
         match source.read_timeout(READ_TIMEOUT) {
             Ok(None) => {}
-            Ok(Some(sixdof::Event::Motion(motion))) => {
-                let motion = DeviceMotion {
-                    translate: motion.translate.map(|v| v as f32),
-                    rotate: motion.rotate.map(|v| v as f32),
-                };
-                let mut state = lock(shared);
-                // Starting and stopping are the edges the frame loop cannot
-                // see for itself: one wakes it, the other gets it the frame
-                // that brings the view to rest.
-                let edge = state.motion.is_idle() != motion.is_idle();
-                state.motion = motion;
-                drop(state);
-                if edge {
-                    wake();
-                }
-            }
-            Ok(Some(sixdof::Event::Button { index, pressed })) => {
-                let mut state = lock(shared);
-                if state.buttons.len() >= MAX_QUEUED_BUTTONS {
-                    state.buttons.remove(0);
-                }
-                state.buttons.push(ButtonEvent { index, pressed });
-                drop(state);
-                wake();
+            Ok(Some(event @ (sixdof::Event::Motion(_) | sixdof::Event::Button { .. }))) => {
+                take_input(event, shared, wake);
             }
             Ok(Some(sixdof::Event::Device { .. })) => {
                 source.refresh_device().ok();
@@ -213,6 +215,44 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
         }
     }
 
+    lost(shared, wake);
+}
+
+/// Holds a motion or queues a button change, waking the frame loop at the
+/// moments it has to be told about.
+fn take_input(event: sixdof::Event, shared: &Mutex<Shared>, wake: &dyn Fn()) {
+    match event {
+        sixdof::Event::Motion(motion) => {
+            let motion = DeviceMotion {
+                translate: motion.translate.map(|v| v as f32),
+                rotate: motion.rotate.map(|v| v as f32),
+            };
+            let mut state = lock(shared);
+            // Starting and stopping are the edges the frame loop cannot see
+            // for itself: one wakes it, the other gets it the frame that
+            // brings the view to rest.
+            let edge = state.motion.is_idle() != motion.is_idle();
+            state.motion = motion;
+            drop(state);
+            if edge {
+                wake();
+            }
+        }
+        sixdof::Event::Button { index, pressed } => {
+            let mut state = lock(shared);
+            if state.buttons.len() >= MAX_QUEUED_BUTTONS {
+                state.buttons.remove(0);
+            }
+            state.buttons.push(ButtonEvent { index, pressed });
+            drop(state);
+            wake();
+        }
+        _ => {}
+    }
+}
+
+/// Leaves the device state clean once the device is gone.
+fn lost(shared: &Mutex<Shared>, wake: &dyn Fn()) {
     let mut state = lock(shared);
     if state.device.take().is_some() {
         app_log::info("6-DoF mouse disconnected");
@@ -231,6 +271,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
 
 /// Records which device is connected, logging only when it changes. The
 /// display-server protocol never names one, so the route stands in for it.
+#[cfg(not(target_arch = "wasm32"))]
 fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
     let buttons = source.device().map_or(0, |device| device.buttons);
     let name = source.device().map_or_else(
@@ -253,6 +294,7 @@ fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
     state.device = name;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn sleep_until_stopped(total: Duration, stop: &Arc<AtomicBool>) {
     let step = Duration::from_millis(100);
     let mut slept = Duration::ZERO;

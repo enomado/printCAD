@@ -22,7 +22,7 @@ pub struct BuildPlan {
 }
 
 /// One question a feature asks of its body's solid during a build.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PlanProbe {
     pub feature: FeatureId,
     pub probe: ChainProbe,

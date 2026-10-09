@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use anyhow::Result;
 use core_document::{BodyId, ImportedGeometry, Unit};
@@ -439,9 +440,14 @@ impl PrintCadApp {
         // file, whole, which is what gets sent to a developer; otherwise one
         // line says how many there were and where the switch is.
         if !report.is_clean() && !self.user_settings.diagnostics.import_report {
+            // A page writes no report, so it names no switch.
+            let switch = if crate::platform::ON_PAGE {
+                ""
+            } else {
+                " (Preferences › General › Diagnostics writes them to a file)"
+            };
             app_log::warn(format!(
-                "{} import read with {} warnings and {} untrimmed faces \
-                 (Preferences › General › Diagnostics writes them to a file)",
+                "{} import read with {} warnings and {} untrimmed faces{switch}",
                 format_of(path),
                 report.warnings.len(),
                 report.untrimmed_faces.len()
@@ -509,8 +515,8 @@ impl PrintCadApp {
         // Identities are resolved here, before any document write, so the
         // whole import can land as ONE op with the derived geometry keyed
         // to the same ids afterwards.
-        let import_epoch_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let import_epoch_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let mut unnamed_index = self.session.document.bodies().len();

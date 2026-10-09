@@ -2073,7 +2073,11 @@ impl PrintCadApp {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        match std::fs::read_to_string(path) {
+        let read = crate::platform::read(path).and_then(|bytes| {
+            String::from_utf8(bytes)
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+        });
+        match read {
             Ok(source) => {
                 console::push(LineKind::Input, format!("run {name}"));
                 self.submit_script(scripting::Job::Script { source, name }, RunKind::File);
@@ -2102,7 +2106,7 @@ impl PrintCadApp {
     /// while the window keeps drawing.
     pub(crate) fn drive_scripts(&mut self, event_loop: &ActiveEventLoop) {
         const BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         loop {
             if self.script_rebuild.is_some() {
                 self.answer_rebuild();
@@ -2262,7 +2266,7 @@ impl PrintCadApp {
         });
         self.script_rebuild = Some(RebuildWait {
             reply,
-            deadline: std::time::Instant::now()
+            deadline: web_time::Instant::now()
                 + std::time::Duration::from_secs_f64(timeout.max(0.0)),
         });
     }
@@ -2278,7 +2282,7 @@ impl PrintCadApp {
                 .in_script_tab(|app| rebuild_failures(&app.session.document))
                 .unwrap_or_default();
             Ok(Value::Array(errors))
-        } else if std::time::Instant::now() > wait.deadline {
+        } else if web_time::Instant::now() > wait.deadline {
             Err(CommandError::failed(
                 "the kernel was still working at the timeout",
             ))
@@ -2354,7 +2358,7 @@ impl PrintCadApp {
         if !due {
             return;
         }
-        self.script_library_read = Some(std::time::Instant::now());
+        self.script_library_read = Some(web_time::Instant::now());
         self.script_library = settings::scripts_dir()
             .map(|dir| crate::script_library::scan(&dir))
             .unwrap_or_default();
@@ -2364,6 +2368,19 @@ impl PrintCadApp {
     /// console ran) or else the template, and open it in the system's
     /// editor.
     pub(crate) fn new_script(&mut self, runs: Option<Vec<String>>) {
+        // A page has no scripts folder: the script is a download.
+        if crate::platform::ON_PAGE {
+            let text = match runs {
+                Some(runs) => crate::script_library::from_runs(&runs),
+                None => crate::script_library::TEMPLATE.to_string(),
+            };
+            if let Err(err) =
+                crate::platform::write(std::path::Path::new("script.lua"), text.as_bytes())
+            {
+                crate::app_log::error(format!("Could not save the script: {err}"));
+            }
+            return;
+        }
         let Some(dir) = settings::scripts_dir() else {
             crate::app_log::warn("The system names no configuration folder for scripts");
             return;
@@ -2762,7 +2779,7 @@ fn short_json(value: &Value) -> String {
 /// A `doc.rebuild` waiting on the kernel.
 pub(crate) struct RebuildWait {
     reply: std::sync::mpsc::Sender<CommandResult>,
-    deadline: std::time::Instant,
+    deadline: web_time::Instant,
 }
 
 /// `doc.picture`: the request in `args` drawn by `draw` and written to
@@ -3026,7 +3043,7 @@ pub(crate) fn document_command(
         "doc.replace_shape" => {
             let body = body_arg(document, &a)?;
             let path = a.string("path")?;
-            let bytes = std::fs::read(path)
+            let bytes = crate::platform::read(std::path::Path::new(path))
                 .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
             if !document.replace_body_shape(body, path, bytes) {
                 return Err(CommandError::bad(

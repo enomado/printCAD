@@ -28,13 +28,13 @@ the verdict. Lenses are evidence questions, not personas.
 |---|---|---|
 | Document and undo | `core_document`, any new op, persistence, the server | One op per edit, inverses, replay, barriers, serde defaults, old files and op logs |
 | Kernel and geometry | `kernel_ogeom`, `kernel_api`, `SolidOp` changes, build plans | `ChainError` attribution, `ChainCache` fingerprints, face naming, probes, the gap protocol, `#[ignore = "kernel: …"]` |
-| Renderer and loop | `render_vk`, `gfx.rs`, `frame.rs`, camera | Fingerprint completeness, drop order, no waits, on-demand frames, validation layers |
+| Renderer and loop | `render_wgpu`, `gfx.rs`, `frame.rs`, camera | Fingerprint completeness, drop order, no waits, on-demand frames, GPU validation |
 | Workbench seam and packages | `Workbench` trait, `bench_api`, `wb_wasm`, `sdk/` | Host names no bench, `HookOutcome` plumbing, suspend and resume, `Access`, grants, traps, package-facing type changes and the example workbench repository |
 | Scripts and agents | `scripting`, `agents`, `mcp.rs`, `agent_context.rs` | Command specs, access declarations, approvals, one undo step per call, tab pinning |
 | UI and design system | `ui/`, `ui_kit` | Tokens only, `UiLayer` seeding, two-phase dispatch, menus as egui buttons, planned placeholders |
 | Tests and oracles | Changed tests or untested material behaviour | Oracle strength, geometric properties over implementation details, owner boundary (see test-audit) |
 | Performance | Import, rebuild, frame cost, big assemblies | Measured with the benches and the frame log, `--release`, no nested `map_ordered` |
-| Platforms | `local_ipc`, paths, spawning, the Vulkan loader, `.gitattributes` | Windows and macOS assumptions nobody has run on real hardware |
+| Platforms | `local_ipc`, paths, spawning, the graphics backends, `.gitattributes` | Windows and macOS assumptions nobody has run on real hardware |
 
 ## Packet
 

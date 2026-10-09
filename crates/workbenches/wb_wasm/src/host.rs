@@ -1,5 +1,6 @@
 //! The host side of the interface: what a guest reaches through `host`,
-//! and what it may reach during each kind of call.
+//! and what it may reach during each kind of call. The runtime holding
+//! the instance hands each import to [`Reach`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,19 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bench_api::{Capabilities, Request, calls};
 use core_document::{BodyPlacement, Document, FeatureId, WorkbenchId, WorkbenchRuntimeContext};
 use serde_json::{Value, json};
-use wasmtime::StoreLimits;
-use wasmtime::component::ResourceTable;
-use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::jobs::JobBoard;
-
-wasmtime::component::bindgen!({
-    world: "workbench",
-    path: "../../bench_api/wit",
-});
-
-pub(crate) use exports::printcad::workbench::bench::Guest as BenchExports;
-pub(crate) use printcad::workbench::host::Mesh;
 
 /// Where a feature's closed loops come from: a function of the bench that
 /// draws them, answering in the feature's body frame.
@@ -102,11 +92,9 @@ pub(crate) struct JobLine {
     pub total: Arc<AtomicU64>,
 }
 
-/// The store's data: WASI, limits, and the host's side of one call.
-pub(crate) struct State {
-    wasi: WasiCtx,
-    table: ResourceTable,
-    pub limits: StoreLimits,
+/// The host's side of one instance: what the call in progress may reach
+/// and what it left for the host.
+pub(crate) struct Reach {
     pub package: Arc<PackageInfo>,
     pub access: Access,
     pub requests: Vec<Request>,
@@ -117,22 +105,14 @@ pub(crate) struct State {
 }
 
 // SAFETY: `access` points at a document or context only for the length of
-// one synchronous call made on the thread that holds the borrow
-// (`Guest::call` sets it and resets it before returning); at any other time
-// it is `Access::None`. Everything else in the state is `Send`.
-unsafe impl Send for State {}
+// one synchronous call made on the thread that holds the borrow (the
+// guest's `call` sets it and resets it before returning); at any other
+// time it is `Access::None`. Everything else in it is `Send`.
+unsafe impl Send for Reach {}
 
-impl State {
-    pub(crate) fn new(
-        wasi: WasiCtx,
-        limits: StoreLimits,
-        package: Arc<PackageInfo>,
-        jobs: Arc<JobBoard>,
-    ) -> Self {
+impl Reach {
+    pub(crate) fn new(package: Arc<PackageInfo>, jobs: Arc<JobBoard>) -> Self {
         Self {
-            wasi,
-            table: ResourceTable::new(),
-            limits,
             package,
             access: Access::None,
             requests: Vec::new(),
@@ -143,7 +123,7 @@ impl State {
     }
 
     fn document(&self) -> Option<&Document> {
-        // SAFETY: see `unsafe impl Send for State`: a pointer here is live
+        // SAFETY: see `unsafe impl Send for Reach`: a pointer here is live
         // for the call in progress.
         unsafe {
             match self.access {
@@ -336,17 +316,9 @@ impl State {
     }
 }
 
-impl WasiView for State {
-    fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView {
-            ctx: &mut self.wasi,
-            table: &mut self.table,
-        }
-    }
-}
-
-impl printcad::workbench::host::Host for State {
-    fn log(&mut self, level: String, message: String) {
+/// The guest's imports, `host` in the WIT world.
+impl Reach {
+    pub(crate) fn log(&mut self, level: String, message: String) {
         let id = self.package.id.clone();
         match self.context() {
             Some(ctx) => match level.as_str() {
@@ -362,14 +334,14 @@ impl printcad::workbench::host::Host for State {
         }
     }
 
-    fn feature(&mut self, id: String) -> Option<String> {
+    pub(crate) fn feature(&mut self, id: String) -> Option<String> {
         let document = self.document()?;
         let id = feature_id(&id).ok()?;
         let node = document.get_feature_meta(id)?;
         serde_json::to_string(&crate::convert::node(document, node)).ok()
     }
 
-    fn features(&mut self) -> String {
+    pub(crate) fn features(&mut self) -> String {
         let Some(document) = self.document() else {
             return "[]".into();
         };
@@ -382,7 +354,7 @@ impl printcad::workbench::host::Host for State {
         serde_json::to_string(&nodes).unwrap_or_else(|_| "[]".into())
     }
 
-    fn bodies(&mut self) -> String {
+    pub(crate) fn bodies(&mut self) -> String {
         let Some(document) = self.document() else {
             return "[]".into();
         };
@@ -407,29 +379,30 @@ impl printcad::workbench::host::Host for State {
         serde_json::to_string(&bodies).unwrap_or_else(|_| "[]".into())
     }
 
-    fn body_mesh(&mut self, body: String) -> Option<Mesh> {
+    /// Positions as x, y, z triples, and the triangles' indices.
+    pub(crate) fn body_mesh(&mut self, body: String) -> Option<(Vec<f32>, Vec<u32>)> {
         let document = self.document()?;
         let geometry = document.imported_geometry(body_id(&body).ok()?)?;
-        Some(Mesh {
-            positions: geometry.mesh.positions.iter().flatten().copied().collect(),
-            indices: geometry.mesh.indices.clone(),
-        })
+        Some((
+            geometry.mesh.positions.iter().flatten().copied().collect(),
+            geometry.mesh.indices.clone(),
+        ))
     }
 
-    fn body_shape(&mut self, body: String) -> Option<Vec<u8>> {
+    pub(crate) fn body_shape(&mut self, body: String) -> Option<Vec<u8>> {
         let document = self.document()?;
         document
             .imported_brep_blob(body_id(&body).ok()?)
             .map(<[u8]>::to_vec)
     }
 
-    fn profile(&mut self, feature: String) -> Option<String> {
+    pub(crate) fn profile(&mut self, feature: String) -> Option<String> {
         let document = self.document()?;
         let profile = placed_profile(document, feature_id(&feature).ok()?)?;
         serde_json::to_string(&profile).ok()
     }
 
-    fn call(&mut self, command: String, args: String) -> Result<String, String> {
+    pub(crate) fn call(&mut self, command: String, args: String) -> Result<String, String> {
         let args: Value = if args.trim().is_empty() {
             Value::Object(Default::default())
         } else {
@@ -442,7 +415,7 @@ impl printcad::workbench::host::Host for State {
         Ok(answer.to_string())
     }
 
-    fn request(&mut self, request: String) {
+    pub(crate) fn request(&mut self, request: String) {
         match serde_json::from_str::<Request>(&request) {
             Ok(request) => self.requests.push(request),
             Err(e) => {
@@ -452,24 +425,24 @@ impl printcad::workbench::host::Host for State {
         }
     }
 
-    fn redraw(&mut self) {
+    pub(crate) fn redraw(&mut self) {
         self.redraw = true;
     }
 
-    fn progress(&mut self, done: u64, total: u64) {
+    pub(crate) fn progress(&mut self, done: u64, total: u64) {
         if let Some(job) = &self.job {
             job.done.store(done, Ordering::Relaxed);
             job.total.store(total, Ordering::Relaxed);
         }
     }
 
-    fn cancelled(&mut self) -> bool {
+    pub(crate) fn cancelled(&mut self) -> bool {
         self.job
             .as_ref()
             .is_some_and(|j| j.cancelled.load(Ordering::Relaxed))
     }
 
-    fn helper(&mut self, name: String, input: Vec<u8>) -> Result<Vec<u8>, String> {
+    pub(crate) fn helper(&mut self, name: String, input: Vec<u8>) -> Result<Vec<u8>, String> {
         let Some(job) = &self.job else {
             return Err("helpers run inside a job".into());
         };

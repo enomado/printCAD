@@ -54,7 +54,7 @@ You MUST complete each phase before proceeding to the next.
    - They often contain the exact solution
    - Read panics and backtraces completely (`RUST_BACKTRACE=1`)
    - Note line numbers, file paths, the op index a `ChainError` carries
-   - Vulkan validation output arrives in `tracing` under `printcad.vulkan`
+   - GPU validation output arrives in `tracing` under `printcad.gpu`
 
 2. **Reproduce Consistently**
    - Can you trigger it reliably?
@@ -210,7 +210,7 @@ You MUST complete each phase before proceeding to the next.
      --all --check`, `cargo clippy --workspace --all-targets -- -D
      warnings`, `cargo test --workspace`, `node
      scripts/lint-comment-rot.mjs`, the seam grep; for rendering or UI
-     work, a smoke run watching for `printcad.vulkan` output
+     work, a smoke run watching for `printcad.gpu` output
 
 4. **If Fix Doesn't Work**
    - STOP

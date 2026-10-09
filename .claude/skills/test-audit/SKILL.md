@@ -108,7 +108,7 @@ scope, run parallel discovery lanes when available:
 - the benches (`crates/workbenches/*`: the sketcher harness and solver,
   Design's build and features, the Assembly's solver and joints, the
   package host and the SDK packages it builds);
-- the app and the rest (`crates/app_shell`, `doc_server`, `render_vk`,
+- the app and the rest (`crates/app_shell`, `doc_server`, `render_wgpu`,
   `ui_kit`, `scripting`, `agents`, `surface_texture`, `settings`,
   `local_ipc`, `axes`);
 - a cross-cutting pattern sweep.

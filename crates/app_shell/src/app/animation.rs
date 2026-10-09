@@ -81,16 +81,16 @@ pub(crate) const FRAMES_EXTENSION: &str = "frames";
 /// path's extension says: `gif`, a folder of frames for
 /// [`FRAMES_EXTENSION`], else an animated PNG. The log says when it is done.
 pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
-    let spawned = std::thread::Builder::new()
-        .name("printcad-animation".into())
-        .spawn(move || match write(&animation, &path) {
+    let spawned = crate::platform::spawn("printcad-animation", move || {
+        match write(&animation, &path) {
             Ok(written) => app_log::info(format!(
                 "Saved a {}-frame animation to {}",
                 animation.frames.len(),
                 written.display()
             )),
             Err(why) => app_log::error(format!("Could not record the animation: {why}")),
-        });
+        }
+    });
     if let Err(err) = spawned {
         app_log::error(format!("Could not start recording the animation: {err}"));
     }
@@ -103,7 +103,7 @@ fn write(animation: &Animation, path: &std::path::Path) -> Result<PathBuf, Strin
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase);
     let save = |target: &std::path::Path, bytes: Vec<u8>| {
-        std::fs::write(target, bytes)
+        crate::platform::write(target, &bytes)
             .map_err(|err| format!("could not save {}: {err}", target.display()))
     };
     match extension.as_deref() {

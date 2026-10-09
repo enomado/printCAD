@@ -383,7 +383,7 @@ impl ShapeHealth {
 
 /// A shape run through the kernel's repair: the mended snapshot, its mesh,
 /// what the repair did, and what the checker finds afterwards.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RepairResult {
     /// Native-format snapshot of the mended shape.
     pub brep_blob: Vec<u8>,
@@ -402,7 +402,7 @@ pub struct RepairResult {
 
 /// A mesh body turned into a B-rep by the kernel: the shape, its mesh, the
 /// checker's verdict, and what the conversion found.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MeshSolidResult {
     /// Native-format snapshot of the shape.
     pub brep_blob: Vec<u8>,
@@ -1586,7 +1586,7 @@ pub struct ChainError {
 }
 
 /// Result of executing a body's solid-op chain.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SolidBuildResult {
     /// Native-format shape snapshot of the final solid (for later
     /// re-tessellation, persistence, and downstream booleans).
@@ -1603,7 +1603,7 @@ pub struct SolidBuildResult {
 
 /// What a feature being edited does to its body, beside the body without
 /// it: the view while it is edited.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FeaturePreview {
     /// The body to show meanwhile: as it stood before a feature that adds,
     /// after one that cuts. None when an adding feature is the body's

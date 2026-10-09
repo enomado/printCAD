@@ -3997,7 +3997,7 @@ mod tests {
             &mut ctx,
         );
         assert!(wb.busy());
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         while wb.measuring.is_some() {
             assert!(started.elapsed().as_secs() < 5, "the measuring finishes");
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -4033,7 +4033,7 @@ mod tests {
             wb.task,
             Some(Task::Interference { found: None, .. })
         ));
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         while wb.checking.is_some() {
             assert!(started.elapsed().as_secs() < 5, "the check finishes");
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -4189,7 +4189,7 @@ mod tests {
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         ctx.kernel = Some(&CUBES);
         wb.check_sweep(&mut ctx, slider, (20.0, 0.0));
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         while wb.sweeping.is_some() {
             assert!(started.elapsed().as_secs() < 5);
             std::thread::sleep(std::time::Duration::from_millis(5));

@@ -4,10 +4,11 @@ use axes::{AxisPreset, AxisSystem};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
-    io::BufReader,
+    fs,
     path::{Path, PathBuf},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::{fs::File, io::BufReader};
 use thiserror::Error;
 
 const QUALIFIER: &str = "com";
@@ -921,6 +922,12 @@ pub enum ProjectionMode {
     Orthographic,
 }
 
+/// The page's local storage, where a browser keeps the settings.
+#[cfg(target_arch = "wasm32")]
+fn page_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
 pub struct SettingsStore {
     path: PathBuf,
 }
@@ -967,6 +974,7 @@ pub fn scripts_dir() -> Option<PathBuf> {
 }
 
 impl SettingsStore {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new() -> Result<Self, SettingsError> {
         let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
             .ok_or(SettingsError::MissingProjectDirs)?;
@@ -976,6 +984,16 @@ impl SettingsStore {
         Ok(Self { path })
     }
 
+    /// A browser page keeps the settings in its own storage, under the
+    /// file's name.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new() -> Result<Self, SettingsError> {
+        Ok(Self {
+            path: PathBuf::from(SETTINGS_FILE),
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load(&self) -> Result<UserSettings, SettingsError> {
         if !self.path.exists() {
             return Ok(UserSettings::default());
@@ -987,12 +1005,33 @@ impl SettingsStore {
         Ok(settings)
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn load(&self) -> Result<UserSettings, SettingsError> {
+        let Some(text) = page_storage().and_then(|s| s.get_item(SETTINGS_FILE).ok().flatten())
+        else {
+            return Ok(UserSettings::default());
+        };
+        let mut settings: UserSettings = serde_json::from_str(&text)?;
+        settings.rendering.retire_former_defaults();
+        Ok(settings)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self, settings: &UserSettings) -> Result<(), SettingsError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
         let file = File::create(&self.path)?;
         serde_json::to_writer_pretty(file, settings)?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn save(&self, settings: &UserSettings) -> Result<(), SettingsError> {
+        let text = serde_json::to_string(settings)?;
+        page_storage()
+            .and_then(|s| s.set_item(SETTINGS_FILE, &text).ok())
+            .ok_or_else(|| std::io::Error::other("the page's storage is unavailable"))?;
         Ok(())
     }
 

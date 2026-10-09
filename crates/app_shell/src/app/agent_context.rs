@@ -11,6 +11,7 @@
 
 use serde_json::{Value, json};
 
+#[cfg(not(target_arch = "wasm32"))]
 use agents::mcp::{Prompt, Resource};
 
 use crate::PrintCadApp;
@@ -85,6 +86,7 @@ pub(crate) fn rules_text(every: &str, this: &str) -> String {
 }
 
 /// The documents the server offers.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resources() -> Vec<Resource> {
     let doc = |uri: &str, name: &str, description: &str, mime: &str| Resource {
         uri: uri.to_string(),
@@ -121,6 +123,7 @@ pub(crate) fn resources() -> Vec<Resource> {
 }
 
 /// The text of a resource that does not depend on the session.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn fixed_resource(uri: &str) -> Option<String> {
     match uri {
         "printcad://guide/scripting" => Some(include_str!("../../../../docs/SCRIPTING.md").into()),
@@ -130,6 +133,7 @@ pub(crate) fn fixed_resource(uri: &str) -> Option<String> {
 }
 
 /// The prompts the server offers; clients show them as commands.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn prompts() -> Vec<Prompt> {
     vec![
         Prompt {
@@ -158,6 +162,7 @@ pub(crate) fn prompts() -> Vec<Prompt> {
 }
 
 /// The text prompt `name` asks.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn prompt_text(name: &str, args: &Value) -> Option<String> {
     Some(match name {
         "review-for-printing" => {

@@ -18,7 +18,7 @@ and macOS and is written in Rust.
 | Document server | `doc_server` | Owns the file on disk, one process per document |
 | Geometry interface | `kernel_api` | Meshes, profiles and solid operations as plain data |
 | Geometry kernel | `kernel_ogeom` | The interface implemented with the ogeom kernel |
-| Renderer | `render_vk` | Vulkan: scene data in, pixels out |
+| Renderer | `render_wgpu` | wgpu: scene data in, pixels out |
 | Surface textures | `surface_texture` | Patterns pressed into faces of a mesh for printing |
 | Local IPC | `local_ipc` | Local sockets and system helpers on every platform |
 | Settings | `settings` | User preferences on disk |

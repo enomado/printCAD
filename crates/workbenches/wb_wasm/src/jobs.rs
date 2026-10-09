@@ -80,7 +80,7 @@ impl JobBoard {
     fn run(self: &Arc<Self>, entry: &str, input: &str, line: JobLine) -> Result<String, String> {
         let cancelled = line.cancelled.clone();
         let (mut store, bindings) = self.loaded.instantiate(self.clone())?;
-        store.data_mut().job = Some(line);
+        store.data_mut().reach.job = Some(line);
         let stop = cancelled.clone();
         store.epoch_deadline_callback(move |_| {
             if stop.load(Ordering::Relaxed) {
@@ -143,15 +143,6 @@ impl JobBoard {
     pub(crate) fn has_finished(&self) -> bool {
         self.board.lock().is_ok_and(|b| !b.finished.is_empty())
     }
-}
-
-/// The folder of a package's helpers for this system.
-pub(crate) fn helpers_dir(package: &Path) -> std::path::PathBuf {
-    package.join("helpers").join(format!(
-        "{}-{}",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    ))
 }
 
 /// Run helper `name` from `dir` with `input` on its standard input; what it

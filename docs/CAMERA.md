@@ -30,8 +30,9 @@ exist.
 
 ## Projection
 
-`view_projection` folds Vulkan's Y-down clip space into the matrix, so
-screen Y grows downward everywhere. Projecting a point to the screen and
+`view_projection` maps to a Y-down clip space, so screen Y grows
+downward everywhere; the renderer's vertex shaders flip it to the GPU's
+Y-up clip space on the way out. Projecting a point to the screen and
 back (`core_document::runtime`, `world_to_viewport` and
 `viewport_to_plane`) goes through helpers that use the same matrix; code
 that maps between the screen and the world uses them rather than its own

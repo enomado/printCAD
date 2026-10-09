@@ -19,6 +19,8 @@ pub(crate) mod links;
 pub(crate) mod mcp;
 pub(crate) mod measure;
 pub(crate) mod packages;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod packages_web;
 pub(crate) mod print_layout;
 pub(crate) mod recompute;
 pub(crate) mod recovery;
@@ -26,6 +28,7 @@ pub(crate) mod scene_guides;
 pub(crate) mod scripts;
 #[cfg(test)]
 mod seam_lint;
+pub(crate) mod server;
 pub(crate) mod session;
 pub(crate) mod sixdof;
 pub(crate) mod step_import;

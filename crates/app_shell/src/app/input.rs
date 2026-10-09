@@ -8,9 +8,9 @@ use winit::{
     window::WindowId,
 };
 
-use render_vk::RenderBackend;
-use std::time::Instant;
+use render_wgpu::RenderBackend;
 use uuid::Uuid;
+use web_time::Instant;
 
 use crate::PrintCadApp;
 use crate::camera::CameraPointerResult;
@@ -47,7 +47,7 @@ impl PrintCadApp {
                 | WindowEvent::DroppedFile(..)
                 | WindowEvent::HoveredFile(..)
         ) {
-            self.last_input_time = Some(std::time::Instant::now());
+            self.last_input_time = Some(web_time::Instant::now());
         }
         // An OS-driven redraw (expose, resize damage) must render once.
         if matches!(event, WindowEvent::RedrawRequested) {

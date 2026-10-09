@@ -200,6 +200,12 @@ pub fn draw_menu_bar(
                             ) {
                                 commands.push(UiCommand::File(FileCommand::SaveAs));
                             }
+                            // A page keeps its documents; this takes one out.
+                            if crate::platform::ON_PAGE
+                                && item_needing_document(ui, "Download a copy", None, have_document)
+                            {
+                                commands.push(UiCommand::DownloadDocument);
+                            }
                             ui.separator();
                             if item_needing_document(
                                 ui,
@@ -225,12 +231,14 @@ pub fn draw_menu_bar(
                             ) {
                                 commands.push(UiCommand::File(FileCommand::SavePicture));
                             }
-                            if item_needing_document(
-                                ui,
-                                "Send to slicer",
-                                key("file.send_to_slicer"),
-                                have_document,
-                            ) {
+                            if crate::platform::offers("file.send_to_slicer")
+                                && item_needing_document(
+                                    ui,
+                                    "Send to slicer",
+                                    key("file.send_to_slicer"),
+                                    have_document,
+                                )
+                            {
                                 commands.push(UiCommand::File(FileCommand::SendToSlicer));
                             }
                             if item_needing_document(
@@ -266,9 +274,11 @@ pub fn draw_menu_bar(
                             if item(ui, "Preferences…", key("app.preferences")) {
                                 result.show_preferences = true;
                             }
-                            ui.separator();
-                            if item(ui, "Quit", key("app.quit")) {
-                                commands.push(UiCommand::Quit);
+                            if crate::platform::offers("app.quit") {
+                                ui.separator();
+                                if item(ui, "Quit", key("app.quit")) {
+                                    commands.push(UiCommand::Quit);
+                                }
                             }
                         });
                     });
@@ -494,37 +504,42 @@ pub fn draw_menu_bar(
                             if item(ui, record, key("app.record")) {
                                 commands.push(UiCommand::ToggleRecording);
                             }
-                            ui.separator();
-                            if inputs.scripts.is_empty() {
-                                ui.label(
-                                    RichText::new("No scripts in the scripts folder yet")
-                                        .font(sans(FONT_SM))
-                                        .color(TEXT3),
-                                );
-                            }
-                            for script in inputs.scripts {
-                                let mut button = egui::Button::new(
-                                    RichText::new(&script.name).font(sans(FONT_SM)),
-                                );
-                                if let Some(k) = key(&script.id) {
-                                    button = button.shortcut_text(k);
+                            // A page has no scripts folder: its scripts
+                            // are files the user picks.
+                            if !crate::platform::ON_PAGE {
+                                ui.separator();
+                                if inputs.scripts.is_empty() {
+                                    ui.label(
+                                        RichText::new("No scripts in the scripts folder yet")
+                                            .font(sans(FONT_SM))
+                                            .color(TEXT3),
+                                    );
                                 }
-                                let response = ui.add(button);
-                                let response = match &script.about {
-                                    Some(about) => response.on_hover_text(about),
-                                    None => response,
-                                };
-                                if response.clicked() {
-                                    commands.push(UiCommand::RunScriptFile(script.path.clone()));
-                                    ui.close();
+                                for script in inputs.scripts {
+                                    let mut button = egui::Button::new(
+                                        RichText::new(&script.name).font(sans(FONT_SM)),
+                                    );
+                                    if let Some(k) = key(&script.id) {
+                                        button = button.shortcut_text(k);
+                                    }
+                                    let response = ui.add(button);
+                                    let response = match &script.about {
+                                        Some(about) => response.on_hover_text(about),
+                                        None => response,
+                                    };
+                                    if response.clicked() {
+                                        commands
+                                            .push(UiCommand::RunScriptFile(script.path.clone()));
+                                        ui.close();
+                                    }
                                 }
-                            }
-                            ui.separator();
-                            if item(ui, "New script", None) {
-                                commands.push(UiCommand::NewScript);
-                            }
-                            if item(ui, "Open scripts folder", None) {
-                                commands.push(UiCommand::EditScript(None));
+                                ui.separator();
+                                if item(ui, "New script", None) {
+                                    commands.push(UiCommand::NewScript);
+                                }
+                                if item(ui, "Open scripts folder", None) {
+                                    commands.push(UiCommand::EditScript(None));
+                                }
                             }
                         });
                     });
@@ -537,7 +552,13 @@ pub fn draw_menu_bar(
                             if choice(ui, inputs.show_console, "Console", key("app.console")) {
                                 result.toggle_console = true;
                             }
-                            if choice(ui, inputs.show_assistant, "Assistant", key("app.assistant"))
+                            if crate::platform::offers("app.assistant")
+                                && choice(
+                                    ui,
+                                    inputs.show_assistant,
+                                    "Assistant",
+                                    key("app.assistant"),
+                                )
                             {
                                 result.toggle_assistant = true;
                             }
@@ -545,7 +566,9 @@ pub fn draw_menu_bar(
                     });
                     ui.menu_button(menu_title("Help"), |ui| {
                         fitted_menu(ui, |ui| {
-                            if item(ui, "Check for updates…", None) {
+                            // The desktop app's releases; a page is always
+                            // the latest.
+                            if !crate::platform::ON_PAGE && item(ui, "Check for updates…", None) {
                                 result.check_updates = true;
                             }
                             if item(ui, "About printCAD", None) {

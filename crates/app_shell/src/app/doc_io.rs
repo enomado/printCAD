@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+#[cfg(not(target_arch = "wasm32"))]
+use rfd::FileDialog;
 
 use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
 use crate::log_panel as app_log;
@@ -28,16 +29,42 @@ pub(crate) fn document_name_from_file_name(file_name: &str) -> &str {
 
 /// The on-disk recent list; missing or unreadable means empty.
 pub(crate) fn load_recent() -> settings::recent::RecentStore {
+    if let Some(path) = page_recent_path() {
+        let mut recent = crate::platform::read(&path)
+            .map(|bytes| settings::recent::RecentStore::from_json(&String::from_utf8_lossy(&bytes)))
+            .unwrap_or_default();
+        // The list is every document the page keeps.
+        recent
+            .files
+            .retain(|entry| crate::platform::exists(&entry.path));
+        if let Some(dir) = page_documents() {
+            for path in crate::platform::list(&dir) {
+                if !recent.files.iter().any(|entry| entry.path == path) {
+                    let size = crate::platform::read(&path).map_or(0, |b| b.len() as u64);
+                    recent.files.push(settings::recent::RecentEntry {
+                        path,
+                        last_opened_ms: 0,
+                        size_bytes: size,
+                    });
+                }
+            }
+        }
+        return recent;
+    }
     settings::SettingsStore::recent_file_path()
         .map(|p| settings::recent::RecentStore::load(&p))
         .unwrap_or_default()
 }
 
-/// Button labels for the unsaved-changes dialog. GTK and Zenity backends report
-/// `MessageDialogResult::Custom(label)` for `YesNoCancelCustom`, not Yes/No/Cancel.
-const UNSAVED_CHANGES_SAVE: &str = "Save";
-const UNSAVED_CHANGES_DISCARD: &str = "Discard";
-const UNSAVED_CHANGES_CANCEL: &str = "Cancel";
+/// Where a page keeps its recent list, beside the documents it keeps.
+fn page_recent_path() -> Option<PathBuf> {
+    crate::platform::kept_dir().map(|kept| kept.join("recent.json"))
+}
+
+/// Where a page keeps the documents saved in it.
+pub(crate) fn page_documents() -> Option<PathBuf> {
+    crate::platform::kept_dir().map(|kept| kept.join("documents"))
+}
 
 /// A parsed document on its way back from the open worker.
 pub(crate) struct OpenJob {
@@ -119,28 +146,12 @@ impl PrintCadApp {
         if !self.session.document.metadata().dirty() {
             return true;
         }
-        let res = MessageDialog::new()
-            .set_title("Unsaved changes")
-            .set_description(
-                "Save changes before continuing? Save writes the file, Discard loses edits, Cancel stays here.",
-            )
-            .set_level(MessageLevel::Warning)
-            .set_buttons(MessageButtons::YesNoCancelCustom(
-                UNSAVED_CHANGES_SAVE.into(),
-                UNSAVED_CHANGES_DISCARD.into(),
-                UNSAVED_CHANGES_CANCEL.into(),
-            ))
-            .show();
-        match res {
-            MessageDialogResult::Cancel => false,
-            MessageDialogResult::No => true,
-            MessageDialogResult::Yes => self.save_document_interactive(),
-            MessageDialogResult::Custom(s) if s == UNSAVED_CHANGES_SAVE => {
-                self.save_document_interactive()
-            }
-            MessageDialogResult::Custom(s) if s == UNSAVED_CHANGES_DISCARD => true,
-            MessageDialogResult::Custom(s) if s == UNSAVED_CHANGES_CANCEL => false,
-            _ => false,
+        match crate::platform::ask_unsaved(
+            "Save changes before continuing? Save writes the file, Discard loses edits, Cancel stays here.",
+        ) {
+            crate::platform::Unsaved::Save => self.save_document_interactive(),
+            crate::platform::Unsaved::Discard => true,
+            crate::platform::Unsaved::Cancel => false,
         }
     }
 
@@ -149,14 +160,21 @@ impl PrintCadApp {
         let path = if let Some(ref p) = self.session.current_file {
             p.clone()
         } else {
-            let mut dialog = FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
-            if let Some(recent_dir) = self.recent.last_dir.clone() {
-                dialog = dialog.set_directory(recent_dir);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut dialog =
+                    FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
+                if let Some(recent_dir) = self.recent.last_dir.clone() {
+                    dialog = dialog.set_directory(recent_dir);
+                }
+                match dialog.set_file_name("untitled.prtcad").save_file() {
+                    Some(p) => p,
+                    None => return false,
+                }
             }
-            match dialog.set_file_name("untitled.prtcad").save_file() {
-                Some(p) => p,
-                None => return false,
-            }
+            // A browser saves by downloading: the name is all there is.
+            #[cfg(target_arch = "wasm32")]
+            PathBuf::from("/browser/untitled.prtcad")
         };
         match self.save_document_at(&path) {
             Ok(()) => true,
@@ -177,7 +195,15 @@ impl PrintCadApp {
 
     /// Front the recent list with `path` and write it out.
     pub(crate) fn touch_recent(&mut self, path: &Path) {
-        self.recent.touch(path);
+        if crate::platform::ON_PAGE {
+            let size = crate::platform::read(path).map_or(0, |b| b.len() as u64);
+            let now = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            self.recent.touch_at(path, now, size);
+        } else {
+            self.recent.touch(path);
+        }
         self.save_recent();
     }
 
@@ -194,6 +220,15 @@ impl PrintCadApp {
     }
 
     fn save_recent(&self) {
+        if let Some(path) = page_recent_path() {
+            let written = serde_json::to_vec_pretty(&self.recent)
+                .map_err(std::io::Error::other)
+                .and_then(|json| crate::platform::write(&path, &json));
+            if let Err(err) = written {
+                app_log::error(format!("Failed to keep the recent list: {err}"));
+            }
+            return;
+        }
         if let Ok(recent_path) = settings::SettingsStore::recent_file_path()
             && let Err(err) = self.recent.save(&recent_path)
         {
@@ -272,10 +307,10 @@ impl PrintCadApp {
         if self.session.server_socket == socket && self.session.server.status().connected {
             return;
         }
-        match doc_server::DaemonClient::spawn_or_connect(&socket) {
-            Ok(client) => {
+        match crate::app::server::connect(&socket) {
+            Ok(server) => {
                 self.session.server.flush();
-                self.session.server = Box::new(client);
+                self.session.server = server;
                 self.session.server_socket = socket;
                 // The old connection's peers are not this one's.
                 self.session.peer_presence.clear();
@@ -308,10 +343,10 @@ impl PrintCadApp {
         if !due {
             return;
         }
-        self.session.last_server_reconnect = Some(std::time::Instant::now());
-        match doc_server::DaemonClient::spawn_or_connect(&self.session.server_socket.clone()) {
-            Ok(client) => {
-                self.session.server = Box::new(client);
+        self.session.last_server_reconnect = Some(web_time::Instant::now());
+        match crate::app::server::connect(&self.session.server_socket.clone()) {
+            Ok(server) => {
+                self.session.server = server;
                 app_log::info("Document server reconnected");
             }
             Err(err) => {
@@ -375,7 +410,7 @@ impl PrintCadApp {
         app_log::info(format!("Opening `{}`...", path.display()));
         // The document's own daemon owns its file. Ask it, not the session
         // daemon.
-        self.switch_server_to(doc_server::socket_path_for(&path));
+        self.switch_server_to(crate::app::server::socket_for(&path));
         self.session
             .server
             .send(core_document::server::ClientMessage::OpenDocument {
@@ -473,14 +508,10 @@ impl PrintCadApp {
             .and_then(|s| s.to_str())
             .map(|s| s.to_ascii_lowercase());
         if matches!(ext_lower.as_deref(), Some("json")) && self.document_has_asset_files() {
-            let _ = MessageDialog::new()
-                .set_title("Cannot save as JSON")
-                .set_description(
-                    "This document has embedded assets (e.g. an imported STEP or IGES file). JSON export does not include those bytes. Save as .prtcad instead.",
-                )
-                .set_level(MessageLevel::Warning)
-                .set_buttons(MessageButtons::Ok)
-                .show();
+            crate::platform::warn(
+                "Cannot save as JSON",
+                "This document has embedded assets (e.g. an imported STEP or IGES file). JSON export does not include those bytes. Save as .prtcad instead.",
+            );
             return Err(anyhow::anyhow!(
                 "JSON format cannot store embedded assets; save as .prtcad"
             ));
@@ -518,7 +549,7 @@ impl PrintCadApp {
                 if self.session.current_file.as_deref() != Some(path) {
                     // Save As gives the document a new identity, and a new
                     // daemon to own it.
-                    self.switch_server_to(doc_server::socket_path_for(path));
+                    self.switch_server_to(crate::app::server::socket_for(path));
                 }
                 self.start_document_save(path, compression);
                 return Ok(());
@@ -622,16 +653,14 @@ impl PrintCadApp {
     /// packing one does, so it does not belong on the UI thread either.
     fn start_document_parse(&mut self, token: u64, path: PathBuf, bytes: Vec<u8>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new()
-            .name("printcad-document-open".to_string())
-            .spawn(move || {
-                let parsed = Self::parse_document_bytes(&path, bytes);
-                let _ = tx.send(OpenJob {
-                    token,
-                    path,
-                    result: parsed.map_err(|err| format!("{err:#}")),
-                });
+        let spawned = crate::platform::spawn("printcad-document-open", move || {
+            let parsed = Self::parse_document_bytes(&path, bytes);
+            let _ = tx.send(OpenJob {
+                token,
+                path,
+                result: parsed.map_err(|err| format!("{err:#}")),
             });
+        });
         match spawned {
             Ok(_) => self.session.document_open_rx = Some(rx),
             Err(err) => app_log::error(format!("Failed to start the open: {err}")),
@@ -689,19 +718,17 @@ impl PrintCadApp {
         let worker_progress = Arc::clone(&progress);
         let (tx, rx) = std::sync::mpsc::channel();
 
-        let spawned = std::thread::Builder::new()
-            .name("printcad-document-save".to_string())
-            .spawn(move || {
-                document.set_thumbnail(crate::thumbnail::render(&preview, forward, up));
-                let packed = document.save_to_bytes_watched(compression, &move |done, total| {
-                    worker_progress.set(done, total);
-                });
-                let _ = tx.send(SaveJob {
-                    path,
-                    at_seq,
-                    result: packed.map_err(|err| err.to_string()),
-                });
+        let spawned = crate::platform::spawn("printcad-document-save", move || {
+            document.set_thumbnail(crate::thumbnail::render(&preview, forward, up));
+            let packed = document.save_to_bytes_watched(compression, &move |done, total| {
+                worker_progress.set(done, total);
             });
+            let _ = tx.send(SaveJob {
+                path,
+                at_seq,
+                result: packed.map_err(|err| err.to_string()),
+            });
+        });
         match spawned {
             Ok(_) => {
                 app_log::info(format!("Saving `{}`…", self.session.document.name()));
@@ -764,7 +791,7 @@ impl PrintCadApp {
         // On the way out, after the user answered for every tab: no copy is
         // left to come back from.
         for job in self.autosave_jobs.drain(..) {
-            let _ = job.join();
+            job.join();
         }
         crate::app::recovery::forget(self.session.tab);
         for slot in &self.tabs {
@@ -785,7 +812,7 @@ impl PrintCadApp {
     /// When the next autosave is due: while a tab has edits its copy lacks,
     /// or a saved tab's copy is still to be taken away. The loop wakes for
     /// it though nothing else moves.
-    pub(crate) fn next_autosave(&self) -> Option<std::time::Instant> {
+    pub(crate) fn next_autosave(&self) -> Option<web_time::Instant> {
         let every = self.autosave_every()?;
         let stale = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()))
@@ -807,11 +834,11 @@ impl PrintCadApp {
         self.autosave_jobs.retain(|job| !job.is_finished());
         if !self
             .next_autosave()
-            .is_some_and(|at| at <= std::time::Instant::now())
+            .is_some_and(|at| at <= web_time::Instant::now())
         {
             return;
         }
-        self.autosaved_at = std::time::Instant::now();
+        self.autosaved_at = web_time::Instant::now();
         let sessions = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()));
         let mut wanted = Vec::new();
@@ -837,23 +864,53 @@ impl PrintCadApp {
         for (tab, seq, mut document, file) in wanted {
             self.autosaved.insert(tab, seq);
             let name = document.name().to_string();
-            let spawned = std::thread::Builder::new()
-                .name("printcad-autosave".to_string())
-                .spawn(move || {
-                    let kept = document
-                        .save_to_bytes(core_document::Compression::Zstd)
-                        .map_err(|e| e.to_string())
-                        .and_then(|bytes| {
-                            crate::app::recovery::keep(tab, &name, file.as_deref(), &bytes)
-                                .map_err(|e| e.to_string())
-                        });
-                    if let Err(why) = kept {
-                        tracing::warn!("Autosave of `{name}` failed: {why}");
-                    }
-                });
+            let spawned = crate::platform::spawn("printcad-autosave", move || {
+                let kept = document
+                    .save_to_bytes(core_document::Compression::Zstd)
+                    .map_err(|e| e.to_string())
+                    .and_then(|bytes| {
+                        crate::app::recovery::keep(tab, &name, file.as_deref(), &bytes)
+                            .map_err(|e| e.to_string())
+                    });
+                if let Err(why) = kept {
+                    tracing::warn!("Autosave of `{name}` failed: {why}");
+                }
+            });
             if let Ok(job) = spawned {
                 self.autosave_jobs.push(job);
             }
+        }
+    }
+
+    /// Hand the document on screen to the browser as a `.prtcad` download,
+    /// named after its file or its name.
+    pub(crate) fn download_document(&mut self) {
+        let name = self
+            .session
+            .current_file
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.session.document.name().to_string());
+        // What a save writes: the preview's whole solid and a picture.
+        let mut document = self.session.document.clone();
+        for (body, preview) in &self.session.previews {
+            crate::app::recompute::store_built_solid(&mut document, *body, preview.full.clone());
+        }
+        let (forward, up) = self.session.camera.view_basis();
+        document.set_thumbnail(crate::thumbnail::render(
+            &self.thumbnail_shapes(),
+            forward,
+            up,
+        ));
+        let bytes = document.save_to_bytes(core_document::Compression::Zstd);
+        let downloaded = bytes.map_err(|e| e.to_string()).and_then(|bytes| {
+            crate::platform::write(Path::new(&format!("{name}.prtcad")), &bytes)
+                .map_err(|e| e.to_string())
+        });
+        match downloaded {
+            Ok(()) => app_log::info(format!("Downloading {name}.prtcad")),
+            Err(err) => app_log::error(format!("Could not download the document: {err}")),
         }
     }
 
@@ -863,7 +920,7 @@ impl PrintCadApp {
         let Some(entry) = self.recoverable.iter().find(|r| r.copy == copy).cloned() else {
             return;
         };
-        let document = std::fs::read(&copy)
+        let document = crate::platform::read(&copy)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| Self::parse_document_bytes(&copy, bytes));
         let document = match document {
@@ -1037,6 +1094,94 @@ impl PrintCadApp {
             .map(|(_, import)| (import.label.clone(), import.extensions.clone()))
             .collect();
 
+        // A browser page: a save names the download, and a pick goes
+        // through the page's own picker, the same kinds of file offered.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = recent_dir;
+            let named = |name: String| vec![std::path::Path::new("/browser").join(name)];
+            // A document is kept by the page, under a name asked for once;
+            // a picked file is a copy, kept the same way when saved.
+            let keep = |stem: &str| -> Vec<PathBuf> {
+                let Some(dir) = page_documents() else {
+                    return Vec::new();
+                };
+                crate::platform::ask_name("Save the document in this browser as", stem)
+                    .map(|name| {
+                        let name: String = name
+                            .chars()
+                            .map(|c| if matches!(c, '/' | '\\') { '-' } else { c })
+                            .collect();
+                        let name = name.strip_suffix(".prtcad").unwrap_or(&name).to_string();
+                        vec![dir.join(format!("{name}.prtcad"))]
+                    })
+                    .unwrap_or_default()
+            };
+            let paths = match &kind {
+                FileDialogKind::Save => match current_path {
+                    Some(path) if crate::platform::web::is_kept(&path) => vec![path],
+                    _ => keep(&stem),
+                },
+                FileDialogKind::SaveAs => keep(&stem),
+                FileDialogKind::Export(format) => named(format!("{stem}.{}", format.extension())),
+                FileDialogKind::SaveFile(file) => {
+                    let name = if file.name.ends_with(&format!(".{}", file.extension)) {
+                        file.name.clone()
+                    } else {
+                        format!("{}.{}", file.name, file.extension)
+                    };
+                    app_log::info(format!("Downloading the {} as {name}", file.kind));
+                    named(name)
+                }
+                FileDialogKind::SaveAnimation(animation) => {
+                    named(format!("{}.png", animation.name))
+                }
+                _ => {
+                    let offered: Vec<String> = match &kind {
+                        // A printCAD file's parts come in linked to it,
+                        // read again by its path, which a page cannot.
+                        FileDialogKind::ImportStep => {
+                            let mut any: Vec<String> = [
+                                "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
+                                "gltf", "wrl", "vrml",
+                            ]
+                            .map(String::from)
+                            .to_vec();
+                            any.extend(bench_imports.into_iter().flat_map(|(_, e)| e));
+                            any
+                        }
+                        FileDialogKind::ReplaceShape(_) => [
+                            "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
+                            "gltf", "wrl", "vrml",
+                        ]
+                        .map(String::from)
+                        .to_vec(),
+                        FileDialogKind::TexturePicture(..) => {
+                            ["png", "jpg", "jpeg"].map(String::from).to_vec()
+                        }
+                        FileDialogKind::RunScript => vec!["lua".into()],
+                        FileDialogKind::InstallPackage => {
+                            vec![workbenches::ARCHIVE_EXTENSION.into()]
+                        }
+                        FileDialogKind::Attach(_) => Vec::new(),
+                        _ => vec!["prtcad".into(), "json".into()],
+                    };
+                    let accept = offered
+                        .iter()
+                        .map(|e| format!(".{e}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let many = matches!(kind, FileDialogKind::Attach(_));
+                    crate::platform::web::pick(&accept, many, move |paths| {
+                        let _ = tx.send(FileDialogResult { kind, paths });
+                    });
+                    return;
+                }
+            };
+            let _ = tx.send(FileDialogResult { kind, paths });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(move || {
             let mut dialog = match kind {
                 FileDialogKind::ImportStep => {

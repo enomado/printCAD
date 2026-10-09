@@ -6,7 +6,7 @@ members = [
   "crates/doc_server",
   "crates/kernel_api",
   "crates/kernel_ogeom",
-  "crates/render_vk",
+  "crates/render_wgpu",
   "crates/workbenches",
   "crates/workbenches/fixtures",
   "crates/workbenches/wb_assembly",
@@ -35,8 +35,6 @@ description = "Workspace for the printCAD parametric CAD application."
 
 [workspace.dependencies]
 anyhow = "1.0.104"
-ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
-ash-window = "0.13"
 base64 = "0.23"
 sha2 = "0.11"
 serde_json = "1.0.151"
@@ -47,10 +45,10 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.26", features = ["serde", "v4"] }
 winit = "0.30.13"
-raw-window-handle = "0.6.2"
 egui = "0.36"
 egui-winit = "0.36"
-egui-ash-renderer = "0.13"
+egui-wgpu = "0.36"
+pollster = "0.4"
 bytemuck = "1.25"
 directories = "6.0"
 glam = { version = "0.33", features = ["std"] }
@@ -59,6 +57,9 @@ flate2 = "1.1.10"
 zstd = "0.14"
 rustc-hash = "2.1"
 rayon = "1.12"
+# The standard clock on a desktop, the page's in a browser (whose target has
+# none); the same types on a desktop, so nothing changes there.
+web-time = "1"
 ogeom = "0.9.10"
 sixdof = { version = "0.2", features = ["magellan"] }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
@@ -78,7 +79,10 @@ opt-level = 3
 # hundreds of megabytes, written again at every link.
 debug = "line-tables-only"
 
+[patch.crates-io]
+# 0.36.2 with one fix: its dropped-file type builds for a browser page
+# (third_party/egui-winit/PATCHED.md). Drop it once a release has the fix.
+egui-winit = { path = "third_party/egui-winit" }
 # Uncomment to build against a local checkout instead of the released crate:
-#[patch.crates-io]
 #ogeom = { path = "../openGeometry/crates/ogeom" }
 #sixdof = { path = "../sixdof" }

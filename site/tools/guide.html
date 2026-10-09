@@ -5,23 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$pagetitle$ · printCAD</title>
   <link rel="icon" href="$root$assets/printcad-small.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="$root$style.css">
+  <link rel="stylesheet" href="$root$guides.css">
 </head>
 <body>
   <header class="top">
     <div class="wrap wide">
       <a class="brand" href="$root$"><img src="$root$assets/printcad.svg" alt="">printCAD</a>
       <nav>
-        <a href="$root$#features">Features</a>
+        <a href="$root$">Overview</a>
         <a href="$root$docs/" aria-current="page">Guides</a>
-        <a href="$root$#download">Download</a>
-        <a href="https://github.com/gilbertorconde/printCAD">GitHub</a>
+        <a href="$root$docs/SCRIPTING.html">Scripting</a>
+        <a href="$root$docs/PLUGINS.html">Packages</a>
       </nav>
+      <a class="pill" href="https://github.com/gilbertorconde/printCAD">GitHub</a>
+      <a class="pill solid" href="$root$#get">Download</a>
     </div>
   </header>
   <div class="wrap wide docs">
     <nav class="side">
+      <details open>
+        <summary>All guides<span>$pagetitle$</span></summary>
 $nav$
+      </details>
     </nav>
     <article>
       <h1>$heading$</h1>
@@ -45,13 +50,17 @@ $endif$
   </div>
   <footer>
     <div class="wrap wide">
-      <span>printCAD</span>
+      <a class="brand" href="$root$"><img src="$root$assets/printcad.svg" alt="">printCAD</a>
+      <a href="$root$docs/">Guides</a>
       <a href="https://github.com/gilbertorconde/printCAD">GitHub</a>
       <a href="https://github.com/gilbertorconde/printCAD/releases">Releases</a>
-      <span>MIT or Apache-2.0</span>
+      <a href="https://github.com/gilbertorconde/PrintCAD-wb-repo">Workbench store</a>
+      <span class="foot-end">MIT or Apache-2.0</span>
     </div>
   </footer>
   <script>
+    // On a narrow screen the guides' list starts folded, above the page.
+    if (matchMedia("(max-width: 860px)").matches) document.querySelector("nav.side details").open = false;
     // A copy button on every code block.
     for (const pre of document.querySelectorAll("article pre")) {
       const button = document.createElement("button");
@@ -59,7 +68,7 @@ $endif$
       button.type = "button";
       button.textContent = "Copy";
       button.addEventListener("click", () => {
-        navigator.clipboard.writeText(pre.innerText).then(() => {
+        navigator.clipboard.writeText((pre.querySelector("code") ?? pre).innerText).then(() => {
           button.textContent = "Copied";
           setTimeout(() => (button.textContent = "Copy"), 1500);
         });

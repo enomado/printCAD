@@ -1,7 +1,7 @@
 # printCAD: agent notes
 
 Linux-native parametric CAD app aimed at FDM/SLA printing.
-Rust workspace + Vulkan (ash) + egui + the pure-Rust ogeom B-rep kernel
+Rust workspace + wgpu (Vulkan, Metal, DirectX 12) + egui + the pure-Rust ogeom B-rep kernel
 (crates.io, `Cargo.lock` holds the exact version).
 
 **Never name the tools or systems this project draws on** (FreeCAD, X11,
@@ -17,7 +17,7 @@ mention outside that section.)
 ## Commands
 
 ```bash
-cargo run -p app_shell            # launch the app (needs Vulkan + Wayland/X11)
+cargo run -p app_shell            # launch the app (needs a Vulkan, Metal or DX12 GPU)
 cargo run --release -p app_shell  # for real STEP files; see the profile note
 cargo test --workspace            # full suite (~1500 tests)
 node scripts/test-budget.mjs      # the same, timed against its budget (what CI runs)
@@ -31,8 +31,8 @@ cargo fmt --all                   # CI enforces --check
   workspace: `-p app_shell` alone leaves `target/release/printcad-serverd`
   missing and the app falls back to direct file I/O with a warning.
 - No system CAD libraries needed: the ogeom kernel is pure Rust, released to
-  crates.io. Bump it with `cargo update -p ogeom`; a commented
-  `[patch.crates-io]` in the workspace `Cargo.toml` points at a local checkout
+  crates.io. Bump it with `cargo update -p ogeom`; a commented line in the
+  workspace `Cargo.toml`'s `[patch.crates-io]` points at a local checkout
   for kernel dev.
 - 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate
   (crates.io, this project's own), consumed by version exactly as the kernel
@@ -84,7 +84,7 @@ cargo fmt --all                   # CI enforces --check
   app's version in `crates/app_shell/Cargo.toml`, its section in
   `RELEASE_NOTES.md`, and a tag `vX.Y.Z`: `.github/workflows/release.yml`
   builds Linux (Ubuntu 22.04, `.tar.gz`), Windows (`.zip`) and macOS (one
-  universal `.app` in a `.dmg`, carrying MoltenVK, ad-hoc signed) through
+  universal `.app` in a `.dmg`, ad-hoc signed) through
   `scripts/package-release.sh` and publishes them as a GitHub release.
   The Linux archive carries `install.sh` (`scripts/linux-install.sh`: a
   per-user install with its menu entry and icon). The application icon is
@@ -95,13 +95,59 @@ cargo fmt --all                   # CI enforces --check
   `winresource`), the macOS bundle's, and the desktop entry's, which the
   window finds through its app id `printcad`.
   The CI's `platforms` job runs clippy and the tests on Windows and macOS.
+- The app also builds for a browser page: `scripts/build-web.sh` (the
+  release build for `wasm32-unknown-unknown`, wasm-bindgen at the version
+  `Cargo.lock` pins, `wasm-opt`; `web/index.html` starts it, showing the
+  module's download) writes `web/dist`, and a second build with atomics and
+  shared memory into `threads/` (the standard library rebuilt,
+  `RUSTC_BOOTSTRAP`; `WEB_THREADS=0` skips it), which the page loads when
+  cross-origin isolated (`third_party/coi-serviceworker` gives a static host
+  the headers): each kernel worker then starts a `wasm-bindgen-rayon` pool
+  and lends it to the kernel (`kernel_ogeom::threads::lend_rayon`,
+  `parallel::set_pool`). A release builds it (`release.yml`'s `web` job,
+  `printcad-web-X.Y.Z.tar.gz`) and `pages.yml` puts the latest release's
+  under the site's `app/`; CI clippies the browser target. Everything that differs sits behind `cfg(target_arch =
+  "wasm32")`, so a desktop build compiles exactly what it did:
+  `app_shell/src/platform.rs` (`spawn` runs work at once on the page,
+  `read`/`write` are the picked files held in memory and downloads, and
+  under `/printcad` the files the page keeps (documents, the recent list,
+  autosaved copies; IndexedDB, read back before the app starts), `remove`,
+  `list`, `exists`, `kept_dir`, `ON_PAGE` and `offers` (the commands a page
+  leaves out of its menus, palette and keys), `set_unsaved` (the page asks
+  before it is left), `temp_dir`, `scratch_file`, `ask_unsaved`, `warn`; `platform/web.rs` the
+  page's picker and downloads), `app/server.rs` (`BrowserFiles` in place
+  of the daemon), the kernel's jobs in the page's workers
+  (`kernel_pool.rs`, `web/kernel-worker.js`: one for requests, more for
+  builds, MessagePack between them, Cancel ending the busy one), the renderer awaited (`Renderer::initialize_async`; WebGPU,
+  else WebGL2), settings in the page's storage, `kernel_ogeom::files` (the
+  reader imports go through), and `web_time` for every clock (the
+  standard one panics on that target). The console's Lua is wasmoon
+  (`third_party/wasmoon`) in a worker of its own (`web/lua-worker.js`,
+  `scripting/src/thread_web.rs`, `web_prelude.lua`: JSON both ways, a
+  script awaiting each command's answer, Stop ending the worker and its
+  globals). The 6-DoF mouse comes through WebHID (`app/sixdof/web.rs`:
+  devices granted before open at start, Preferences › Input › 6-DoF mouse
+  opens the browser's chooser, each report decoded by
+  `sixdof::hid::Decoder`). Packages run through `wb_wasm`'s `web.rs` with
+  jco (`third_party/jco`, `scripts/vendor-jco.sh`); the page keeps each
+  installed archive in IndexedDB (`app/packages_web.rs`, a `Package` held
+  in memory, `Package::from_archive`), installs from a file or a store's
+  `mirror` (the registry's own copy, since a release's download refuses a
+  page; `store::listed_package`), and has no GitHub installs or update
+  checks. Agents' sockets, the document daemon and the command line are
+  desktop-only. `egui-winit` is
+  patched (`third_party/egui-winit/PATCHED.md`) until a release builds for
+  the browser.
 - The website (GitHub Pages) is `site/` (a hand-written landing page,
-  stylesheet in the app's palette, screenshots in `site/assets/shots/`,
-  the guides' index `site/guides.md`) plus every guide in `docs/` turned
-  into a page by `scripts/build-site.sh` (pandoc, `site/tools/`: the page
-  template and a filter sending guide links to pages and source links to
-  GitHub); `.github/workflows/pages.yml` builds and publishes it on pushes
-  touching them. A new guide goes into the script's `guides` list and
+  `index.html`, `style.css` and `main.js` over a small WebGL2 viewer,
+  `gl.js`, drawing the parts in `site/assets/models.bin`, which
+  `site/tools/pack-models.py` packs from STL exports of the scripts in
+  `site/tools/scenes/`; the guides' stylesheet `guides.css` and index
+  `site/guides.md`) plus every guide in `docs/` turned into a page by
+  `scripts/build-site.sh` (pandoc, `site/tools/`: the page template and a
+  filter sending guide links to pages and source links to GitHub);
+  `.github/workflows/pages.yml` builds and publishes it on pushes touching
+  them. A new guide goes into the script's `guides` list and
   `site/guides.md`.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
@@ -115,8 +161,9 @@ cargo fmt --all                   # CI enforces --check
   still ~1.4x slower than release, so use `--release` when timing anything.
 - `crates/kernel_ogeom/examples/import_bench.rs` prints the phase breakdown of
   an import; reference timings live in the import-performance memory.
-- Vulkan validation layers, when installed, are routed into `tracing`
-  (target `printcad.vulkan`). Keep the app validation-clean.
+- wgpu's validation errors are routed into `tracing` (target
+  `printcad.gpu`), with the graphics API's own validation under them where
+  it is installed. Keep the app validation-clean.
 
 ## Crate map / dataflow
 
@@ -140,13 +187,19 @@ cargo fmt --all                   # CI enforces --check
 - `workbenches/wb_wasm`: workbench packages (`docs/PLUGINS.md`, RFC 0001).
   One wasmtime engine (`engine.rs`: an epoch ticker that runs only while a
   call or job does, 25 ms for frame and input calls, 1 s otherwise; the
-  compiled component cached beside `bench.wasm`), `host.rs` (the store's
-  `State`: what the call in progress may reach, `Access::None/Read/Write`,
+  compiled component cached beside `bench.wasm`), `exports.rs` (the
+  guest's exports as the `Exports` trait, whichever runtime holds the
+  instance, `Budget`, `Fault`), `host.rs` (`Reach`, the host's side of an
+  instance: what the call in progress may reach, `Access::None/Read/Write`,
   a raw pointer valid for that one synchronous call; the `doc.*` calls a
   package makes on its own kinds only, recorded like any edit), `guest.rs`
-  (instantiate with WASI, the package's `data/` preopened as `/data`, the
-  network only when granted, a memory cap; a trap or overrun replaces the
-  instance, three turn the bench off), `jobs.rs` (a job in its own
+  (wasmtime's bindings and store; instantiate with WASI, the package's
+  `data/` preopened as `/data`, the network only when granted, a memory
+  cap; a trap or overrun replaces the instance, three turn the bench off),
+  `web.rs` (the same on a browser page: jco transpiles the component in
+  `web/package-worker.js`, the instance runs on the page and is called as
+  wasmtime's, with no budget, no `/data` and no network; `web/jobs.rs` a
+  job in a worker of its own, stopped by ending it), `jobs.rs` (a job in its own
   instance on its own thread, progress and cancel, native helpers under
   the `helper` grant), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
   over the guest, frame cached by document seq, selection and events,
@@ -417,20 +470,23 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   where each solve starts; `place_bodies` stores the new count
   (`counted_couplings`) with every solve, drag and sweep that crosses the
   wrap.
-- `render_vk`: data-only renderer (`FrameSubmission` in, pixels out). GPU
-  picking with async readback; per-body mesh cache keyed by (id, revision).
+- `render_wgpu`: data-only renderer (`FrameSubmission` in, pixels out) on
+  wgpu: Vulkan, Metal or DirectX 12, the first the platform offers
+  (`WGPU_BACKEND` picks one), the GPU chosen by `preferred_gpu` or for
+  performance. Shaders are WGSL (`shaders/`), validated by naga in its
+  tests. GPU picking with async readback (`readback.rs`: a buffer per pick
+  or picture, mapped once its frame is done); per-body mesh cache keyed by
+  (id, revision). Edges are instanced screen-space quads (`vs_edge`), any
+  width on any backend; the clipping plane discards per fragment. The pick
+  pass writes depth into a colour target as well, since a depth texture
+  cannot be copied in part. The window takes a plain format, as egui
+  blends for; the scene draws into an sRGB texture that the blit encodes
+  onto it.
   `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
-  plane whose lines `grid.frag` works out per pixel, three decades at once,
-  each faded by its spacing on screen, drawn after the opaque bodies,
-  depth-tested and never picked; the app's `app/scene_guides.rs` lays out
-  the ground grid (square to the axis preset's up) and the origin's three
-  planes (see-through bodies, a fixed size on screen), View › Grid and
-  Origin planes, both hidden while an edit session holds the view.
-  The Vulkan library is loaded at run time (`load_vulkan`; on macOS the
-  loader or MoltenVK, then a bundle's `Frameworks`), kept as the renderer's
-  last field so it outlives every call; surfaces come from `ash-window`,
-  and portability enumeration and the portability subset are turned on
-  where the driver offers them (Vulkan over Metal).
+  plane whose lines `grid.wgsl` works out per pixel, three decades at once,
+  each faded by its spacing on screen, depth-tested and never picked.
+  `app/scene_guides.rs` lays out the ground grid and origin planes; View ›
+  Grid and Origin planes hide them while an edit session holds the view.
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,
@@ -982,14 +1038,12 @@ hacks, no silently degraded feature). Instead:
 ## Invariants: violate these and things break subtly
 
 - **`app/gfx.rs` field order IS the teardown contract** (struct fields drop in
-  *declaration* order): renderer before window. Do not reorder. Inside the
-  renderer the same rule bites: anything that frees device objects in its own
-  `Drop` (the egui renderer) must be `take()`n and dropped in
-  `RendererCore::drop` BEFORE `destroy_device`, or it runs on a dead device:
-  a hang or segfault at exit plus a wall of "leaked objects".
-- **Vulkan validation layers default to debug builds only**
-  (`RenderSettings::default`); `PRINTCAD_VULKAN_VALIDATION=1` enables them for
-  a release run. `PRINTCAD_EXIT_AFTER_MS` quits through the real exit path
+  *declaration* order): renderer before window. Do not reorder: the
+  surface is made from the window's raw handles (`create_surface_unsafe`)
+  and must go first.
+- **GPU validation defaults to debug builds only**
+  (`RenderSettings::default`); `PRINTCAD_GPU_VALIDATION=1` (or
+  `PRINTCAD_VULKAN_VALIDATION=1`) enables it for a release run. `PRINTCAD_EXIT_AFTER_MS` quits through the real exit path
   after a delay (keeps the loop awake) so teardown can be timed on a loaded
   document.
 - **UiLayer must never own state the host mutates.** `active_tool` and
@@ -1052,15 +1106,17 @@ hacks, no silently degraded feature). Instead:
   (`profile::loose_ends` names what was left out).
 - **Pocket/Groove cut AGAINST the sketch normal by default** (a face
   sketch's normal points out of the material, so the default digs in).
-- **NDC is Y-down**: the camera bakes the Vulkan Y flip into `view_proj`.
+- **NDC is Y-down**: the camera bakes a Y flip into `view_proj`, and the
+  renderer's vertex shaders flip it back to the GPU's Y-up clip space.
   Transform helpers live in `core_document::runtime` (ctx methods + free
   functions); mirror them, never re-derive with a different convention.
 - **Camera orientation is preset-relative** (`q·(−depth)=forward`,
   `q·vertical=up` in the active axis preset, default Z-up). Never build
   orientation quats against a hardcoded XYZ basis.
-- Renderer hot path has **no `queue_wait_idle`/`device_wait_idle`**: picking
-  uses per-in-flight staging slots resolved after the fence wait; buffer
-  destruction goes through the `MeshCache` retire queue. Keep it that way.
+- Renderer hot path **never waits on the GPU**: picks and pictures are
+  buffers mapped asynchronously and collected after a non-blocking poll at
+  the top of the next frames; wgpu keeps a replaced buffer alive until the
+  GPU is done with it. Keep it that way.
 - Serde compatibility: new fields on persisted types (features, sketch) take
   `#[serde(default)]` so old `.prtcad` files keep loading.
 - Persisted shape blobs (`brep/<uuid>.bin` in `.prtcad`, `SolidOp::Boolean`
@@ -1116,7 +1172,7 @@ same orbit before assuming the pass costs anything.
 
 **The 3D scene is cached between changes.** The scene pass resolves into a
 persistent scene image and runs only when `scene_fingerprint(frame)`
-(`render_vk/src/core.rs`) changes; every frame copies that image under the
+(`render_wgpu/src/core.rs`) changes; every frame copies that image under the
 UI pass. UI-only frames (hover, panels, typing) therefore cost ~2 ms on any
 model. **Completeness of the fingerprint is the contract**: anything the
 scene pass reads (camera, viewport, lighting, per-body id/revision/mesh
@@ -1217,7 +1273,7 @@ on the start page (`Screen::Start`); the recent list lives in
 - Solver/geometry math is unit-tested next to the code. Assert geometric
   properties (bounds, tangency, closure), not implementation details.
 - Before committing: fmt, clippy (zero warnings), full test suite, and a
-  short `cargo run` smoke check watching for `printcad.vulkan` output. For
+  short `cargo run` smoke check watching for `printcad.gpu` output. For
   UI work, a headless capture of the release build (`PRINTCAD_BENCH_SKETCH=pad
   PRINTCAD_EXIT_AFTER_MS=…`, `grim`, `ydotool` for keys) is the smoke
   check; verify on a small STEP, never the huge assembly files.

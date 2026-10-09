@@ -14,7 +14,7 @@ boundary that is cheap and deterministic enough.
 | Workbench packages | The SDK packages built by cargo and run through the host | `cargo test -p wb_wasm` (`tests/packages.rs`, builds `sdk/`); the `rogue` package misbehaves on request |
 | Generated artifacts and indexes | A test that fails on drift | the icon table test in `ui_kit/src/icon.rs`, the command reference in `docs/SCRIPTING.md` (`PRINTCAD_WRITE_DOCS=1` rewrites), the release notes entry for the running version |
 | The host-bench seam | A lint over the host's sources | `crates/app_shell/src/app/seam_lint.rs` and the CI grep |
-| Rendering and the whole app | A headless run with the bench hooks | `PRINTCAD_BENCH_SKETCH=pad PRINTCAD_EXIT_AFTER_MS=…`, `PRINTCAD_BENCH_PICTURE`, `grim`; watch for `printcad.vulkan` output; on a small STEP, never a huge assembly |
+| Rendering and the whole app | A headless run with the bench hooks | `PRINTCAD_BENCH_SKETCH=pad PRINTCAD_EXIT_AFTER_MS=…`, `PRINTCAD_BENCH_PICTURE`, `grim`; watch for `printcad.gpu` output; on a small STEP, never a huge assembly |
 | Windows and macOS | CI only | the `platforms` job of `ci.yml`; nobody has run the app there on real hardware |
 
 ## Rules

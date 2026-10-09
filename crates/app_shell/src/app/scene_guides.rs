@@ -8,7 +8,7 @@ use axes::AxisSystem;
 use core_document::datum::BasePlane;
 use glam::Vec3;
 use kernel_api::TriMesh;
-use render_vk::{BodySubmission, GridSubmission, HighlightState};
+use render_wgpu::{BodySubmission, GridSubmission, HighlightState};
 use settings::ProjectionMode;
 use ui_kit::tokens;
 use uuid::Uuid;

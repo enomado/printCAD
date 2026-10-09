@@ -1,10 +1,11 @@
 //! Per-frame work: pacing, scene submission assembly, UI run, render, pick.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use glam::Vec3;
-use render_vk::{
+use render_wgpu::{
     BodySubmission, GpuLight, HighlightState, LightingData, RenderBackend,
     ViewportRect as RenderViewportRect,
 };
@@ -721,6 +722,11 @@ impl PrintCadApp {
         self.drive_chats();
         self.drive_picture();
         self.drive_autosave();
+        crate::platform::set_unsaved(
+            std::iter::once(&self.session)
+                .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()))
+                .any(|session| session.document.metadata().dirty()),
+        );
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();
@@ -838,6 +844,7 @@ impl PrintCadApp {
                         fps: (!self.fps_display_idle).then_some(self.current_fps),
                         scene_redraws_per_s: self.scene_redraws_per_s,
                         gpu_name: self.gpu_name.as_deref(),
+                        graphics_api: self.graphics_api,
                         gpus: &self.available_gpus,
                         hovered_point: self.session.hovered_world_pos,
                         pivot_screen_pos,

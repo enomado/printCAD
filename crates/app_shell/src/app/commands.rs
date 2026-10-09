@@ -308,6 +308,8 @@ impl PrintCadApp {
                 UiCommand::InstallPackage => {
                     self.start_file_dialog(crate::app::doc_io::FileDialogKind::InstallPackage)
                 }
+                #[cfg(target_arch = "wasm32")]
+                UiCommand::ChooseNavDevice => self.nav_device.choose_device(),
                 UiCommand::RemovePackage(id) => self.remove_package(&id),
                 UiCommand::InstallPackageFromGithub(text) => self.install_package_from_github(text),
                 UiCommand::CheckPackageUpdates => self.check_package_updates(),
@@ -484,6 +486,7 @@ impl PrintCadApp {
                 UiCommand::StartNew(kind) => intents.start_new = Some(kind),
                 UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
                 UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
+                UiCommand::DownloadDocument => self.download_document(),
             }
         }
 
@@ -738,7 +741,7 @@ impl PrintCadApp {
             self.start_new_document(kind);
         }
         if let Some(path) = intents.open_recent {
-            if path.exists() {
+            if crate::platform::exists(&path) {
                 self.open_document_at(path);
             } else {
                 app_log::error(format!("`{}` is gone; removed from recent", path.display()));
@@ -746,6 +749,20 @@ impl PrintCadApp {
             }
         }
         for path in intents.remove_recent {
+            // A page's recent list is the documents it keeps: taking one off
+            // deletes it from the browser, once the user says so.
+            if crate::platform::ON_PAGE {
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                if !crate::platform::confirm(&format!(
+                    "Delete {name} from this browser? It cannot be brought back."
+                )) {
+                    continue;
+                }
+                crate::platform::remove(&path);
+            }
             self.remove_recent(&path);
         }
         if intents.show_start_page {
@@ -1233,7 +1250,7 @@ impl PrintCadApp {
         index: usize,
         path: &std::path::Path,
     ) {
-        let bytes = match std::fs::read(path) {
+        let bytes = match crate::platform::read(path) {
             Ok(bytes) => bytes,
             Err(err) => {
                 app_log::error(format!("Could not read {}: {err}", path.display()));

@@ -43,7 +43,7 @@ pub use tab_bar::TabInfo;
 use core_document::WorkbenchId;
 use egui::Context;
 use egui_winit::{State, egui as egui_core};
-use render_vk::EguiSubmission;
+use render_wgpu::EguiSubmission;
 use settings::ProjectionMode;
 use winit::{event::WindowEvent, window::Window};
 
@@ -333,6 +333,7 @@ impl UiLayer {
             fps,
             scene_redraws_per_s,
             gpu_name,
+            graphics_api,
             gpus,
             hovered_point,
             pivot_screen_pos,
@@ -616,6 +617,9 @@ impl UiLayer {
                         registry,
                         gpus,
                         gpu_name,
+                        graphics_api,
+                        #[cfg(target_arch = "wasm32")]
+                        nav_device: nav_device.as_deref(),
                         nav_buttons,
                         scripts,
                         packages,
@@ -933,6 +937,9 @@ impl UiLayer {
                     registry,
                     gpus,
                     gpu_name,
+                    graphics_api,
+                    #[cfg(target_arch = "wasm32")]
+                    nav_device: nav_device.as_deref(),
                     nav_buttons,
                     scripts,
                     packages,

@@ -129,7 +129,11 @@ pub(super) fn face_tint(axis: Color32) -> Color32 {
 
 pub(crate) fn rasterize_svg(svg: &str) -> Option<ColorImage> {
     let mut fontdb = fontdb::Database::new();
+    // A browser page has no fonts of its own to load: the labels fall back
+    // to the app's bundled face, last in the template's list.
+    #[cfg(not(target_arch = "wasm32"))]
     fontdb.load_system_fonts();
+    fontdb.load_font_data(ui_kit::theme::SANS_SEMIBOLD_TTF.to_vec());
     let opt = Options {
         font_family: "DejaVu Sans".into(),
         languages: vec!["en".into()],

@@ -181,21 +181,19 @@ impl crate::PrintCadApp {
                     tx
                 })
                 .clone();
-            let spawned = std::thread::Builder::new()
-                .name("printcad-texture".to_string())
-                .spawn(move || {
-                    let pressed = pressing.apply(&local, Detail::PREVIEW);
-                    let placed = if placement.is_identity() {
-                        pressed
-                    } else {
-                        placement.mesh(&pressed)
-                    };
-                    let _ = tx.send(Made {
-                        body,
-                        key,
-                        mesh: Arc::new(placed),
-                    });
+            let spawned = crate::platform::spawn("printcad-texture", move || {
+                let pressed = pressing.apply(&local, Detail::PREVIEW);
+                let placed = if placement.is_identity() {
+                    pressed
+                } else {
+                    placement.mesh(&pressed)
+                };
+                let _ = tx.send(Made {
+                    body,
+                    key,
+                    mesh: Arc::new(placed),
                 });
+            });
             if let Err(err) = spawned {
                 crate::log_panel::warn(format!("The texture preview could not start: {err}"));
                 if let Some(preview) = self.session.textured.get_mut(&body) {

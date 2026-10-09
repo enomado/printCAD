@@ -18,6 +18,7 @@ const MONO_MEDIUM: &str = "mono-medium";
 /// rendered on the CPU) without scanning the system's fonts.
 pub const SANS_REGULAR_TTF: &[u8] = include_bytes!("../fonts/IBMPlexSans-Regular.ttf");
 pub const MONO_REGULAR_TTF: &[u8] = include_bytes!("../fonts/IBMPlexMono-Regular.ttf");
+pub const SANS_SEMIBOLD_TTF: &[u8] = include_bytes!("../fonts/IBMPlexSans-SemiBold.ttf");
 
 /// Proportional UI text at `size` px.
 pub fn sans(size: f32) -> FontId {
@@ -63,10 +64,7 @@ pub fn font_definitions() -> FontDefinitions {
         "plex-sans-medium",
         include_bytes!("../fonts/IBMPlexSans-Medium.ttf"),
     );
-    add(
-        "plex-sans-semibold",
-        include_bytes!("../fonts/IBMPlexSans-SemiBold.ttf"),
-    );
+    add("plex-sans-semibold", SANS_SEMIBOLD_TTF);
     add("plex-mono", MONO_REGULAR_TTF);
     add(
         "plex-mono-medium",
