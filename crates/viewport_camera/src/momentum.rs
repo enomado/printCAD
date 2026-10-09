@@ -30,7 +30,7 @@ use crate::navigation::{NavigationDrag, ScreenPoint};
 use crate::smoothing::SmoothingMillis;
 
 /// Wheel and trackpad-scroll tail arriving this soon after a release neither
-/// stop the inertia nor zoom: they are ignored (upstream `input_debounce`, И6).
+/// stop the inertia nor zoom: they are ignored.
 /// Later wheel input stops the inertia and zooms.
 pub const WHEEL_DEBOUNCE: Duration = Duration::from_millis(80);
 
@@ -60,9 +60,8 @@ pub struct MomentumLaw {
 }
 
 impl MomentumLaw {
-    /// Upstream defaults `damping 160`, `friction 0.2` in our units:
-    /// `a = 160/256·10 = 6.25 1/s`, `b = 0.2·40 = 8 px/s²`.
-    fn upstream(window: SmoothingMillis) -> Self {
+    /// Default decay: damping of 6.25 per second and friction of 8 px/s².
+    fn default_law(window: SmoothingMillis) -> Self {
         Self {
             damping: DampingRate(6.25),
             friction: Friction(8.0),
@@ -113,7 +112,7 @@ impl MomentumLaw {
     }
 }
 
-/// Inertia for pan and orbit separately; the wheel has none (И4).
+/// Inertia for pan and orbit separately; the wheel has none.
 /// Off by default: the default is the exact CAD camera, release means stop.
 /// Container default: a file without the field, or without one of its
 /// fields, loads the default (`NavigationSettings.momentum`).
@@ -130,8 +129,8 @@ impl Default for MomentumSettings {
         // Upstream `init_pan` 40 ms, `init_orbit` 60 ms.
         Self {
             enabled: false,
-            pan: MomentumLaw::upstream(SmoothingMillis(40)),
-            orbit: MomentumLaw::upstream(SmoothingMillis(60)),
+            pan: MomentumLaw::default_law(SmoothingMillis(40)),
+            orbit: MomentumLaw::default_law(SmoothingMillis(60)),
         }
     }
 }
@@ -150,7 +149,7 @@ impl MomentumSettings {
     }
 }
 
-/// Timestamped pointer positions of one hold, for the release speed (И3).
+/// Timestamped pointer positions of one hold, for the release speed.
 /// Time is the host's explicit clock since the press, like
 /// [`crate::smoothing::SmoothedInput`]; positions are the raw pointer, never
 /// a smoothed one.
@@ -271,7 +270,7 @@ impl Momentum {
         self.elapsed >= self.law.stop_time(self.speed)
     }
 
-    /// Wheel input now is a scroll tail of the gesture and is ignored (И6).
+    /// Wheel input now is a scroll tail of the gesture and is ignored.
     pub fn wheel_debounced(&self) -> bool {
         self.elapsed < WHEEL_DEBOUNCE
     }

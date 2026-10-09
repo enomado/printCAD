@@ -48,7 +48,7 @@ fn transitions(source: CameraController) -> Vec<CameraTransition> {
     ]
 }
 
-/// 🎯 **Переход сэмплится от источника по прошедшему времени.**
+/// Transitions sample the source pose using elapsed time.
 ///
 /// Whatever way the frames split the time (30/60/144 FPS or irregular), the
 /// sample at the same elapsed time is the same camera, and the end is the
@@ -182,7 +182,7 @@ fn a_projection_transition_is_a_dolly_zoom() {
     }
 }
 
-/// «Показать всё» glides: the pivot travels in a straight line to the
+/// Fit glides: the pivot travels in a straight line to the
 /// sphere's centre and the scale changes monotonically.
 #[test]
 fn a_fit_transition_moves_pivot_and_scale_monotonically() {

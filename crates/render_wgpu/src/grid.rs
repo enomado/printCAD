@@ -1,5 +1,5 @@
 //! Plane patches with three decades of antialiased lines and origin axes.
-use crate::mesh::DEPTH_FORMAT;
+use crate::mesh::{DEPTH_FORMAT, NO_CLIP};
 use crate::{FrameSubmission, GridSubmission};
 use egui_wgpu::wgpu;
 use wgpu::util::DeviceExt;
@@ -20,6 +20,8 @@ struct GridUniform {
     v_axis_color: [f32; 4],
 }
 impl GridUniform {
+    /// Measure the plane from a nearby node of the coarsest lattice so
+    /// shader coordinates stay small. Axis offsets keep the true origin.
     fn new(grid: &GridSubmission, frame: &FrameSubmission) -> Self {
         let dot = |axis: [f32; 3]| -> f64 {
             (0..3)
@@ -42,7 +44,7 @@ impl GridUniform {
         Self {
             view_proj: frame.view_proj,
             camera_step: with(frame.camera_pos, grid.step),
-            clip_plane: frame.clip_plane.unwrap_or([0.0, 0.0, 0.0, 1.0]),
+            clip_plane: frame.clip_plane.unwrap_or(NO_CLIP),
             anchor_radius: with(anchor, grid.radius),
             u_minor: with(grid.u, grid.minor_alpha),
             v_major: with(grid.v, grid.major_alpha),
@@ -161,6 +163,109 @@ impl GridPipeline {
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn grid(center: [f32; 3], step: f32) -> GridSubmission {
+        GridSubmission {
+            origin: [0.0; 3],
+            u: [1.0, 0.0, 0.0],
+            v: [0.0, 1.0, 0.0],
+            step,
+            center,
+            radius: 100.0,
+            forward: [0.0, 0.0, -1.0],
+            depth_range: [0.1, 1000.0],
+            color: [1.0; 3],
+            minor_alpha: 0.1,
+            major_alpha: 0.3,
+            u_axis_color: [1.0, 0.0, 0.0],
+            v_axis_color: [0.0, 1.0, 0.0],
+            axis_alpha: 0.8,
+        }
+    }
+
+    #[test]
+    fn the_plane_is_measured_from_a_node_next_to_the_patch() {
+        let uniform = GridUniform::new(
+            &grid([12_345.0, -6_789.0, 0.0], 1.0),
+            &FrameSubmission::default(),
+        );
+        assert_eq!(uniform.anchor_radius[..3], [12_300.0, -6_800.0, 0.0]);
+        assert_eq!(uniform.u_axis_color[3], -12_300.0);
+        assert_eq!(uniform.v_axis_color[3], 6_800.0);
+    }
+
+    #[test]
+    fn a_grid_in_another_plane_keeps_its_node_in_that_plane() {
+        let mut g = grid([0.0, 260.0, -133.0], 0.5);
+        g.origin = [0.0, 0.0, 7.0];
+        g.u = [0.0, 1.0, 0.0];
+        g.v = [0.0, 0.0, 1.0];
+        let uniform = GridUniform::new(&g, &FrameSubmission::default());
+        assert_eq!(uniform.anchor_radius[..3], [0.0, 250.0, -143.0]);
+    }
+
+    #[test]
+    fn every_grid_field_invalidates_the_cached_scene() {
+        use crate::core::scene_fingerprint;
+
+        let empty = FrameSubmission::default();
+        let frame = FrameSubmission {
+            grids: vec![grid([0.0; 3], 1.0)],
+            ..FrameSubmission::default()
+        };
+        let fingerprint = scene_fingerprint(&frame);
+        assert_ne!(fingerprint, scene_fingerprint(&empty));
+        assert_eq!(fingerprint, scene_fingerprint(&frame));
+        let vectors: [fn(&mut GridSubmission) -> &mut [f32]; 9] = [
+            |g| &mut g.origin,
+            |g| &mut g.u,
+            |g| &mut g.v,
+            |g| &mut g.center,
+            |g| &mut g.forward,
+            |g| &mut g.color,
+            |g| &mut g.u_axis_color,
+            |g| &mut g.v_axis_color,
+            |g| &mut g.depth_range,
+        ];
+        let mut checked = 0;
+        for vector in vectors {
+            let mut sample = frame.grids[0];
+            for index in 0..vector(&mut sample).len() {
+                let mut changed = FrameSubmission {
+                    grids: frame.grids.clone(),
+                    ..FrameSubmission::default()
+                };
+                vector(&mut changed.grids[0])[index] += 1.0;
+                assert_ne!(fingerprint, scene_fingerprint(&changed));
+                checked += 1;
+            }
+        }
+        let scalars: [fn(&mut GridSubmission) -> &mut f32; 5] = [
+            |g| &mut g.step,
+            |g| &mut g.radius,
+            |g| &mut g.minor_alpha,
+            |g| &mut g.major_alpha,
+            |g| &mut g.axis_alpha,
+        ];
+        for scalar in scalars {
+            let mut changed = FrameSubmission {
+                grids: frame.grids.clone(),
+                ..FrameSubmission::default()
+            };
+            *scalar(&mut changed.grids[0]) += 1.0;
+            assert_ne!(fingerprint, scene_fingerprint(&changed));
+            checked += 1;
+        }
+        assert_eq!(checked, 31);
+        let mut two = FrameSubmission {
+            grids: frame.grids.clone(),
+            ..FrameSubmission::default()
+        };
+        two.grids.push(frame.grids[0]);
+        assert_ne!(fingerprint, scene_fingerprint(&two));
+    }
+
     #[test]
     fn grid_shader_validates() {
         let module = naga::front::wgsl::parse_str(include_str!("../shaders/grid.wgsl")).unwrap();

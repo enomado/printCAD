@@ -30,7 +30,7 @@ fn surface(sphere: BoundingSphere) -> Vec<Vec3> {
         .collect()
 }
 
-/// 🎯 **Ф3: «показать всё» влезает и в узкое, и в широкое окно.**
+/// Fit contains the full sphere in both narrow and wide viewports.
 ///
 /// Every surface point of the sphere projects inside the viewport, and the
 /// fit is tight: on the binding axis the silhouette reaches within the margin

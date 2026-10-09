@@ -15,7 +15,7 @@ use glam::{Quat, Vec3};
 use crate::camera::CameraPose;
 
 /// Below this `|direction × world_up|` (sine of the angle) a view direction
-/// counts as along world_up. The same 0.01 rad as upstream.
+/// counts as along world_up, with a 0.01 rad tolerance.
 const POLE_SINE: f32 = 0.01;
 
 /// Rotation angles closer than this are a tie; the axis order decides.

@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// Длина в единицах пространства хозяина: расстояние вдоль луча, интервал отсечения,
-/// глубина камеры. Конечна и не отрицательна.
+/// Length in host model units: ray distance, clipping interval or camera
+/// depth. Finite and non-negative.
 ///
-/// Глубины камеры лежат в сохраняемых настройках (`NavigationLimits`), поэтому формат —
-/// голое число (`serde(transparent)`). Десериализация
-/// `new` не вызывает: значение из файла проверяет `NavigationLimits::validate`.
+/// Camera depths are stored in `NavigationLimits` as bare numbers through
+/// `serde(transparent)`. Deserialization bypasses `new`; file values are
+/// checked by `NavigationLimits::validate`.
 ///
-/// Арифметики пока нет намеренно: её добавляем, когда она понадобится коду библиотеки.
+/// Arithmetic is handled explicitly at the numerical boundary.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Length(pub f64);
@@ -24,11 +24,10 @@ impl Length {
     }
 }
 
-/// Знаковая длина: значение сустава-сдвига, смещение вдоль оси.
-/// Конечна, знак — направление вдоль оси. У [`Length`] инвариант `≥ 0`, для сдвига он
-/// не годится.
+/// Signed displacement along an axis. Finite; the sign indicates direction.
+/// Unlike [`Length`], offsets may be negative.
 ///
-/// Арифметики пока нет намеренно, как у [`Length`].
+/// Arithmetic is handled explicitly at the numerical boundary.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Offset(pub f64);
 

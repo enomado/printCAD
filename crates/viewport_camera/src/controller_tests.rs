@@ -108,10 +108,9 @@ fn projection_change_keeps_scale_and_pixel_of_an_off_axis_pivot() {
     }
 }
 
-/// 🎯 **Ф2: шаг зума не зависит от FOV.** One wheel event scales the model
-/// units per pixel at the anchor by `exp(-delta·k)` for any FOV (upstream
-/// had to divide its step by the FOV to get there; the exponential step on
-/// the distance gets it for free, and this pins it).
+/// One wheel event scales the model units per pixel at the anchor by
+/// `exp(-delta·k)` for any FOV: the exponential distance step preserves
+/// the same zoom ratio across projections.
 #[test]
 fn zoom_step_is_independent_of_the_fov() {
     for fov in [0.2_f32, 0.8, 1.5] {

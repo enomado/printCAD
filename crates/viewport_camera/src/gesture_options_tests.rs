@@ -59,7 +59,7 @@ fn close(a: CameraPose, b: CameraPose, what: &str) {
     );
 }
 
-/// 🎯 **О2: vertical orbit speed is its own setting.** The ratio scales the
+/// Vertical orbit speed is its own setting. The ratio scales the
 /// tilt only: a vertical drag at ratio 2 equals twice that drag at ratio 1,
 /// and a horizontal drag is bit-identical. Both orbit policies.
 ///
@@ -110,7 +110,7 @@ fn vertical_orbit_ratio_scales_the_tilt_and_leaves_the_turn() {
     assert_eq!(checked, 4);
 }
 
-/// 🎯 **О1: world-up orbit passes over the pole.** Without the option the
+/// World-up orbit passes over the pole. Without the option the
 /// elevation stops at the pole; with it the same drag carries the camera
 /// 0.3 rad over the top: upside down, with a level horizon (no roll), the
 /// anchor's pixel and depth kept, no jump at the pole. A new gesture from
@@ -188,7 +188,7 @@ fn pass_poles_tilts_over_the_pole_and_the_next_gesture_continues() {
     assert_eq!(checked, 8);
 }
 
-/// 🎯 **О3: zoom in a hold is a separate total.** Steps in any order with the
+/// Zoom in a hold is a separate total. Steps in any order with the
 /// same sum give the same camera; the zoomed gesture keeps its anchor
 /// relation (orbit: the pixel; pan: the pixel moved by the pointer), the
 /// anchor's scale is the press scale × e^zoom, and the total stops at the
@@ -262,7 +262,7 @@ fn hold_zoom_is_a_separate_total_clamped_to_the_limits() {
     assert_eq!(checked, 8);
 }
 
-/// 🎯 **О4: perspective zoom passes through the anchor.** Wheel notches at a
+/// Perspective zoom passes through the anchor. Wheel notches at a
 /// surface point: without the option the camera stops at `min_scale` in
 /// front of it; with it the camera travels on, the pivot staying under the
 /// pointer at the limit's scale, and passes the surface. Past the limit each

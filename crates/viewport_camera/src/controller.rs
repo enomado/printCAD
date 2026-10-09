@@ -45,7 +45,7 @@ pub struct CameraControllerConfig {
     /// Unit world-up axis for canonical views and world-up orbit.
     pub world_up: Vec3,
     /// Radians per logical pixel: `x` for horizontal drags (yaw), `y` for
-    /// vertical ones (pitch) — upstream `Sensitivity.orbit: Vec2` (О2).
+    /// vertical ones (pitch).
     pub orbit_sensitivity: Vec2,
     /// Exponential zoom coefficient per wheel unit/logical pixel.
     pub zoom_sensitivity: f32,
@@ -267,7 +267,7 @@ impl CameraController {
         self.pivot = anchor + translation;
     }
 
-    /// Change projection or FOV (Ф1, dolly zoom) keeping the scale at the
+    /// Change projection or FOV with dolly zoom, keeping the scale at the
     /// pivot's **axial** depth and the pivot's off-centre screen position.
     ///
     /// The pivot's view-space `x, y` stay; only the depth changes to the one

@@ -325,7 +325,7 @@ fn the_wheel_is_debounced_only_right_after_release() {
     assert!(!momentum.is_done(), "a fast fling outlives the debounce");
 }
 
-/// Settings stored before С5б (no `momentum`) load with inertia off; the new
+/// Settings without `momentum` load with inertia off; the
 /// field round-trips.
 #[test]
 fn settings_without_momentum_load_with_inertia_off_and_round_trip() {

@@ -27,6 +27,7 @@ mod step_import_modal;
 mod tab_bar;
 mod task_panel;
 pub(crate) mod toolbar;
+mod unsaved_modal;
 mod view_toolbar;
 pub use view_toolbar::PickFilter;
 
@@ -322,6 +323,7 @@ impl UiLayer {
             screen,
             recent,
             recoverable,
+            unsaved_question,
             active_tool: host_active_tool,
             active_workbench: host_active_workbench,
             settings,
@@ -631,6 +633,9 @@ impl UiLayer {
                     commands.push(request);
                 }
                 hud::draw_toasts(ui.ctx(), viewport_rect_logical);
+                if let Some(name) = &unsaved_question {
+                    unsaved_modal::draw(ui.ctx(), name, &mut commands);
+                }
                 Self::release_notice(
                     &mut self.preferences,
                     &mut self.dismissed_release,
@@ -1026,6 +1031,9 @@ impl UiLayer {
                 &mut commands,
             );
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);
+            if let Some(name) = &unsaved_question {
+                unsaved_modal::draw(ui.ctx(), name, &mut commands);
+            }
             Self::release_notice(
                 &mut self.preferences,
                 &mut self.dismissed_release,

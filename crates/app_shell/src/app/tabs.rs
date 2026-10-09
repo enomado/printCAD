@@ -138,22 +138,15 @@ impl PrintCadApp {
         app_log::info("No closed tab to reopen");
     }
 
-    /// Close tab `index`, saving or discarding its edits as the user
-    /// decides. `false` when they cancel. The last tab closing leaves a
-    /// blank one behind.
-    pub(crate) fn close_tab_interactive(&mut self, index: usize) -> bool {
+    /// Close tab `index` now, whatever edits it has: the user answered
+    /// for them (`app/unsaved.rs`). The last tab closing leaves a blank one
+    /// behind.
+    pub(crate) fn close_tab_now(&mut self, index: usize) {
         if index >= self.tabs.len() {
-            return false;
+            return;
         }
         let was_active = self.active_tab;
         self.switch_tab(index);
-        if !self.confirm_discard_or_save() {
-            self.switch_tab(was_active);
-            return false;
-        }
-        // A save the dialog started is still being written; the
-        // connection must not go away under it.
-        self.wait_for_document_saves();
         self.close_active_tab();
         // Closing a background tab keeps the one that was on screen.
         if was_active != index {
@@ -164,7 +157,6 @@ impl PrintCadApp {
             };
             self.switch_tab(back);
         }
-        true
     }
 
     /// Drop the tab on screen and bring a neighbour on, or a blank tab
@@ -204,31 +196,6 @@ impl PrintCadApp {
         self.registry
             .resume_sessions(std::mem::take(&mut self.session.bench_states));
         self.redraw_needed = true;
-    }
-
-    /// Every open tab's unsaved edits, each saved or discarded as the user
-    /// decides. `false` when they cancel on any of them.
-    pub(crate) fn confirm_close_all(&mut self) -> bool {
-        let was_active = self.active_tab;
-        for index in 0..self.tabs.len() {
-            let dirty = self.tabs[index]
-                .parked
-                .as_ref()
-                .unwrap_or(&self.session)
-                .document
-                .metadata()
-                .dirty();
-            if !dirty {
-                continue;
-            }
-            self.switch_tab(index);
-            if !self.confirm_discard_or_save() {
-                self.switch_tab(was_active);
-                return false;
-            }
-        }
-        self.switch_tab(was_active);
-        true
     }
 
     /// Run `f` with tab `index` on screen, then put things back. The

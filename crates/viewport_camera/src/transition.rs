@@ -30,7 +30,7 @@ pub struct CameraTransition {
 
 #[derive(Clone, Copy, Debug)]
 enum TransitionTarget {
-    /// Dolly zoom through FOVs, keeping the scale at the pivot (Ф1).
+    /// Dolly zoom through FOVs, keeping the scale at the pivot.
     Projection {
         from_fov: f32,
         target: ProjectionKind,

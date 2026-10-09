@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// Масштаб вида: единиц пространства хозяина на один логический пиксель экрана.
-/// Строго положителен и конечен.
+/// View scale in host model units per logical screen pixel.
+/// Finite and strictly positive.
 ///
-/// Лежит в сохраняемых настройках камеры (`crate::navigation::NavigationLimits`),
-/// поэтому формат — голое число (`serde(transparent)`). Десериализация `new` не вызывает; значение из
-/// файла проверяет `NavigationLimits::validate` на границе файла.
+/// Stored in `crate::navigation::NavigationLimits` as a bare number through
+/// `serde(transparent)`. Deserialization bypasses `new`; file values are
+/// checked by `NavigationLimits::validate`.
 ///
-/// Арифметики пока нет намеренно: её добавляем, когда она понадобится коду библиотеки.
+/// Arithmetic is handled explicitly at the numerical boundary.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PerPx(pub f64);

@@ -587,10 +587,13 @@ impl RendererCore {
                 multiview_mask: None,
             });
             set_viewport(&mut pass, viewport);
-            self.last_draw_stats =
-                self.mesh_renderer
-                    .draw(&mut pass, &self.mesh_cache, frame, viewport_px);
-            self.grid_renderer.draw(&mut pass);
+            self.last_draw_stats = self.mesh_renderer.draw(
+                &mut pass,
+                &self.mesh_cache,
+                frame,
+                viewport_px,
+                &self.grid_renderer,
+            );
             drop(pass);
             self.last_scene_fingerprint = Some(fingerprint);
         }

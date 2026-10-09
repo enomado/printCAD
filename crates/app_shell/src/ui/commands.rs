@@ -156,6 +156,8 @@ pub enum UiCommand {
     ReopenTab,
     /// Hand the document on screen to the browser as a download.
     DownloadDocument,
+    /// The user answered the unsaved-edits question.
+    AnswerUnsaved(crate::app::unsaved::Unsaved),
     CloseTab(uuid::Uuid),
     SelectTab(uuid::Uuid),
     /// The next (`1`) or previous (`-1`) tab, wrapping.

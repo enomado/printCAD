@@ -147,7 +147,7 @@ impl Default for NavigationLimits {
 
 impl NavigationLimits {
     pub fn validate(self) -> Result<(), String> {
-        // Bounded local f32 envelope, not the upstream's enormous-world promise.
+        // Keep the local f32 calculations within a bounded numerical envelope.
         for value in [self.min_scale.0, self.max_scale.0] {
             if !value.is_finite() || !(0.001..=10000.0).contains(&value) {
                 return Err(
@@ -208,25 +208,25 @@ pub struct NavigationSettings {
     /// this setting existed load with it off.
     #[serde(default)]
     pub momentum: MomentumSettings,
-    /// О2: vertical orbit speed relative to the horizontal `orbit_speed`
-    /// (upstream `Sensitivity.orbit: Vec2`). A ratio rather than a second
+    /// Vertical orbit speed relative to the horizontal `orbit_speed`.
+    /// A ratio rather than a second
     /// speed, so files saved before it existed load with 1 — Y = X at any
     /// `orbit_speed`.
     #[serde(default = "unit_ratio")]
     pub orbit_vertical_ratio: f32,
-    /// О1: world-up orbit (`keep_horizon`) passes over the poles instead of
-    /// stopping there (upstream `can_pass_tdc`). Past a pole the camera is
+    /// World-up orbit (`keep_horizon`) passes over the poles instead of
+    /// stopping there. Past a pole the camera is
     /// upside down with a level horizon: no roll is added, and the next
     /// gesture tilts the way the screen shows. Off by default.
     #[serde(default)]
     pub pass_poles: bool,
-    /// О3: wheel/pinch during a held pan or orbit zooms about the gesture's
-    /// anchor (upstream `MotionInputs::OrbitZoom/PanZoom`). Enabled by default.
+    /// Wheel/pinch during a held pan or orbit zooms about the gesture's
+    /// anchor. Enabled by default.
     #[serde(default = "zoom_in_hold_enabled")]
     pub zoom_in_hold: bool,
-    /// О4: in perspective, zooming in past `min_scale` moves the camera and
+    /// In perspective, zooming in past `min_scale` moves the camera and
     /// its anchor forward together instead of stopping, so the camera can
-    /// pass through a surface (upstream `zoom_through_objects`). Off by
+    /// pass through a surface. Off by
     /// default; see [`Self::zoom_to`].
     #[serde(default)]
     pub zoom_through: bool,
@@ -411,12 +411,12 @@ impl NavigationSettings {
     }
 
     /// Wheel/pinch zoom to `ln(target)` model units/px at `anchor`, which
-    /// keeps its pixel (К9: one exponential step). The target is clamped to
+    /// keeps its pixel through one exponential step. The target is clamped to
     /// the limits — in log space, so a Page event or a huge wheel delta
     /// neither overflows nor underflows. An anchor behind the camera is
     /// refused, as by [`CameraController::zoom`].
     ///
-    /// О4 `zoom_through` (perspective, zooming in below `min_scale`): the
+    /// `zoom_through` (perspective, zooming in below `min_scale`): the
     /// zoom first reaches the limit, then the camera travels on along the ray
     /// to the anchor, and the pivot moves ahead with it at the limit's
     /// distance `reach`. The travel continues the exponential zoom with its
@@ -488,7 +488,7 @@ impl NavigationSettings {
     ) -> NavigationDrag {
         let camera = self.configure_with_up(camera, world_up);
         let mut drag = NavigationDrag::new(camera, start, anchor, kind, self.pan_grip);
-        // О3: the hold's zoom is clamped to the limits relative to the press
+        // The hold's zoom is clamped to the limits relative to the press
         // scale; a press already beyond a limit may only zoom back towards it.
         let scale = camera.scale_at(anchor);
         drag.zoom_range = [
@@ -508,7 +508,7 @@ impl NavigationSettings {
             } else {
                 (screen_right - world_up * screen_right.dot(world_up)).normalize()
             };
-            // О1: past a pole the camera is upside down and its screen right
+            // Past a pole the camera is upside down and its screen right
             // opposes `up × back`. Tilting about the screen's side keeps a
             // vertical drag turning the view the way it did before the pole.
             let right = if self.pass_poles && right.dot(screen_right) < 0.0 {
@@ -542,7 +542,7 @@ impl NavigationSettings {
 /// same camera, independently of event frequency or the render frame rate.
 /// Inertia after release ([`crate::momentum::Momentum`]) keeps sampling it.
 ///
-/// О3: zoom inside the hold is a separate total, not a pointer event: the
+/// Zoom inside the hold is a separate total, not a pointer event: the
 /// snapshot zoomed about the anchor by `zoom`, then moved by the pointer. A
 /// wheel step makes a new value ([`Self::zoomed`]), so the camera depends
 /// only on the two totals, not on how wheel and pointer events interleave.
@@ -602,7 +602,7 @@ impl NavigationDrag {
         // The press takes hold of the anchor: it is the pivot from the first
         // sample on. By default release means stop at the pointed view; the
         // optional inertia samples this same snapshot at a virtual pointer.
-        // О3: the hold's zoom applies to the snapshot first. Zoom about the
+        // The hold's zoom applies to the snapshot first. Zoom about the
         // anchor keeps its pixel, so the gesture below sees a press camera
         // that differs only in scale, and keeps its anchor relation.
         let mut press = self.camera;
@@ -618,7 +618,7 @@ impl NavigationDrag {
                     let yaw = Quat::from_axis_angle(ground.up, -delta.x * ground.sensitivity.x);
                     let tilt = delta.y * ground.sensitivity.y;
                     // Rotation about the (yawed) side axis; positive raises the
-                    // camera. Without О1 elevation stops at the poles.
+                    // camera. Without `pass_poles` elevation stops at the poles.
                     let raise = if ground.pass_poles {
                         tilt
                     } else {
@@ -664,7 +664,7 @@ impl NavigationDrag {
         camera
     }
 
-    /// О3: one wheel/pinch step inside the hold, `ln` of the scale ratio
+    /// One wheel/pinch step inside the hold, `ln` of the scale ratio
     /// (< 0 zooms in), added to the hold's total and clamped to the limits.
     pub fn zoomed(self, log_step: f32) -> Self {
         assert!(log_step.is_finite(), "hold zoom step must be finite");

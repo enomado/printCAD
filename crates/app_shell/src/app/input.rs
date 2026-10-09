@@ -279,14 +279,7 @@ impl PrintCadApp {
         }
 
         match event {
-            WindowEvent::CloseRequested => {
-                if self.confirm_close_all() {
-                    // Let any queued write finish; exiting mid-file would
-                    // leave a truncated document.
-                    self.wait_for_all_document_saves();
-                    event_loop.exit();
-                }
-            }
+            WindowEvent::CloseRequested => self.request_quit(event_loop),
             WindowEvent::Resized(size) => {
                 if let Some(gfx) = self.gfx.as_mut() {
                     gfx.renderer.resize(size);

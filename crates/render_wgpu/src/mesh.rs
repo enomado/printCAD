@@ -685,9 +685,11 @@ impl MeshRenderer {
         cache: &MeshCache,
         frame: &FrameSubmission,
         viewport: [f32; 2],
+        grids: &crate::grid::GridPipeline,
     ) -> DrawStats {
         let bodies = &frame.bodies;
         if bodies.is_empty() {
+            grids.draw(pass);
             return DrawStats::default();
         }
         let view_proj = frame.view_proj;
@@ -793,6 +795,11 @@ impl MeshRenderer {
         }
 
         faces(pass, &mut stats, &self.wireframe, &|b| b.is_wireframe);
+
+        // Grids show through translucent bodies while staying behind their
+        // tint. Their pipeline binds its own uniforms at group zero.
+        grids.draw(pass);
+        pass.set_bind_group(0, &self.frame_bind_group, &[]);
 
         // Translucent bodies last, over everything opaque and its edges:
         // blended, depth-tested, never writing depth. Those drawn one layer
