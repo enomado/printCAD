@@ -803,6 +803,7 @@ impl PrintCadApp {
 
         {
             let tabs = self.tab_infos();
+            let unsaved_question = self.unsaved_question();
             let Some(gfx) = self.gfx.as_mut() else {
                 return;
             };
@@ -831,6 +832,7 @@ impl PrintCadApp {
                         screen: self.session.screen,
                         recent: &self.recent.files,
                         recoverable: &self.recoverable,
+                        unsaved_question,
                         active_tool: self.session.active_tool.clone(),
                         active_workbench: self.session.active_workbench.clone(),
                         settings: &self.user_settings,

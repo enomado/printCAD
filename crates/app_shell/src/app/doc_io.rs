@@ -140,23 +140,8 @@ impl PrintCadApp {
         self.session.document.assets().next().is_some()
     }
 
-    /// If the document is dirty, prompt Save / Discard / Cancel. Returns false when
-    /// the user cancels or save fails.
-    pub(crate) fn confirm_discard_or_save(&mut self) -> bool {
-        if !self.session.document.metadata().dirty() {
-            return true;
-        }
-        match crate::platform::ask_unsaved(
-            "Save changes before continuing? Save writes the file, Discard loses edits, Cancel stays here.",
-        ) {
-            crate::platform::Unsaved::Save => self.save_document_interactive(),
-            crate::platform::Unsaved::Discard => true,
-            crate::platform::Unsaved::Cancel => false,
-        }
-    }
-
     /// Save to [`Self::current_file`] or prompt for a path. Returns false if cancelled or save fails.
-    fn save_document_interactive(&mut self) -> bool {
+    pub(crate) fn save_document_interactive(&mut self) -> bool {
         let path = if let Some(ref p) = self.session.current_file {
             p.clone()
         } else {
@@ -172,9 +157,22 @@ impl PrintCadApp {
                     None => return false,
                 }
             }
-            // A browser saves by downloading: the name is all there is.
+            // A page keeps the document under a name it asks for.
             #[cfg(target_arch = "wasm32")]
-            PathBuf::from("/browser/untitled.prtcad")
+            {
+                let stem = self.session.document.name().to_string();
+                let name = crate::platform::ask_name("Save the document in this browser as", &stem);
+                match (page_documents(), name) {
+                    (Some(dir), Some(name)) => {
+                        let name = name
+                            .strip_suffix(".prtcad")
+                            .unwrap_or(&name)
+                            .replace(['/', '\\'], "-");
+                        dir.join(format!("{name}.prtcad"))
+                    }
+                    _ => return false,
+                }
+            }
         };
         match self.save_document_at(&path) {
             Ok(()) => true,
@@ -508,12 +506,9 @@ impl PrintCadApp {
             .and_then(|s| s.to_str())
             .map(|s| s.to_ascii_lowercase());
         if matches!(ext_lower.as_deref(), Some("json")) && self.document_has_asset_files() {
-            crate::platform::warn(
-                "Cannot save as JSON",
-                "This document has embedded assets (e.g. an imported STEP or IGES file). JSON export does not include those bytes. Save as .prtcad instead.",
-            );
             return Err(anyhow::anyhow!(
-                "JSON format cannot store embedded assets; save as .prtcad"
+                "this document has embedded assets (an imported STEP or IGES file, say), which \
+                 JSON cannot hold; save it as .prtcad"
             ));
         }
 

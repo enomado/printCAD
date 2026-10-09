@@ -20,6 +20,17 @@ version first.
 - Edges draw at the width you set on every graphics API.
 - Preferences › General › About names the graphics API in use, and `WGPU_BACKEND=gl` runs printCAD on OpenGL where Vulkan is not available.
 
+### Navigation
+- Orbiting and panning follow the drag from where it started, so the same movement of the mouse always gives the same view, however fast the pointer reports.
+- Orbit turns about the world's up and stops at the poles rather than rolling over; a saved Camera up setting keeps free rotation.
+- Fit uses the narrower side of the view, so a tall window frames the model too, and frames models larger than the wheel zooms out to. Switching between perspective and orthographic keeps the scale at the pivot.
+
+### Assembly
+- Move body has handles on the body: arrows, plane squares and a view disc slide it, rings turn it. The panel's Handles choice or Shift+G switches between moving and turning, a held handle shows its value, Shift steps it, and Escape puts the body back.
+
+### Closing
+- Closing a tab, the window or the app with unsaved edits asks in printCAD's own window (Save, Don't save, Cancel), quitting asking for each tab in turn. On Linux it no longer needs zenity: without it the close button did nothing.
+
 ### Kernel
 - Built on ogeom 0.9.14, which runs in a browser. Sections through shallow crossings state their error truthfully, and inside-or-outside checks answer where a ray only grazes a face.
 

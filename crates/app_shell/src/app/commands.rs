@@ -45,6 +45,8 @@ struct FrameIntents {
     orient_to_plane: Option<core_document::CameraOrientRequest>,
     finish_sketch: bool,
     quit: bool,
+    /// The answer to the unsaved-edits question.
+    unsaved_answer: Option<crate::app::unsaved::Unsaved>,
     request_workbench: Option<ActiveWorkbench>,
     undo: bool,
     redo: bool,
@@ -483,6 +485,7 @@ impl PrintCadApp {
                 UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
                 UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
                 UiCommand::DownloadDocument => self.download_document(),
+                UiCommand::AnswerUnsaved(answer) => intents.unsaved_answer = Some(answer),
             }
         }
 
@@ -803,12 +806,11 @@ impl PrintCadApp {
 
         // File > Quit / Ctrl+Q. Applied here so the rest of the frame
         // (rendering, picks, dialogs) finishes cleanly before the loop ends.
-        if intents.quit && self.confirm_close_all() {
-            app_log::info("Quit requested via menu / shortcut");
-            // A save started by the dialogs above is still being written;
-            // the exit would kill it mid-file.
-            self.wait_for_all_document_saves();
-            event_loop.exit();
+        if let Some(answer) = intents.unsaved_answer {
+            self.answer_unsaved(answer, event_loop);
+        }
+        if intents.quit {
+            self.request_quit(event_loop);
         }
     }
 
