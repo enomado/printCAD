@@ -114,7 +114,7 @@ cargo fmt --all                   # CI enforces --check
   autosaved copies; IndexedDB, read back before the app starts), `remove`,
   `list`, `exists`, `kept_dir`, `ON_PAGE` and `offers` (the commands a page
   leaves out of its menus, palette and keys), `set_unsaved` (the page asks
-  before it is left), `temp_dir`, `scratch_file`, `ask_unsaved`, `warn`; `platform/web.rs` the
+  before it is left), `confirm`, `ask_name`, `temp_dir`, `scratch_file`; `platform/web.rs` the
   page's picker and downloads), `app/server.rs` (`BrowserFiles` in place
   of the daemon), the kernel's jobs in the page's workers
   (`kernel_pool.rs`, `web/kernel-worker.js`: one for requests, more for
@@ -536,6 +536,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   held on `UiLayer` for its tab and drawn in the task panel while no bench
   task is open, editing the document live as a bench task does and
   closing through `TaskClosed` plus the `Recorded` calls it would make.
+  Closing a tab, the window or the app with unsaved edits asks in the
+  window (`app/unsaved.rs`, `ui/unsaved_modal.rs`) and the close waits for
+  the answer; quitting asks for each tab with edits in turn.
 
 The `Workbench` trait is the only seam between the host and a bench; the
 host never names a bench: `app/seam_lint.rs` and a CI grep over
