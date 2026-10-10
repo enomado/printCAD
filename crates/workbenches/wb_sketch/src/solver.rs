@@ -17,6 +17,10 @@ use crate::sketch::{
     Vec2D, X_AXIS_ID, Y_AXIS_ID, constraint_refs,
 };
 
+#[cfg(test)]
+#[path = "solver/migration.rs"]
+mod migration;
+
 /// Maximum damping retries per outer iteration before declaring a stall.
 const MAX_INNER_RETRIES: usize = 25;
 /// Initial Levenberg-Marquardt damping factor.

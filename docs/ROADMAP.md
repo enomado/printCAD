@@ -57,7 +57,7 @@ Each goes to the kernel's repository as an issue with its API, a repro, the
 bench numbers and an acceptance test (the time follows the touched region,
 the result the same as now).
 
-## Proposed sketch solver extraction
+## Proposed sketch solver extraction (L)
 
 [RFC 0003](rfcs/0003-standalone-sketch-solver.md) proposes a standalone 2D
 constraint solver with a numerical problem/result API, replayable fixtures

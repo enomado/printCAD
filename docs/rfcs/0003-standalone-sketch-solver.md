@@ -1,8 +1,8 @@
-# RFC 0003 Standalone 2D sketch solver
+# RFC 0003: Standalone 2D sketch solver
 
 - Status: proposed
 - Date: 2026-10-09
-- Scope: a new `sketch_solver` crate, the `wb_sketch` solver adapter,
+- Scope: a new `crates/sketch_solver` crate, the `wb_sketch` solver adapter,
   numerical fixtures, a replay example and CI checks
 
 ## Summary
@@ -74,6 +74,16 @@ types belong to the numerical problem. Serialization is an optional feature;
 JSON file handling belongs to a replay example. Production callers use the
 library directly.
 
+The crate lives at `crates/sketch_solver`, beside the other shared
+libraries. Its README defines the public API, supported inputs, numerical
+precision and replay commands, and the contract for copying the complete
+sources and tests between consumers. The crate map in `CLAUDE.md` gains
+its entry with milestone 3.
+
+Compilation for `wasm32-wasip2` establishes that the library can be linked
+into a workbench package. Access through the SDK's host calls needs its
+own contract and is outside this extraction.
+
 The core owns the complete set of mathematical relations the sketcher
 currently supports, including curve parameters introduced by contacts,
 internal alignment, linked offsets and array dimensions. Moving only the
@@ -87,6 +97,11 @@ a `Sketch`, sample for display, or edit document metadata remain in the
 workbench. There must be no callback from the core into workbench code.
 
 ## Problem and result contract
+
+The [problem and migration contract](0003-solver-contract.md) fixes the
+record fields, identity mapping, ordering and application boundary.
+The [equation inventory](0003-solver-equations.md) covers all 42 relations,
+their row counts, units, variables, hidden rules and geometric test links.
 
 The following names describe the proposed API; the first implementation
 settles their exact fields against the complete relation inventory:
