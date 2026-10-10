@@ -12,9 +12,11 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
+pub(crate) mod contact;
+
 use crate::sketch::{
     AxisDirection, ConstraintKind, GeometryElement, InternalRole, ORIGIN_ID, Reference, Sketch,
-    Vec2D, X_AXIS_ID, Y_AXIS_ID, constraint_refs,
+    SolverSettings, Vec2D, X_AXIS_ID, Y_AXIS_ID, constraint_refs,
 };
 
 #[cfg(test)]
@@ -92,34 +94,53 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
 }
 
 fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
-    if sys.specs.is_empty() || sys.vars.is_empty() {
-        // Nothing to solve can still leave nothing free: a line drawn on
-        // the ends of projected geometry, which the solver holds, cannot
-        // move though no constraint names it.
-        sketch.is_fully_constrained = sketch.geometry.iter().any(|g| !sketch.is_external(g.id()))
-            && dof_estimate(sketch) == 0;
-        sketch.unsolved = false;
-        return SolveOutcome::NothingToSolve;
-    }
+    let iteration = iterate(&sys, sketch.solver);
+    apply(sketch, &sys, &iteration);
+    iteration.outcome
+}
 
-    let mut x = sys.vars.clone();
-    let mut r = eval_residuals(&sys, &x);
-    let mut cost = sq_norm(&r);
-    let mut lambda = LAMBDA_INIT;
-    let mut iterations = 0;
-    let settings = sketch.solver;
+/// Numerical output before storage rounding and application updates. Even
+/// a stalled attempt exposes its iteration count and effective threshold.
+struct Iteration {
+    values: Vec<f64>,
+    outcome: SolveOutcome,
+    iterations: usize,
+    residual: f64,
+    threshold: f64,
+}
+
+/// This boundary reads only compiled equations and numerical settings. It
+/// neither rounds geometry nor refits splines, follows text or computes
+/// application flags; failed held attempts can therefore be inspected
+/// without applying their result.
+fn iterate(sys: &System, settings: SolverSettings) -> Iteration {
     let tolerance = if settings.tolerance > 0.0 {
         settings.tolerance
     } else {
         CONVERGENCE_TOL
     };
+    if sys.specs.is_empty() || sys.vars.is_empty() {
+        return Iteration {
+            values: sys.vars.clone(),
+            outcome: SolveOutcome::NothingToSolve,
+            iterations: 0,
+            residual: 0.0,
+            threshold: tolerance * var_scale(&sys.vars),
+        };
+    }
+
+    let mut x = sys.vars.clone();
+    let mut r = eval_residuals(sys, &x);
+    let mut cost = sq_norm(&r);
+    let mut lambda = LAMBDA_INIT;
+    let mut iterations = 0;
     let max_iterations = (settings.max_iterations as usize).max(1);
     let mut converged = inf_norm(&r) < tolerance * var_scale(&x);
 
     while !converged && iterations < max_iterations {
         iterations += 1;
 
-        let jac = jacobian(&sys, &x);
+        let jac = jacobian(sys, &x);
         let (jtj, jtr) = normal_equations(&jac, &r);
 
         // Each variable is damped by its own curvature plus the average
@@ -150,7 +171,7 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
             for (column, &j) in sys.free.iter().enumerate() {
                 trial[j] += step[column];
             }
-            let trial_r = eval_residuals(&sys, &trial);
+            let trial_r = eval_residuals(sys, &trial);
             let trial_cost = sq_norm(&trial_r);
             if trial_cost.is_finite() && trial_cost < cost {
                 x = trial;
@@ -175,8 +196,6 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
         }
     }
 
-    write_back(sketch, &sys, &x);
-
     let outcome = if converged {
         SolveOutcome::Converged { iterations }
     } else {
@@ -184,10 +203,35 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
             residual: inf_norm(&r),
         }
     };
+    Iteration {
+        threshold: tolerance * var_scale(&x),
+        values: x,
+        outcome,
+        iterations,
+        residual: inf_norm(&r),
+    }
+}
+
+/// Store the numerical answer before application post-processing. Flags
+/// intentionally use DoF measured on stored f32 geometry, not on the
+/// numerical iterate; a NothingToSolve answer does not write geometry.
+fn apply(sketch: &mut Sketch, sys: &System, iteration: &Iteration) {
+    if iteration.outcome == SolveOutcome::NothingToSolve {
+        // Nothing to solve can still leave nothing free: a line drawn on
+        // the ends of projected geometry, which the solver holds, cannot
+        // move though no constraint names it.
+        sketch.is_fully_constrained = sketch.geometry.iter().any(|g| !sketch.is_external(g.id()))
+            && dof_estimate(sketch) == 0;
+        sketch.unsolved = false;
+        return;
+    }
+    debug_assert!(iteration.residual.is_finite());
+    debug_assert!(iteration.threshold.is_finite());
+    debug_assert!(iteration.iterations <= sketch.solver.max_iterations.max(1) as usize);
+    write_back(sketch, sys, &iteration.values);
     sketch.is_fully_constrained =
-        matches!(outcome, SolveOutcome::Converged { .. }) && dof_estimate(sketch) == 0;
-    sketch.unsolved = matches!(outcome, SolveOutcome::NotConverged { .. });
-    outcome
+        matches!(iteration.outcome, SolveOutcome::Converged { .. }) && dof_estimate(sketch) == 0;
+    sketch.unsolved = matches!(iteration.outcome, SolveOutcome::NotConverged { .. });
 }
 
 /// The end point a line or arc `a` shares with arc `b` (or with line `b`
@@ -380,7 +424,7 @@ enum CurveVars {
         shape: CurveShape,
     },
     Spline {
-        basis: crate::spline::Basis,
+        basis: crate::spline::math::Basis,
         control: Vec<usize>,
     },
 }
@@ -1293,6 +1337,38 @@ fn build_system_with(
     held: &[Uuid],
     arcs_always: bool,
 ) -> System {
+    prepare(sketch, exclude, held, arcs_always)
+}
+
+/// Application preparation supplies the compiler with stored geometry,
+/// active relation selection and the held/derived variable classifications.
+fn prepare(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid], arcs_always: bool) -> System {
+    let pins = ApplicationPins {
+        external: sketch.external_ids(),
+        held: held.to_vec(),
+        derived: crate::spline::derived_points(sketch)
+            .into_iter()
+            .chain(crate::text::outline_points(sketch))
+            .collect(),
+    };
+    compile_system(sketch, exclude, &pins, arcs_always)
+}
+
+/// These classifications belong to the caller, not to numerical equation
+/// construction. Gesture-held points stay distinct because excluding a
+/// constraint must reclassify ellipse foci against that particular hold.
+struct ApplicationPins {
+    external: std::collections::HashSet<Uuid>,
+    held: Vec<Uuid>,
+    derived: Vec<Uuid>,
+}
+
+fn compile_system(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    pins: &ApplicationPins,
+    arcs_always: bool,
+) -> System {
     let mut vars = Vec::new();
     let mut point_vars = HashMap::new();
     let mut radius_vars = HashMap::new();
@@ -1384,39 +1460,35 @@ fn build_system_with(
     }
     // External geometry is where the solid's edge put it: its points and
     // radii are held still, as the origin is.
-    for id in sketch.external_ids() {
-        if let Some(&v) = point_vars.get(&id) {
+    for id in &pins.external {
+        if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
         }
-        if let Some(&r) = radius_vars.get(&id) {
+        if let Some(&r) = radius_vars.get(id) {
             pinned.push(r);
         }
-        if let Some(&k) = shape_vars.get(&id) {
+        if let Some(&k) = shape_vars.get(id) {
             pinned.extend([k, k + 1, k + 2]);
         }
     }
-    for id in held {
+    for id in &pins.held {
         if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
         }
     }
     // A spline drawn through points has its control points worked out from
     // them after the solve: the solver leaves them be.
-    for id in crate::spline::derived_points(sketch) {
-        if let Some(&v) = point_vars.get(&id) {
-            pinned.extend([v, v + 1]);
-        }
-    }
-    // Text outlines follow their point after the solve.
-    for id in crate::text::outline_points(sketch) {
-        if let Some(&v) = point_vars.get(&id) {
+    // Fit-spline controls and text outlines are worked out by the caller
+    // after the solve; the compiler receives their held IDs explicitly.
+    for id in &pins.derived {
+        if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
         }
     }
     // A focus only its ellipse holds follows the shape after the solve,
     // so moving it costs the solve nothing: a radius dragged past the
     // other trades the axes as it does with the foci hidden.
-    let derived_foci = derived_foci(sketch, exclude, held);
+    let derived_foci = derived_foci(sketch, exclude, &pins.held);
     for id in &derived_foci {
         if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
@@ -1500,7 +1572,7 @@ fn build_system_with(
                 })
             }
             GeometryElement::BSpline(b) => Some(CurveVars::Spline {
-                basis: crate::spline::Basis::of(b)?,
+                basis: crate::spline::basis_of(b)?,
                 control: b
                     .control_points
                     .iter()
@@ -1913,7 +1985,7 @@ fn build_system_with(
                             p,
                             c,
                             r,
-                            inside: crate::measure::point_inside(
+                            inside: crate::solver::contact::point_inside(
                                 segment_length(&vars, c, p),
                                 vars[r],
                             ),
@@ -1933,7 +2005,7 @@ fn build_system_with(
                             r1,
                             c2,
                             r2,
-                            nested: crate::measure::circles_nest(
+                            nested: crate::solver::contact::circles_nest(
                                 segment_length(&vars, c1, c2),
                                 vars[r1],
                                 vars[r2],
@@ -3981,7 +4053,7 @@ mod curve_constraints {
         let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline) else {
             panic!("not a spline");
         };
-        let basis = crate::spline::Basis::of(b).unwrap();
+        let basis = crate::spline::basis_of(b).unwrap();
         let control: Vec<[f64; 2]> = b
             .control_points
             .iter()
@@ -3990,8 +4062,7 @@ mod curve_constraints {
                 [f64::from(p.x), f64::from(p.y)]
             })
             .collect();
-        basis
-            .sample(&control, 2000)
+        crate::spline::sample_basis(&basis, &control, 2000)
             .into_iter()
             .map(|p| p.to_glam())
             .collect()

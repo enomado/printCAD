@@ -837,6 +837,78 @@ fn corpus_checks_geometric_meaning_and_held_fallback() {
 }
 
 #[test]
+fn iteration_exposes_failed_attempts_without_application_writeback() {
+    let cases = cases();
+    for (input, held) in &cases {
+        let before = serde_json::to_value(input).unwrap();
+        let system = prepare(input, None, held, false);
+        let result = iterate(&system, input.solver);
+        assert_eq!(
+            serde_json::to_value(input).unwrap(),
+            before,
+            "{}",
+            input.name
+        );
+        assert!(
+            result.values.iter().all(|value| value.is_finite()),
+            "{}",
+            input.name
+        );
+        assert_eq!(
+            result.residual,
+            inf_norm(&eval_residuals(&system, &result.values))
+        );
+        assert_eq!(
+            result.threshold,
+            input.solver.tolerance * var_scale(&result.values)
+        );
+        match result.outcome {
+            SolveOutcome::Converged { iterations } => {
+                assert_eq!(result.iterations, iterations);
+                assert!(result.residual < result.threshold);
+            }
+            SolveOutcome::NotConverged { residual } => {
+                assert_eq!(result.residual, residual);
+                assert!(result.iterations > 0);
+                assert!(result.residual >= result.threshold);
+            }
+            SolveOutcome::NothingToSolve => assert_eq!(result.iterations, 0),
+        }
+        if input.name == "held_fallback" {
+            assert!(matches!(result.outcome, SolveOutcome::NotConverged { .. }));
+            // The failed numerical attempt itself keeps the held point;
+            // application retry is responsible for releasing it later.
+            let at = system.point_vars[&held[0]];
+            assert_eq!(result.values[at], 40.0);
+            assert_eq!(
+                input.point_position(held[0]).unwrap(),
+                Vec2D::new(40.0, 0.0)
+            );
+        }
+    }
+}
+
+#[test]
+fn numerical_residual_and_stored_geometry_are_measured_separately() {
+    let (mut input, held) = cases()
+        .into_iter()
+        .find(|(s, _)| s.name == "ordinary")
+        .unwrap();
+    let system = prepare(&input, None, &held, false);
+    let result = iterate(&system, input.solver);
+    assert!(matches!(result.outcome, SolveOutcome::Converged { .. }));
+    assert!(result.residual < result.threshold);
+    apply(&mut input, &system, &result);
+    let a = input.point_position(Uuid::from_u128(1)).unwrap().to_glam();
+    let b = input.point_position(Uuid::from_u128(2)).unwrap().to_glam();
+    assert!(a.length() < 1e-5);
+    assert!((b.y - a.y).abs() < 1e-5);
+    assert!(((b - a).length() - 10.0).abs() < 1e-4);
+    assert!(input.is_fully_constrained);
+    assert!(!input.unsolved);
+}
+
+#[test]
 fn corpus_comparison_rejects_geometry_and_metadata_mutations() {
     let (input, held) = cases()
         .into_iter()
@@ -862,16 +934,25 @@ fn corpus_comparison_rejects_geometry_and_metadata_mutations() {
 fn measure_migration_baseline() {
     let inputs = cases();
     let repetitions = 50;
-    for phase in ["compile", "solve_apply", "diagnose"] {
+    for phase in ["compile", "iterate", "solve_apply", "diagnose"] {
+        // Preparation is outside the iteration timer. The other phases
+        // keep their whole-corpus application-boundary measurement.
+        let prepared: Vec<_> = inputs
+            .iter()
+            .map(|(input, held)| prepare(input, None, held, false))
+            .collect();
         let start = Instant::now();
         for _ in 0..repetitions {
-            for (input, held) in &inputs {
+            for ((input, held), system) in inputs.iter().zip(&prepared) {
                 match phase {
                     "compile" => {
                         std::hint::black_box(build_system_holding(input, None, held));
                     }
                     "solve_apply" => {
                         std::hint::black_box(solve_holding(&mut input.clone(), held));
+                    }
+                    "iterate" => {
+                        std::hint::black_box(iterate(system, input.solver));
                     }
                     "diagnose" => {
                         std::hint::black_box(diagnose(input));

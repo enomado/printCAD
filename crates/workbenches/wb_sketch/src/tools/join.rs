@@ -182,7 +182,8 @@ pub fn join(sketch: &mut Sketch, selected: &HashSet<Uuid>, tolerance: f32) -> To
     }
     // The fit's knots are the even ones a spline takes when it has none of
     // its own.
-    let Some((_, control)) = spline::fit_chain(&samples, f64::from(tolerance), MAX_CONTROL_POINTS)
+    let Some((_, control)) =
+        spline::math::fit_chain(&samples, f64::from(tolerance), MAX_CONTROL_POINTS)
     else {
         return ToolEffect::log(format!(
             "No spline follows these curves within {tolerance} mm; a sharp corner needs a looser tolerance"
