@@ -15,9 +15,7 @@ mod application_tests;
 #[cfg(test)]
 #[path = "solver/migration.rs"]
 mod migration;
-#[cfg(test)]
-#[allow(dead_code)]
-mod oracle;
+pub mod report;
 /// Result of a constraint solve.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SolveOutcome {

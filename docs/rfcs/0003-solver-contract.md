@@ -1,9 +1,10 @@
 # Solver problem and migration contract
 
-This specifies milestone 1 of [RFC 0003](0003-standalone-sketch-solver.md).
+This specifies the public boundary of [RFC 0003](0003-standalone-sketch-solver.md).
 The first copy of the library is `crates/sketch_solver`. Its modules are
 `problem`, `compile`, `curves`, `spline`, `residual`, `solve`, `freedom`, and
-`diagnosis`. The module paths, rather than re-exports, identify public types.
+`diagnosis`, `input`, `contact`, `trace`, and optional `replay`. The module
+paths, rather than re-exports, identify public types.
 
 ## Identity and ordering
 
@@ -14,7 +15,7 @@ The adapter maps a UUID through `as_u128()` and reconstructs it through
 `Uuid::from_u128()`. The inverse is exact, including UUID ordering used to
 order ellipse focus rules. Point and curve identities remain separate even
 if they carry the same number; duplicate identities within a domain fail
-validation. `ItemId` explicitly distinguishes a point from a curve.
+validation. `ItemReference` explicitly distinguishes a point from a curve.
 
 Origin and coordinate axes use `PointReference::Origin` and
 `CurveReference::{XAxis,YAxis}`; ordinary references carry a typed ID.
@@ -33,7 +34,7 @@ explicit curve-ID sort. IDs in the result always name the caller's input.
 
 `problem::Problem` owns:
 
-- `geometry: Vec<Geometry>`: points with `[f64; 2]` coordinates; lines
+- `geometry: Vec<Geometry>`: points with `Vector { x, y }` coordinates; lines
   with typed endpoints; circles and arcs with centre, radius and arc
   endpoints; ellipses with centre, major-vector and initial minor radius,
   optional arc endpoints; hyperbolas/parabolas with centre or vertex,
@@ -44,11 +45,11 @@ explicit curve-ID sort. IDs in the result always name the caller's input.
   driving application relations enter this vector. Internal alignment
   includes a typed role and item. Generic gap/contact operands use typed
   item references, rather than an untyped ID with guessed interpretation.
-- `external: Vec<ItemId>`: explicitly fixed geometry and its points;
+- `external: Vec<ItemReference>`: explicitly fixed geometry and its points;
   external shape degrees of freedom never count as free.
-- `held_points: Vec<PointId>`: the current gesture's held points, used in
+- `held_points: Vec<PointReference>`: the current gesture's held points, used in
   focus classification as well as variable pinning.
-- `application_held_points: Vec<PointId>`: fit-spline controls and text
+- `application_held_points: Vec<PointReference>`: fit-spline controls and text
   outlines that the application updates after applying a result. They
   have no font, image, fit-point or document dependencies in the core.
 - `settings: Settings`: effective positive finite tolerance, positive
@@ -58,53 +59,57 @@ explicit curve-ID sort. IDs in the result always name the caller's input.
   replay records every value. The adapter resolves the application's
   zero-iteration and nonpositive-tolerance fallback before construction.
 
-`solve::solve(&Problem) -> Result<Solution, InputError>` returns:
+The validated entry points are:
 
-- `Outcome`: `Converged`, `NotConverged` or `NothingToSolve`;
-  the iteration count is explicit even for an unsuccessful attempt.
-- Ordered solved point positions, curve radii and participating shapes,
-  plus solved auxiliary parameters. Untouched geometry remains addressable
-  by the same IDs. Held values stay unchanged.
-- The effective convergence threshold, maximum residual and ordered
-  residual rows, each with `EquationIndex`, value, unit and origin.
-- A compilation trace: initial variable values, free indices, contact
-  parameters, selected contact/gap branches, ray endpoint ordering and
-  the exact ordered residual specifications. This trace supports replay
-  of iteration without reselecting branches.
-- Per-constraint compilation reports, including `NoEquations` when a
-  valid application relation naturally contributes no rows (control
-  polygon, derived focus or a pitch with no step).
+- `compile::compile(&Problem) -> Result<System, input::InputError>`.
+- `solve::solve(&Problem) -> Result<Iteration, input::InputError>`.
+- `freedom::analyze(&Problem) -> Result<Freedom, input::InputError>`.
+- `diagnosis::analyze(&Problem) -> Result<Diagnosis, input::InputError>`.
 
-`freedom::degrees_of_freedom(&Problem) -> Result<Freedom, InputError>`
-returns the free-variable count, Jacobian rank, uncompiled free-shape
-count and their difference. It compiles circular-arc endpoint rules even
-when ordinary solve has no user residual. A hidden parabola minor slot is
-pinned. `Freedom` must not substitute for the application's nudge-based
-`free_points` policy.
+`Iteration` returns ordered `f64` values, `SolveOutcome`, iterations even
+for unsuccessful attempts, residual infinity norm and effective threshold.
+`System` provides typed point/radius/shape accessors and variable/equation
+indices into numerical arrays. Held values stay unchanged. `Length`,
+`Radians` and `Ratio` distinguish quantities; `Direction` is dimensionless
+and `ControlEdgeIndex` identifies a spline control edge.
 
-`diagnosis::diagnose(&Problem) -> Result<Diagnosis, InputError>` returns
-DoF, ordered redundant/conflicting `ConstraintId`s and `analyzed`. It
-counts semantic constraints, including valid zero-row constraints, towards
-the limit (60 by default). Each exclusion probe recompiles shape variables
-and derived foci from the remaining constraints and the probe's held set.
-Numerical diagnosis has no callback into application post-processing;
-the corpus must expose any difference this boundary introduces.
+`trace::snapshot` records initial values, free indices, contact parameters,
+selected branches, ray order, residual specifications and equation provenance.
+Every constraint has a `ConstraintRows` record, including valid zero-row
+relations. `replay::run`, enabled with serde, combines this trace, the answer,
+ordered residual values with origins, freedom and diagnosis into one versioned
+result. Equation units and mixed scaling are specified in the equation inventory;
+the numerical result does not assign a single physical unit to all residuals.
 
-`problem::InputError` identifies the record and reason: duplicate ID,
-missing or wrong-kind reference, nonfinite number, unsupported geometry
-or relation domain, invalid settings, or invalid spline data. Finite
-zero-length lines and coincident centres remain admissible and use the
-existing numerical floors; inability to solve them is a numerical outcome.
-Unsupported fixture schemas are rejected by the replay reader before
-constructing a problem. No malformed input silently loses a relation.
+`Freedom` reports free variables, Jacobian rank, uncompiled free shapes and
+their difference. Rank compilation includes arc endpoint rules even without
+user residuals. A hidden parabola minor slot is pinned. This analysis does not
+replace the application's nudge-based `free_points` policy.
+
+`Diagnosis` reports DoF, ordered redundant/conflicting IDs and `analyzed`.
+The default limit is 60 semantic constraints, including valid zero-row relations.
+Each probe recompiles geometry, shape variables and derived foci. Standalone
+diagnosis applies a solved `f64` configuration. `diagnose_at` allows the
+application to supply its configuration after f32 write-back, spline refit and
+text following, without callbacks into the application.
+
+`input::InputError` distinguishes duplicate IDs, missing references,
+nonfinite geometry, invalid relation domains/settings and invalid splines.
+Finite degenerate geometry remains admissible; failure to converge is a
+numerical outcome. Replay rejects unsupported schema versions separately.
 
 ## Adapter contract
 
-`prepare` builds the ordered problem and `IdMap`, plus a report of every
-excluded application constraint: inactive, reference dimension, missing
-geometry or unsupported operand kind. Partial composite relations report
-which members were excluded; they cannot vanish behind a successful solve.
-An exhaustive match over `ConstraintKind` enforces the 42-variant mapping.
+`prepare` builds the ordered problem with reversible UUID-to-typed-ID
+conversion. An exhaustive match enforces all 42 relation mappings. Inactive and
+reference dimensions are filtered here; unresolved stored references retain
+the application's zero-row compatibility through trusted `compile_system`.
+
+`wb_sketch::solver_report::compilation_reports` inspects every stored relation:
+inactive/reference/compiled/no-equations disposition, typed equation indices,
+strict semantic input errors, and omitted pair indices for partial Offset
+relations. Valid zero-row relations and malformed saved relations are observable
+separately. This inspection does not alter numerical solve or diagnosis policy.
 
 `apply` writes f32 positions and radii, normalizes ellipse axes in the
 current f32 operation order, renames major/minor dimensions and internal
@@ -129,8 +134,8 @@ separation. A missing second point measures the first from zero.
 are periodic directions with current wrapped errors. `ArcAngle` and
 `ArcLength` use a CCW sweep in `(0, 2π]`, with equal endpoints denoting a
 full turn. New standalone inputs outside this sweep domain fail explicitly;
-the adapter reports unsupported legacy domains without silently replacing
-them. This does not introduce a signed-sweep or multi-turn arc model.
+the application's explicit compilation report identifies unsupported legacy
+domains; its trusted path retains saved-document behaviour. This does not introduce a signed-sweep or multi-turn arc model.
 
 Tangency selects the initial external/internal branch once; equal errors
 select external. A shared line/arc or arc/arc endpoint uses its endpoint
@@ -170,9 +175,8 @@ cargo test -p wb_sketch --release --no-default-features --locked --lib \
   solver::migration::measure_migration_baseline -- --ignored --exact --nocapture
 ```
 
-The timing test separates compilation and diagnosis. Its solve phase
-includes current write-back, refit and text following; milestone 2 adds a
-separate pure-iteration measurement. Clean and incremental library-test
+The timing test separates compilation, pure iteration and diagnosis. Its
+solve phase includes input cloning, write-back, refit and text following. Clean and incremental library-test
 builds use an isolated target directory and the same toolchain, profile,
 features and lockfile. No speedup is inferred from cached workspace builds.
 

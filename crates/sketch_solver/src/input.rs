@@ -126,14 +126,28 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
         if !constraint_ids.insert(c.id) {
             return Err(InputError::DuplicateConstraint(c.id));
         }
-        for id in c.kind.references() {
-            if !exists(id) {
-                return Err(InputError::MissingReference(id));
-            }
-        }
-        validate_relation(problem, c.id, &c.kind)?;
+        validate_constraint(problem, c)?;
     }
     Ok(())
+}
+
+/// Validate references and the numerical domain of one relation against the
+/// supplied geometry. Geometry and settings must be validated separately.
+pub fn validate_constraint(
+    problem: &Problem,
+    constraint: &crate::problem::Constraint,
+) -> Result<(), InputError> {
+    for id in constraint.kind.references() {
+        if !matches!(
+            id,
+            ItemReference::Point(PointReference::Origin)
+                | ItemReference::Curve(CurveReference::XAxis | CurveReference::YAxis)
+        ) && problem.get_geometry(id).is_none()
+        {
+            return Err(InputError::MissingReference(id));
+        }
+    }
+    validate_relation(problem, constraint.id, &constraint.kind)
 }
 
 fn validate_relation(
@@ -297,7 +311,7 @@ fn validate_relation(
                 }
                 InternalRole::ControlEdge(index) => {
                     matches!(element,ItemReference::Curve(e) if line(*e))
-                        && matches!(problem.get_geometry(*c),Some(Geometry::BSpline(b)) if (*index as usize) < b.control_points.len().saturating_sub(usize::from(!b.periodic)))
+                        && matches!(problem.get_geometry(*c),Some(Geometry::BSpline(b)) if (index.0 as usize) < b.control_points.len().saturating_sub(usize::from(!b.periodic)))
                 }
             }
         }

@@ -412,45 +412,74 @@ fn semantic_replay_corpus_matches_ported_solver() {
 }
 
 #[test]
-fn standalone_compiler_and_iteration_match_application_oracle() {
-    for (input, held) in cases() {
-        for arcs_always in [false, true] {
-            for held in [&[][..], held.as_slice()] {
-                let problem = adapter::prepare(&input, held);
-                for exclude in
-                    std::iter::once(None).chain(input.constraints.iter().map(|c| Some(c.id)))
-                {
-                    let old = oracle::capture(&input, exclude, held, arcs_always);
-                    let new = sketch_solver::compile::compile_system(
-                        &problem,
-                        exclude.map(|id| sketch_solver::problem::ConstraintId(id.as_u128())),
-                        arcs_always,
-                    );
-                    equivalent(&old["compiled"], &compiled_core(&new), &input.name);
-                    let new_answer = sketch_solver::solve::iterate(&new, problem.settings);
-                    equivalent(&old["values"], &json!(new_answer.values), &input.name);
-                    assert_eq!(
-                        old["iterations"],
-                        json!(new_answer.iterations),
-                        "{}",
-                        input.name
-                    );
-                    assert_eq!(
-                        old["residual"],
-                        json!(new_answer.residual),
-                        "{}",
-                        input.name
-                    );
-                    assert_eq!(
-                        old["threshold"],
-                        json!(new_answer.threshold),
-                        "{}",
-                        input.name
-                    );
-                }
-            }
-        }
-    }
+fn compilation_reports_explain_filtering_and_partial_offsets() {
+    use super::report::{Disposition, compilation_reports};
+    let mut sketch = Sketch::new("reports");
+    let a = point(&mut sketch, 0.0, 0.0);
+    let b = point(&mut sketch, 4.0, 0.0);
+    let first = line(&mut sketch, a, b);
+    let c = point(&mut sketch, 0.0, 2.0);
+    let d = point(&mut sketch, 4.0, 2.0);
+    let second = line(&mut sketch, c, d);
+    relation(
+        &mut sketch,
+        ConstraintKind::Length {
+            line: first,
+            length: 4.0,
+        },
+    );
+    sketch.constraints[0].active = false;
+    relation(
+        &mut sketch,
+        ConstraintKind::Length {
+            line: first,
+            length: 4.0,
+        },
+    );
+    sketch.constraints[1].driving = false;
+    let missing = Uuid::from_u128(999);
+    relation(
+        &mut sketch,
+        ConstraintKind::Length {
+            line: missing,
+            length: 4.0,
+        },
+    );
+    relation(
+        &mut sketch,
+        ConstraintKind::Offset {
+            pairs: vec![[first, second], [first, missing], [first, a]],
+            distance: 2.0,
+        },
+    );
+    relation(&mut sketch, ConstraintKind::Horizontal { element: first });
+    sketch.constraints[4].driving = false;
+    relation(
+        &mut sketch,
+        ConstraintKind::Pitch {
+            points: vec![a],
+            columns: 1,
+            distance: 1.0,
+            across: false,
+            direction: None,
+        },
+    );
+    let reports = compilation_reports(&sketch);
+    assert_eq!(reports.len(), 6);
+    assert_eq!(reports[0].disposition, Disposition::Inactive);
+    assert_eq!(reports[1].disposition, Disposition::ReferenceDimension);
+    assert_eq!(reports[2].disposition, Disposition::NoEquations);
+    assert!(matches!(
+        reports[2].input_error,
+        Some(sketch_solver::input::InputError::MissingReference(_))
+    ));
+    assert_eq!(reports[3].disposition, Disposition::Compiled);
+    assert_eq!(reports[3].equations.len(), 2);
+    assert_eq!(reports[3].skipped_members, vec![1, 2]);
+    assert!(reports[3].input_error.is_some());
+    assert_eq!(reports[4].disposition, Disposition::Compiled);
+    assert_eq!(reports[5].disposition, Disposition::NoEquations);
+    assert!(reports[5].input_error.is_none());
 }
 
 /// This match makes a new application relation require an inventory entry.
@@ -816,11 +845,6 @@ fn every_relation_has_an_equation_inventory_entry() {
         let problem = adapter::prepare(&probe, &[]);
         let core = sketch_solver::compile::compile_system(&problem, None, true);
         equivalent(&compiled(&sys), &compiled_core(&core), name);
-        equivalent(
-            &oracle::capture(&probe, None, &[], true)["compiled"],
-            &compiled_core(&core),
-            name,
-        );
     }
     assert_eq!(names.len(), 42);
 }

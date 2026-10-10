@@ -265,7 +265,13 @@ fn relation(sketch: &Sketch, kind: &C) -> core::Relation {
             columns,
             distance: length(distance),
             across,
-            direction: direction.map(|v| vector(Vec2D::from_glam(v.to_glam().normalize_or_zero()))),
+            direction: direction.map(|v| {
+                let v = v.to_glam().normalize_or_zero();
+                core::Direction {
+                    x: v.x as f64,
+                    y: v.y as f64,
+                }
+            }),
         },
         C::PolarPitch {
             center,
@@ -316,7 +322,9 @@ fn relation(sketch: &Sketch, kind: &C) -> core::Relation {
                 sketch::InternalRole::MinorAxis => core::InternalRole::MinorAxis,
                 sketch::InternalRole::Focus1 => core::InternalRole::Focus1,
                 sketch::InternalRole::Focus2 => core::InternalRole::Focus2,
-                sketch::InternalRole::ControlEdge(n) => core::InternalRole::ControlEdge(n),
+                sketch::InternalRole::ControlEdge(n) => {
+                    core::InternalRole::ControlEdge(core::ControlEdgeIndex(n))
+                }
             },
         },
     }

@@ -44,6 +44,7 @@ explicit references. Geometry and relation order determine variable and row
 order. Index newtypes expose offsets into numerical answer vectors.
 
 Coordinates and lengths use one caller-chosen unit; `Radians` identifies angles.
+`Direction` is dimensionless, and `ControlEdgeIndex` identifies a spline edge.
 All numerical inputs must be finite, geometry and constraint IDs unique, and
 references resolvable to the required geometry kind. Degenerate finite geometry
 is allowed and may fail to converge. Directional angles are periodic. Arc sweep
@@ -124,6 +125,15 @@ cargo test -p sketch_solver
 cargo test -p sketch_solver --no-default-features
 cargo test -p sketch_solver --features serde
 cargo clippy -p sketch_solver --all-targets --all-features -- -D warnings
-cargo check -p sketch_solver --target wasm32-unknown-unknown
-cargo check -p sketch_solver --target wasm32-wasip2
+cargo check -p sketch_solver --all-features --target wasm32-unknown-unknown
+cargo check -p sketch_solver --all-features --target wasm32-wasip2
+node scripts/check-solver-deps.mjs
 ```
+
+The repository dependency gate copies the crate outside the workspace and
+resolves default, no-default, serde and all-feature graphs with `cargo metadata`
+and `cargo tree`. It checks normal, build, development and target dependencies;
+default builds permit only this crate, while serialization permits only serde's
+JSON and derive dependencies. CI runs this gate alongside feature tests, strict
+clippy and browser/WASI compilation. In a copied crate, run the same Cargo
+commands with `--manifest-path /path/to/sketch_solver/Cargo.toml`.

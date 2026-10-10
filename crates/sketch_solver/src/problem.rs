@@ -19,6 +19,7 @@ id!(CurveId, u128);
 id!(ConstraintId, u128);
 id!(VariableIndex, usize);
 id!(EquationIndex, usize);
+id!(ControlEdgeIndex, u32);
 
 #[cfg(feature = "serde")]
 mod id_wire {
@@ -121,10 +122,18 @@ impl From<CurveId> for ItemReference {
     }
 }
 
-/// A vector in the caller's length unit. Pitch directions are unit vectors.
+/// A vector in the caller's length unit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vector {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// A dimensionless unit direction, or zero for a degenerate direction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Direction {
     pub x: f64,
     pub y: f64,
 }
@@ -275,7 +284,7 @@ pub enum InternalRole {
     MinorAxis,
     Focus1,
     Focus2,
-    ControlEdge(u32),
+    ControlEdge(ControlEdgeIndex),
 }
 
 /// Relations use distinct point and curve references. General items occur
@@ -441,7 +450,7 @@ pub enum Relation {
         columns: u32,
         distance: Length,
         across: bool,
-        direction: Option<Vector>,
+        direction: Option<Direction>,
     },
     PolarPitch {
         center: PointReference,
