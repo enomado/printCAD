@@ -8,7 +8,7 @@ use glam::Vec2;
 use uuid::Uuid;
 
 use crate::sketch::{GeometryElement, Reference, Sketch};
-use crate::solver::contact::circles_nest;
+use sketch_solver::contact::circles_nest;
 
 /// An item as the measurements see it: a point, the infinite line through
 /// a segment, or a whole circle (an arc counts as its circle).

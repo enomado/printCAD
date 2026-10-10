@@ -8,7 +8,7 @@ use glam::DVec2;
 
 use crate::conic::Shape;
 use crate::sketch::{GeometryElement, Sketch};
-use crate::spline::math::Basis;
+use sketch_solver::spline::Basis;
 
 /// What a curve runs along, whatever part of it the element keeps.
 #[derive(Debug, Clone)]

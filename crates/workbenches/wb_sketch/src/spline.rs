@@ -2,10 +2,8 @@
 //! Pure basis and fitting formulas live in [`math`]; this boundary alone
 //! converts sampled or refitted positions to stored f32 geometry.
 
-pub mod math;
-
 use crate::sketch::{BSpline, GeometryElement, Sketch, Vec2D};
-use crate::spline::math::{Basis, solve_points};
+use sketch_solver::spline::{Basis, solve_points};
 
 /// The highest degree a sketch spline takes.
 pub const MAX_DEGREE: u32 = 5;

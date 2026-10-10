@@ -1,0 +1,10 @@
+pub mod compile;
+pub mod contact;
+pub mod curves;
+pub mod diagnosis;
+pub mod freedom;
+pub mod input;
+pub mod problem;
+pub mod residual;
+pub mod solve;
+pub mod spline;

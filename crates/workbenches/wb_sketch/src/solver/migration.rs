@@ -5,6 +5,7 @@
 use std::time::Instant;
 
 use serde_json::{Value, json};
+use sketch_solver::solve::{inf_norm, var_scale};
 
 use super::*;
 use crate::sketch::{
@@ -351,10 +352,64 @@ fn cases() -> Vec<(Sketch, Vec<Uuid>)> {
 }
 
 fn compiled(sys: &System) -> Value {
-    let mut derived: Vec<_> = sys.derived_foci.iter().copied().collect();
+    compiled_core(sys)
+}
+
+fn compiled_core(sys: &sketch_solver::compile::System) -> Value {
+    use sketch_solver::problem::PointReference;
+    let mut derived: Vec<_> = sys
+        .derived_foci
+        .iter()
+        .map(|id| match id {
+            PointReference::Point(id) => Uuid::from_u128(id.0),
+            PointReference::Origin => ORIGIN_ID,
+        })
+        .collect();
     derived.sort();
     json!({"values": sys.vars, "free": sys.free, "equations": sys.residual_len,
-        "spec_dimensions": sys.specs.iter().map(ResidualSpec::dim).collect::<Vec<_>>(), "derived_foci": derived})
+        "spec_dimensions": sys.specs.iter().map(sketch_solver::residual::ResidualSpec::dim).collect::<Vec<_>>(), "derived_foci": derived})
+}
+
+#[test]
+fn standalone_compiler_and_iteration_match_application_oracle() {
+    for (input, held) in cases() {
+        for arcs_always in [false, true] {
+            for held in [&[][..], held.as_slice()] {
+                let problem = adapter::prepare(&input, held);
+                for exclude in
+                    std::iter::once(None).chain(input.constraints.iter().map(|c| Some(c.id)))
+                {
+                    let old = oracle::capture(&input, exclude, held, arcs_always);
+                    let new = sketch_solver::compile::compile_system(
+                        &problem,
+                        exclude.map(|id| sketch_solver::problem::ConstraintId(id.as_u128())),
+                        arcs_always,
+                    );
+                    equivalent(&old["compiled"], &compiled_core(&new), &input.name);
+                    let new_answer = sketch_solver::solve::iterate(&new, problem.settings);
+                    equivalent(&old["values"], &json!(new_answer.values), &input.name);
+                    assert_eq!(
+                        old["iterations"],
+                        json!(new_answer.iterations),
+                        "{}",
+                        input.name
+                    );
+                    assert_eq!(
+                        old["residual"],
+                        json!(new_answer.residual),
+                        "{}",
+                        input.name
+                    );
+                    assert_eq!(
+                        old["threshold"],
+                        json!(new_answer.threshold),
+                        "{}",
+                        input.name
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// This match makes a new application relation require an inventory entry.
@@ -717,6 +772,14 @@ fn every_relation_has_an_equation_inventory_entry() {
         relation(&mut probe, kind);
         let sys = build_system_with(&probe, None, &[], true);
         assert_eq!(sys.residual_len - base_rows, rows, "{name}");
+        let problem = adapter::prepare(&probe, &[]);
+        let core = sketch_solver::compile::compile_system(&problem, None, true);
+        equivalent(&compiled(&sys), &compiled_core(&core), name);
+        equivalent(
+            &oracle::capture(&probe, None, &[], true)["compiled"],
+            &compiled_core(&core),
+            name,
+        );
     }
     assert_eq!(names.len(), 42);
 }
@@ -841,7 +904,7 @@ fn iteration_exposes_failed_attempts_without_application_writeback() {
     let cases = cases();
     for (input, held) in &cases {
         let before = serde_json::to_value(input).unwrap();
-        let system = prepare(input, None, held, false);
+        let system = build_system_with(input, None, held, false);
         let result = iterate(&system, input.solver);
         assert_eq!(
             serde_json::to_value(input).unwrap(),
@@ -878,7 +941,7 @@ fn iteration_exposes_failed_attempts_without_application_writeback() {
             assert!(matches!(result.outcome, SolveOutcome::NotConverged { .. }));
             // The failed numerical attempt itself keeps the held point;
             // application retry is responsible for releasing it later.
-            let at = system.point_vars[&held[0]];
+            let at = system.point_vars[&adapter::point(held[0])];
             assert_eq!(result.values[at], 40.0);
             assert_eq!(
                 input.point_position(held[0]).unwrap(),
@@ -894,7 +957,7 @@ fn numerical_residual_and_stored_geometry_are_measured_separately() {
         .into_iter()
         .find(|(s, _)| s.name == "ordinary")
         .unwrap();
-    let system = prepare(&input, None, &held, false);
+    let system = build_system_with(&input, None, &held, false);
     let result = iterate(&system, input.solver);
     assert!(matches!(result.outcome, SolveOutcome::Converged { .. }));
     assert!(result.residual < result.threshold);
@@ -939,7 +1002,7 @@ fn measure_migration_baseline() {
         // keep their whole-corpus application-boundary measurement.
         let prepared: Vec<_> = inputs
             .iter()
-            .map(|(input, held)| prepare(input, None, held, false))
+            .map(|(input, held)| build_system_with(input, None, held, false))
             .collect();
         let start = Instant::now();
         for _ in 0..repetitions {

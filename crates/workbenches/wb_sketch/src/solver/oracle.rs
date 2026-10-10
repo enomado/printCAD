@@ -1,0 +1,2404 @@
+//! Test-only equation compiler and iteration for migration comparison.
+use crate::sketch::{
+    AxisDirection, ConstraintKind, GeometryElement, InternalRole, ORIGIN_ID, Reference, Sketch,
+    SolverSettings, X_AXIS_ID, Y_AXIS_ID, constraint_refs,
+};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+/// Maximum damping retries per outer iteration before declaring a stall.
+const MAX_INNER_RETRIES: usize = 25;
+/// Initial Levenberg-Marquardt damping factor.
+const LAMBDA_INIT: f64 = 1e-3;
+const LAMBDA_MIN: f64 = 1e-12;
+const LAMBDA_MAX: f64 = 1e12;
+/// Floor for the diagonal damping term so a zero JᵀJ diagonal still damps.
+const DAMPING_FLOOR: f64 = 1e-12;
+/// Relative convergence tolerance. Convergence is declared when the residual
+/// inf-norm drops below `CONVERGENCE_TOL * max(1, |x|_inf)`: residuals carry
+/// length units, so scaling the tolerance by the model's coordinate magnitude
+/// makes sketches drawn in millimetres and in metres behave the same, while
+/// the `max(1, ..)` floor keeps tiny sketches from demanding sub-f64 accuracy.
+const CONVERGENCE_TOL: f64 = 1e-9;
+/// Relative step for central-difference Jacobian columns.
+const FD_EPS: f64 = 1e-6;
+/// Minimum length used when normalizing directions, to avoid division by
+/// zero on degenerate (zero-length) lines.
+const MIN_LEN: f64 = 1e-12;
+/// Step cap (times the variable scale) to avoid explosions on ill-conditioned
+/// iterations far from the solution.
+const MAX_STEP_SCALE: f64 = 100.0;
+/// Relative tolerance for the numerical rank of the Jacobian.
+const RANK_TOL: f64 = 1e-8;
+
+/// Result of a constraint solve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SolveOutcome {
+    /// All residuals below tolerance.
+    Converged { iterations: usize },
+    /// Iteration limit hit with residual norm still above tolerance.
+    NotConverged { residual: f64 },
+    /// No constraints (or none referencing existing geometry).
+    NothingToSolve,
+}
+/// Numerical output before storage rounding and application updates. Even
+/// a stalled attempt exposes its iteration count and effective threshold.
+struct Iteration {
+    values: Vec<f64>,
+    outcome: SolveOutcome,
+    iterations: usize,
+    residual: f64,
+    threshold: f64,
+}
+
+/// This boundary reads only compiled equations and numerical settings. It
+/// neither rounds geometry nor refits splines, follows text or computes
+/// application flags; failed held attempts can therefore be inspected
+/// without applying their result.
+fn iterate(sys: &System, settings: SolverSettings) -> Iteration {
+    let tolerance = if settings.tolerance > 0.0 {
+        settings.tolerance
+    } else {
+        CONVERGENCE_TOL
+    };
+    if sys.specs.is_empty() || sys.vars.is_empty() {
+        return Iteration {
+            values: sys.vars.clone(),
+            outcome: SolveOutcome::NothingToSolve,
+            iterations: 0,
+            residual: 0.0,
+            threshold: tolerance * var_scale(&sys.vars),
+        };
+    }
+
+    let mut x = sys.vars.clone();
+    let mut r = eval_residuals(sys, &x);
+    let mut cost = sq_norm(&r);
+    let mut lambda = LAMBDA_INIT;
+    let mut iterations = 0;
+    let max_iterations = (settings.max_iterations as usize).max(1);
+    let mut converged = inf_norm(&r) < tolerance * var_scale(&x);
+
+    while !converged && iterations < max_iterations {
+        iterations += 1;
+
+        let jac = jacobian(sys, &x);
+        let (jtj, jtr) = normal_equations(&jac, &r);
+
+        // Each variable is damped by its own curvature plus the average
+        // one: with its own alone, a variable the constraints barely feel
+        // (a point sliding almost square to the only row that moves it)
+        // costs nearly nothing to move, and the step flings it far off.
+        let mean_diag =
+            jtj.iter().enumerate().map(|(i, row)| row[i]).sum::<f64>() / jtj.len().max(1) as f64;
+        let mut improved = false;
+        for _ in 0..MAX_INNER_RETRIES {
+            // Damped normal equations: (JᵀJ + λ·D) dx = -Jᵀr, with D the
+            // diagonal of JᵀJ raised by its mean.
+            let mut a = jtj.clone();
+            for (i, row) in a.iter_mut().enumerate() {
+                row[i] += lambda * (jtj[i][i] + mean_diag).max(DAMPING_FLOOR);
+            }
+            let rhs: Vec<f64> = jtr.iter().map(|v| -v).collect();
+            let mut step = match solve_linear(a, rhs) {
+                Some(s) => s,
+                None => {
+                    lambda = (lambda * 10.0).min(LAMBDA_MAX);
+                    continue;
+                }
+            };
+            cap_step(&mut step, var_scale(&x));
+
+            let mut trial = x.clone();
+            for (column, &j) in sys.free.iter().enumerate() {
+                trial[j] += step[column];
+            }
+            let trial_r = eval_residuals(sys, &trial);
+            let trial_cost = sq_norm(&trial_r);
+            if trial_cost.is_finite() && trial_cost < cost {
+                x = trial;
+                r = trial_r;
+                cost = trial_cost;
+                lambda = (lambda / 10.0).max(LAMBDA_MIN);
+                improved = true;
+                break;
+            }
+            lambda = (lambda * 10.0).min(LAMBDA_MAX);
+        }
+
+        if inf_norm(&r) < tolerance * var_scale(&x) {
+            converged = true;
+            break;
+        }
+        if !improved {
+            // Damping saturated without any cost reduction: the problem is
+            // contradictory or the solve sits at a (possibly non-zero) local
+            // minimum.
+            break;
+        }
+    }
+
+    let outcome = if converged {
+        SolveOutcome::Converged { iterations }
+    } else {
+        SolveOutcome::NotConverged {
+            residual: inf_norm(&r),
+        }
+    };
+    Iteration {
+        threshold: tolerance * var_scale(&x),
+        values: x,
+        outcome,
+        iterations,
+        residual: inf_norm(&r),
+    }
+}
+
+/// The end point a line or arc `a` shares with arc `b` (or with line `b`
+/// when `a` is the arc), when they meet end to end.
+fn shared_end(sketch: &Sketch, a: Uuid, b: Uuid) -> Option<Uuid> {
+    let ends = |id: Uuid| match sketch.get_geometry(id) {
+        Some(GeometryElement::Line(l)) => Some([l.start, l.end]),
+        Some(GeometryElement::Arc(a)) => Some([a.start, a.end]),
+        _ => None,
+    };
+    let (ea, eb) = (ends(a)?, ends(b)?);
+    ea.into_iter().find(|p| eb.contains(p))
+}
+
+/// A curve as the system moves it, to find its point at a parameter: a
+/// line, a circle or arc, an ellipse, a hyperbola or parabola, a spline
+/// over its control points.
+#[derive(Debug, Clone)]
+enum CurveVars {
+    Line {
+        s: usize,
+        e: usize,
+    },
+    Circle {
+        c: usize,
+        r: usize,
+    },
+    Ellipse {
+        c: usize,
+        shape: CurveShape,
+    },
+    Hyperbola {
+        c: usize,
+        shape: CurveShape,
+    },
+    Parabola {
+        c: usize,
+        shape: CurveShape,
+    },
+    Spline {
+        basis: sketch_solver::spline::Basis,
+        control: Vec<usize>,
+    },
+}
+
+impl CurveVars {
+    /// The curve's frame from its shape: the axis direction, its length and
+    /// the minor radius.
+    fn frame(v: &[f64], shape: CurveShape) -> ([f64; 2], f64, f64) {
+        let (x, y, minor) = shape.get(v);
+        let a = (x * x + y * y).sqrt().max(MIN_LEN);
+        ([x / a, y / a], a, minor)
+    }
+
+    /// Its point at `t`.
+    fn at(&self, v: &[f64], t: f64) -> [f64; 2] {
+        let along = |c: usize, u: [f64; 2], x: f64, y: f64| {
+            [v[c] + u[0] * x - u[1] * y, v[c + 1] + u[1] * x + u[0] * y]
+        };
+        match self {
+            CurveVars::Line { s, e } => [
+                v[*s] + t * (v[*e] - v[*s]),
+                v[*s + 1] + t * (v[*e + 1] - v[*s + 1]),
+            ],
+            CurveVars::Circle { c, r } => [v[*c] + v[*r] * t.cos(), v[*c + 1] + v[*r] * t.sin()],
+            CurveVars::Ellipse { c, shape } => {
+                let (u, a, b) = Self::frame(v, *shape);
+                along(*c, u, a * t.cos(), b * t.sin())
+            }
+            CurveVars::Hyperbola { c, shape } => {
+                let (u, a, b) = Self::frame(v, *shape);
+                along(*c, u, a * t.cosh(), b * t.sinh())
+            }
+            // The vertex at `c`, the focus `f` along the axis: y² = 4fx.
+            CurveVars::Parabola { c, shape } => {
+                let (u, f, _) = Self::frame(v, *shape);
+                along(*c, u, t * t / (4.0 * f), t)
+            }
+            CurveVars::Spline { basis, control } => {
+                let pts: Vec<[f64; 2]> = control.iter().map(|&k| [v[k], v[k + 1]]).collect();
+                basis.eval(&pts, t)
+            }
+        }
+    }
+
+    /// Its unit direction at `t`, by a small step either way.
+    fn direction(&self, v: &[f64], t: f64) -> [f64; 2] {
+        let h = 1e-6;
+        let (a, b) = (self.at(v, t - h), self.at(v, t + h));
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-300);
+        [dx / len, dy / len]
+    }
+
+    /// The parameter of a point on a parabola or hyperbola, in its frame;
+    /// `None` for other curves.
+    fn param_of(&self, v: &[f64], p: usize) -> Option<f64> {
+        let (c, shape, hyperbola) = match self {
+            CurveVars::Hyperbola { c, shape } => (*c, *shape, true),
+            CurveVars::Parabola { c, shape } => (*c, *shape, false),
+            _ => return None,
+        };
+        let (u, _, b) = Self::frame(v, shape);
+        let across = -(v[p] - v[c]) * u[1] + (v[p + 1] - v[c + 1]) * u[0];
+        Some(if hyperbola {
+            (across / b.max(MIN_LEN)).asinh()
+        } else {
+            across
+        })
+    }
+
+    /// The parameters worth searching for a first guess.
+    fn range(&self, v: &[f64]) -> (f64, f64) {
+        match self {
+            // A line's own length and as much again either side.
+            CurveVars::Line { .. } => (-1.0, 2.0),
+            CurveVars::Circle { .. } | CurveVars::Ellipse { .. } => (0.0, std::f64::consts::TAU),
+            CurveVars::Hyperbola { .. } => (-4.0, 4.0),
+            CurveVars::Parabola { shape, .. } => {
+                let (_, f, _) = Self::frame(v, *shape);
+                (-20.0 * f, 20.0 * f)
+            }
+            CurveVars::Spline { basis, .. } => basis.domain(),
+        }
+    }
+}
+
+/// The parameter where `curve` comes nearest `target`: sampled, then
+/// narrowed.
+fn nearest_param(curve: &CurveVars, v: &[f64], target: [f64; 2]) -> f64 {
+    let d = |t: f64| {
+        let p = curve.at(v, t);
+        (p[0] - target[0]).powi(2) + (p[1] - target[1]).powi(2)
+    };
+    let (mut lo, mut hi) = curve.range(v);
+    let mut best = lo;
+    for _ in 0..4 {
+        let n = 64;
+        let step = (hi - lo) / n as f64;
+        best = (0..=n)
+            .map(|i| lo + step * i as f64)
+            .min_by(|a, b| d(*a).total_cmp(&d(*b)))
+            .unwrap_or(lo);
+        lo = best - step;
+        hi = best + step;
+    }
+    best
+}
+
+/// The parameters where two curves come nearest each other: sampled, then
+/// each narrowed against the other.
+fn nearest_params(a: &CurveVars, b: &CurveVars, v: &[f64]) -> (f64, f64) {
+    let (a0, a1) = a.range(v);
+    let (b0, b1) = b.range(v);
+    let n = 48;
+    let mut best = (a0, b0, f64::INFINITY);
+    for i in 0..=n {
+        let ta = a0 + (a1 - a0) * i as f64 / n as f64;
+        let pa = a.at(v, ta);
+        for j in 0..=n {
+            let tb = b0 + (b1 - b0) * j as f64 / n as f64;
+            let pb = b.at(v, tb);
+            let d = (pa[0] - pb[0]).powi(2) + (pa[1] - pb[1]).powi(2);
+            if d < best.2 {
+                best = (ta, tb, d);
+            }
+        }
+    }
+    let (mut ta, mut tb) = (best.0, best.1);
+    for _ in 0..4 {
+        tb = nearest_param(b, v, a.at(v, ta));
+        ta = nearest_param(a, v, b.at(v, tb));
+    }
+    (ta, tb)
+}
+
+/// One resolved constraint residual, expressed in variable indices.
+enum ResidualSpec {
+    /// An ellipse's semi-major or semi-minor radius, its shape at `k`,
+    /// less `radius`.
+    EllipseRadius { k: usize, major: bool, radius: f64 },
+    /// The length along a curve less `length`: a spline's whole domain, or
+    /// a conic's arc between the ends `ends` holds.
+    CurveLength {
+        curve: CurveVars,
+        ends: Option<(usize, usize)>,
+        length: f64,
+    },
+    /// p - curve(t) (2 residuals), `t` a variable of its own.
+    PointOnCurve {
+        p: usize,
+        curve: CurveVars,
+        t: usize,
+    },
+    /// Where two curves meet, a(ta) - b(tb) (2 residuals), and their
+    /// directions there: the sine between them for tangent, the cosine for
+    /// square.
+    CurvesMeet {
+        a: CurveVars,
+        ta: usize,
+        b: CurveVars,
+        tb: usize,
+        square: bool,
+    },
+    /// p - pos (2 residuals).
+    FixedPoint { p: usize, x: f64, y: f64 },
+    /// p1 - p2 (2 residuals).
+    Coincident { p1: usize, p2: usize },
+    /// y_end - y_start.
+    Horizontal { s: usize, e: usize },
+    /// x_end - x_start.
+    Vertical { s: usize, e: usize },
+    /// |end - start| - length.
+    Length { s: usize, e: usize, len: f64 },
+    /// |p1 - p2| - distance.
+    Distance { p1: usize, p2: usize, d: f64 },
+    /// r - radius.
+    Radius { r: usize, radius: f64 },
+    /// 2r - diameter.
+    Diameter { r: usize, diameter: f64 },
+    /// |coord(b) - coord(a)| - value on one axis, or the signed
+    /// difference less a negative value. `a`/`b` index the exact variable
+    /// (x or y already applied); `b = None` measures from origin.
+    CoordDistance {
+        a: usize,
+        b: Option<usize>,
+        value: f64,
+    },
+    /// r1 - r2.
+    EqualRadius { r1: usize, r2: usize },
+    /// |line1| - |line2|.
+    EqualLength {
+        s1: usize,
+        e1: usize,
+        s2: usize,
+        e2: usize,
+    },
+    /// cross(d1_hat, d2_hat).
+    Parallel {
+        s1: usize,
+        e1: usize,
+        s2: usize,
+        e2: usize,
+    },
+    /// dot(d1_hat, d2_hat).
+    Perpendicular {
+        s1: usize,
+        e1: usize,
+        s2: usize,
+        e2: usize,
+    },
+    /// cross(p - a, b - a) / |b - a| (perpendicular distance).
+    PointOnLine { p: usize, s: usize, e: usize },
+    /// |p - center| - r.
+    PointOnCircle { p: usize, c: usize, r: usize },
+    /// wrap(atan2(cross(d1, d2), dot(d1, d2)) - angle).
+    Angle {
+        s1: usize,
+        e1: usize,
+        s2: usize,
+        e2: usize,
+        angle: f64,
+    },
+    /// wrap(atan2(dy, dx) - target): line direction against a fixed target
+    /// angle (axis constraints; the axis offset is folded into `target`).
+    AngleToTarget { s: usize, e: usize, target: f64 },
+    /// Approximate point-on-ellipse: the normalized ellipse equation scaled
+    /// by the minor radius, ≈ signed distance near the boundary. The point
+    /// and center move, and the shape too when it is in the system.
+    PointOnEllipse {
+        p: usize,
+        c: usize,
+        shape: CurveShape,
+    },
+    /// Implicit arc consistency: |endpoint - center| - r.
+    ArcEndpoint { p: usize, c: usize, r: usize },
+    /// A line and an arc joined smoothly at their shared end `p`: the
+    /// radius there square to the line, dot(unit(p - c), unit(e - s)).
+    TangentAtEnd {
+        p: usize,
+        c: usize,
+        s: usize,
+        e: usize,
+    },
+    /// Two arcs joined smoothly at their shared end `p`: both centres on
+    /// one line through it, cross(unit(p - c1), unit(p - c2)).
+    TangentArcsAtEnd { p: usize, c1: usize, c2: usize },
+    /// |perpendicular distance(center, infinite line)| - r.
+    TangentLineCircle {
+        s: usize,
+        e: usize,
+        c: usize,
+        r: usize,
+    },
+    /// |c1 - c2| - (r1 + r2) (external) or |c1 - c2| - |r1 - r2| (internal).
+    /// The branch is picked once per solve, from the configuration at solve
+    /// start (see `build_system`), never per iteration.
+    TangentCircles {
+        c1: usize,
+        r1: usize,
+        c2: usize,
+        r2: usize,
+        internal: bool,
+    },
+    /// p1/p2 mirror-symmetric about a line: midpoint on the line (cross
+    /// residual) and the p1→p2 direction perpendicular to it (dot residual).
+    Symmetric {
+        p1: usize,
+        p2: usize,
+        s: usize,
+        e: usize,
+    },
+    /// p - (s + e)/2 (2 residuals).
+    Midpoint { p: usize, s: usize, e: usize },
+    /// r · sweep - length, the sweep counter-clockwise from the start
+    /// point's angle about the center to the end point's.
+    ArcLength {
+        c: usize,
+        s: usize,
+        e: usize,
+        r: usize,
+        len: f64,
+    },
+    /// The major radii equal, then the minor ones: `a` and `b` index each
+    /// ellipse's shape (major x, major y, minor radius).
+    EqualEllipse { a: usize, b: usize },
+    /// sweep - angle, the sweep counter-clockwise from the start point's
+    /// angle about the center to the end point's.
+    ArcAngle {
+        c: usize,
+        s: usize,
+        e: usize,
+        angle: f64,
+    },
+    /// wrap(angle at v from the arm to a to the arm to b - angle).
+    AngleThreePoints {
+        a: usize,
+        v: usize,
+        b: usize,
+        angle: f64,
+    },
+    /// |perpendicular distance(p, infinite line)| - d.
+    GapPointLine {
+        p: usize,
+        s: usize,
+        e: usize,
+        d: f64,
+    },
+    /// |p - c| - r - d, or r - |p - c| - d for a point inside the circle
+    /// (the side is picked once per solve, like tangency's branch).
+    GapPointCircle {
+        p: usize,
+        c: usize,
+        r: usize,
+        inside: bool,
+        d: f64,
+    },
+    /// |perpendicular distance(midpoint of s2-e2, line s1-e1)| - d: two
+    /// parallel lines apart.
+    GapLines {
+        s1: usize,
+        e1: usize,
+        s2: usize,
+        e2: usize,
+        d: f64,
+    },
+    /// A step of a set length and way: `a1 - a0` equals `(dx, dy)`.
+    Step {
+        a0: usize,
+        a1: usize,
+        dx: f64,
+        dy: f64,
+    },
+    /// Two steps the same: `b1 - b0` equals `a1 - a0`, in x and in y.
+    SameStep {
+        a0: usize,
+        a1: usize,
+        b0: usize,
+        b1: usize,
+    },
+    /// |perpendicular distance(center, infinite line)| - r - d.
+    GapLineCircle {
+        s: usize,
+        e: usize,
+        c: usize,
+        r: usize,
+        d: f64,
+    },
+    /// |c1 - c2| - (r1 + r2) - d apart, or |r1 - r2| - |c1 - c2| - d for
+    /// one circle inside the other (picked once per solve).
+    GapCircles {
+        c1: usize,
+        r1: usize,
+        c2: usize,
+        r2: usize,
+        nested: bool,
+        d: f64,
+    },
+    /// wrap(angle from curve 1's tangent at p to curve 2's - angle).
+    AngleAtPoint {
+        t1: Tangent,
+        t2: Tangent,
+        p: usize,
+        angle: f64,
+    },
+    /// sin in - ratio · sin out: each ray's unit direction (toward p for
+    /// the first, away from it for the second) along the interface's unit
+    /// tangent at p. `near` is the end of a ray at p, picked once per solve.
+    Refraction {
+        near1: usize,
+        far1: usize,
+        near2: usize,
+        far2: usize,
+        interface: Tangent,
+        p: usize,
+        ratio: f64,
+    },
+    /// A parabola's or hyperbola's end point on its curve: the curve's
+    /// equation over its gradient, ≈ signed distance. The point and the
+    /// curve's centre move, and the shape too when it is in the system.
+    OnConic {
+        p: usize,
+        c: usize,
+        shape: CurveShape,
+        hyperbola: bool,
+    },
+    /// p - (c + the offset `at` names in the curve's frame) (2 residuals):
+    /// a piece of internal geometry where its curve puts it.
+    Internal {
+        p: usize,
+        c: usize,
+        shape: CurveShape,
+        at: Offset,
+    },
+    /// An ellipse's focus `p`, its offset from the centre `z = along + i
+    /// across` in the curve's frame: `z² = a² − b²` (2 residuals,
+    /// `along · across` and `along² − across² − (a² − b²)`, over `2a`).
+    /// It has no singular point where the radii meet: the focus slides
+    /// into the centre and out across as the minor radius grows past the
+    /// major, which side the solve keeps from where the point stands.
+    Focus {
+        p: usize,
+        c: usize,
+        shape: CurveShape,
+    },
+}
+
+/// An ellipse's or conic's shape: the vector along its axis (an ellipse's
+/// center to major vertex, a conic's axis) and its minor radius (a
+/// hyperbola's semi-minor axis; a parabola has none). Held where it is,
+/// or three variables of the system from `Var`'s index on, when internal
+/// geometry can move it.
+#[derive(Debug, Clone, Copy)]
+enum CurveShape {
+    Fixed { x: f64, y: f64, minor: f64 },
+    Var(usize),
+}
+
+impl CurveShape {
+    /// `(axis x, axis y, minor)`.
+    fn get(self, v: &[f64]) -> (f64, f64, f64) {
+        match self {
+            CurveShape::Fixed { x, y, minor } => (x, y, minor),
+            CurveShape::Var(k) => (v[k], v[k + 1], v[k + 2]),
+        }
+    }
+}
+
+/// Where a piece of internal geometry sits from its curve's centre, along
+/// the axis `u` and across it `w` (`u` turned a quarter counter-clockwise),
+/// with `a` the axis length and `b` the minor radius.
+#[derive(Debug, Clone, Copy)]
+enum Offset {
+    /// `sign · a` along: an ellipse's major vertices, a conic's axis end.
+    Major(f64),
+    /// `sign · b` across.
+    Minor(f64),
+    /// `√(a² + b²)` along: a hyperbola's focus.
+    HyperbolaFocus,
+}
+
+impl Offset {
+    fn of(self, (x, y, minor): (f64, f64, f64)) -> (f64, f64) {
+        let a = x.hypot(y).max(MIN_LEN);
+        let (u, w) = ((x / a, y / a), (-y / a, x / a));
+        let (along, across) = match self {
+            Offset::Major(sign) => (sign * a, 0.0),
+            Offset::Minor(sign) => (0.0, sign * minor),
+            Offset::HyperbolaFocus => (a.hypot(minor), 0.0),
+        };
+        (u.0 * along + w.0 * across, u.1 * along + w.1 * across)
+    }
+}
+
+/// Where a curve's tangent at a point comes from: a line's two ends, or a
+/// circle's center (the tangent is square to the radius through the point,
+/// counter-clockwise).
+#[derive(Debug, Clone, Copy)]
+enum Tangent {
+    Line { s: usize, e: usize },
+    Circle { c: usize },
+}
+
+impl Tangent {
+    /// The (unnormalized) tangent at the point with x-variable `p`.
+    fn at(self, v: &[f64], p: usize) -> (f64, f64) {
+        match self {
+            Tangent::Line { s, e } => (v[e] - v[s], v[e + 1] - v[s + 1]),
+            Tangent::Circle { c } => (-(v[p + 1] - v[c + 1]), v[p] - v[c]),
+        }
+    }
+}
+
+fn unit(d: (f64, f64)) -> (f64, f64) {
+    let len = (d.0 * d.0 + d.1 * d.1).sqrt().max(MIN_LEN);
+    (d.0 / len, d.1 / len)
+}
+
+impl ResidualSpec {
+    fn dim(&self) -> usize {
+        match self {
+            ResidualSpec::FixedPoint { .. }
+            | ResidualSpec::Coincident { .. }
+            | ResidualSpec::Symmetric { .. }
+            | ResidualSpec::Midpoint { .. }
+            | ResidualSpec::EqualEllipse { .. }
+            | ResidualSpec::PointOnCurve { .. }
+            | ResidualSpec::SameStep { .. }
+            | ResidualSpec::Step { .. }
+            | ResidualSpec::Internal { .. }
+            | ResidualSpec::Focus { .. } => 2,
+            ResidualSpec::CurvesMeet { .. } => 3,
+            _ => 1,
+        }
+    }
+
+    fn eval(&self, v: &[f64], out: &mut Vec<f64>) {
+        match self {
+            ResidualSpec::CurveLength {
+                curve,
+                ends,
+                length,
+            } => {
+                let (t0, t1) = match ends {
+                    Some((s, e)) => (
+                        curve.param_of(v, *s).unwrap_or(0.0),
+                        curve.param_of(v, *e).unwrap_or(0.0),
+                    ),
+                    None => curve.range(v),
+                };
+                let n = 128;
+                let mut total = 0.0;
+                let mut last = curve.at(v, t0);
+                for i in 1..=n {
+                    let q = curve.at(v, t0 + (t1 - t0) * i as f64 / n as f64);
+                    total += ((q[0] - last[0]).powi(2) + (q[1] - last[1]).powi(2)).sqrt();
+                    last = q;
+                }
+                out.push(total - length);
+                return;
+            }
+            ResidualSpec::PointOnCurve { p, curve, t } => {
+                let q = curve.at(v, v[*t]);
+                out.push(v[*p] - q[0]);
+                out.push(v[*p + 1] - q[1]);
+                return;
+            }
+            ResidualSpec::CurvesMeet {
+                a,
+                ta,
+                b,
+                tb,
+                square,
+            } => {
+                let (pa, pb) = (a.at(v, v[*ta]), b.at(v, v[*tb]));
+                out.push(pa[0] - pb[0]);
+                out.push(pa[1] - pb[1]);
+                let (da, db) = (a.direction(v, v[*ta]), b.direction(v, v[*tb]));
+                out.push(if *square {
+                    da[0] * db[0] + da[1] * db[1]
+                } else {
+                    da[0] * db[1] - da[1] * db[0]
+                });
+                return;
+            }
+            _ => {}
+        }
+        match *self {
+            ResidualSpec::PointOnCurve { .. }
+            | ResidualSpec::CurvesMeet { .. }
+            | ResidualSpec::CurveLength { .. } => {}
+            ResidualSpec::EllipseRadius { k, major, radius } => {
+                out.push(if major {
+                    (v[k] * v[k] + v[k + 1] * v[k + 1]).sqrt() - radius
+                } else {
+                    v[k + 2] - radius
+                });
+            }
+            ResidualSpec::FixedPoint { p, x, y } => {
+                out.push(v[p] - x);
+                out.push(v[p + 1] - y);
+            }
+            ResidualSpec::Coincident { p1, p2 } => {
+                out.push(v[p1] - v[p2]);
+                out.push(v[p1 + 1] - v[p2 + 1]);
+            }
+            ResidualSpec::Horizontal { s, e } => out.push(v[e + 1] - v[s + 1]),
+            ResidualSpec::Vertical { s, e } => out.push(v[e] - v[s]),
+            ResidualSpec::Length { s, e, len } => {
+                out.push(segment_length(v, s, e) - len);
+            }
+            ResidualSpec::Distance { p1, p2, d } => {
+                out.push(segment_length(v, p1, p2) - d);
+            }
+            ResidualSpec::Radius { r, radius } => out.push(v[r] - radius),
+            ResidualSpec::Diameter { r, diameter } => out.push(2.0 * v[r] - diameter),
+            ResidualSpec::CoordDistance { a, b, value } => {
+                let d = match b {
+                    Some(b) => v[b] - v[a],
+                    None => v[a],
+                };
+                // A positive value is how far apart, either way round; a
+                // negative one is the way too: `b` that far on the
+                // negative side of `a`.
+                out.push(if value < 0.0 {
+                    d - value
+                } else {
+                    d.abs() - value
+                });
+            }
+            ResidualSpec::EqualRadius { r1, r2 } => out.push(v[r1] - v[r2]),
+            ResidualSpec::EqualLength { s1, e1, s2, e2 } => {
+                out.push(segment_length(v, s1, e1) - segment_length(v, s2, e2));
+            }
+            ResidualSpec::Parallel { s1, e1, s2, e2 } => {
+                let d1 = unit_direction(v, s1, e1);
+                let d2 = unit_direction(v, s2, e2);
+                out.push(d1.0 * d2.1 - d1.1 * d2.0);
+            }
+            ResidualSpec::Perpendicular { s1, e1, s2, e2 } => {
+                let d1 = unit_direction(v, s1, e1);
+                let d2 = unit_direction(v, s2, e2);
+                out.push(d1.0 * d2.0 + d1.1 * d2.1);
+            }
+            ResidualSpec::PointOnLine { p, s, e } => {
+                let dx = v[e] - v[s];
+                let dy = v[e + 1] - v[s + 1];
+                let px = v[p] - v[s];
+                let py = v[p + 1] - v[s + 1];
+                let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+                out.push((px * dy - py * dx) / len);
+            }
+            ResidualSpec::PointOnCircle { p, c, r } | ResidualSpec::ArcEndpoint { p, c, r } => {
+                out.push(segment_length(v, c, p) - v[r]);
+            }
+            ResidualSpec::Angle {
+                s1,
+                e1,
+                s2,
+                e2,
+                angle,
+            } => {
+                let d1 = (v[e1] - v[s1], v[e1 + 1] - v[s1 + 1]);
+                let d2 = (v[e2] - v[s2], v[e2 + 1] - v[s2 + 1]);
+                let cross = d1.0 * d2.1 - d1.1 * d2.0;
+                let dot = d1.0 * d2.0 + d1.1 * d2.1;
+                out.push(wrap_angle(cross.atan2(dot) - angle));
+            }
+            ResidualSpec::AngleToTarget { s, e, target } => {
+                let dy = v[e + 1] - v[s + 1];
+                let dx = v[e] - v[s];
+                out.push(wrap_angle(dy.atan2(dx) - target));
+            }
+            ResidualSpec::PointOnEllipse { p, c, shape } => {
+                let (major_x, major_y, minor) = shape.get(v);
+                let a = (major_x * major_x + major_y * major_y).sqrt().max(MIN_LEN);
+                // Either radius may be the longer part way through a solve.
+                let b = minor.abs().max(MIN_LEN);
+                // Rotate the point into the ellipse frame.
+                let (cos_t, sin_t) = (major_x / a, major_y / a);
+                let dx = v[p] - v[c];
+                let dy = v[p + 1] - v[c + 1];
+                let u = dx * cos_t + dy * sin_t;
+                let w = -dx * sin_t + dy * cos_t;
+                let q = ((u / a).powi(2) + (w / b).powi(2)).sqrt();
+                out.push((q - 1.0) * b);
+            }
+            ResidualSpec::TangentLineCircle { s, e, c, r } => {
+                out.push(point_line_distance(v, c, s, e).abs() - v[r]);
+            }
+            ResidualSpec::TangentAtEnd { p, c, s, e } => {
+                let radial = unit_direction(v, c, p);
+                let along = unit_direction(v, s, e);
+                out.push(radial.0 * along.0 + radial.1 * along.1);
+            }
+            ResidualSpec::TangentArcsAtEnd { p, c1, c2 } => {
+                let a = unit_direction(v, c1, p);
+                let b = unit_direction(v, c2, p);
+                out.push(a.0 * b.1 - a.1 * b.0);
+            }
+            ResidualSpec::TangentCircles {
+                c1,
+                r1,
+                c2,
+                r2,
+                internal,
+            } => {
+                let target = if internal {
+                    (v[r1] - v[r2]).abs()
+                } else {
+                    v[r1] + v[r2]
+                };
+                out.push(segment_length(v, c1, c2) - target);
+            }
+            ResidualSpec::Symmetric { p1, p2, s, e } => {
+                // (1) The p1p2 midpoint lies on the line (signed
+                // perpendicular distance, like PointOnLine).
+                let (mx, my) = ((v[p1] + v[p2]) * 0.5, (v[p1 + 1] + v[p2 + 1]) * 0.5);
+                let dx = v[e] - v[s];
+                let dy = v[e + 1] - v[s + 1];
+                let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+                out.push(((mx - v[s]) * dy - (my - v[s + 1]) * dx) / len);
+                // (2) p1 → p2 perpendicular to the line direction.
+                let (ux, uy) = (dx / len, dy / len);
+                out.push((v[p1] - v[p2]) * ux + (v[p1 + 1] - v[p2 + 1]) * uy);
+            }
+            ResidualSpec::Midpoint { p, s, e } => {
+                out.push(v[p] - (v[s] + v[e]) * 0.5);
+                out.push(v[p + 1] - (v[s + 1] + v[e + 1]) * 0.5);
+            }
+            ResidualSpec::ArcLength { c, s, e, r, len } => {
+                let a0 = (v[s + 1] - v[c + 1]).atan2(v[s] - v[c]);
+                let a1 = (v[e + 1] - v[c + 1]).atan2(v[e] - v[c]);
+                let mut sweep = (a1 - a0) % std::f64::consts::TAU;
+                if sweep <= 0.0 {
+                    sweep += std::f64::consts::TAU;
+                }
+                out.push(v[r] * sweep - len);
+            }
+            ResidualSpec::GapPointLine { p, s, e, d } => {
+                out.push(point_line_distance(v, p, s, e).abs() - d);
+            }
+            ResidualSpec::EqualEllipse { a, b } => {
+                let major = |k: usize| (v[k] * v[k] + v[k + 1] * v[k + 1]).sqrt();
+                out.push(major(a) - major(b));
+                out.push(v[a + 2] - v[b + 2]);
+            }
+            ResidualSpec::ArcAngle { c, s, e, angle } => {
+                let a0 = (v[s + 1] - v[c + 1]).atan2(v[s] - v[c]);
+                let a1 = (v[e + 1] - v[c + 1]).atan2(v[e] - v[c]);
+                let mut sweep = (a1 - a0) % std::f64::consts::TAU;
+                if sweep <= 0.0 {
+                    sweep += std::f64::consts::TAU;
+                }
+                out.push(sweep - angle);
+            }
+            ResidualSpec::AngleThreePoints { a, v: at, b, angle } => {
+                let (x1, y1) = (v[a] - v[at], v[a + 1] - v[at + 1]);
+                let (x2, y2) = (v[b] - v[at], v[b + 1] - v[at + 1]);
+                let now = (x1 * y2 - y1 * x2).atan2(x1 * x2 + y1 * y2);
+                let pi = std::f64::consts::PI;
+                out.push((now - angle + pi).rem_euclid(2.0 * pi) - pi);
+            }
+            ResidualSpec::GapPointCircle { p, c, r, inside, d } => {
+                let from_center = segment_length(v, c, p);
+                out.push(if inside {
+                    v[r] - from_center - d
+                } else {
+                    from_center - v[r] - d
+                });
+            }
+            ResidualSpec::GapLineCircle { s, e, c, r, d } => {
+                out.push(point_line_distance(v, c, s, e).abs() - v[r] - d);
+            }
+            ResidualSpec::GapLines { s1, e1, s2, e2, d } => {
+                let (mx, my) = ((v[s2] + v[e2]) * 0.5, (v[s2 + 1] + v[e2 + 1]) * 0.5);
+                let (dx, dy) = (v[e1] - v[s1], v[e1 + 1] - v[s1 + 1]);
+                let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+                let across = ((mx - v[s1]) * dy - (my - v[s1 + 1]) * dx) / len;
+                out.push(across.abs() - d);
+            }
+            ResidualSpec::Step { a0, a1, dx, dy } => {
+                out.push(v[a1] - v[a0] - dx);
+                out.push(v[a1 + 1] - v[a0 + 1] - dy);
+            }
+            ResidualSpec::SameStep { a0, a1, b0, b1 } => {
+                out.push((v[b1] - v[b0]) - (v[a1] - v[a0]));
+                out.push((v[b1 + 1] - v[b0 + 1]) - (v[a1 + 1] - v[a0 + 1]));
+            }
+            ResidualSpec::GapCircles {
+                c1,
+                r1,
+                c2,
+                r2,
+                nested,
+                d,
+            } => {
+                let between = segment_length(v, c1, c2);
+                out.push(if nested {
+                    (v[r1] - v[r2]).abs() - between - d
+                } else {
+                    between - v[r1] - v[r2] - d
+                });
+            }
+            ResidualSpec::AngleAtPoint { t1, t2, p, angle } => {
+                let d1 = t1.at(v, p);
+                let d2 = t2.at(v, p);
+                let cross = d1.0 * d2.1 - d1.1 * d2.0;
+                let dot = d1.0 * d2.0 + d1.1 * d2.1;
+                out.push(wrap_angle(cross.atan2(dot) - angle));
+            }
+            ResidualSpec::Refraction {
+                near1,
+                far1,
+                near2,
+                far2,
+                interface,
+                p,
+                ratio,
+            } => {
+                let t = unit(interface.at(v, p));
+                let d1 = unit((v[near1] - v[far1], v[near1 + 1] - v[far1 + 1]));
+                let d2 = unit((v[far2] - v[near2], v[far2 + 1] - v[near2 + 1]));
+                let sin_in = d1.0 * t.0 + d1.1 * t.1;
+                let sin_out = d2.0 * t.0 + d2.1 * t.1;
+                out.push(sin_in - ratio * sin_out);
+            }
+            ResidualSpec::OnConic {
+                p,
+                c,
+                shape,
+                hyperbola,
+            } => {
+                let (axis_x, axis_y, minor) = shape.get(v);
+                let a = axis_x.hypot(axis_y).max(MIN_LEN);
+                let (ux, uy) = (axis_x / a, axis_y / a);
+                let (dx, dy) = (v[p] - v[c], v[p + 1] - v[c + 1]);
+                let x = dx * ux + dy * uy;
+                let y = -dx * uy + dy * ux;
+                let distance = if hyperbola {
+                    let (a2, b2) = (a * a, minor.max(MIN_LEN).powi(2));
+                    let f = x * x / a2 - y * y / b2 - 1.0;
+                    let g = ((2.0 * x / a2).powi(2) + (2.0 * y / b2).powi(2)).sqrt();
+                    f / g.max(MIN_LEN)
+                } else {
+                    (x - y * y / (4.0 * a)) / (1.0 + (y / (2.0 * a)).powi(2)).sqrt()
+                };
+                out.push(distance);
+            }
+            ResidualSpec::Internal { p, c, shape, at } => {
+                let (dx, dy) = at.of(shape.get(v));
+                out.push(v[p] - (v[c] + dx));
+                out.push(v[p + 1] - (v[c + 1] + dy));
+            }
+            ResidualSpec::Focus { p, c, shape } => {
+                let (x, y, minor) = shape.get(v);
+                let a = x.hypot(y).max(MIN_LEN);
+                let (dx, dy) = (v[p] - v[c], v[p + 1] - v[c + 1]);
+                let along = (dx * x + dy * y) / a;
+                let across = (dy * x - dx * y) / a;
+                let scale = 2.0 * a.max(minor.abs());
+                out.push(2.0 * along * across / scale);
+                out.push((along * along - across * across - (a * a - minor * minor)) / scale);
+            }
+        }
+    }
+}
+
+/// Signed perpendicular distance from point `p` to the infinite line
+/// through `s` → `e`.
+fn point_line_distance(v: &[f64], p: usize, s: usize, e: usize) -> f64 {
+    let dx = v[e] - v[s];
+    let dy = v[e + 1] - v[s + 1];
+    let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+    ((v[p] - v[s]) * dy - (v[p + 1] - v[s + 1]) * dx) / len
+}
+
+fn segment_length(v: &[f64], a: usize, b: usize) -> f64 {
+    let dx = v[b] - v[a];
+    let dy = v[b + 1] - v[a + 1];
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn unit_direction(v: &[f64], s: usize, e: usize) -> (f64, f64) {
+    let dx = v[e] - v[s];
+    let dy = v[e + 1] - v[s + 1];
+    let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+    (dx / len, dy / len)
+}
+
+fn wrap_angle(a: f64) -> f64 {
+    use std::f64::consts::{PI, TAU};
+    let mut a = a % TAU;
+    if a > PI {
+        a -= TAU;
+    } else if a < -PI {
+        a += TAU;
+    }
+    a
+}
+
+/// The constraint system: free variables plus resolved residual specs.
+struct System {
+    /// Initial values for every variable, free or pinned.
+    vars: Vec<f64>,
+    /// Indices the solver may move. Reference geometry (the origin and the
+    /// axes) sits in `vars` so residuals can address it, but stays out of
+    /// here: it holds still and costs no degree of freedom.
+    free: Vec<usize>,
+    /// Point id -> index of its x variable (y is at index + 1).
+    point_vars: HashMap<Uuid, usize>,
+    /// Circle/arc id -> index of its radius variable.
+    radius_vars: HashMap<Uuid, usize>,
+    /// Ellipse or conic id -> index of its three shape variables (see
+    /// `CurveShape`), for the curves whose internal geometry is shown.
+    shape_vars: HashMap<Uuid, usize>,
+    /// Ellipse foci nothing but their curve holds: left out of the solve
+    /// and placed from the solved shape after it.
+    derived_foci: std::collections::HashSet<Uuid>,
+    /// Resolved residuals (user constraints plus implicit arc consistency).
+    specs: Vec<ResidualSpec>,
+    /// Total residual dimension.
+    residual_len: usize,
+}
+
+/// Resolve the sketch into variables and residual specs. Constraints that
+/// reference missing geometry ids (or geometry of the wrong kind) are
+/// silently skipped, so malformed input never panics. Inactive constraints
+/// and reference (non-driving) dimensions contribute nothing.
+fn build_system(sketch: &Sketch) -> System {
+    build_system_excluding(sketch, None)
+}
+
+/// `build_system` minus the constraint with id `exclude` (diagnostics probe
+/// the system with individual constraints removed).
+fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
+    build_system_holding(sketch, exclude, &[])
+}
+
+/// `build_system_excluding` with the points `held` pinned where they are.
+fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -> System {
+    build_system_with(sketch, exclude, held, false)
+}
+
+/// `build_system_holding`, with every arc's ends held to its circle even
+/// when nothing else is constrained (`arcs_always`), as counting degrees of
+/// freedom needs.
+fn build_system_with(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    held: &[Uuid],
+    arcs_always: bool,
+) -> System {
+    prepare(sketch, exclude, held, arcs_always)
+}
+
+/// Application preparation supplies the compiler with stored geometry,
+/// active relation selection and the held/derived variable classifications.
+fn prepare(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid], arcs_always: bool) -> System {
+    let pins = ApplicationPins {
+        external: sketch.external_ids(),
+        held: held.to_vec(),
+        derived: crate::spline::derived_points(sketch)
+            .into_iter()
+            .chain(crate::text::outline_points(sketch))
+            .collect(),
+    };
+    compile_system(sketch, exclude, &pins, arcs_always)
+}
+
+/// These classifications belong to the caller, not to numerical equation
+/// construction. Gesture-held points stay distinct because excluding a
+/// constraint must reclassify ellipse foci against that particular hold.
+struct ApplicationPins {
+    external: std::collections::HashSet<Uuid>,
+    held: Vec<Uuid>,
+    derived: Vec<Uuid>,
+}
+
+fn compile_system(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    pins: &ApplicationPins,
+    arcs_always: bool,
+) -> System {
+    let mut vars = Vec::new();
+    let mut point_vars = HashMap::new();
+    let mut radius_vars = HashMap::new();
+    // The origin and a tip along each axis, pinned where they belong. They
+    // only join the system when a constraint points at them, and they bring
+    // one residual per variable, so they cost no degree of freedom.
+    let references_used = sketch.constraints.iter().any(|c| {
+        c.is_solved()
+            && constraint_refs(&c.kind)
+                .iter()
+                .any(|id| Reference::of(*id).is_some())
+    });
+    let mut pinned: Vec<usize> = Vec::new();
+    let mut reference_var = |vars: &mut Vec<f64>, x: f64, y: f64| {
+        let at = vars.len();
+        vars.push(x);
+        vars.push(y);
+        pinned.push(at);
+        pinned.push(at + 1);
+        at
+    };
+    let (origin_var, x_tip_var, y_tip_var) = if references_used {
+        (
+            Some(reference_var(&mut vars, 0.0, 0.0)),
+            Some(reference_var(&mut vars, 1.0, 0.0)),
+            Some(reference_var(&mut vars, 0.0, 1.0)),
+        )
+    } else {
+        (None, None, None)
+    };
+    // An ellipse or conic showing internal geometry has its shape in the
+    // system, so the geometry can size and turn it.
+    let shaped: std::collections::HashSet<Uuid> = sketch
+        .constraints
+        .iter()
+        .filter(|c| c.is_solved() && exclude != Some(c.id))
+        .flat_map(|c| match c.kind {
+            ConstraintKind::InternalAlignment { curve, .. } => vec![curve],
+            // Equal ellipses size each other, so their shapes are free.
+            ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => vec![ellipse1, ellipse2],
+            ConstraintKind::EllipseRadius { ellipse, .. } => vec![ellipse],
+            _ => Vec::new(),
+        })
+        .collect();
+    let mut shape_vars = HashMap::new();
+    for element in &sketch.geometry {
+        match element {
+            GeometryElement::Ellipse(e) if shaped.contains(&e.id) => {
+                shape_vars.insert(e.id, vars.len());
+                vars.push(f64::from(e.major.x));
+                vars.push(f64::from(e.major.y));
+                vars.push(f64::from(e.major.to_glam().length() * e.ratio));
+            }
+            GeometryElement::Conic(c) if shaped.contains(&c.id) => {
+                shape_vars.insert(c.id, vars.len());
+                vars.push(f64::from(c.axis.x));
+                vars.push(f64::from(c.axis.y));
+                vars.push(f64::from(c.minor));
+                // A parabola has no minor axis: its slot holds still.
+                if c.kind == crate::sketch::ConicKind::Parabola {
+                    pinned.push(vars.len() - 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    for element in &sketch.geometry {
+        match element {
+            GeometryElement::Point(p) => {
+                point_vars.insert(p.id, vars.len());
+                vars.push(f64::from(p.position.x));
+                vars.push(f64::from(p.position.y));
+            }
+            GeometryElement::Circle(c) => {
+                radius_vars.insert(c.id, vars.len());
+                vars.push(f64::from(c.radius));
+            }
+            GeometryElement::Arc(a) => {
+                radius_vars.insert(a.id, vars.len());
+                vars.push(f64::from(a.radius));
+            }
+            // Lines and splines move with their points; an ellipse's or
+            // conic's shape joins above when something sizes it.
+            GeometryElement::Line(_)
+            | GeometryElement::Ellipse(_)
+            | GeometryElement::BSpline(_)
+            | GeometryElement::Conic(_) => {}
+        }
+    }
+    // External geometry is where the solid's edge put it: its points and
+    // radii are held still, as the origin is.
+    for id in &pins.external {
+        if let Some(&v) = point_vars.get(id) {
+            pinned.extend([v, v + 1]);
+        }
+        if let Some(&r) = radius_vars.get(id) {
+            pinned.push(r);
+        }
+        if let Some(&k) = shape_vars.get(id) {
+            pinned.extend([k, k + 1, k + 2]);
+        }
+    }
+    for id in &pins.held {
+        if let Some(&v) = point_vars.get(id) {
+            pinned.extend([v, v + 1]);
+        }
+    }
+    // A spline drawn through points has its control points worked out from
+    // them after the solve: the solver leaves them be.
+    // Fit-spline controls and text outlines are worked out by the caller
+    // after the solve; the compiler receives their held IDs explicitly.
+    for id in &pins.derived {
+        if let Some(&v) = point_vars.get(id) {
+            pinned.extend([v, v + 1]);
+        }
+    }
+    // A focus only its ellipse holds follows the shape after the solve,
+    // so moving it costs the solve nothing: a radius dragged past the
+    // other trades the axes as it does with the foci hidden.
+    let derived_foci = derived_foci(sketch, exclude, &pins.held);
+    for id in &derived_foci {
+        if let Some(&v) = point_vars.get(id) {
+            pinned.extend([v, v + 1]);
+        }
+    }
+
+    let point_var = |id: Uuid| {
+        if id == ORIGIN_ID {
+            return origin_var;
+        }
+        point_vars.get(&id).copied()
+    };
+    // Line -> (start x-var, end x-var), only when both endpoints are points.
+    // The axes run from the origin through their tip.
+    let line_vars = |id: Uuid| match id {
+        X_AXIS_ID => Some((origin_var?, x_tip_var?)),
+        Y_AXIS_ID => Some((origin_var?, y_tip_var?)),
+        _ => match sketch.get_geometry(id) {
+            Some(GeometryElement::Line(l)) => Some((point_var(l.start)?, point_var(l.end)?)),
+            _ => None,
+        },
+    };
+    // Circle or arc -> (center x-var, radius var).
+    let circle_vars = |id: Uuid| match sketch.get_geometry(id) {
+        Some(GeometryElement::Circle(c)) => {
+            Some((point_var(c.center)?, radius_vars.get(&id).copied()?))
+        }
+        Some(GeometryElement::Arc(a)) => {
+            Some((point_var(a.center)?, radius_vars.get(&id).copied()?))
+        }
+        _ => None,
+    };
+    let radius_var = |id: Uuid| circle_vars(id).map(|(_, r)| r);
+    // Any item a gap, angle or refraction reaches: a point, a line or a
+    // circle (an arc counting as its circle).
+    let item_vars = |id: Uuid| {
+        if let Some(p) = point_var(id) {
+            Some(ItemVars::Point(p))
+        } else if let Some((s, e)) = line_vars(id) {
+            Some(ItemVars::Line(s, e))
+        } else {
+            circle_vars(id).map(|(c, r)| ItemVars::Circle(c, r))
+        }
+    };
+    let tangent_of = |id: Uuid| match item_vars(id)? {
+        ItemVars::Line(s, e) => Some(Tangent::Line { s, e }),
+        ItemVars::Circle(c, _) => Some(Tangent::Circle { c }),
+        ItemVars::Point(_) => None,
+    };
+    // A ray's (near, far) ends: the one nearer `p` at solve start first.
+    let ray_ends = |id: Uuid, p: usize| {
+        let (s, e) = line_vars(id)?;
+        Some(
+            if segment_length(&vars, s, p) <= segment_length(&vars, e, p) {
+                (s, e)
+            } else {
+                (e, s)
+            },
+        )
+    };
+
+    // Any curve, to be read at a parameter.
+    let curve_of = |id: Uuid| -> Option<CurveVars> {
+        if let Some((s, e)) = line_vars(id) {
+            return Some(CurveVars::Line { s, e });
+        }
+        if let Some((c, r)) = circle_vars(id) {
+            return Some(CurveVars::Circle { c, r });
+        }
+        match sketch.get_geometry(id)? {
+            GeometryElement::Ellipse(e) => Some(CurveVars::Ellipse {
+                c: point_var(e.center)?,
+                shape: curve_shape(sketch, &shape_vars, e.id),
+            }),
+            GeometryElement::Conic(k) => {
+                let c = point_var(k.center)?;
+                let shape = curve_shape(sketch, &shape_vars, k.id);
+                Some(match k.kind {
+                    crate::sketch::ConicKind::Hyperbola => CurveVars::Hyperbola { c, shape },
+                    crate::sketch::ConicKind::Parabola => CurveVars::Parabola { c, shape },
+                })
+            }
+            GeometryElement::BSpline(b) => Some(CurveVars::Spline {
+                basis: crate::spline::basis_of(b)?,
+                control: b
+                    .control_points
+                    .iter()
+                    .map(|p| point_var(*p))
+                    .collect::<Option<Vec<_>>>()?,
+            }),
+            _ => None,
+        }
+    };
+    // The parameters a constraint on a curve adds, past the geometry's
+    // variables: each where the curve is nearest now.
+    let base = vars.len();
+    let mut aux: Vec<f64> = Vec::new();
+
+    let mut specs = Vec::new();
+    for constraint in &sketch.constraints {
+        if !constraint.is_solved() || exclude == Some(constraint.id) {
+            continue;
+        }
+        match constraint.kind {
+            ConstraintKind::EllipseRadius {
+                ellipse,
+                major,
+                radius,
+            } => {
+                if let Some(&k) = shape_vars.get(&ellipse) {
+                    specs.push(ResidualSpec::EllipseRadius {
+                        k,
+                        major,
+                        radius: f64::from(radius),
+                    });
+                }
+            }
+            ConstraintKind::CurveLength { curve: id, length } => {
+                if let Some(curve) = curve_of(id) {
+                    let ends = match sketch.get_geometry(id) {
+                        Some(GeometryElement::Conic(k)) => point_var(k.start).zip(point_var(k.end)),
+                        _ => None,
+                    };
+                    specs.push(ResidualSpec::CurveLength {
+                        curve,
+                        ends,
+                        length: f64::from(length),
+                    });
+                }
+            }
+            ConstraintKind::PointOnCurve { point, curve } => {
+                if let (Some(p), Some(curve)) = (point_var(point), curve_of(curve)) {
+                    let t0 = nearest_param(&curve, &vars, [vars[p], vars[p + 1]]);
+                    let t = base + aux.len();
+                    aux.push(t0);
+                    specs.push(ResidualSpec::PointOnCurve { p, curve, t });
+                }
+            }
+            ConstraintKind::TangentCurves { curve1, curve2 }
+            | ConstraintKind::PerpendicularCurves { curve1, curve2 } => {
+                if let (Some(a), Some(b)) = (curve_of(curve1), curve_of(curve2)) {
+                    let (t1, t2) = nearest_params(&a, &b, &vars);
+                    let ta = base + aux.len();
+                    aux.extend([t1, t2]);
+                    specs.push(ResidualSpec::CurvesMeet {
+                        a,
+                        ta,
+                        b,
+                        tb: ta + 1,
+                        square: matches!(
+                            constraint.kind,
+                            ConstraintKind::PerpendicularCurves { .. }
+                        ),
+                    });
+                }
+            }
+            ConstraintKind::FixedPoint { point, position } => {
+                if let Some(p) = point_var(point) {
+                    specs.push(ResidualSpec::FixedPoint {
+                        p,
+                        x: f64::from(position.x),
+                        y: f64::from(position.y),
+                    });
+                }
+            }
+            ConstraintKind::Coincident { point1, point2 } => {
+                if let (Some(p1), Some(p2)) = (point_var(point1), point_var(point2)) {
+                    specs.push(ResidualSpec::Coincident { p1, p2 });
+                }
+            }
+            ConstraintKind::Parallel { line1, line2 } => {
+                if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
+                    specs.push(ResidualSpec::Parallel { s1, e1, s2, e2 });
+                }
+            }
+            ConstraintKind::Perpendicular { line1, line2 } => {
+                if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
+                    specs.push(ResidualSpec::Perpendicular { s1, e1, s2, e2 });
+                }
+            }
+            ConstraintKind::EqualLength { line1, line2 } => {
+                if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
+                    specs.push(ResidualSpec::EqualLength { s1, e1, s2, e2 });
+                }
+            }
+            ConstraintKind::Length { line, length } => {
+                if let Some((s, e)) = line_vars(line) {
+                    specs.push(ResidualSpec::Length {
+                        s,
+                        e,
+                        len: f64::from(length),
+                    });
+                }
+            }
+            ConstraintKind::EqualRadius { circle1, circle2 } => {
+                if let (Some(r1), Some(r2)) = (radius_var(circle1), radius_var(circle2)) {
+                    specs.push(ResidualSpec::EqualRadius { r1, r2 });
+                }
+            }
+            ConstraintKind::Radius { circle, radius } => {
+                if let Some(r) = radius_var(circle) {
+                    specs.push(ResidualSpec::Radius {
+                        r,
+                        radius: f64::from(radius),
+                    });
+                }
+            }
+            ConstraintKind::Diameter { circle, diameter } => {
+                if let Some(r) = radius_var(circle) {
+                    specs.push(ResidualSpec::Diameter {
+                        r,
+                        diameter: f64::from(diameter),
+                    });
+                }
+            }
+            ConstraintKind::PointOnLine { point, line } => {
+                if let (Some(p), Some((s, e))) = (point_var(point), line_vars(line)) {
+                    specs.push(ResidualSpec::PointOnLine { p, s, e });
+                }
+            }
+            ConstraintKind::PointOnCircle { point, circle } => {
+                if let (Some(p), Some((c, r))) = (point_var(point), circle_vars(circle)) {
+                    specs.push(ResidualSpec::PointOnCircle { p, c, r });
+                }
+            }
+            ConstraintKind::Horizontal { element } => {
+                if let Some((s, e)) = line_vars(element) {
+                    specs.push(ResidualSpec::Horizontal { s, e });
+                }
+            }
+            ConstraintKind::Vertical { element } => {
+                if let Some((s, e)) = line_vars(element) {
+                    specs.push(ResidualSpec::Vertical { s, e });
+                }
+            }
+            // Two points level or plumb: the line between them is.
+            ConstraintKind::HorizontalPoints { point1, point2 } => {
+                if let (Some(s), Some(e)) = (point_var(point1), point_var(point2)) {
+                    specs.push(ResidualSpec::Horizontal { s, e });
+                }
+            }
+            ConstraintKind::VerticalPoints { point1, point2 } => {
+                if let (Some(s), Some(e)) = (point_var(point1), point_var(point2)) {
+                    specs.push(ResidualSpec::Vertical { s, e });
+                }
+            }
+            ConstraintKind::Block { element } => {
+                if let Some(geom) = sketch.get_geometry(element) {
+                    // Fix every referenced point (and the element itself,
+                    // for standalone points) at its current position, plus
+                    // the radius when the element has one.
+                    let mut ids = Sketch::curve_point_ids(geom);
+                    if let GeometryElement::Point(p) = geom {
+                        ids.push(p.id);
+                    }
+                    for pid in ids {
+                        if let (Some(p), Some(pos)) = (point_var(pid), sketch.point_position(pid)) {
+                            specs.push(ResidualSpec::FixedPoint {
+                                p,
+                                x: f64::from(pos.x),
+                                y: f64::from(pos.y),
+                            });
+                        }
+                    }
+                    if let Some(&r) = radius_vars.get(&element) {
+                        specs.push(ResidualSpec::Radius { r, radius: vars[r] });
+                    }
+                }
+            }
+            ConstraintKind::Distance {
+                point1,
+                point2,
+                distance,
+            } => {
+                if let (Some(p1), Some(p2)) = (point_var(point1), point_var(point2)) {
+                    specs.push(ResidualSpec::Distance {
+                        p1,
+                        p2,
+                        d: f64::from(distance),
+                    });
+                }
+            }
+            ConstraintKind::DistanceX { a, b, value } => {
+                if let (Some(pa), Some(pb)) = (point_var(a), resolve_opt(b, &point_var)) {
+                    specs.push(ResidualSpec::CoordDistance {
+                        a: pa,
+                        b: pb,
+                        value: f64::from(value),
+                    });
+                }
+            }
+            ConstraintKind::DistanceY { a, b, value } => {
+                if let (Some(pa), Some(pb)) = (point_var(a), resolve_opt(b, &point_var)) {
+                    specs.push(ResidualSpec::CoordDistance {
+                        a: pa + 1,
+                        b: pb.map(|i| i + 1),
+                        value: f64::from(value),
+                    });
+                }
+            }
+            ConstraintKind::Angle {
+                line1,
+                line2,
+                angle_rad,
+            } => {
+                if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
+                    specs.push(ResidualSpec::Angle {
+                        s1,
+                        e1,
+                        s2,
+                        e2,
+                        angle: f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::AngleToAxis {
+                line,
+                axis,
+                angle_rad,
+            } => {
+                if let Some((s, e)) = line_vars(line) {
+                    let base = match axis {
+                        AxisDirection::Horizontal => 0.0,
+                        AxisDirection::Vertical => std::f64::consts::FRAC_PI_2,
+                    };
+                    specs.push(ResidualSpec::AngleToTarget {
+                        s,
+                        e,
+                        target: base + f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::PointOnEllipse { point, ellipse } => {
+                if let (Some(p), Some(GeometryElement::Ellipse(el))) =
+                    (point_var(point), sketch.get_geometry(ellipse))
+                    && let Some(c) = point_var(el.center)
+                {
+                    specs.push(ResidualSpec::PointOnEllipse {
+                        p,
+                        c,
+                        shape: curve_shape(sketch, &shape_vars, ellipse),
+                    });
+                }
+            }
+            // Resolved together below, once each point is known.
+            ConstraintKind::InternalAlignment { .. } => {}
+            ConstraintKind::Tangent {
+                line_or_circle1,
+                item2,
+            } => {
+                // Joined end to end, the tangency is at the shared end:
+                // written there it stays independent of the ends lying on
+                // both curves, where the distance form would not be.
+                let at_end = shared_end(sketch, line_or_circle1, item2);
+                let resolved = match (
+                    line_vars(line_or_circle1),
+                    circle_vars(line_or_circle1),
+                    line_vars(item2),
+                    circle_vars(item2),
+                ) {
+                    (Some((s, e)), _, _, Some((c, _))) | (_, Some((c, _)), Some((s, e)), _)
+                        if at_end.and_then(&point_var).is_some() =>
+                    {
+                        let p = at_end.and_then(&point_var).expect("checked");
+                        Some(ResidualSpec::TangentAtEnd { p, c, s, e })
+                    }
+                    (_, Some((c1, _)), _, Some((c2, _)))
+                        if at_end.and_then(&point_var).is_some() =>
+                    {
+                        let p = at_end.and_then(&point_var).expect("checked");
+                        Some(ResidualSpec::TangentArcsAtEnd { p, c1, c2 })
+                    }
+                    // Line ↔ circle/arc, in either selection order.
+                    (Some((s, e)), _, _, Some((c, r))) | (_, Some((c, r)), Some((s, e)), _) => {
+                        Some(ResidualSpec::TangentLineCircle { s, e, c, r })
+                    }
+                    // Circle/arc ↔ circle/arc: choose the external or
+                    // internal branch ONCE, from the configuration at solve
+                    // start (build_system runs once per solve call).
+                    (_, Some((c1, r1)), _, Some((c2, r2))) => {
+                        let dist = segment_length(&vars, c1, c2);
+                        let external_err = (dist - (vars[r1] + vars[r2])).abs();
+                        let internal_err = (dist - (vars[r1] - vars[r2]).abs()).abs();
+                        Some(ResidualSpec::TangentCircles {
+                            c1,
+                            r1,
+                            c2,
+                            r2,
+                            internal: internal_err < external_err,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(spec) = resolved {
+                    specs.push(spec);
+                }
+            }
+            ConstraintKind::Symmetric {
+                point1,
+                point2,
+                line,
+            } => {
+                if let (Some(p1), Some(p2), Some((s, e))) =
+                    (point_var(point1), point_var(point2), line_vars(line))
+                {
+                    specs.push(ResidualSpec::Symmetric { p1, p2, s, e });
+                }
+            }
+            ConstraintKind::SymmetricAboutPoint {
+                point1,
+                point2,
+                center,
+            } => {
+                // center = (p1 + p2) / 2: exactly the Midpoint residual.
+                if let (Some(s), Some(e), Some(p)) =
+                    (point_var(point1), point_var(point2), point_var(center))
+                {
+                    specs.push(ResidualSpec::Midpoint { p, s, e });
+                }
+            }
+            ConstraintKind::Midpoint { point, line } => {
+                if let (Some(p), Some((s, e))) = (point_var(point), line_vars(line)) {
+                    specs.push(ResidualSpec::Midpoint { p, s, e });
+                }
+            }
+            ConstraintKind::ArcLength { arc, length } => {
+                if let Some(GeometryElement::Arc(a)) = sketch.get_geometry(arc)
+                    && let (Some(c), Some(s), Some(e), Some(r)) = (
+                        point_var(a.center),
+                        point_var(a.start),
+                        point_var(a.end),
+                        radius_vars.get(&arc).copied(),
+                    )
+                {
+                    specs.push(ResidualSpec::ArcLength {
+                        c,
+                        s,
+                        e,
+                        r,
+                        len: f64::from(length),
+                    });
+                }
+            }
+            ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => {
+                if let (Some(&a), Some(&b)) = (shape_vars.get(&ellipse1), shape_vars.get(&ellipse2))
+                {
+                    specs.push(ResidualSpec::EqualEllipse { a, b });
+                }
+            }
+            ConstraintKind::ArcAngle { arc, angle_rad } => {
+                if let Some(GeometryElement::Arc(a)) = sketch.get_geometry(arc)
+                    && let (Some(c), Some(s), Some(e)) =
+                        (point_var(a.center), point_var(a.start), point_var(a.end))
+                {
+                    specs.push(ResidualSpec::ArcAngle {
+                        c,
+                        s,
+                        e,
+                        angle: f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::AngleThreePoints {
+                point1,
+                vertex,
+                point2,
+                angle_rad,
+            } => {
+                if let (Some(a), Some(v), Some(b)) =
+                    (point_var(point1), point_var(vertex), point_var(point2))
+                {
+                    specs.push(ResidualSpec::AngleThreePoints {
+                        a,
+                        v,
+                        b,
+                        angle: f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::Gap {
+                item1,
+                item2,
+                distance,
+            } => {
+                let d = f64::from(distance);
+                let spec = match (item_vars(item1), item_vars(item2)) {
+                    (Some(ItemVars::Point(p)), Some(ItemVars::Line(s, e)))
+                    | (Some(ItemVars::Line(s, e)), Some(ItemVars::Point(p))) => {
+                        Some(ResidualSpec::GapPointLine { p, s, e, d })
+                    }
+                    (Some(ItemVars::Point(p)), Some(ItemVars::Circle(c, r)))
+                    | (Some(ItemVars::Circle(c, r)), Some(ItemVars::Point(p))) => {
+                        Some(ResidualSpec::GapPointCircle {
+                            p,
+                            c,
+                            r,
+                            inside: sketch_solver::contact::point_inside(
+                                segment_length(&vars, c, p),
+                                vars[r],
+                            ),
+                            d,
+                        })
+                    }
+                    (Some(ItemVars::Line(s1, e1)), Some(ItemVars::Line(s2, e2))) => {
+                        Some(ResidualSpec::GapLines { s1, e1, s2, e2, d })
+                    }
+                    (Some(ItemVars::Line(s, e)), Some(ItemVars::Circle(c, r)))
+                    | (Some(ItemVars::Circle(c, r)), Some(ItemVars::Line(s, e))) => {
+                        Some(ResidualSpec::GapLineCircle { s, e, c, r, d })
+                    }
+                    (Some(ItemVars::Circle(c1, r1)), Some(ItemVars::Circle(c2, r2))) => {
+                        Some(ResidualSpec::GapCircles {
+                            c1,
+                            r1,
+                            c2,
+                            r2,
+                            nested: sketch_solver::contact::circles_nest(
+                                segment_length(&vars, c1, c2),
+                                vars[r1],
+                                vars[r2],
+                            ),
+                            d,
+                        })
+                    }
+                    _ => None,
+                };
+                specs.extend(spec);
+            }
+            ConstraintKind::Pitch {
+                ref points,
+                columns,
+                distance,
+                across,
+                direction,
+            } => {
+                let Some(p) = points
+                    .iter()
+                    .map(|id| point_var(*id))
+                    .collect::<Option<Vec<usize>>>()
+                else {
+                    continue;
+                };
+                let cols = (columns as usize).max(1);
+                // The pairs that step: along each row, or down the first
+                // column; the first pair sets the step the rest repeat.
+                let steps: Vec<(usize, usize)> = if across {
+                    (cols..p.len())
+                        .step_by(cols)
+                        .map(|i| (p[i - cols], p[i]))
+                        .collect()
+                } else {
+                    (0..p.len())
+                        .filter(|i| i % cols != 0)
+                        .map(|i| (p[i - 1], p[i]))
+                        .collect()
+                };
+                if let Some(&(a0, a1)) = steps.first() {
+                    let d = f64::from(distance);
+                    specs.push(match direction {
+                        Some(way) => {
+                            let way = way.to_glam().normalize_or_zero().as_dvec2() * d;
+                            ResidualSpec::Step {
+                                a0,
+                                a1,
+                                dx: way.x,
+                                dy: way.y,
+                            }
+                        }
+                        None => ResidualSpec::Distance { p1: a0, p2: a1, d },
+                    });
+                    for &(b0, b1) in &steps[1..] {
+                        specs.push(ResidualSpec::SameStep { a0, a1, b0, b1 });
+                    }
+                }
+            }
+            ConstraintKind::PolarPitch {
+                center,
+                ref points,
+                angle_rad,
+            } => {
+                let (Some(c), Some(p)) = (
+                    point_var(center),
+                    points
+                        .iter()
+                        .map(|id| point_var(*id))
+                        .collect::<Option<Vec<usize>>>(),
+                ) else {
+                    continue;
+                };
+                for w in p.windows(2) {
+                    specs.push(ResidualSpec::AngleThreePoints {
+                        a: w[0],
+                        v: c,
+                        b: w[1],
+                        angle: f64::from(angle_rad),
+                    });
+                }
+                for &q in p.iter().skip(1) {
+                    specs.push(ResidualSpec::EqualLength {
+                        s1: c,
+                        e1: p[0],
+                        s2: c,
+                        e2: q,
+                    });
+                }
+            }
+            ConstraintKind::Offset {
+                ref pairs,
+                distance,
+            } => {
+                let d = f64::from(distance);
+                for &[a, b] in pairs {
+                    match (item_vars(a), item_vars(b)) {
+                        (Some(ItemVars::Line(s1, e1)), Some(ItemVars::Line(s2, e2))) => {
+                            specs.push(ResidualSpec::Parallel { s1, e1, s2, e2 });
+                            specs.push(ResidualSpec::GapLines { s1, e1, s2, e2, d });
+                        }
+                        (Some(ItemVars::Circle(c1, r1)), Some(ItemVars::Circle(c2, r2))) => {
+                            specs.push(ResidualSpec::GapCircles {
+                                c1,
+                                r1,
+                                c2,
+                                r2,
+                                nested: true,
+                                d,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ConstraintKind::AngleAtPoint {
+                curve1,
+                curve2,
+                point,
+                angle_rad,
+            } => {
+                if let (Some(t1), Some(t2), Some(p)) =
+                    (tangent_of(curve1), tangent_of(curve2), point_var(point))
+                {
+                    specs.push(ResidualSpec::AngleAtPoint {
+                        t1,
+                        t2,
+                        p,
+                        angle: f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::Refraction {
+                ray1,
+                ray2,
+                interface,
+                point,
+                ratio,
+            } => {
+                if let Some(p) = point_var(point)
+                    && let (Some((near1, far1)), Some((near2, far2)), Some(interface)) =
+                        (ray_ends(ray1, p), ray_ends(ray2, p), tangent_of(interface))
+                {
+                    specs.push(ResidualSpec::Refraction {
+                        near1,
+                        far1,
+                        near2,
+                        far2,
+                        interface,
+                        p,
+                        ratio: f64::from(ratio),
+                    });
+                }
+            }
+        }
+    }
+
+    // Implicit arc-consistency residuals: whenever the sketch has at least one
+    // solvable user constraint, EVERY arc contributes |start - center| - r and
+    // |end - center| - r. They are added for all arcs (not only arcs directly
+    // referenced by a constraint) because the solver can move an arc's shared
+    // points through constraints that never mention the arc itself; without
+    // these residuals such an arc would silently become geometrically invalid.
+    // When there are no user constraints the solver reports NothingToSolve and
+    // never runs, so gating on "at least one constraint exists" costs nothing.
+    if arcs_always || !specs.is_empty() {
+        for element in &sketch.geometry {
+            if let GeometryElement::Arc(arc) = element
+                && let (Some(c), Some(s), Some(e), Some(r)) = (
+                    point_var(arc.center),
+                    point_var(arc.start),
+                    point_var(arc.end),
+                    radius_vars.get(&arc.id).copied(),
+                )
+            {
+                specs.push(ResidualSpec::ArcEndpoint { p: s, c, r });
+                specs.push(ResidualSpec::ArcEndpoint { p: e, c, r });
+            }
+        }
+    }
+
+    vars.extend(aux);
+    specs.extend(conic_end_residuals(sketch, &point_var, &shape_vars));
+    specs.extend(internal_residuals(
+        sketch,
+        exclude,
+        &point_var,
+        &shape_vars,
+        &derived_foci,
+    ));
+
+    let residual_len = specs.iter().map(ResidualSpec::dim).sum();
+    let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
+    System {
+        vars,
+        free,
+        point_vars,
+        radius_vars,
+        shape_vars,
+        derived_foci,
+        specs,
+        residual_len,
+    }
+}
+
+/// An item's variables: a point's x, a line's two ends, a circle's center
+/// and radius.
+#[derive(Debug, Clone, Copy)]
+enum ItemVars {
+    Point(usize),
+    Line(usize, usize),
+    Circle(usize, usize),
+}
+
+/// A parabola's or hyperbola's arc ends on its curve whatever else holds:
+/// both ends of every one join every solve, so dragging an end slides it
+/// along the curve and dragging the centre takes the arc along.
+fn conic_end_residuals(
+    sketch: &Sketch,
+    point_var: &impl Fn(Uuid) -> Option<usize>,
+    shape_vars: &HashMap<Uuid, usize>,
+) -> Vec<ResidualSpec> {
+    let mut specs = Vec::new();
+    for element in &sketch.geometry {
+        let GeometryElement::Conic(conic) = element else {
+            continue;
+        };
+        let Some(c) = point_var(conic.center) else {
+            continue;
+        };
+        for end in [conic.start, conic.end] {
+            if let Some(p) = point_var(end) {
+                specs.push(ResidualSpec::OnConic {
+                    p,
+                    c,
+                    shape: curve_shape(sketch, shape_vars, conic.id),
+                    hyperbola: conic.kind == crate::sketch::ConicKind::Hyperbola,
+                });
+            }
+        }
+    }
+    specs
+}
+
+/// An ellipse's or conic's shape as the system has it: its variables when
+/// it has them, else where it is.
+fn curve_shape(sketch: &Sketch, shape_vars: &HashMap<Uuid, usize>, id: Uuid) -> CurveShape {
+    if let Some(&k) = shape_vars.get(&id) {
+        return CurveShape::Var(k);
+    }
+    match sketch.get_geometry(id) {
+        Some(GeometryElement::Ellipse(e)) => CurveShape::Fixed {
+            x: f64::from(e.major.x),
+            y: f64::from(e.major.y),
+            minor: f64::from(e.major.to_glam().length() * e.ratio),
+        },
+        Some(GeometryElement::Conic(c)) => CurveShape::Fixed {
+            x: f64::from(c.axis.x),
+            y: f64::from(c.axis.y),
+            minor: f64::from(c.minor),
+        },
+        _ => CurveShape::Fixed {
+            x: 1.0,
+            y: 0.0,
+            minor: 0.0,
+        },
+    }
+}
+
+/// Each piece of internal geometry held where its curve puts it: every
+/// point of it that is not the curve's own, once, however many pieces
+/// share it (a parabola's axis ends at its focus). A control polygon is
+/// drawn through the spline's own points and needs none.
+fn internal_residuals(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    point_var: &impl Fn(Uuid) -> Option<usize>,
+    shape_vars: &HashMap<Uuid, usize>,
+    derived_foci: &std::collections::HashSet<Uuid>,
+) -> Vec<ResidualSpec> {
+    use crate::sketch::{ConicKind, InternalRole};
+    let mut specs = Vec::new();
+    let mut placed: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    type Foci = (usize, CurveShape, Option<Uuid>, Option<Uuid>);
+    let mut foci: HashMap<Uuid, Foci> = HashMap::new();
+    for constraint in &sketch.constraints {
+        let ConstraintKind::InternalAlignment {
+            element,
+            curve,
+            role,
+        } = constraint.kind
+        else {
+            continue;
+        };
+        if !constraint.is_solved() || exclude == Some(constraint.id) {
+            continue;
+        }
+        let Some(geometry) = sketch.get_geometry(curve) else {
+            continue;
+        };
+        let (center, ellipse, hyperbola) = match geometry {
+            GeometryElement::Ellipse(e) => (e.center, true, false),
+            GeometryElement::Conic(c) => (c.center, false, c.kind == ConicKind::Hyperbola),
+            _ => continue,
+        };
+        let Some(c) = point_var(center) else {
+            continue;
+        };
+        let own = Sketch::curve_point_ids(geometry);
+        let shape = curve_shape(sketch, shape_vars, curve);
+        // The points of the element and where each goes. An ellipse's
+        // foci are placed after the loop, the second from the first.
+        let targets: Vec<(Uuid, Offset)> = match (role, sketch.get_geometry(element)) {
+            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p)))
+                if ellipse && derived_foci.contains(&p.id) =>
+            {
+                Vec::new()
+            }
+            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p)))
+                if ellipse =>
+            {
+                let slot = foci.entry(curve).or_insert((c, shape, None, None));
+                if role == InternalRole::Focus1 {
+                    slot.2 = slot.2.or(Some(p.id));
+                } else {
+                    slot.3 = slot.3.or(Some(p.id));
+                }
+                Vec::new()
+            }
+            (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p))) => {
+                let at = if hyperbola {
+                    Offset::HyperbolaFocus
+                } else {
+                    Offset::Major(1.0)
+                };
+                vec![(p.id, at)]
+            }
+            (InternalRole::MajorAxis, Some(GeometryElement::Line(l))) => {
+                let mut ends = vec![(l.end, Offset::Major(1.0))];
+                if ellipse {
+                    ends.push((l.start, Offset::Major(-1.0)));
+                }
+                ends
+            }
+            (InternalRole::MinorAxis, Some(GeometryElement::Line(l))) => {
+                vec![(l.start, Offset::Minor(-1.0)), (l.end, Offset::Minor(1.0))]
+            }
+            _ => Vec::new(),
+        };
+        for (point, at) in targets {
+            if own.contains(&point) || !placed.insert(point) {
+                continue;
+            }
+            if let Some(p) = point_var(point) {
+                specs.push(ResidualSpec::Internal { p, c, shape, at });
+            }
+        }
+    }
+    // An ellipse's first focus solves `z² = a² − b²` and the second stands
+    // opposite it through the centre, which keeps them on opposite sides
+    // as they cross it; a lone focus solves the square itself.
+    let mut foci: Vec<_> = foci.into_iter().collect();
+    foci.sort_by_key(|(curve, _)| *curve);
+    for (_, (c, shape, first, second)) in foci {
+        let first = first.filter(|id| placed.insert(*id)).and_then(point_var);
+        let second = second.filter(|id| placed.insert(*id)).and_then(point_var);
+        match (first, second) {
+            (Some(p), Some(q)) => {
+                specs.push(ResidualSpec::Focus { p, c, shape });
+                specs.push(ResidualSpec::Midpoint { p: c, s: p, e: q });
+            }
+            (Some(p), None) | (None, Some(p)) => specs.push(ResidualSpec::Focus { p, c, shape }),
+            (None, None) => {}
+        }
+    }
+    specs
+}
+
+/// The ellipse foci nothing holds but their curve: no other constraint
+/// names them, no curve runs through them, and they are not being dragged.
+fn derived_foci(
+    sketch: &Sketch,
+    exclude: Option<Uuid>,
+    held: &[Uuid],
+) -> std::collections::HashSet<Uuid> {
+    let mut foci = std::collections::HashSet::new();
+    for c in &sketch.constraints {
+        if let ConstraintKind::InternalAlignment {
+            element,
+            curve,
+            role: InternalRole::Focus1 | InternalRole::Focus2,
+        } = c.kind
+            && c.is_solved()
+            && exclude != Some(c.id)
+            && matches!(
+                sketch.get_geometry(curve),
+                Some(GeometryElement::Ellipse(_))
+            )
+            && matches!(
+                sketch.get_geometry(element),
+                Some(GeometryElement::Point(_))
+            )
+            && !held.contains(&element)
+        {
+            foci.insert(element);
+        }
+    }
+    for c in &sketch.constraints {
+        if !c.is_solved()
+            || exclude == Some(c.id)
+            || matches!(c.kind, ConstraintKind::InternalAlignment { .. })
+        {
+            continue;
+        }
+        for id in constraint_refs(&c.kind) {
+            foci.remove(&id);
+        }
+    }
+    for g in &sketch.geometry {
+        for id in Sketch::curve_point_ids(g) {
+            foci.remove(&id);
+        }
+    }
+    foci
+}
+
+/// Resolve an optional point reference: absent is fine (measure from the
+/// origin), present-but-unresolvable skips the whole constraint (`None`).
+fn resolve_opt(
+    id: Option<Uuid>,
+    point_var: &impl Fn(Uuid) -> Option<usize>,
+) -> Option<Option<usize>> {
+    match id {
+        None => Some(None),
+        Some(id) => point_var(id).map(Some),
+    }
+}
+
+fn eval_residuals(sys: &System, x: &[f64]) -> Vec<f64> {
+    let mut out = Vec::with_capacity(sys.residual_len);
+    for spec in &sys.specs {
+        spec.eval(x, &mut out);
+    }
+    out
+}
+
+/// Central-difference Jacobian (m residuals x n variables).
+fn jacobian(sys: &System, x: &[f64]) -> Vec<Vec<f64>> {
+    // One column per movable variable: a pinned reference contributes none,
+    // so nothing can trade a constraint against tilting an axis.
+    let mut jac = vec![vec![0.0; sys.free.len()]; sys.residual_len];
+    let mut probe = x.to_vec();
+    for (column, &j) in sys.free.iter().enumerate() {
+        let eps = FD_EPS * x[j].abs().max(1.0);
+        let original = probe[j];
+        probe[j] = original + eps;
+        let r_plus = eval_residuals(sys, &probe);
+        probe[j] = original - eps;
+        let r_minus = eval_residuals(sys, &probe);
+        probe[j] = original;
+        for (row, (rp, rm)) in jac.iter_mut().zip(r_plus.iter().zip(&r_minus)) {
+            row[column] = (rp - rm) / (2.0 * eps);
+        }
+    }
+    jac
+}
+
+/// Build JᵀJ and Jᵀr for the normal equations.
+fn normal_equations(jac: &[Vec<f64>], r: &[f64]) -> (Vec<Vec<f64>>, Vec<f64>) {
+    let n = jac.first().map_or(0, Vec::len);
+    let mut jtj = vec![vec![0.0; n]; n];
+    let mut jtr = vec![0.0; n];
+    for (row, ri) in jac.iter().zip(r) {
+        for (a, ra) in row.iter().enumerate() {
+            jtr[a] += ra * ri;
+            for (acc, rb) in jtj[a].iter_mut().zip(row) {
+                *acc += ra * rb;
+            }
+        }
+    }
+    (jtj, jtr)
+}
+
+/// Solve `a * x = b` with Gaussian elimination and partial pivoting.
+/// Returns `None` when the matrix is numerically singular.
+fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    for col in 0..n {
+        let mut pivot_row = col;
+        let mut pivot_val = a[col][col].abs();
+        for (row, row_vals) in a.iter().enumerate().skip(col + 1) {
+            let v = row_vals[col].abs();
+            if v > pivot_val {
+                pivot_val = v;
+                pivot_row = row;
+            }
+        }
+        if !pivot_val.is_finite() || pivot_val < 1e-300 {
+            return None;
+        }
+        a.swap(col, pivot_row);
+        b.swap(col, pivot_row);
+        let (upper, lower) = a.split_at_mut(col + 1);
+        let pivot_vals = &upper[col];
+        let pivot = pivot_vals[col];
+        let b_pivot = b[col];
+        for (offset, row_vals) in lower.iter_mut().enumerate() {
+            let factor = row_vals[col] / pivot;
+            if factor == 0.0 {
+                continue;
+            }
+            for (dst, src) in row_vals[col..].iter_mut().zip(&pivot_vals[col..]) {
+                *dst -= factor * src;
+            }
+            b[col + 1 + offset] -= factor * b_pivot;
+        }
+    }
+    let mut x = vec![0.0; n];
+    for col in (0..n).rev() {
+        let mut sum = b[col];
+        for k in (col + 1)..n {
+            sum -= a[col][k] * x[k];
+        }
+        x[col] = sum / a[col][col];
+    }
+    if x.iter().all(|v| v.is_finite()) {
+        Some(x)
+    } else {
+        None
+    }
+}
+
+/// Numerical rank via row echelon form with partial pivoting. Pivots below
+/// `RANK_TOL` times the largest Jacobian entry are treated as zero, which is
+/// loose enough to flag redundant (dependent) constraint rows near a solution
+/// while keeping genuinely independent rows.
+fn jacobian_rank(mut m: Vec<Vec<f64>>) -> usize {
+    let rows = m.len();
+    let cols = m.first().map_or(0, Vec::len);
+    if rows == 0 || cols == 0 {
+        return 0;
+    }
+    let max_abs = m.iter().flatten().fold(0.0_f64, |acc, v| acc.max(v.abs()));
+    if max_abs == 0.0 || !max_abs.is_finite() {
+        return 0;
+    }
+    let tol = max_abs * RANK_TOL;
+
+    let mut rank = 0;
+    let mut row = 0;
+    for col in 0..cols {
+        if row >= rows {
+            break;
+        }
+        let mut pivot_row = row;
+        let mut pivot_val = m[row][col].abs();
+        for (r, row_vals) in m.iter().enumerate().skip(row + 1) {
+            let v = row_vals[col].abs();
+            if v > pivot_val {
+                pivot_val = v;
+                pivot_row = r;
+            }
+        }
+        if pivot_val <= tol {
+            continue;
+        }
+        m.swap(row, pivot_row);
+        let (upper, lower) = m.split_at_mut(row + 1);
+        let pivot_vals = &upper[row];
+        let pivot = pivot_vals[col];
+        for row_vals in lower.iter_mut() {
+            let factor = row_vals[col] / pivot;
+            if factor == 0.0 {
+                continue;
+            }
+            for (dst, src) in row_vals[col..].iter_mut().zip(&pivot_vals[col..]) {
+                *dst -= factor * src;
+            }
+        }
+        row += 1;
+        rank += 1;
+    }
+    rank
+}
+
+fn sq_norm(v: &[f64]) -> f64 {
+    v.iter().map(|x| x * x).sum()
+}
+
+fn inf_norm(v: &[f64]) -> f64 {
+    v.iter().fold(0.0_f64, |acc, x| acc.max(x.abs()))
+}
+
+/// Characteristic magnitude of the variable vector, floored at 1.
+fn var_scale(x: &[f64]) -> f64 {
+    inf_norm(x).max(1.0)
+}
+
+/// Cap the step inf-norm relative to the variable scale so a single
+/// ill-conditioned iteration cannot fling the geometry to infinity.
+fn cap_step(step: &mut [f64], scale: f64) {
+    let max_step = MAX_STEP_SCALE * scale;
+    let norm = inf_norm(step);
+    if norm > max_step {
+        let factor = max_step / norm;
+        for v in step.iter_mut() {
+            *v *= factor;
+        }
+    }
+}
+
+pub(super) fn capture(
+    input: &Sketch,
+    exclude: Option<Uuid>,
+    held: &[Uuid],
+    arcs_always: bool,
+) -> serde_json::Value {
+    let sys = build_system_with(input, exclude, held, arcs_always);
+    let answer = iterate(&sys, input.solver);
+    let mut derived: Vec<_> = sys.derived_foci.iter().copied().collect();
+    derived.sort();
+    serde_json::json!({
+        "compiled": {"values": sys.vars, "free": sys.free, "equations": sys.residual_len,
+            "spec_dimensions": sys.specs.iter().map(ResidualSpec::dim).collect::<Vec<_>>(),
+            "derived_foci": derived},
+        "values": answer.values, "iterations": answer.iterations,
+        "residual": answer.residual, "threshold": answer.threshold,
+    })
+}

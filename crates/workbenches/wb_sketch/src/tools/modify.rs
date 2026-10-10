@@ -1867,7 +1867,7 @@ fn offset_sampled(
         .map(|&i| samples[i] + tangent(i).perp() * d)
         .map(|q| [f64::from(q.x), f64::from(q.y)])
         .collect();
-    let fit = crate::spline::math::interpolate(&points, 3, closed)?;
+    let fit = sketch_solver::spline::interpolate(&points, 3, closed)?;
     let control: Vec<Uuid> = fit
         .control
         .iter()

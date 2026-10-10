@@ -11,9 +11,9 @@ use glam::DVec2;
 use uuid::Uuid;
 
 use crate::sketch::{BSpline, GeometryElement, Point, Sketch, Vec2D};
-use crate::spline::math::{Basis, insert_knot};
 use crate::spline::{MAX_DEGREE, basis_of};
 use crate::tools::ToolEffect;
+use sketch_solver::spline::{Basis, insert_knot};
 
 /// A spline in the making: degree, clamped knots, and control points with
 /// their weights; `start` and `end` are the sketch points the first and
