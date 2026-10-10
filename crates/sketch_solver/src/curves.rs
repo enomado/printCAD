@@ -4,6 +4,7 @@ use crate::residual::CurveShape;
 /// line, a circle or arc, an ellipse, a hyperbola or parabola, a spline
 /// over its control points.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CurveVars {
     Line {
         s: usize,

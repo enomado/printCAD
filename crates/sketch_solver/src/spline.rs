@@ -4,6 +4,7 @@
 /// The basis functions of one spline: which control points weigh in at a
 /// parameter, and how much.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Basis {
     degree: usize,
     /// The full knot vector: `count + degree + 1` knots over the control

@@ -371,6 +371,47 @@ fn compiled_core(sys: &sketch_solver::compile::System) -> Value {
 }
 
 #[test]
+fn semantic_replay_corpus_matches_ported_solver() {
+    use sketch_solver::replay::{Fixture, Regression, SCHEMA_VERSION, run};
+    let replay: Vec<_> = cases()
+        .into_iter()
+        .map(|(input, held)| {
+            let fixture = Fixture {
+                schema_version: SCHEMA_VERSION,
+                problem: adapter::prepare(&input, &held),
+            };
+            let expected = run(&fixture);
+            Regression {
+                name: input.name,
+                fixture,
+                expected,
+            }
+        })
+        .collect();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../sketch_solver/fixtures/migration.json");
+    if std::env::var_os("PRINTCAD_CAPTURE_SOLVER_REPLAY_CORPUS").is_some() {
+        assert!(
+            !path.exists(),
+            "the saved semantic corpus must not be overwritten"
+        );
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&replay).unwrap() + "\n").unwrap();
+    }
+    let mut saved: Vec<Regression> =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for case in &mut saved {
+        case.fixture.problem.external.sort();
+        case.fixture.problem.application_held_points.sort();
+    }
+    equivalent(
+        &serde_json::to_value(saved).unwrap(),
+        &serde_json::to_value(replay).unwrap(),
+        "semantic_replay",
+    );
+}
+
+#[test]
 fn standalone_compiler_and_iteration_match_application_oracle() {
     for (input, held) in cases() {
         for arcs_always in [false, true] {

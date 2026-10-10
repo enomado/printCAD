@@ -3,6 +3,7 @@ use crate::problem::{
     Geometry as GeometryElement, Problem as Sketch, Relation as ConstraintKind, *,
 };
 use crate::residual::{CurveShape, Offset, ResidualSpec, Tangent, segment_length};
+use crate::trace::EquationSource;
 use std::collections::{HashMap, HashSet};
 
 pub fn compile(problem: &Problem) -> Result<System, crate::input::InputError> {
@@ -23,6 +24,7 @@ fn shared_end(sketch: &Sketch, a: CurveReference, b: CurveReference) -> Option<P
 
 /// The constraint system: free variables plus resolved residual specs.
 pub struct System {
+    pub origins: Vec<EquationSource>,
     pub settings: Settings,
     /// Initial values for every variable, free or pinned.
     pub vars: Vec<f64>,
@@ -303,10 +305,12 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     let mut aux: Vec<f64> = Vec::new();
 
     let mut specs = Vec::new();
+    let mut origins = Vec::new();
     for constraint in &sketch.constraints {
         if exclude == Some(constraint.id) {
             continue;
         }
+        let start = specs.len();
         match constraint.kind {
             ConstraintKind::EllipseRadius {
                 ellipse,
@@ -879,6 +883,12 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                 }
             }
         }
+        for spec in &specs[start..] {
+            origins.extend(std::iter::repeat_n(
+                EquationSource::Constraint(constraint.id),
+                spec.dim(),
+            ));
+        }
     }
 
     // Implicit arc-consistency residuals: whenever the sketch has at least one
@@ -901,23 +911,37 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             {
                 specs.push(ResidualSpec::ArcEndpoint { p: s, c, r });
                 specs.push(ResidualSpec::ArcEndpoint { p: e, c, r });
+                origins.push(EquationSource::ArcEndpoint {
+                    curve: arc.id.into(),
+                    point: arc.start,
+                });
+                origins.push(EquationSource::ArcEndpoint {
+                    curve: arc.id.into(),
+                    point: arc.end,
+                });
             }
         }
     }
 
     vars.extend(aux);
-    specs.extend(conic_end_residuals(sketch, &point_var, &shape_vars));
-    specs.extend(internal_residuals(
-        sketch,
-        exclude,
-        &point_var,
-        &shape_vars,
-        &derived_foci,
-    ));
+    let implicit = conic_end_residuals(sketch, &point_var, &shape_vars)
+        .into_iter()
+        .chain(internal_residuals(
+            sketch,
+            exclude,
+            &point_var,
+            &shape_vars,
+            &derived_foci,
+        ));
+    for (spec, origin) in implicit {
+        origins.extend(std::iter::repeat_n(origin, spec.dim()));
+        specs.push(spec);
+    }
 
     let residual_len = specs.iter().map(ResidualSpec::dim).sum();
     let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
     System {
+        origins,
         settings: sketch.settings,
         vars,
         free,
@@ -946,7 +970,7 @@ fn conic_end_residuals(
     sketch: &Sketch,
     point_var: &impl Fn(PointReference) -> Option<usize>,
     shape_vars: &HashMap<CurveReference, usize>,
-) -> Vec<ResidualSpec> {
+) -> Vec<(ResidualSpec, EquationSource)> {
     let mut specs = Vec::new();
     for element in &sketch.geometry {
         let GeometryElement::Conic(conic) = element else {
@@ -957,12 +981,18 @@ fn conic_end_residuals(
         };
         for end in [conic.start, conic.end] {
             if let Some(p) = point_var(end) {
-                specs.push(ResidualSpec::OnConic {
-                    p,
-                    c,
-                    shape: curve_shape(sketch, shape_vars, conic.id.into()),
-                    hyperbola: conic.kind == ConicKind::Hyperbola,
-                });
+                specs.push((
+                    ResidualSpec::OnConic {
+                        p,
+                        c,
+                        shape: curve_shape(sketch, shape_vars, conic.id.into()),
+                        hyperbola: conic.kind == ConicKind::Hyperbola,
+                    },
+                    EquationSource::ConicEndpoint {
+                        curve: conic.id.into(),
+                        point: end,
+                    },
+                ));
             }
         }
     }
@@ -1008,15 +1038,11 @@ fn internal_residuals(
     point_var: &impl Fn(PointReference) -> Option<usize>,
     shape_vars: &HashMap<CurveReference, usize>,
     derived_foci: &HashSet<PointReference>,
-) -> Vec<ResidualSpec> {
+) -> Vec<(ResidualSpec, EquationSource)> {
     let mut specs = Vec::new();
     let mut placed: HashSet<PointReference> = HashSet::new();
-    type Foci = (
-        usize,
-        CurveShape,
-        Option<PointReference>,
-        Option<PointReference>,
-    );
+    type Focus = (PointReference, ConstraintId);
+    type Foci = (usize, CurveShape, Option<Focus>, Option<Focus>);
     let mut foci: HashMap<CurveReference, Foci> = HashMap::new();
     for constraint in &sketch.constraints {
         let ConstraintKind::InternalAlignment {
@@ -1056,9 +1082,9 @@ fn internal_residuals(
             {
                 let slot = foci.entry(curve).or_insert((c, shape, None, None));
                 if role == InternalRole::Focus1 {
-                    slot.2 = slot.2.or(Some(p.id.into()));
+                    slot.2 = slot.2.or(Some((p.id.into(), constraint.id)));
                 } else {
-                    slot.3 = slot.3.or(Some(p.id.into()));
+                    slot.3 = slot.3.or(Some((p.id.into(), constraint.id)));
                 }
                 Vec::new()
             }
@@ -1087,7 +1113,10 @@ fn internal_residuals(
                 continue;
             }
             if let Some(p) = point_var(point) {
-                specs.push(ResidualSpec::Internal { p, c, shape, at });
+                specs.push((
+                    ResidualSpec::Internal { p, c, shape, at },
+                    EquationSource::Constraint(constraint.id),
+                ));
             }
         }
     }
@@ -1097,14 +1126,27 @@ fn internal_residuals(
     let mut foci: Vec<_> = foci.into_iter().collect();
     foci.sort_by_key(|(curve, _)| *curve);
     for (_, (c, shape, first, second)) in foci {
-        let first = first.filter(|id| placed.insert(*id)).and_then(point_var);
-        let second = second.filter(|id| placed.insert(*id)).and_then(point_var);
+        let first = first
+            .filter(|(id, _)| placed.insert(*id))
+            .and_then(|(id, source)| point_var(id).map(|p| (p, source)));
+        let second = second
+            .filter(|(id, _)| placed.insert(*id))
+            .and_then(|(id, source)| point_var(id).map(|p| (p, source)));
         match (first, second) {
-            (Some(p), Some(q)) => {
-                specs.push(ResidualSpec::Focus { p, c, shape });
-                specs.push(ResidualSpec::Midpoint { p: c, s: p, e: q });
+            (Some((p, first)), Some((q, second))) => {
+                specs.push((
+                    ResidualSpec::Focus { p, c, shape },
+                    EquationSource::Constraint(first),
+                ));
+                specs.push((
+                    ResidualSpec::Midpoint { p: c, s: p, e: q },
+                    EquationSource::Constraint(second),
+                ));
             }
-            (Some(p), None) | (None, Some(p)) => specs.push(ResidualSpec::Focus { p, c, shape }),
+            (Some((p, source)), None) | (None, Some((p, source))) => specs.push((
+                ResidualSpec::Focus { p, c, shape },
+                EquationSource::Constraint(source),
+            )),
             (None, None) => {}
         }
     }

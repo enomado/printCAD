@@ -381,7 +381,7 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
             }),
         })
         .collect();
-    core::Problem {
+    let mut problem = core::Problem {
         geometry,
         constraints: sketch
             .constraints
@@ -404,5 +404,8 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
             .map(point)
             .collect(),
         settings: settings(sketch.solver),
-    }
+    };
+    problem.external.sort();
+    problem.application_held_points.sort();
+    problem
 }

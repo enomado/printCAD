@@ -77,6 +77,46 @@ unresolved stored constraints (zero rows) and require trusted finite geometry
 and settings. Untrusted consumers should use the validated entry points above.
 Numeric compiled equations expose raw offsets only at this low-level boundary.
 
+With `serde`, `replay::Fixture` carries schema version 1 and a semantic problem.
+`replay::run` returns a deterministic compiled trace, answer, residuals with
+typed equation indices and provenance, DoF and diagnosis. The trace records
+initial auxiliary contact parameters, tangent/gap branches and refraction ray
+order. Every input constraint has a row report, including zero-row relations.
+Unsupported schemas and invalid semantic inputs produce separate replay errors.
+Serde JSON preserves `f64` round trips and the full `u128` ID domain. IDs within
+`u64` serialize as integers; larger IDs serialize as decimal strings. The reader
+accepts both without enabling arbitrary-precision JSON numbers in consumers.
+
+The example runner accepts a single fixture, the saved regression corpus, or
+standard input (`-`). An optional second argument records the caller's revision;
+neither the numerical library nor its replay functions read the environment.
+
+```sh
+cargo run -p sketch_solver --features serde --example solve_problem -- \
+  crates/sketch_solver/fixtures/migration.json
+cargo test -p sketch_solver --features serde --test replay
+cargo test -p sketch_solver --test generated -- --nocapture
+cargo test -p sketch_solver --test boundaries
+```
+
+`fixtures/migration.json` contains 24 frozen semantic cases: 23 numerical runs
+and one invalid stored-reference case rejected by the strict interface. The
+application's compatibility path also checks its original stored-geometry
+baseline without overwriting it. External and application-held pin lists are
+sets; their ordering does not change equations. Geometry and relation ordering
+remains significant. Regression traces and floating-point answers are fixed;
+recapture is not a way to make a changed implementation pass.
+
+The bounded generators run 96 fixed seeds across three planted-feasible
+families (288 problems), with independent coordinate/distance/direction oracles.
+Failure output includes seed, family and a structurally reduced problem; with
+serde enabled it also prints a versioned fixture for replay. The reducer removes
+irrelevant constraints and geometry while preserving validated numerical failure.
+An answer mutation must fail the geometric oracle. Boundary tests include 90
+repeated directional-angle transitions, the separate arc-sweep domain,
+degenerate finite geometry, fully held inputs, ellipse equal axes on both sides,
+both gap branches, multiple conflicts and the 60/61 diagnosis limit.
+
 Run the default and independent feature checks with:
 
 ```sh

@@ -2,6 +2,11 @@
 //! length unit; directions and angles are expressed in radians.
 
 macro_rules! id {
+    ($name:ident, u128) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        pub struct $name(#[cfg_attr(feature = "serde", serde(with = "id_wire"))] pub u128);
+    };
     ($name:ident, $inner:ty) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -14,6 +19,37 @@ id!(CurveId, u128);
 id!(ConstraintId, u128);
 id!(VariableIndex, usize);
 id!(EquationIndex, usize);
+
+#[cfg(feature = "serde")]
+mod id_wire {
+    use serde::{Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(value: &u128, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Ok(value) = u64::try_from(*value) {
+            serializer.serialize_u64(value)
+        } else {
+            serializer.serialize_str(&value.to_string())
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+        struct Identity;
+        impl serde::de::Visitor<'_> for Identity {
+            type Value = u128;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an unsigned integer or a decimal u128 identity string")
+            }
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<u128, E> {
+                Ok(u128::from(value))
+            }
+            fn visit_u128<E: serde::de::Error>(self, value: u128) -> Result<u128, E> {
+                Ok(value)
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<u128, E> {
+                value.parse().map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(Identity)
+    }
+}
 
 macro_rules! quantity {
     ($name:ident) => {

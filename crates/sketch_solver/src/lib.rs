@@ -5,6 +5,9 @@ pub mod diagnosis;
 pub mod freedom;
 pub mod input;
 pub mod problem;
+#[cfg(feature = "serde")]
+pub mod replay;
 pub mod residual;
 pub mod solve;
 pub mod spline;
+pub mod trace;

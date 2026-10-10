@@ -71,6 +71,16 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
                 c.axis.x.is_finite() && c.axis.y.is_finite() && c.minor.0.is_finite()
             }
             Geometry::BSpline(b) => {
+                let count = b.control_points.len();
+                let degree = (b.degree as usize).min(count.saturating_sub(1));
+                if b.degree == 0
+                    || (!b.knots.is_empty()
+                        && (b.periodic
+                            || b.knots.len() != count + degree + 1
+                            || b.knots.windows(2).any(|w| w[0] > w[1])))
+                {
+                    return Err(InputError::InvalidSpline(g.id()));
+                }
                 if crate::spline::Basis::new(b.degree, b.control_points.len(), &b.knots, b.periodic)
                     .is_none()
                     || (!b.weights.is_empty()
@@ -182,7 +192,20 @@ fn validate_relation(
         Relation::PointOnCircle { circle: c, .. } => circle(*c),
         Relation::PointOnEllipse { ellipse: e, .. } => ellipse(*e),
         Relation::Horizontal { element } | Relation::Vertical { element } => line(*element),
-        Relation::Distance { distance, .. } | Relation::Gap { distance, .. } => finite(distance.0),
+        Relation::Distance { distance, .. } => finite(distance.0),
+        Relation::Gap {
+            item1,
+            item2,
+            distance,
+        } => {
+            let supports = match (*item1, *item2) {
+                (ItemReference::Point(_), ItemReference::Curve(c))
+                | (ItemReference::Curve(c), ItemReference::Point(_)) => line(c) || circle(c),
+                (ItemReference::Curve(a), ItemReference::Curve(b)) => tangent(a) && tangent(b),
+                (ItemReference::Point(_), ItemReference::Point(_)) => false,
+            };
+            supports && finite(distance.0)
+        }
         Relation::DistanceX { value, .. } | Relation::DistanceY { value, .. } => finite(value.0),
         Relation::Angle {
             line1,
@@ -229,7 +252,11 @@ fn validate_relation(
         } => {
             *columns > 0
                 && finite(distance.0)
-                && direction.is_none_or(|d| finite(d.x) && finite(d.y))
+                && direction.is_none_or(|d| {
+                    finite(d.x)
+                        && finite(d.y)
+                        && (d.x.hypot(d.y) == 0.0 || (d.x.hypot(d.y) - 1.0).abs() < 1e-6)
+                })
         }
         Relation::PolarPitch { angle_rad, .. } | Relation::AngleThreePoints { angle_rad, .. } => {
             finite(angle_rad.0)
@@ -247,7 +274,33 @@ fn validate_relation(
             ratio,
             ..
         } => line(*ray1) && line(*ray2) && tangent(*interface) && finite(ratio.0),
-        Relation::InternalAlignment { curve: c, .. } => curve(*c),
+        Relation::InternalAlignment {
+            element,
+            curve: c,
+            role,
+        } => {
+            use crate::problem::InternalRole;
+            match role {
+                InternalRole::Focus1 | InternalRole::Focus2 => {
+                    matches!(element, ItemReference::Point(_))
+                        && matches!(
+                            problem.get_geometry(*c),
+                            Some(Geometry::Ellipse(_) | Geometry::Conic(_))
+                        )
+                }
+                InternalRole::MajorAxis | InternalRole::MinorAxis => {
+                    matches!(element,ItemReference::Curve(e) if line(*e))
+                        && matches!(
+                            problem.get_geometry(*c),
+                            Some(Geometry::Ellipse(_) | Geometry::Conic(_))
+                        )
+                }
+                InternalRole::ControlEdge(index) => {
+                    matches!(element,ItemReference::Curve(e) if line(*e))
+                        && matches!(problem.get_geometry(*c),Some(Geometry::BSpline(b)) if (*index as usize) < b.control_points.len().saturating_sub(usize::from(!b.periodic)))
+                }
+            }
+        }
     };
     if valid {
         Ok(())

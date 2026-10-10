@@ -15,6 +15,7 @@ const CONVERGENCE_TOL: f64 = 1e-9;
 
 /// Result of a constraint solve.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SolveOutcome {
     /// All residuals below tolerance.
     Converged { iterations: usize },
@@ -26,6 +27,8 @@ pub enum SolveOutcome {
 
 /// Numerical output before storage rounding and application updates. Even
 /// a stalled attempt exposes its iteration count and effective threshold.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Iteration {
     pub values: Vec<f64>,
     pub outcome: SolveOutcome,

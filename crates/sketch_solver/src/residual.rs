@@ -2,6 +2,7 @@ use crate::curves::CurveVars;
 
 /// One resolved constraint residual, expressed in variable indices.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResidualSpec {
     /// An ellipse's semi-major or semi-minor radius, its shape at `k`,
     /// less `radius`.
@@ -278,6 +279,7 @@ pub enum ResidualSpec {
 /// or three variables of the system from `Var`'s index on, when internal
 /// geometry can move it.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CurveShape {
     Fixed { x: f64, y: f64, minor: f64 },
     Var(usize),
@@ -297,6 +299,7 @@ impl CurveShape {
 /// the axis `u` and across it `w` (`u` turned a quarter counter-clockwise),
 /// with `a` the axis length and `b` the minor radius.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Offset {
     /// `sign · a` along: an ellipse's major vertices, a conic's axis end.
     Major(f64),
@@ -323,6 +326,7 @@ impl Offset {
 /// circle's center (the tangent is square to the radius through the point,
 /// counter-clockwise).
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Tangent {
     Line { s: usize, e: usize },
     Circle { c: usize },
