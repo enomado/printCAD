@@ -191,3 +191,32 @@ measurements describe this machine and test harness, not a CI budget or
 a standalone-core speedup. The engine is the solver at `566bf70` with
 test-only observation and corpus modules attached; its numerical code is
 unchanged.
+
+## Extraction acceptance
+
+The extraction is complete as of 2026-10-10. Acceptance includes the frozen
+application and semantic corpora, independent geometric checks, standalone
+dependency and feature gates, browser/WASI compilation, the full workspace
+release suite (1843 passed, 0 failed, 2 ignored across 58 suites), and the
+CI budget (1843 tests across 35 programs in 21.4 s; slowest program 8.7 s,
+within the 150 s total / 60 s per-program limits). The constrained-sketch
+startup smoke passed with zero GPU errors; it does not exercise pointer or
+keyboard interaction.
+
+At the user's request, final post-extraction build and runtime measurements
+are deferred and do not block acceptance. No speedup or absence of a
+performance regression is claimed. The baseline above remains a reference;
+there are no comparable final measurements. Optimization, if needed, is
+separate work. This acceptance update changes documentation only.
+
+For a future comparison, use the same Rust 1.98 toolchain, release profile,
+features and locked dependency versions on an idle machine. Build the
+`wb_sketch --no-default-features --lib` test target without running it in a
+fresh target directory, touch only `crates/sketch_solver/src/compile.rs`,
+then rebuild that same target. The baseline touch changed the workbench's
+`solver.rs`; report this difference in the compilation boundary explicitly.
+Run the timing test above five times (50 repetitions of all 24 cases each),
+reporting medians and ranges for compilation, pure iteration,
+solve including clone/application updates, and diagnosis. Pure iteration
+has no pre-extraction baseline. The extraction adds the local solver package
+to Cargo.lock; existing dependency versions are unchanged.
