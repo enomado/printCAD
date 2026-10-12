@@ -1535,6 +1535,11 @@ pub enum DesignFeature {
         /// How far down a modeled thread runs, mm.
         #[serde(default)]
         thread_depth: f32,
+        /// A threaded hole drilled to its tap size whose thread is shown,
+        /// not cut: a stripe down the bore and its designation in the
+        /// tree, never in what is exported.
+        #[serde(default)]
+        cosmetic_thread: bool,
         #[serde(default)]
         fit: HoleFit,
         /// A clearance diameter of one's own, in place of the fit's, mm.
@@ -2212,7 +2217,6 @@ impl DesignFeature {
         probe.refine()
     }
 
-    /// True when this feature removes material (must not be a body's first).
     /// A cutting feature that keeps what it shares with the body (the
     /// common) rather than cutting it away.
     pub fn keeps_inside(&self) -> bool {
@@ -2246,6 +2250,30 @@ impl DesignFeature {
         }
     }
 
+    /// A cosmetic thread's designation ("M6", "1/4-20 2B LH"), for a
+    /// threaded hole that shows its thread rather than cutting it.
+    pub fn cosmetic_thread(&self) -> Option<String> {
+        let DesignFeature::Hole {
+            thread: Some(spec),
+            threaded: true,
+            modeled_thread: false,
+            cosmetic_thread: true,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let mut name = spec.size.clone();
+        if !spec.class.is_empty() {
+            name = format!("{name} {}", spec.class);
+        }
+        if spec.left_handed {
+            name.push_str(" LH");
+        }
+        Some(name)
+    }
+
+    /// True when this feature removes material (must not be a body's first).
     pub fn is_subtractive(&self) -> bool {
         match self {
             DesignFeature::Pocket { .. }

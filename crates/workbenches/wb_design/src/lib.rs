@@ -607,6 +607,7 @@ impl DesignWorkbench {
                 need_material(has_solid)?;
                 (
                     DesignFeature::Hole {
+                        cosmetic_thread: false,
                         clearance: None,
                         thread_length: Default::default(),
                         refine: false,
@@ -1436,7 +1437,10 @@ impl Workbench for DesignWorkbench {
             icon: feature.as_ref().map(|f| f.icon()).unwrap_or("tree-feature"),
             kind_label: feature
                 .as_ref()
-                .map(|f| f.kind_label().to_string())
+                .map(|f| match f.cosmetic_thread() {
+                    Some(thread) => format!("{} · {thread} thread", f.kind_label()),
+                    None => f.kind_label().to_string(),
+                })
                 .unwrap_or_else(|| "Design feature".to_string()),
             family_label: "Design feature".to_string(),
             builds_solid: !matches!(feature, Some(DesignFeature::Borrow { .. })),
@@ -1450,8 +1454,26 @@ impl Workbench for DesignWorkbench {
         &self,
         document: &Document,
         id: FeatureId,
-        _node: &core_document::FeatureNode,
+        node: &core_document::FeatureNode,
     ) -> Option<core_document::PassiveGeometry> {
+        // A hole's cosmetic thread: a helix down its bore.
+        if let Some(feature @ DesignFeature::Hole { .. }) = document
+            .feature_values(id)
+            .and_then(|data| DesignFeature::from_json(data).ok())
+            && feature.cosmetic_thread().is_some()
+        {
+            let body = node.body;
+            let mesh = build::cosmetic_thread_lines(document, body, &feature);
+            return (!mesh.positions.is_empty()).then(|| core_document::PassiveGeometry {
+                revision: core_document::data_revision(&feature.to_json())
+                    ^ body
+                        .and_then(|b| document.imported_geometry(b))
+                        .map_or(0, |g| g.revision),
+                mesh,
+                tint: core_document::PassiveTint::External,
+                region: None,
+            });
+        }
         let borrow = borrow::borrow_of(document, id)?;
         let mesh = borrow::lines(document, &borrow);
         if mesh.positions.is_empty() {
@@ -2872,6 +2894,44 @@ mod icon_coverage {
         );
         assert_eq!(info.kind_label, "Pad");
         assert!(info.builds_solid);
+    }
+
+    /// A hole with a cosmetic thread names its designation where the tree
+    /// says what the feature is; the same hole cutting nothing extra does
+    /// not.
+    #[test]
+    fn a_cosmetic_thread_names_its_designation_in_the_feature_kind() {
+        let hole = |cosmetic_thread: bool| DesignFeature::Hole {
+            boolean_tolerance: None,
+            cosmetic_thread,
+            clearance: None,
+            thread_length: Default::default(),
+            refine: false,
+            sketch: FeatureId(uuid::Uuid::new_v4()),
+            diameter: 10.2,
+            depth: 10.0,
+            through_all: true,
+            cut: crate::feature::HoleCut::None,
+            thread: Some(crate::feature::ThreadSpec::new(
+                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                "M12",
+            )),
+            threaded: true,
+            modeled_thread: false,
+            thread_depth: 0.0,
+            fit: crate::feature::HoleFit::Normal,
+            drill_point: crate::feature::DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
+            nut_trap: None,
+            reversed: false,
+        };
+        let kind = |feature: &DesignFeature| {
+            let node = core_document::FeatureNode::new(FeatureId(uuid::Uuid::new_v4()), feature);
+            DesignWorkbench::default().feature_info(&node).kind_label
+        };
+        assert_eq!(kind(&hole(true)), "Hole · M12 thread");
+        assert_eq!(kind(&hole(false)), "Hole");
     }
 
     #[test]
