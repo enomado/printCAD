@@ -260,12 +260,15 @@ impl Geometry {
                 points
             }
             Self::Conic(c) => vec![c.center, c.start, c.end],
-            Self::BSpline(b) => b
-                .control_points
-                .iter()
-                .chain(&b.fit_points)
-                .copied()
-                .collect(),
+            Self::BSpline(b) => {
+                let mut points = b.control_points.clone();
+                for point in &b.fit_points {
+                    if !points.contains(point) {
+                        points.push(*point);
+                    }
+                }
+                points
+            }
         }
     }
 }

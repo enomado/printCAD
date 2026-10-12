@@ -1,5 +1,5 @@
 //! Application conversion, sampling and updates for sketch splines.
-//! Pure basis and fitting formulas live in [`math`]; this boundary alone
+//! Pure basis and fitting formulas live in [`sketch_solver::spline`]; this boundary alone
 //! converts sampled or refitted positions to stored f32 geometry.
 
 use crate::sketch::{BSpline, GeometryElement, Sketch, Vec2D};

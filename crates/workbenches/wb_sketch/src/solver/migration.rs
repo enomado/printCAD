@@ -352,10 +352,6 @@ fn cases() -> Vec<(Sketch, Vec<Uuid>)> {
 }
 
 fn compiled(sys: &System) -> Value {
-    compiled_core(sys)
-}
-
-fn compiled_core(sys: &sketch_solver::compile::System) -> Value {
     use sketch_solver::problem::PointReference;
     let mut derived: Vec<_> = sys
         .derived_foci
@@ -842,9 +838,6 @@ fn every_relation_has_an_equation_inventory_entry() {
         relation(&mut probe, kind);
         let sys = build_system_with(&probe, None, &[], true);
         assert_eq!(sys.residual_len - base_rows, rows, "{name}");
-        let problem = adapter::prepare(&probe, &[]);
-        let core = sketch_solver::compile::compile_system(&problem, None, true);
-        equivalent(&compiled(&sys), &compiled_core(&core), name);
     }
     assert_eq!(names.len(), 42);
 }

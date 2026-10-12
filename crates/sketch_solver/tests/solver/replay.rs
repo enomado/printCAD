@@ -5,7 +5,7 @@ use sketch_solver::replay::{Fixture, Regression, ReplayError, SCHEMA_VERSION, ru
 #[test]
 fn saved_semantic_corpus_replays_without_application_types() {
     let corpus: Vec<Regression> =
-        serde_json::from_str(include_str!("../fixtures/migration.json")).unwrap();
+        serde_json::from_str(include_str!("../../fixtures/migration.json")).unwrap();
     assert_eq!(corpus.len(), 24);
     let mut successes = 0;
     let mut invalid = 0;
@@ -97,7 +97,7 @@ fn schema_and_malformed_input_are_rejected_explicitly() {
             .is_err()
     );
     let mut corpus: Vec<Regression> =
-        serde_json::from_str(include_str!("../fixtures/migration.json")).unwrap();
+        serde_json::from_str(include_str!("../../fixtures/migration.json")).unwrap();
     let mut fixture = corpus.remove(1).fixture;
     fixture
         .problem
