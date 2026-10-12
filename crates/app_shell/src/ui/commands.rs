@@ -87,6 +87,8 @@ pub enum UiCommand {
     ToggleGrid,
     /// The origin's planes drawn, or not.
     ToggleOriginPlanes,
+    /// The window fills the screen, or goes back to the size it had.
+    ToggleFullscreen,
     /// Arm the measure tool, or put it away.
     ToggleMeasure,
     Edit(EditCommand),
@@ -186,6 +188,14 @@ pub enum UiCommand {
     },
     SelectTreeItem(TreeItemId),
     ActivateTreeItem(TreeItemId),
+    /// A Ctrl-click on a feature's row: add it to the tree's selection, or
+    /// take it out.
+    ToggleTreeFeature(core_document::FeatureId),
+    /// Suppress or unsuppress several features as one undo step.
+    SuppressFeatures {
+        features: Vec<core_document::FeatureId>,
+        suppressed: bool,
+    },
     /// History context-menu action on a tree feature row.
     TreeFeature {
         feature: core_document::FeatureId,
@@ -226,6 +236,8 @@ pub enum UiCommand {
     Undo,
     Redo,
     ToggleLogPanel,
+    /// The status bar's readouts, as its menu left them.
+    SetStatusBar(settings::StatusBarSettings),
     /// Orbit around the point on the focal plane under the cursor.
     PivotAtCursor,
     /// Run a workbench's keyboard action, bound to a key.

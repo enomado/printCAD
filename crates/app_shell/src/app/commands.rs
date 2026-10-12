@@ -81,6 +81,17 @@ struct FrameIntents {
 }
 
 impl PrintCadApp {
+    /// The window fills the monitor it is on, borderless, or leaves it.
+    fn toggle_fullscreen(&mut self) {
+        let Some(gfx) = self.gfx.as_ref() else {
+            return;
+        };
+        let full = gfx.window.fullscreen().is_some();
+        gfx.window
+            .set_fullscreen((!full).then_some(winit::window::Fullscreen::Borderless(None)));
+        self.redraw_needed = true;
+    }
+
     pub(crate) fn apply_ui_commands(
         &mut self,
         commands: Vec<UiCommand>,
@@ -110,6 +121,10 @@ impl PrintCadApp {
                 }
                 UiCommand::SetLayoutGap(gap) => {
                     self.user_settings.printing.layout_gap_mm = gap.max(0.0);
+                    intents.persist_settings = true;
+                }
+                UiCommand::SetStatusBar(shown) => {
+                    self.user_settings.status_bar = shown;
                     intents.persist_settings = true;
                 }
                 UiCommand::SetSlicerLayout(on) => {
@@ -156,6 +171,7 @@ impl PrintCadApp {
                 UiCommand::ToggleAnnotations => intents.toggle_annotations = true,
                 UiCommand::ToggleGrid => intents.toggle_grid = true,
                 UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
+                UiCommand::ToggleFullscreen => self.toggle_fullscreen(),
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {
@@ -197,6 +213,11 @@ impl PrintCadApp {
                 } => intents.commit_settings = Some((settings, display_unit)),
                 UiCommand::SelectTreeItem(item) => intents.select_tree_item = Some(item),
                 UiCommand::ActivateTreeItem(item) => intents.activate_tree_item = Some(item),
+                UiCommand::ToggleTreeFeature(feature) => self.toggle_tree_feature(feature),
+                UiCommand::SuppressFeatures {
+                    features,
+                    suppressed,
+                } => self.suppress_features(&features, suppressed),
                 UiCommand::TreeFeature { feature, command } => {
                     intents.tree_feature = Some((feature, command));
                 }
@@ -1120,8 +1141,53 @@ impl PrintCadApp {
             .fly_to_fit(view, center, radius, &self.user_settings.camera);
     }
 
+    /// A Ctrl-click on a feature's row: the feature joins the tree's
+    /// selection, or leaves it. The selected row stays where it is, so its
+    /// body's tip does not move; taking the selected row itself out hands
+    /// the selection to the feature added last.
+    fn toggle_tree_feature(&mut self, feature: core_document::FeatureId) {
+        let Some(TreeItemId::Feature(primary)) = self.session.tree_selection else {
+            self.apply_tree_selection(TreeItemId::Feature(feature));
+            return;
+        };
+        let mut also = self.session.tree_also().to_vec();
+        if feature == primary {
+            if let Some(next) = also.pop() {
+                self.apply_tree_selection(TreeItemId::Feature(next));
+                self.session.tree_also = Some((TreeItemId::Feature(next), also));
+            }
+            return;
+        }
+        match also.iter().position(|f| *f == feature) {
+            Some(at) => {
+                also.remove(at);
+            }
+            None => also.push(feature),
+        }
+        self.session.tree_also = Some((TreeItemId::Feature(primary), also));
+    }
+
+    /// Suppress or unsuppress every feature of the tree's selection, as one
+    /// undo step, recorded as a `doc.suppress` per feature.
+    fn suppress_features(&mut self, features: &[core_document::FeatureId], suppressed: bool) {
+        crate::app::scripts::suppress_all(&mut self.session.document, features, suppressed);
+        self.record_calls(
+            features
+                .iter()
+                .map(|f| crate::app::scripts::suppress_call(*f, suppressed))
+                .collect(),
+        );
+        self.session.journal.label_next(if suppressed {
+            "Suppress features"
+        } else {
+            "Unsuppress features"
+        });
+        self.close_gesture();
+    }
+
     pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {
         self.session.tree_selection = Some(selection);
+        self.session.tree_also = None;
         // A selection made here is not a viewport click, so the next click
         // on that body picks a face instead of undoing this.
         self.session.last_select_click = None;

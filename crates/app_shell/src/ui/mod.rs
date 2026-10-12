@@ -355,6 +355,7 @@ impl UiLayer {
             pivot_screen_pos,
             axis_system,
             tree_selection: active_tree_selection,
+            tree_also,
             active_document_object,
             editing_feature,
             viewport_hud,
@@ -551,6 +552,7 @@ impl UiLayer {
                     show_annotations: settings.rendering.show_annotations,
                     show_grid: settings.rendering.show_grid,
                     show_origin_planes: settings.rendering.show_origin_planes,
+                    fullscreen: window.fullscreen().is_some(),
                     show_console: self.console.open,
                     show_assistant: self.assistant.open,
                     projection,
@@ -777,8 +779,12 @@ impl UiLayer {
                         console: self.console.open,
                         assistant: self.assistant.open,
                     },
+                    shown: settings.status_bar,
                 },
             );
+            if let Some(shown) = status.shown {
+                commands.push(UiCommand::SetStatusBar(shown));
+            }
             if status.toggle_log {
                 commands.push(UiCommand::ToggleLogPanel);
             }
@@ -815,6 +821,7 @@ impl UiLayer {
                     registry,
                     host: host.clone(),
                     active_tree_selection,
+                    tree_also,
                     active_document_object,
                     editing_feature,
                     filter: &mut self.tree_filter,
