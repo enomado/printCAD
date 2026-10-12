@@ -1245,14 +1245,17 @@ impl PrintCadApp {
                 FileDialogKind::SaveFile(ref file) => rfd::FileDialog::new()
                     .add_filter(file.kind.as_str(), &[file.extension.as_str()])
                     .set_file_name(file.name.as_str()),
-                FileDialogKind::SaveAnimation(ref animation) => rfd::FileDialog::new()
-                    .add_filter("Animated PNG", &["png"])
-                    .add_filter("GIF", &["gif"])
-                    .add_filter(
-                        "A folder of PNG frames",
-                        &[crate::app::animation::FRAMES_EXTENSION],
-                    )
-                    .set_file_name(format!("{}.png", animation.name)),
+                FileDialogKind::SaveAnimation(ref animation) => {
+                    // Videos where ffmpeg can make them; the name's ending
+                    // picks the kind, so the default name has none.
+                    let (title, label, extensions) = crate::app::animation::save_dialog(
+                        crate::app::animation::ffmpeg().is_some(),
+                    );
+                    rfd::FileDialog::new()
+                        .set_title(title)
+                        .add_filter(label, &extensions)
+                        .set_file_name(animation.name.as_str())
+                }
                 FileDialogKind::ReplaceShape(_) => rfd::FileDialog::new()
                     .set_title("Replace the shape with the first solid of a file")
                     .add_filter(
