@@ -430,6 +430,10 @@ fn plane_row(
                     }
                 }
             });
+    });
+    // On a line of its own: beside a long face reading it wraps a letter a line.
+    ui.horizontal(|ui| {
+        label_cell(ui, "");
         if ui
             .add_enabled_ui(picked.face.is_some(), |ui| {
                 accent_outline_button(ui, "Use selected face")
@@ -626,7 +630,7 @@ pub fn attachment_editor(
         DatumAttachment::AlongEdge { edge } | DatumAttachment::CurveCentre { edge } => {
             picks_changed |= edge_row(ui, edge, &picked);
         }
-        DatumAttachment::PlaneIntersection { planes } => {
+        DatumAttachment::PlaneIntersection { planes } | DatumAttachment::Midplane { planes } => {
             for (i, plane) in planes.iter_mut().enumerate() {
                 picks_changed |= plane_row(ui, ctx, (salt, i), body, plane, &picked);
             }
