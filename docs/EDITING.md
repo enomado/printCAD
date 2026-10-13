@@ -275,15 +275,28 @@ pipe's path.
 - Deleting a body removes its features. Unless the body was still empty,
   this clears the undo history.
 - Array of copies… (a body's menu) repeats the body in a row (a count, a
-  spacing and a direction) or a ring (a count, the angle between
-  neighbours and an axis), each repeat a linked copy the array owns. The
+  spacing and a direction), a ring (a count, the angle between
+  neighbours and an axis), along a path (a sketch's chain of curves or a
+  selected edge of a solid: the copies spread over its whole length or a
+  spacing apart, measured along it, and turned with it when asked) or at
+  points (a sketch's points that are no curve's end or centre; the body
+  stands at the first), each repeat a linked copy the array owns. A
+  component's tree menu offers it too: every body in the component is
+  copied, each occurrence's copies held together in a rigid component of
+  their own beside it, and deleting one of them skips the whole
+  occurrence. While
+  the task lays out a row, an arrow stands on its first copy: dragging it
+  changes the spacing (in 0.1 mm steps, Escape puts it back). A path
+  or point array reads its places when it is made or edited. The
   copies follow every change to the body and stand where the array puts
   them from where the body sits, so moving the body carries them. They
   draw, pick, export and print like any body, and the parts list counts
-  them with the body. The tree names each copy's place in its array; Edit
-  array on the body or a copy changes the count, spacing, angle or axis
-  in the task panel, one undo step, and deleting a copy (or Skip this
-  copy) leaves that place out until Edit array brings it back.
+  them with the body. The tree gathers an array's copies under a row of
+  its own (its eye hides them all, Delete takes the array away and leaves
+  the body) and names each copy's place in it; Edit array on that row,
+  the body or a copy changes the count, spacing, angle or axis in the
+  task panel, one undo step, and deleting a copy (or Skip this copy)
+  leaves that place out until Edit array brings it back.
 
 ![The feature tree of the bracket: its sketches, pad, holes and fillet in order](images/feature-tree.png)
 

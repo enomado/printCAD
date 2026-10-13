@@ -195,7 +195,13 @@ impl UiLayer {
                 task
             }
             OpenTask::Array(body) => {
-                host_tasks::HostTask::Array(array_task::ArrayTask::open(document, body))
+                host_tasks::HostTask::Array(Box::new(array_task::ArrayTask::open(document, body)))
+            }
+            OpenTask::ComponentArray(component) => {
+                let Some(task) = array_task::ArrayTask::open_component(document, component) else {
+                    return;
+                };
+                host_tasks::HostTask::Array(Box::new(task))
             }
         };
         self.host_task = Some((tab.into(), task));
@@ -321,6 +327,24 @@ impl UiLayer {
         self.property_tab = layout.property_page;
         if let Some(share) = layout.tree_share.filter(|s| (0.0..=1.0).contains(s)) {
             self.tree_share = share;
+        }
+    }
+
+    /// The row of copies the open array task lays out, for the view's
+    /// spacing handle: the array, its direction and its spacing.
+    pub fn array_row(&self) -> Option<(core_document::ArrayId, [f32; 3], f32)> {
+        match &self.host_task {
+            Some((tab, host_tasks::HostTask::Array(task))) if *tab == self.active_tab => {
+                task.row_handle()
+            }
+            _ => None,
+        }
+    }
+
+    /// The open array task's row spacing, set by the view's handle.
+    pub fn drag_array_spacing(&mut self, document: &mut core_document::Document, spacing: f32) {
+        if let Some((_, host_tasks::HostTask::Array(task))) = &mut self.host_task {
+            task.drag_spacing(document, spacing);
         }
     }
 
@@ -498,6 +522,7 @@ impl UiLayer {
             reveal_body,
             viewport_menu,
             picked_faces,
+            picked_edges,
             nav_device,
             nav_buttons,
             document_saving,
@@ -1049,6 +1074,7 @@ impl UiLayer {
                     task: task.as_ref(),
                     host_task: self.host_task.as_mut().map(|(_, t)| t),
                     picked_faces: &picked_faces,
+                    picked_edges: &picked_edges,
                     custom_colors: &settings.rendering.custom_colors,
                     printing: &settings.printing,
                     print_layout,
