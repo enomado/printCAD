@@ -137,7 +137,13 @@ View keys:
 | Orthographic, perspective | O, P |
 | Full screen | F11 |
 
-Right click the status bar to choose which of its readouts show.
+Right click the status bar to choose which of its readouts show. Its
+quick measure (off until turned on there) reads the selection: an edge's
+length, a face's area, the least distance and angle between two picks.
+
+The property panel's Physical group gives a body's volume, area, centre
+of mass and inertia, about the centre of mass, the origin, a world axis,
+a datum point or line, or the line of the edge or round face picked.
 
 ### Row and body menus
 
