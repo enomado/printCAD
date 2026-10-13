@@ -1059,8 +1059,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional(
             "font",
             ParamKind::String,
-            "IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, or a font file's path \
-             (IBM Plex Sans)",
+            "IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, the family of a font \
+             installed on the machine, or a font file's path (IBM Plex Sans)",
         )
         .optional(
             "font_asset",
@@ -1068,9 +1068,10 @@ pub fn register(context: &mut WorkbenchContext) {
             "The document asset a font file was kept as, which a recording names",
         )
         .note(
-            "A font file named by its path is kept in the document the first time it is \
-             used, so the text is made again from it on any machine; a font neither carried \
-             nor kept is refused with why.",
+            "A font installed on the machine, named by its family, or a font file named by \
+             its path, is kept in the document the first time it is used, so the text is \
+             made again from it on any machine; a font neither carried nor kept is refused \
+             with why. A browser page has no installed fonts.",
         )
         .optional("size", ParamKind::Number, "The font's em, mm (10)")
         .optional(
@@ -1093,8 +1094,10 @@ pub fn register(context: &mut WorkbenchContext) {
              returned moves the whole text.",
         )
         .note(
-            "A `font` that is not one of the three bundled names is read as a file path, \
-             refused when no such file is there. Text with nothing to draw is refused.",
+            "A `font` that is not one of the three bundled names is a file's path when it \
+             looks like one (a path separator, or a font file's extension) or names a file \
+             there, else an installed family, its letters' case aside; the family a font \
+             gives is what the block records. Text with nothing to draw is refused.",
         )
         .see_also("sketch.text_edit")
         .example(
@@ -1128,7 +1131,33 @@ pub fn register(context: &mut WorkbenchContext) {
             "Only what is given changes, and the outlines are made again on the same point; \
              a `size` of 0 or less is refused.",
         )
+        .note(
+            "A block's size, spacing and angle are numbers formulas can set: \
+             `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, \
+             `<block>/spacing` and `<block>/angle`, and the outlines are made again at what \
+             they come to, in the font the document keeps. The string is not, since a \
+             formula makes a number.",
+        )
         .see_also("sketch.text")
+        .see_also("doc.set_formula")
+        .example(
+            "Text whose height a variable sets",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local t = pc.sketch.text{sketch = s, text = "I", at = {0, 0}, size = 10}
+            pc.var.new{name = "Label"}
+            pc.var.set{set = "Label", name = "height", formula = "10 mm"}
+            pc.doc.set_formula{id = s, parameter = t.text .. "/size", formula = "Label.height"}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.feature{id = pad}.body
+            local small = pc.doc.measure{body = body}
+            pc.var.set{set = "Label", name = "height", formula = "20 mm"}
+            assert(#pc.doc.rebuild() == 0)
+            local large = pc.doc.measure{body = body}
+            assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
+            "#,
+        )
         .example(
             "A letter made twice as large",
             r#"
@@ -5129,6 +5158,116 @@ mod tests {
                 .to_string()
                 .contains("cannot read the font")
         );
+    }
+
+    /// A font found installed by its family is kept in the document under
+    /// the family the font gives, and text in it is made again from the
+    /// kept copy once the document is read back where no such font is
+    /// installed.
+    #[test]
+    fn an_installed_font_is_kept_and_reopens_without_it() {
+        const FAMILY: &str = "Printcad Kept Family";
+        let installed = |family: &str| {
+            family
+                .eq_ignore_ascii_case(FAMILY)
+                .then(|| crate::text::InstalledFont {
+                    family: FAMILY.to_string(),
+                    bytes: crate::text::FONTS[2].1.to_vec(),
+                    index: 0,
+                    file: Some("kept.ttf".to_string()),
+                })
+        };
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let mut spec = crate::text::TextSpec {
+            text: "A".to_string(),
+            font: "printcad kept family".to_string(),
+            ..Default::default()
+        };
+        crate::text::load_font_from(&mut doc, &mut spec, &installed).unwrap();
+        assert_eq!(spec.font, FAMILY, "the family as the font names it");
+        let asset = spec.font_asset.expect("kept");
+        assert_eq!(
+            doc.get_asset(asset).unwrap().metadata["family"],
+            json!(FAMILY)
+        );
+        let mut args = crate::text_args(&spec, None);
+        args["sketch"] = s.clone();
+        args["at"] = json!([0, 0]);
+        let made = call(&mut doc, "sketch.text", args).unwrap();
+
+        let bytes = doc.save_to_bytes(core_document::Compression::None).unwrap();
+        let mut reopened = Document::load_from_bytes(bytes).unwrap();
+        assert!(crate::text::installed_font(FAMILY).is_none());
+        call(
+            &mut reopened,
+            "sketch.text_edit",
+            json!({"sketch": s, "block": made["text"], "text": "AB"}),
+        )
+        .expect("made again from the kept font");
+        let block = sketch_of(&reopened, &s).texts[0].clone();
+        assert_eq!(block.text, "AB");
+        assert_eq!(block.font, FAMILY);
+        assert_eq!(block.font_asset, Some(asset));
+
+        let missing = call(
+            &mut reopened,
+            "sketch.text",
+            json!({"sketch": s, "text": "C", "at": [0, 20], "font": FAMILY}),
+        );
+        assert!(
+            missing
+                .unwrap_err()
+                .to_string()
+                .contains("is installed here"),
+            "a family neither installed nor kept is refused with why"
+        );
+    }
+
+    /// A text block's size set by a variable: the outlines the document
+    /// builds from are made again at its value, keeping their elements,
+    /// and the block's stored data is left as it was made.
+    #[test]
+    fn a_variable_sets_a_texts_size() {
+        let registry = registry();
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let made = call(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": s, "text": "I", "at": [0, 0], "size": 10}),
+        )
+        .unwrap();
+        let block = made["text"].as_str().unwrap().to_string();
+        let sizes = doc.add_variable_set("Label").unwrap();
+        doc.set_variable(sizes, "height", "10 mm", None).unwrap();
+        doc.set_feature_formula(
+            feature_id(&s),
+            format!("{block}/size"),
+            Some("Label.height".into()),
+        )
+        .unwrap();
+        let height = |doc: &Document| {
+            let built = crate::stored_sketch(doc, feature_id(&s)).unwrap().sketch;
+            let ys: Vec<f64> = crate::text::outline_points(&built)
+                .iter()
+                .filter_map(|p| built.point_position(*p))
+                .map(|p| p.y)
+                .collect();
+            let elements = built.texts[0].elements.clone();
+            let top = ys.iter().copied().fold(f64::MIN, f64::max);
+            let bottom = ys.iter().copied().fold(f64::MAX, f64::min);
+            (top - bottom, elements)
+        };
+        registry.evaluate(&mut doc);
+        let (small, elements) = height(&doc);
+        doc.set_variable(sizes, "height", "25 mm", None).unwrap();
+        registry.evaluate(&mut doc);
+        let (large, kept) = height(&doc);
+        assert!((large / small - 2.5).abs() < 1e-6, "{small} then {large}");
+        assert_eq!(kept, elements, "the same elements, reshaped");
+        let stored = sketch_of(&doc, &s).texts[0].clone();
+        assert_eq!(stored.size, 10.0, "the stored data is as it was made");
     }
 
     #[test]

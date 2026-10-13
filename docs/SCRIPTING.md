@@ -2473,7 +2473,7 @@ assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
 - `sketch` (id): The sketch to draw in
 - `text` (string): What it says; a new line starts a line
 - `at` (list): Where its point goes, {x, y}
-- `font` (string, optional): IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, or a font file's path (IBM Plex Sans)
+- `font` (string, optional): IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, the family of a font installed on the machine, or a font file's path (IBM Plex Sans)
 - `font_asset` (string, optional): The document asset a font file was kept as, which a recording names
 - `size` (number, optional): The font's em, mm (10)
 - `spacing` (number, optional): Added between letters, mm (0)
@@ -2482,10 +2482,10 @@ assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
 
 Notes:
 
-- A font file named by its path is kept in the document the first time it is used, so the text is made again from it on any machine; a font neither carried nor kept is refused with why.
+- A font installed on the machine, named by its family, or a font file named by its path, is kept in the document the first time it is used, so the text is made again from it on any machine; a font neither carried nor kept is refused with why. A browser page has no installed fonts.
 - `at` is where the baseline starts: the letters stand on it, capitals reaching about 0.7 of `size`, the em.
 - The letters are closed outlines that pad as they read; dragging the point returned moves the whole text.
-- A `font` that is not one of the three bundled names is read as a file path, refused when no such file is there. Text with nothing to draw is refused.
+- A `font` that is not one of the three bundled names is a file's path when it looks like one (a path separator, or a font file's extension) or names a file there, else an installed family, its letters' case aside; the family a font gives is what the block records. Text with nothing to draw is refused.
 
 See also `pc.sketch.text_edit`.
 
@@ -2517,23 +2517,26 @@ Notes:
 
 - `block` is either the `text` or the `point` that `sketch.text` returned.
 - Only what is given changes, and the outlines are made again on the same point; a `size` of 0 or less is refused.
+- A block's size, spacing and angle are numbers formulas can set: `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, `<block>/spacing` and `<block>/angle`, and the outlines are made again at what they come to, in the font the document keeps. The string is not, since a formula makes a number.
 
-See also `pc.sketch.text`.
+See also `pc.sketch.text`, `pc.doc.set_formula`.
 
-Example: A letter made twice as large.
+Example: Text whose height a variable sets.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
 local t = pc.sketch.text{sketch = s, text = "I", at = {0, 0}, size = 10}
+pc.var.new{name = "Label"}
+pc.var.set{set = "Label", name = "height", formula = "10 mm"}
+pc.doc.set_formula{id = s, parameter = t.text .. "/size", formula = "Label.height"}
 local pad = pc.design.pad{sketch = s, length = 1}
 assert(#pc.doc.rebuild() == 0)
 local body = pc.doc.feature{id = pad}.body
 local small = pc.doc.measure{body = body}
-pc.sketch.text_edit{sketch = s, block = t.text, size = 20}
+pc.var.set{set = "Label", name = "height", formula = "20 mm"}
 assert(#pc.doc.rebuild() == 0)
 local large = pc.doc.measure{body = body}
 assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
-assert(math.abs(large.volume - 4 * small.volume) < 1e-3, "four times the area")
 ```
 
 `pc.sketch.to_bspline`: Make lines, arcs, circles, ellipses and conics into splines that are exactly them.
