@@ -213,12 +213,14 @@ fn datums_asking(
                     .probes(),
                 // A primitive attached by a mode asks what the attachment
                 // asks.
+                // A feature starting on a face of the solid asks where the
+                // face is.
                 "wb.design" => match DesignFeature::from_json(&n.data).ok()? {
                     DesignFeature::Primitive {
                         attached: Some(attached),
                         ..
                     } => attached.probes(),
-                    _ => return None,
+                    feature => vec![feature.start_face()?.probe()],
                 },
                 "wb.sketch" => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
@@ -445,7 +447,7 @@ pub fn invalidate_body(document: &mut Document, body: BodyId) {
     }
 }
 
-fn face_pick_plane(pick: &FacePick) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn face_pick_plane(pick: &FacePick) -> ([f64; 3], [f64; 3]) {
     (
         [
             pick.point[0] as f64,
@@ -616,6 +618,9 @@ fn plan_feature(
         if subtractive { cut } else { additive_boolean }
     };
 
+    if feature.start_face().is_some() {
+        start_face_is_flat(document, feature_id).map_err(&fail)?;
+    }
     let start_index = plan.ops.len();
     match &feature {
         DesignFeature::Pad { profile_face, .. } | DesignFeature::Pocket { profile_face, .. } => {
@@ -635,6 +640,7 @@ fn plan_feature(
         DesignFeature::Revolution {
             sketch,
             angle_deg,
+            start_angle_deg,
             axis,
             project_axis,
             reversed,
@@ -647,6 +653,7 @@ fn plan_feature(
         | DesignFeature::Groove {
             sketch,
             angle_deg,
+            start_angle_deg,
             axis,
             project_axis,
             reversed,
@@ -664,9 +671,17 @@ fn plan_feature(
                 ));
             }
             let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
-            let profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
+            let mut profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
             let axis_2d =
                 axis_in_sketch(document, &sketch_feature, axis, *project_axis).map_err(&fail)?;
+            if *start_angle_deg != 0.0 {
+                let turn = if *reversed {
+                    -*start_angle_deg
+                } else {
+                    *start_angle_deg
+                };
+                turn_plane(&mut profile.plane, axis_2d, f64::from(turn));
+            }
             let termination = match (mode, up_to_face) {
                 (RevolveMode::Angle, _) => RevolveTermination::Angle,
                 (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
@@ -1647,7 +1662,7 @@ fn extrude_op(
         boolean
     };
     if let Some(r) = borrowed {
-        if extras.start_offset != 0.0 || extras.start_at.is_some() || second.is_some() {
+        if extras.moves_start() || second.is_some() {
             return Err(
                 "a start offset or a second side's own taper takes a sketch's profile, not a face"
                     .into(),
@@ -1663,7 +1678,7 @@ fn extrude_op(
         }]);
     }
     Ok(match (profile_face, sketch) {
-        (Some(_), _) if extras.start_offset != 0.0 || extras.start_at.is_some() => {
+        (Some(_), _) if extras.moves_start() => {
             return Err("a start offset or plane takes a sketch's profile, not a face".into());
         }
         (Some(_), _) if second.is_some() => {
@@ -1676,15 +1691,18 @@ fn extrude_op(
         }],
         (None, Some(sketch)) => {
             let mut profile = sketch_profile(document, sketch, feature.regions())?;
-            if extras.start_offset != 0.0 || extras.start_at.is_some() {
+            if extras.moves_start() {
                 // Along the way the first side runs.
                 let way = normalize(custom.unwrap_or(profile.plane.normal))
                     .map_err(|_| "the extrusion direction is zero".to_string())?;
-                let to_start = match extras.start_at {
-                    Some(start) => {
+                let to_start = match (&extras.start_face, extras.start_at) {
+                    (Some(face), _) => {
+                        distance_to_plane(profile.plane.origin, way, face_pick_plane(face))?
+                    }
+                    (None, Some(start)) => {
                         distance_to_plane(profile.plane.origin, way, start_plane(document, start)?)?
                     }
-                    None => 0.0,
+                    (None, None) => 0.0,
                 };
                 let s =
                     to_start + f64::from(extras.start_offset) * if reversed { -1.0 } else { 1.0 };
@@ -1710,9 +1728,28 @@ fn extrude_op(
     })
 }
 
+/// Refused when the last build found the face `feature` starts on curved:
+/// a start is a plane.
+fn start_face_is_flat(document: &Document, feature: FeatureId) -> Result<(), String> {
+    let answer = document
+        .probed_references(feature)
+        .and_then(|probed| probed.answers.first());
+    match answer {
+        Some(Ok(kernel_api::ProbeAnswer::Face { surface, .. }))
+            if !matches!(surface, kernel_api::FaceSurface::Plane { .. }) =>
+        {
+            Err("the face it starts on is not flat".into())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// The plane an extrusion starts on, as a point and its normal in the
 /// body's frame: a datum plane's (or coordinate system's), or a sketch's.
-fn start_plane(document: &Document, start: FeatureId) -> Result<([f64; 3], [f64; 3]), String> {
+pub(crate) fn start_plane(
+    document: &Document,
+    start: FeatureId,
+) -> Result<([f64; 3], [f64; 3]), String> {
     let data = document
         .feature_values(start)
         .ok_or("the plane the extrusion starts on is gone")?;
@@ -1734,7 +1771,7 @@ fn start_plane(document: &Document, start: FeatureId) -> Result<([f64; 3], [f64;
 
 /// How far from `from` along `way` the plane through `point` square to
 /// `normal` lies; refused for a plane the way runs along.
-fn distance_to_plane(
+pub(crate) fn distance_to_plane(
     from: [f64; 3],
     way: [f64; 3],
     (point, normal): ([f64; 3], [f64; 3]),
@@ -1878,6 +1915,38 @@ pub(crate) fn axis_in_sketch(
 
 /// Build the revolve sweep for a feature. `reversed` flips the axis so the
 /// sweep runs the other way around.
+/// `plane` turned `angle_deg` about the axis it holds (a point and a
+/// direction in its own coordinates), right-handed about the direction:
+/// the axis stays where it is in the plane's coordinates.
+fn turn_plane(
+    plane: &mut kernel_api::ProfilePlane,
+    (axis_origin, axis_dir): ([f64; 2], [f64; 2]),
+    angle_deg: f64,
+) {
+    let at = |p: [f64; 2]| -> [f64; 3] {
+        std::array::from_fn(|k| plane.origin[k] + plane.x_axis[k] * p[0] + plane.y_axis[k] * p[1])
+    };
+    let pivot = at(axis_origin);
+    let way: [f64; 3] =
+        std::array::from_fn(|k| plane.x_axis[k] * axis_dir[0] + plane.y_axis[k] * axis_dir[1]);
+    let Ok(k) = normalize(way) else {
+        return;
+    };
+    let (sin, cos) = angle_deg.to_radians().sin_cos();
+    // Rodrigues: v cos + (k × v) sin + k (k · v)(1 − cos).
+    let turn = |v: [f64; 3]| -> [f64; 3] {
+        let kv = cross3(k, v);
+        let along = dot3(k, v) * (1.0 - cos);
+        std::array::from_fn(|i| v[i] * cos + kv[i] * sin + k[i] * along)
+    };
+    let from_pivot: [f64; 3] = std::array::from_fn(|i| plane.origin[i] - pivot[i]);
+    let moved = turn(from_pivot);
+    plane.origin = std::array::from_fn(|i| pivot[i] + moved[i]);
+    plane.x_axis = turn(plane.x_axis);
+    plane.y_axis = turn(plane.y_axis);
+    plane.normal = turn(plane.normal);
+}
+
 fn revolve_kind(
     (axis_origin, axis_dir): ([f64; 2], [f64; 2]),
     angle_deg: f32,
@@ -2013,7 +2082,7 @@ pub fn hole_taper_deg(feature: &DesignFeature) -> f64 {
 }
 
 /// Circle centers + standalone points of a sketch (hole positions).
-fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
+pub(crate) fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
     let mut centers = Vec::new();
     let referenced: std::collections::HashSet<_> = sketch
         .geometry
@@ -2060,7 +2129,6 @@ pub(crate) fn cosmetic_thread_lines(
         through_all,
         thread: Some(spec),
         thread_depth,
-        reversed,
         ..
     } = feature
     else {
@@ -2072,11 +2140,8 @@ pub(crate) fn cosmetic_thread_lines(
     let (Ok(size), Ok(sketch_feature)) = (spec.resolve(), load_sketch(document, *sketch)) else {
         return mesh;
     };
-    let plane = profile::plane_of(&sketch_feature.plane);
-    let into = if *reversed {
-        plane.normal
-    } else {
-        plane.normal.map(|c| -c)
+    let Ok((plane, into)) = hole_plane(document, feature, &sketch_feature) else {
+        return mesh;
     };
     let bore = f64::from(hole_diameter(feature)) * 0.5;
     let radius = bore * 0.98;
@@ -2204,7 +2269,7 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
     };
     let size = thread.as_ref().map(ThreadSpec::resolve).transpose()?;
     let sketch_feature = load_sketch(document, *sketch)?;
-    let plane = profile::plane_of(&sketch_feature.plane);
+    let (plane, into) = hole_plane(document, feature, &sketch_feature)?;
     let centers = hole_centers(&sketch_feature.sketch);
     if centers.is_empty() {
         return Err("the hole sketch has no circles or points to place holes at".into());
@@ -2221,12 +2286,6 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
     let tan_taper = taper.to_radians().tan();
     // The drill's radius `down` into the material.
     let radius_at = |down: f64| radius - down * tan_taper;
-    // Into the material: against the sketch normal unless reversed.
-    let into = if *reversed {
-        plane.normal
-    } else {
-        plane.normal.map(|c| -c)
-    };
 
     let circles_profile = |radius: f64| Profile {
         plane,
@@ -2506,6 +2565,42 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
         }
     }
     Ok(ops)
+}
+
+/// The plane a hole starts drilling on, in its body's frame, and the way
+/// it drills into the material (against the sketch normal unless
+/// reversed): the sketch's plane carried along the drill to where the
+/// hole's start puts it.
+pub(crate) fn hole_plane(
+    document: &Document,
+    feature: &DesignFeature,
+    sketch: &SketchFeature,
+) -> Result<(kernel_api::ProfilePlane, [f64; 3]), String> {
+    let DesignFeature::Hole {
+        reversed, start, ..
+    } = feature
+    else {
+        return Err("not a hole feature".into());
+    };
+    let mut plane = profile::plane_of(&sketch.plane);
+    let into = if *reversed {
+        plane.normal
+    } else {
+        plane.normal.map(|c| -c)
+    };
+    if start.moves() {
+        let way = normalize(into).map_err(|_| "the hole's sketch has no normal".to_string())?;
+        let to_start = match (&start.face, start.at) {
+            (Some(face), _) => distance_to_plane(plane.origin, way, face_pick_plane(face))?,
+            (None, Some(at)) => distance_to_plane(plane.origin, way, start_plane(document, at)?)?,
+            (None, None) => 0.0,
+        };
+        let s = to_start + f64::from(start.offset);
+        for (o, w) in plane.origin.iter_mut().zip(way) {
+            *o += w * s;
+        }
+    }
+    Ok((plane, into))
 }
 
 /// A cone cut `down` along `into` below a hole center: `wide` in radius
@@ -4091,6 +4186,7 @@ mod tests {
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode: Default::default(),
                 up_to_face: None,
             },
@@ -4111,6 +4207,7 @@ mod tests {
                 reversed: true,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode: Default::default(),
                 up_to_face: None,
             },
@@ -4211,6 +4308,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::Hole {
                 cosmetic_thread: false,
+                start: Default::default(),
                 clearance: None,
                 thread_length: Default::default(),
                 refine: false,
@@ -4344,6 +4442,7 @@ mod tests {
             .unwrap();
         let hole = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance,
             thread_length: length,
             refine: false,
@@ -4521,6 +4620,7 @@ mod tests {
         let mut hole = DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread: true,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4584,6 +4684,7 @@ mod tests {
         let hole = |thread_depth: f32| DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread: true,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4677,6 +4778,7 @@ mod tests {
             doc.add_feature_in_body(
                 DesignFeature::Hole {
                     cosmetic_thread: false,
+                    start: Default::default(),
                     clearance: None,
                     thread_length: Default::default(),
                     refine: false,
@@ -4731,6 +4833,7 @@ mod tests {
             .unwrap();
         let mut hole = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5078,6 +5181,7 @@ mod tests {
     fn metric_hole_diameter_uses_the_table() {
         let feature = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5104,6 +5208,7 @@ mod tests {
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
         let clearance = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5380,6 +5485,112 @@ mod tests {
             .unwrap();
         let refused = body_build_ops(&doc, body).unwrap_err().to_string();
         assert!(refused.contains("runs along the plane"), "{refused}");
+    }
+
+    /// A pad starting on a face of the solid sweeps from the face's
+    /// plane, asks the solid before it where the face is, and is refused
+    /// once a build finds the face curved.
+    #[test]
+    fn a_pad_starts_on_the_face_it_picks() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 10.0), "Pad".into(), Some(body))
+            .unwrap();
+        let face = FacePick {
+            point: [1.0, 1.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        };
+        let mut boss = pad(sketch_id, 2.0);
+        if let DesignFeature::Pad { extras, .. } = &mut boss {
+            extras.start_face = Some(face);
+        }
+        let boss = doc
+            .add_feature_in_body(boss, "Boss".into(), Some(body))
+            .unwrap();
+        let mut plan = body_build_ops(&doc, body).unwrap();
+        plan.probes = datum_probes(&doc, body, &plan);
+        let SolidOp::Sweep { profile, .. } = &plan.ops[1] else {
+            panic!("a sweep");
+        };
+        assert!((profile.plane.origin[2] - 10.0).abs() < 1e-9);
+        assert_eq!(plan.probes.len(), 1);
+        assert_eq!(plan.probes[0].feature, boss);
+        assert_eq!(plan.probes[0].probe.after_op, 1, "the solid before it");
+        assert_eq!(plan.probes[0].probe.probe, face.probe());
+
+        doc.store_probe_answers(
+            &plan.probes,
+            &[Ok(kernel_api::ProbeAnswer::Face {
+                point: [1.0, 1.0, 10.0],
+                normal: [1.0, 0.0, 0.0],
+                surface: kernel_api::FaceSurface::Cylinder {
+                    origin: [0.0; 3],
+                    axis: [0.0, 0.0, 1.0],
+                    radius: 1.0,
+                },
+            })],
+        );
+        let refused = body_build_ops(&doc, body).unwrap_err().to_string();
+        assert!(refused.contains("not flat"), "{refused}");
+    }
+
+    /// A hole starts on its sketch's plane, carried along the drill onto
+    /// another sketch's plane, then its offset further in; the plane it
+    /// starts on is a dependency.
+    #[test]
+    fn a_hole_starts_where_its_start_says() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let lifted = {
+            let mut s = Sketch::new("lifted");
+            s.plane.origin = [0.0, 0.0, 7.0];
+            let plane = s.plane;
+            SketchFeature::new(s, plane)
+        };
+        let lifted = doc
+            .add_feature_in_body(lifted, "lifted".into(), Some(body))
+            .unwrap();
+        let mut hole = match DesignFeature::from_json(&serde_json::json!({"Hole": {
+            "sketch": sketch_id, "diameter": 2.0, "depth": 3.0, "through_all": false,
+        }})) {
+            Ok(hole) => hole,
+            Err(e) => panic!("{e}"),
+        };
+        let start_z = |doc: &Document, hole: &DesignFeature| {
+            let sketch = load_sketch(doc, sketch_id).unwrap();
+            hole_plane(doc, hole, &sketch).unwrap().0.origin[2]
+        };
+        assert!(start_z(&doc, &hole).abs() < 1e-9);
+        if let DesignFeature::Hole { start, .. } = &mut hole {
+            start.offset = 2.0;
+        }
+        assert!(
+            (start_z(&doc, &hole) + 2.0).abs() < 1e-9,
+            "into the material"
+        );
+        if let DesignFeature::Hole { start, .. } = &mut hole {
+            start.at = Some(lifted);
+        }
+        assert!((start_z(&doc, &hole) - 5.0).abs() < 1e-9);
+        assert!(hole.dependencies().contains(&lifted));
+    }
+
+    /// A plane turned about an axis it holds keeps the axis where it was
+    /// and turns right-handed about the axis's direction.
+    #[test]
+    fn a_plane_turns_about_the_axis_it_holds() {
+        let mut plane = kernel_api::ProfilePlane {
+            origin: [0.0, 0.0, 5.0],
+            ..Default::default()
+        };
+        // The line x = 2 of the plane, along its y.
+        turn_plane(&mut plane, ([2.0, 0.0], [0.0, 1.0]), 90.0);
+        let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9);
+        assert!(close(plane.normal, [1.0, 0.0, 0.0]), "{:?}", plane.normal);
+        assert!(close(plane.x_axis, [0.0, 0.0, -1.0]), "{:?}", plane.x_axis);
+        assert!(close(plane.y_axis, [0.0, 1.0, 0.0]));
+        // The axis's point stays put: origin + 2 x.
+        let on_axis: [f64; 3] = std::array::from_fn(|k| plane.origin[k] + 2.0 * plane.x_axis[k]);
+        assert!(close(on_axis, [2.0, 0.0, 5.0]), "{on_axis:?}");
     }
 
     #[test]
@@ -6110,6 +6321,7 @@ mod tests {
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode,
                 up_to_face,
             };

@@ -284,6 +284,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             mode: Default::default(),
             up_to_face: None,
         },
@@ -309,6 +310,74 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
         "z span"
     );
     assert!((max[1] - min[1] - 2.0).abs() < 0.1, "height");
+}
+
+/// The bounds of a revolution of the rectangle x ∈ [5, 8], y ∈ [0, 2]
+/// about the sketch's Y axis.
+fn revolved_bounds(angle_deg: f32, start_angle_deg: f32, reversed: bool) -> ([f32; 3], [f32; 3]) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let mut sketch = Sketch::new("ring");
+    let corners = [(5.0, 0.0), (8.0, 0.0), (8.0, 2.0), (5.0, 2.0)]
+        .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
+    for i in 0..4 {
+        sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )));
+    }
+    let plane = sketch.plane;
+    let sketch_id = doc
+        .add_feature_in_body(SketchFeature::new(sketch, plane), "ring".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        wb_design::DesignFeature::Revolution {
+            regions: Vec::new(),
+            refine: false,
+            boolean_tolerance: None,
+            sketch: sketch_id,
+            angle_deg,
+            axis: wb_design::RevolveAxis::SketchY,
+            project_axis: false,
+            reversed,
+            midplane: false,
+            second_angle_deg: None,
+            start_angle_deg,
+            mode: Default::default(),
+            up_to_face: None,
+        },
+        "Revolution".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
+    let result = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    mesh_bounds(&result.mesh)
+}
+
+/// A quarter turn started a quarter turn on carries on where a quarter
+/// turn from the profile ends: the two together are the half turn, either
+/// way round.
+#[test]
+fn a_revolution_starts_turned_by_its_start_angle() {
+    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 0.1);
+    for reversed in [false, true] {
+        let first = revolved_bounds(90.0, 0.0, reversed);
+        let next = revolved_bounds(90.0, 90.0, reversed);
+        let half = revolved_bounds(180.0, 0.0, reversed);
+        let lo = std::array::from_fn(|i| first.0[i].min(next.0[i]));
+        let hi = std::array::from_fn(|i| first.1[i].max(next.1[i]));
+        assert!(
+            !near(first.0, next.0) || !near(first.1, next.1),
+            "reversed {reversed}: turned"
+        );
+        assert!(
+            near(lo, half.0) && near(hi, half.1),
+            "reversed {reversed}: {first:?} and {next:?} against {half:?}"
+        );
+    }
 }
 
 #[test]
@@ -375,6 +444,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     doc.add_feature_in_body(
         DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -436,6 +506,7 @@ fn plate_with_nut_trap(depth: Option<f32>, trap: wb_design::NutTrap) -> Result<f
     doc.add_feature_in_body(
         DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -1234,6 +1305,7 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         .unwrap();
     let hole = |modeled_thread: bool| DesignFeature::Hole {
         cosmetic_thread: false,
+        start: Default::default(),
         clearance: None,
         thread_length: Default::default(),
         refine: false,
@@ -1383,6 +1455,7 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
                     reversed: false,
                     midplane: false,
                     second_angle_deg: None,
+                    start_angle_deg: 0.0,
                     mode: Default::default(),
                     up_to_face: None,
                 },
@@ -1528,6 +1601,114 @@ fn a_pad_on_a_datum_sketch_follows_the_datum() {
         "flipped: {min:?}..{max:?}"
     );
     assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
+}
+
+/// Sketch and Design registered, as the app has them.
+fn design_registry() -> core_document::DocumentService {
+    let mut registry = core_document::DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
+        .unwrap();
+    registry
+}
+
+/// Rebuild as the host does, probes and all, until nothing is left to
+/// rebuild: what each build finds of the references its plan asks about
+/// goes back to the document, which may move features and rebuild again.
+fn settle_probing(
+    registry: &core_document::DocumentService,
+    doc: &mut Document,
+    kernel: &mut OgeomKernel,
+) {
+    for _ in 0..16 {
+        let jobs = registry.rebuild_jobs(doc);
+        if jobs.is_empty() {
+            return;
+        }
+        for job in jobs {
+            let Ok(plan) = job.plan else { continue };
+            if plan.ops.is_empty() {
+                continue;
+            }
+            let asked: Vec<kernel_api::ChainProbe> = plan.probes.iter().map(|p| p.probe).collect();
+            let result = kernel
+                .execute_solid_chain_probing(
+                    &plan.ops,
+                    &TessellationSettings::default(),
+                    None,
+                    &asked,
+                )
+                .unwrap_or_else(|e| panic!("{e:?}"));
+            doc.store_probe_answers(&plan.probes, &result.probes);
+            doc.set_imported_brep_data(job.body, result.brep_blob, Vec::new());
+            doc.set_imported_geometry(
+                job.body,
+                core_document::ImportedGeometry {
+                    mesh: std::sync::Arc::new(result.mesh),
+                    source_asset: None,
+                    revision: 0,
+                    bounds_mm: result.bounds_mm,
+                    brep_blob_path: None,
+                    mesh_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+        }
+    }
+    panic!("the rebuilds never settled");
+}
+
+/// A pad starting on the top face of the pad before it stands on that
+/// face, and follows it when the first pad grows.
+#[test]
+fn a_pad_starting_on_a_face_follows_the_face() {
+    use core_document::WorkbenchFeature;
+    let registry = design_registry();
+    let mut kernel = OgeomKernel::new();
+    let (mut doc, body, base) = setup(40.0, 40.0);
+    let first = doc
+        .add_feature_in_body(
+            pad_feature(base, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    // A 4 x 4 square drawn on the ground, started on the top face.
+    let ground = wb_sketch::sketch::SketchPlane {
+        origin: [18.0, 18.0, 0.0],
+        ..Default::default()
+    };
+    let small = doc
+        .add_feature_in_body(rect_sketch_on(ground, 4.0, 4.0), "small".into(), Some(body))
+        .unwrap();
+    let mut boss = pad_feature(small, 5.0, false, false);
+    if let DesignFeature::Pad { extras, .. } = &mut boss {
+        extras.start_face = Some(wb_design::FacePick {
+            point: [20.0, 20.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        });
+    }
+    doc.add_feature_in_body(boss, "Boss".into(), Some(body))
+        .unwrap();
+    let top = |doc: &Document| {
+        doc.imported_geometry(body)
+            .and_then(|g| g.bounds_mm)
+            .expect("a solid")
+            .1[2]
+    };
+    settle_probing(&registry, &mut doc, &mut kernel);
+    assert!((top(&doc) - 15.0).abs() < 1e-3, "{}", top(&doc));
+
+    doc.update_feature_data(first, pad_feature(base, 20.0, false, false).to_json())
+        .unwrap();
+    doc.mark_feature_dirty(first);
+    settle_probing(&registry, &mut doc, &mut kernel);
+    assert!((top(&doc) - 25.0).abs() < 1e-3, "followed: {}", top(&doc));
 }
 
 /// A symmetric pocket from the top face cuts half its depth into the
@@ -1969,6 +2150,7 @@ fn drilled_block_solid(
 fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> DesignFeature {
     DesignFeature::Hole {
         cosmetic_thread: false,
+        start: Default::default(),
         clearance: None,
         thread_length: Default::default(),
         refine: false,
@@ -2001,6 +2183,29 @@ fn volume(properties: &kernel_api::PhysicalProperties) -> f64 {
 }
 
 use std::f64::consts::PI;
+
+/// A hole started 2 mm above the top face drills only the 2 mm of its
+/// 4 mm depth that reach the material; started 3 mm in, all 4 mm, lower.
+#[test]
+fn a_hole_drills_from_where_its_start_puts_it() {
+    let block = 20.0 * 20.0 * 10.0;
+    let r = 3.0f64;
+    let removed = |offset: f32| {
+        let drilled = drilled_block(20.0, 10.0, |sketch| {
+            with_hole(plain_hole(sketch, 6.0, 4.0), |f| {
+                if let DesignFeature::Hole { start, .. } = f {
+                    start.offset = offset;
+                }
+            })
+        })
+        .unwrap_or_else(|e| panic!("builds: {e}"));
+        block - volume(&drilled)
+    };
+    let above = removed(-2.0);
+    assert!((above - PI * r * r * 2.0).abs() < 0.05, "{above}");
+    let within = removed(3.0);
+    assert!((within - PI * r * r * 4.0).abs() < 0.05, "{within}");
+}
 
 /// A 118° drill point below the depth adds its cone under the wall; within
 /// the depth the wall stops short so the tip lands on the depth.
@@ -2561,6 +2766,7 @@ fn revolution(sketch: FeatureId, fields: serde_json::Value) -> DesignFeature {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             mode: wb_design::RevolveMode::Angle,
             up_to_face: None,
         },

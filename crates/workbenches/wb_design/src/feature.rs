@@ -232,6 +232,32 @@ impl FacePick {
         }
     }
 
+    /// What a build asks of the solid to find the face again.
+    pub fn probe(&self) -> kernel_api::ShapeProbe {
+        kernel_api::ShapeProbe::Face {
+            point: self.point.map(f64::from),
+            normal: self.normal.map(f64::from),
+            name: self.name,
+        }
+    }
+
+    /// The pick moved to where a build found its face: `false` when the
+    /// answer is not a face's, or the face is not flat.
+    pub fn take_answer(&mut self, answer: &Result<kernel_api::ProbeAnswer, String>) -> bool {
+        match answer {
+            Ok(kernel_api::ProbeAnswer::Face {
+                point,
+                normal,
+                surface: kernel_api::FaceSurface::Plane { .. },
+            }) => {
+                self.point = point.map(|c| c as f32);
+                self.normal = normal.map(|c| c as f32);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Whether `other` names the same face: the same name, or (without
     /// one) the same point.
     pub fn same_place(&self, other: &FacePick) -> bool {
@@ -401,6 +427,29 @@ impl Attached {
     }
 }
 
+/// Where a hole starts drilling: its sketch's plane carried along the
+/// drill onto a datum plane, another sketch's plane or a flat face of the
+/// solid, then `offset` further in.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HoleStart {
+    /// Millimetres further into the material; negative starts above.
+    pub offset: f32,
+    /// A datum plane or a sketch whose plane the hole starts on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<FeatureId>,
+    /// A flat face of the solid the hole starts on, in place of `at`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub face: Option<FacePick>,
+}
+
+impl HoleStart {
+    /// The hole does not start on its sketch's plane.
+    pub fn moves(&self) -> bool {
+        self.offset != 0.0 || self.at.is_some() || self.face.is_some()
+    }
+}
+
 /// A pad's or pocket's less used settings.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -419,6 +468,11 @@ pub struct ExtrudeExtras {
     /// profile carried there along the way it runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_at: Option<FeatureId>,
+    /// A flat face of the solid the extrusion starts on, in place of
+    /// `start_at`: found again on the solid before the feature, as a
+    /// sketch placed on a face is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_face: Option<FacePick>,
     /// The second side's taper, when it differs from the first's.
     pub taper2_deg: Option<f32>,
     /// With a slanted direction, the length is measured along the
@@ -429,6 +483,11 @@ pub struct ExtrudeExtras {
 impl ExtrudeExtras {
     pub fn is_plain(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// The profile does not start where it is drawn.
+    pub fn moves_start(&self) -> bool {
+        self.start_offset != 0.0 || self.start_at.is_some() || self.start_face.is_some()
     }
 }
 
@@ -1349,6 +1408,10 @@ pub enum DesignFeature {
         reversed: bool,
         #[serde(default)]
         midplane: bool,
+        /// Degrees the profile is turned about the axis, the way the
+        /// turn runs, before it starts.
+        #[serde(default)]
+        start_angle_deg: f32,
         #[serde(default)]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -1385,6 +1448,10 @@ pub enum DesignFeature {
         reversed: bool,
         #[serde(default)]
         midplane: bool,
+        /// Degrees the profile is turned about the axis, the way the
+        /// turn runs, before it starts.
+        #[serde(default)]
+        start_angle_deg: f32,
         #[serde(default)]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -1565,6 +1632,9 @@ pub enum DesignFeature {
         /// A hexagonal pocket for a captive nut at one end.
         #[serde(default, deserialize_with = "nut_trap_or_flag")]
         nut_trap: Option<NutTrap>,
+        /// Where it starts drilling, when not on its sketch's plane.
+        #[serde(default)]
+        start: HoleStart,
         #[serde(default)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -2296,6 +2366,27 @@ impl DesignFeature {
         Some(name)
     }
 
+    /// The face of the solid the feature starts on, when it starts on one.
+    pub fn start_face(&self) -> Option<&FacePick> {
+        match self {
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_ref()
+            }
+            DesignFeature::Hole { start, .. } => start.face.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn start_face_mut(&mut self) -> Option<&mut FacePick> {
+        match self {
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_mut()
+            }
+            DesignFeature::Hole { start, .. } => start.face.as_mut(),
+            _ => None,
+        }
+    }
+
     /// True when this feature removes material (must not be a body's first).
     pub fn is_subtractive(&self) -> bool {
         match self {
@@ -2353,6 +2444,15 @@ impl WorkbenchFeature for DesignFeature {
             && let Some(start) = extras.start_at
         {
             deps.push(start);
+        }
+        if let DesignFeature::Hole {
+            start: HoleStart {
+                at: Some(start), ..
+            },
+            ..
+        } = self
+        {
+            deps.push(*start);
         }
         if let Some(originals) = self.originals() {
             deps.extend_from_slice(originals);

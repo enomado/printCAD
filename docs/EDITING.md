@@ -133,6 +133,21 @@ preview.
 ![A pad's preview, drawn see-through](images/pad-preview.png)
 ![The Pad task panel](images/pad-task.png)
 
+**View handles.** While its task is open, a feature shows a dot at the
+end of each number it can show in the view: a pad's or pocket's length
+(and the second side's), a hole's depth, a revolution's or groove's
+angles on an arc round its axis, a draft's angle, a primitive's sizes, a
+fillet's radius or a chamfer's size. One more dot sets where it starts: a
+pad's, pocket's or hole's start offset, from its profile or from the
+plane or face it starts on, and a revolution's or groove's start angle;
+those go either side of zero. Drag a dot to set the number: in
+steps of 1 mm or 5°, or with Shift held in fine steps of 0.1 mm or 1°
+(Preferences › Design sets all four). The number shows beside the dot and
+the status bar names it with its steps while it is held. A pad's,
+pocket's, hole's, revolution's or groove's dot turns the feature the
+other way when clicked, or when dragged back through its start. A number
+a formula sets has no dot.
+
 **Regions.** A sketch's curves may cross, meet three or more at a point,
 or leave a spur: every closed area between them is a region (two
 overlapping circles make three, the lens and two crescents). By default a

@@ -27,6 +27,12 @@ fn fields(variant: &str) -> &'static [Field] {
             ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
             ("up_to_offset", "offset", "Offset", Some(LENGTH)),
             ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
+            (
+                "extras/start_offset",
+                "start_offset",
+                "Start offset",
+                Some(LENGTH),
+            ),
         ],
         "Pocket" => &[
             ("depth", "depth", "Depth", Some(LENGTH)),
@@ -34,10 +40,17 @@ fn fields(variant: &str) -> &'static [Field] {
             ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
             ("up_to_offset", "offset", "Offset", Some(LENGTH)),
             ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
+            (
+                "extras/start_offset",
+                "start_offset",
+                "Start offset",
+                Some(LENGTH),
+            ),
         ],
         "Revolution" | "Groove" => &[
             ("angle_deg", "angle", "Angle", Some(ANGLE)),
             ("second_angle_deg", "angle2", "Second angle", Some(ANGLE)),
+            ("start_angle_deg", "start_angle", "Start angle", Some(ANGLE)),
         ],
         "Helix" => &[
             ("pitch", "pitch", "Pitch", Some(LENGTH)),
@@ -69,6 +82,7 @@ fn fields(variant: &str) -> &'static [Field] {
         "Hole" => &[
             ("diameter", "diameter", "Diameter", Some(LENGTH)),
             ("depth", "depth", "Depth", Some(LENGTH)),
+            ("start/offset", "start_offset", "Start offset", Some(LENGTH)),
             (
                 "cut/Counterbore/diameter",
                 "counterbore_diameter",
@@ -428,7 +442,14 @@ mod tests {
         );
         assert_eq!(
             all_resolve(&pad),
-            ["length", "length2", "taper", "offset", "offset2"]
+            [
+                "length",
+                "length2",
+                "taper",
+                "offset",
+                "offset2",
+                "start_offset"
+            ]
         );
         // A custom direction's components join them, only while it is one.
         let slanted = feature(serde_json::json!({"Pad": {
@@ -443,6 +464,7 @@ mod tests {
                 "taper",
                 "offset",
                 "offset2",
+                "start_offset",
                 "direction_x",
                 "direction_y",
                 "direction_z"
