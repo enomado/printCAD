@@ -5680,3 +5680,46 @@ fn an_armed_tool_cancels_and_a_misfit_never_arms() {
     h.pick_edge(rim(body));
     assert_eq!(stored(&h), before, "nothing came in");
 }
+
+#[test]
+fn repair_action_closes_an_imported_outline_and_drops_stale_construction() {
+    use wb_sketch::sketch::{Line, Point, Vec2D};
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    let mut sketch = h.sketch();
+    // Fixture boundary: an imported outline has distinct, near-coincident ends.
+    let mut points = Vec::new();
+    for (x, y) in [
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (10.0005, 0.0),
+        (5.0, 8.0),
+        (5.0005, 8.0),
+        (0.0005, 0.0),
+    ] {
+        points.push(sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
+    }
+    for (start, end) in [(0, 1), (2, 3), (4, 5)] {
+        sketch.add_geometry(GeometryElement::Line(Line::new(points[start], points[end])));
+    }
+    sketch.set_construction(points[2], true);
+    sketch.set_construction(points[5], true);
+    assert!(wb_sketch::profile::extract_wires(&sketch).is_err());
+    let plane = sketch.plane;
+    h.doc
+        .update_feature_data(
+            id,
+            serde_json::to_value(SketchFeature::new(sketch, plane)).unwrap(),
+        )
+        .unwrap();
+    h.event(WorkbenchInputEvent::ToolActivated, Some("sketch.repair"));
+    let repaired = h.sketch();
+    let wires = wb_sketch::profile::extract_wires(&repaired).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 3);
+    for (removed, kept) in [(points[2], points[1]), (points[5], points[0])] {
+        assert!(repaired.get_geometry(removed).is_none());
+        assert!(!repaired.is_construction(removed));
+        assert!(!repaired.is_construction(kept), "a drawn end stays drawn");
+    }
+}

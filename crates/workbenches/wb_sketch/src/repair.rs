@@ -104,6 +104,27 @@ fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
     }
 }
 
+/// Join each point in `joined` into the point it maps to, carrying every
+/// reference over. The kept point is construction only when every point
+/// joined into it was: a drawn end stays drawn.
+fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
+    let mut drawn: HashSet<Uuid> = HashSet::new();
+    for (alias, kept) in joined {
+        for id in [alias, kept] {
+            if !sketch.construction.contains(id) {
+                drawn.insert(*kept);
+            }
+        }
+    }
+    rename_all(sketch, joined);
+    sketch
+        .geometry
+        .retain(|g| !matches!(g, GeometryElement::Point(p) if joined.contains_key(&p.id)));
+    sketch
+        .construction
+        .retain(|id| !joined.contains_key(id) && !drawn.contains(id));
+}
+
 /// Repair `sketch`, ends within `tolerance` of each other joined.
 pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
     let mut done = Repaired::default();
@@ -131,10 +152,7 @@ pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
         }
     }
     done.joined = joined.len();
-    rename_all(sketch, &joined);
-    sketch
-        .geometry
-        .retain(|g| !matches!(g, GeometryElement::Point(p) if joined.contains_key(&p.id)));
+    join_points(sketch, &joined);
 
     // Curves of no size.
     let length = |sketch: &Sketch, a: Uuid, b: Uuid| match (
@@ -280,5 +298,60 @@ mod tests {
             repair(&mut sketch, 0.01).is_empty(),
             "a second repair finds nothing"
         );
+    }
+
+    #[test]
+    fn repair_keeps_construction_only_where_every_joined_point_had_it() {
+        let mut sketch = Sketch::new("outlines");
+        let mut removed = Vec::new();
+        let mut guide_points = Vec::new();
+        let mut drawn_points = Vec::new();
+        let mut guides = Vec::new();
+        for (offset, construction) in [(0.0, false), (20.0, true)] {
+            let a = point(&mut sketch, offset, 0.0);
+            let b = point(&mut sketch, offset + 10.0, 0.0);
+            let b2 = point(&mut sketch, offset + 10.0005, 0.0);
+            let c = point(&mut sketch, offset + 5.0, 8.0);
+            let c2 = point(&mut sketch, offset + 5.0005, 8.0);
+            let a2 = point(&mut sketch, offset + 0.0005, 0.0);
+            // Only the removed end is a guide at a; both are at b; only the
+            // kept one is at c.
+            sketch.set_construction(a2, true);
+            sketch.set_construction(b, true);
+            sketch.set_construction(b2, true);
+            sketch.set_construction(c, true);
+            removed.extend([a2, b2, c2]);
+            guide_points.push(b);
+            drawn_points.extend([a, c]);
+            for (start, end) in [(a, b), (b2, c), (c2, a2)] {
+                let line = sketch.add_geometry(GeometryElement::Line(Line::new(start, end)));
+                sketch.set_construction(line, construction);
+                if construction {
+                    guides.push(line);
+                }
+            }
+        }
+        let done = repair(&mut sketch, 0.01);
+        assert_eq!(done.joined, 6);
+        assert_eq!(done.degenerate + done.duplicates + done.constraints, 0);
+        for id in removed {
+            assert!(sketch.get_geometry(id).is_none());
+            assert!(!sketch.construction.contains(&id), "no stale membership");
+        }
+        for id in guide_points.into_iter().chain(guides) {
+            assert!(
+                sketch.is_construction(id),
+                "a guide joined to a guide stays one"
+            );
+        }
+        for id in drawn_points {
+            assert!(!sketch.is_construction(id), "a drawn end stays drawn");
+        }
+        let restored: Sketch =
+            serde_json::from_value(serde_json::to_value(&sketch).unwrap()).unwrap();
+        assert_eq!(restored.construction, sketch.construction);
+        let wires = crate::profile::extract_wires(&restored).unwrap();
+        assert_eq!(wires.len(), 1, "only the drawn triangle defines a profile");
+        assert!(repair(&mut sketch, 0.01).is_empty());
     }
 }
