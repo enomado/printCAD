@@ -199,8 +199,10 @@ cargo fmt --all                   # CI enforces --check
   package makes on its own kinds only, recorded like any edit),
   `geometry.rs` (the read-only `geom.*` calls, the kernel asked in the
   body's frame and its answer named from the body's mesh by where it
-  lies; a plan's `CosmeticThread`s drawn as `passive_geometry`, the plan
-  asked again only when the body's history changed), `guest.rs`
+  lies; a plan's `CosmeticThread`s drawn as `passive_geometry` and,
+  those with a `designation`, answered as `cosmetic_threads` from their
+  face (`thread_face`), the plan asked again only when the body's history
+  changed), `guest.rs`
   (wasmtime's bindings and store; instantiate with WASI, the package's
   `data/` preopened as `/data`, the network only when granted, a memory
   cap; a trap or overrun replaces the instance, three turn the bench off),
@@ -1450,6 +1452,11 @@ on the start page (`Screen::Start`); the recent list lives in
   (a taper thread its minor diameter at the face, narrowing 1:16),
   clearances otherwise; "Modeled thread" also cuts the standard's groove
   (60° or 55°) along a helix out to the major diameter, along a cone for a
-  taper (`thread_cut` in `wb_design/src/build.rs`). Drill points and
+  taper (`thread_cut` in `wb_design/src/build.rs`). A cosmetic thread
+  (`cosmetic_thread`) draws a helix instead, and its designation reaches
+  the host through `Workbench::cosmetic_threads` (`ThreadCallout`, kept by
+  `DocumentService::evaluate` as derived `Document::cosmetic_threads`),
+  which the parts list's Threads column, `app/annotations.rs`'s callouts
+  and a STEP export's callouts (`export.rs::body_notes`) read. Drill points and
   counterdrill cones are kernel cone primitives cut at each centre.
   `docs/HOLES.md` is the user guide.
