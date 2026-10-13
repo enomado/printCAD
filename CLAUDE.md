@@ -196,7 +196,13 @@ cargo fmt --all                   # CI enforces --check
   instance, `Budget`, `Fault`), `host.rs` (`Reach`, the host's side of an
   instance: what the call in progress may reach, `Access::None/Read/Write`,
   a raw pointer valid for that one synchronous call; the `doc.*` calls a
-  package makes on its own kinds only, recorded like any edit), `guest.rs`
+  package makes on its own kinds only, recorded like any edit),
+  `geometry.rs` (the read-only `geom.*` calls, the kernel asked in the
+  body's frame and its answer named from the body's mesh by where it
+  lies; a plan's `CosmeticThread`s drawn as `passive_geometry` and,
+  those with a `designation`, answered as `cosmetic_threads` from their
+  face (`thread_face`), the plan asked again only when the body's history
+  changed), `guest.rs`
   (wasmtime's bindings and store; instantiate with WASI, the package's
   `data/` preopened as `/data`, the network only when granted, a memory
   cap; a trap or overrun replaces the instance, three turn the bench off),
@@ -262,7 +268,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   failing op index (`ChainError`). Profile wires group by containment:
   nested = holes, disjoint = separate solids (compounded when regions stay
   disjoint). Patterns re-run the tool op under the transform rather than
-  instancing. Tests marked `#[ignore]` document kernel-side gaps; grep for
+  instancing. A pattern with a path step (Design's Path Pattern, or a
+  Multi Transform's Path step) plans `SolidOp::Pattern`, whose steps the
+  chain turns into transforms where the op stands
+  (`ops/pattern_steps.rs`: a sketch's chain, or an edge of the running
+  solid found by its `EdgeProbe`, walked by arc length, an aligned copy's
+  turn carried along it), so the plan stays a pure function of the
+  document; `KernelQueries::pattern_transforms` answers the same for the
+  task's occurrence dots. Tests marked `#[ignore]` document kernel-side gaps; grep for
   `kernel:` in `tests/` before assuming a feature is wired wrong.
 - `core_document`: Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context,
@@ -325,7 +338,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `problem`, semantic `compile`, `curves`, `spline`, `residual`, LM `solve`,
   rank/DoF `freedom` and `diagnosis`; optional serde. Its complete directory
   can be copied to another consumer without workspace inheritance.
-- `workbenches/wb_sketch`: sketcher: `tools.rs` + `tools/{draw,modify,
+- `workbenches/wb_sketch`: sketcher. Its model (`sketch.rs`: points,
+  radii, constraint values, `SketchPlane`) is `f64`, stored as the solver
+  answers it; `boundary.rs` is the one place values cross to and from the
+  `f32` of screens, GPU meshes, picks and the package contract (incoming
+  singles widened through their shortest decimal). `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (sketch_solver adapter, storage write-back and
   application diagnostics),
@@ -348,7 +365,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   task's checks; `sketch.regions` lists them), `overlay.rs` (screen-space rendering
   while editing), `glyphs.rs` (constraint icons and dimension layouts),
   `constrain.rs` (which constraint a toolbar action creates for the
-  selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
+  selection's shape; a tool the selection does not fit yet arms in
+  `model_picks.rs`, taking sketch clicks and the host's edge picks as
+  operands, projecting the edges as guides, reusing what the sketch
+  holds, and recording `sketch.external` then `sketch.constrain`),
+  `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
@@ -494,8 +515,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`WGPU_BACKEND` picks one), the GPU chosen by `preferred_gpu` or for
   performance. Shaders are WGSL (`shaders/`), validated by naga in its
   tests. GPU picking with async readback (`readback.rs`: a buffer per pick
-  or picture, mapped once its frame is done); per-body mesh cache keyed by
-  (id, revision). Edges are instanced screen-space quads (`vs_edge`), any
+  or picture, mapped once its frame is done); mesh cache keyed by the
+  body's id, or the shared mesh's key when a `BodySubmission` carries a
+  `MeshInstance` (its mesh drawn moved by `Draw.model`), and revision.
+  Edges are instanced screen-space quads (`vs_edge`), any
   width on any backend; the clipping plane discards per fragment. The pick
   pass writes depth into a colour target as well, since a depth texture
   cannot be copied in part, and, where the device has
@@ -646,7 +669,13 @@ and stores the result as geometry marked in `Sketch::external` with its
 drawn geometry is, left out of profiles until marked as counting (`ExternalSource::defining`, which the
 Construction button switches as it does construction for drawn curves),
 drawn in the external colour (dashed while a guide, solid once it
-counts), never dragged, and projected again. New projections take the
+counts), never dragged, and projected again: when the sketch opens, and
+as derived values whenever its solid changes (`derive_on_geometry`, given
+the kernel `DocumentService::set_kernel` holds, asked on the UI thread on
+a page as on the desktop, once per change of what it projects), the edge found by its faces' names
+(`ExternalSource::faces`, read from the mesh as it is added) before its
+point, except from a solid built from the sketch itself, which waits for
+the sketch to open. New projections take the
 Construction mode (a guide in it, counting out of it; the commands' `counts`
 flag, off unless given); projected ends at one spot join in the profile
 once per editing session (in place when the curve is the same kind). Its
@@ -703,16 +732,26 @@ its snapshot, the kernel's mirror of the source's (`KernelQueries::mirror`),
 which `drive_mirrored_copies` asks the kernel worker for
 (`copies_awaiting_shape`, kept by `set_mirrored_shape` only while the
 source still has the snapshot it was made from). Arrays of linked copies
-(`core_document/src/arrays.rs`: `CopyArray`, a source, an
-`ArrayPattern` (linear or polar, in the document's axes), a count and
-skipped occurrences, kept in `Document::copy_arrays`) own their copies:
-one op, `SetCopyArray`, carries the whole array with its copies' ids
-resolved, its apply making missing copies, dropping unlisted ones and
-placing each at `pattern.motion(index).after(source placement)`; moving
+(`core_document/src/arrays.rs`: `CopyArray`, a source body or a
+component, an `ArrayPattern` (linear, polar, a path's stations or a
+sketch's points, in the document's axes), a count and skipped
+occurrences, kept in `Document::copy_arrays`) own their copies: one op,
+`SetCopyArray`, carries the whole array with its copies' ids resolved,
+its apply making missing copies, dropping unlisted ones and placing each
+at `pattern.motion(index).after(placement of what it copies)`; moving
 the source re-places them inside `SetBodyPlacement`'s apply, and
-`remove_body` on a copy skips its occurrence instead. The body menu's
-Array of copies… is `ui/array_task.rs`; commands `doc.array` and
-`doc.set_array`.
+`remove_body` on a copy skips its occurrence instead. A component
+array's occurrence copies every body of it (`ArrayInstance::members`)
+into a rigid component of its own (`group`). A path or point pattern
+carries the stations or points it was read with: the host reads them
+(`app/array_paths.rs`: a bench's `Workbench::feature_paths`, chains and
+free points, through the kernel's `wire_frames`, or a solid edge through
+`edge_frames`) whenever the array is made or edited. The body menu's
+Array of copies… is `ui/array_task.rs` (a component's tree row too;
+a row's spacing drags in the view, `app/array_handle.rs`); commands
+`doc.array` and `doc.set_array`. A copy that draws its source's mesh as
+it is submits that shared mesh with its placement as a
+`render_wgpu::MeshInstance`, so the GPU holds it once.
 
 **Base solids.** An imported, converted or repaired solid takes features
 by becoming its body's base: `Document::set_body_base` (op `SetBodyBase`,
@@ -753,7 +792,13 @@ Design's Project (`DesignFeature::Project`, `SolidOp::Project`,
 picked faces: `split_face` (`Projection::Along`) splits them, and for
 Emboss/Deboss each piece whose inner point falls in a profile region is
 thickened (`make_thick_sheet`, the side checked by a point) and fused on or
-cut away; the kernel's `offset_faces` refuses such regions.
+cut away; the kernel's `offset_faces` refuses such regions. Its `wrap`
+builds `SolidOp::Wrap` instead (`ops/wrap.rs`, `Development`): the sketch
+unrolled onto the faces' cylinder or cone from where its middle lands, each
+curve a `Curve::OnSurface` of its chart curve (on a cylinder the curve's
+exact B-spline with mapped control points, on a cone a fit), cut at
+derivative jumps, carrying that chart curve as its pcurve on each picked
+face's surface, then `split_face` with `Projection::OnFace`.
 
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,
@@ -830,8 +875,9 @@ drags are `step::drag`; Design records in `record_task` when a task
 closes, diffing against what the command makes alone (`default_feature`);
 Assembly in `record_joint`. The host maps its own UI commands in
 `recorded_of` and keeps calls in `PrintCadApp.recording`
-(`scripting::Recorder`, which names results and writes numbers exactly
-so a replay meets single-precision values bit for bit); nothing records
+(`scripting::Recorder`, which names results and writes numbers exactly,
+a double that is exactly a single as the single's digits, so a replay
+meets stored values bit for bit); nothing records
 while a script runs. The app's own
 commands: `doc.*` (the pure ones in `scripts::document_command`, shared
 with `headless.rs`), `app.*`, and every keymap command, the file ones
@@ -1175,6 +1221,9 @@ hacks, no silently degraded feature). Instead:
   buffers mapped asynchronously and collected after a non-blocking poll at
   the top of the next frames; wgpu keeps a replaced buffer alive until the
   GPU is done with it. Keep it that way.
+- `serde_json` is built with `float_roundtrip` (workspace): without it a
+  JSON number can parse one unit off the double it was written from, and
+  `f64` sketch values would not survive a save.
 - Serde compatibility: new fields on persisted types (features, sketch) take
   `#[serde(default)]` so old `.prtcad` files keep loading.
 - A `.prtcad`'s meshes are entries of their own (`mesh/<uuid>.bin`,
@@ -1428,6 +1477,11 @@ on the start page (`Screen::Start`); the recent list lives in
   (a taper thread its minor diameter at the face, narrowing 1:16),
   clearances otherwise; "Modeled thread" also cuts the standard's groove
   (60° or 55°) along a helix out to the major diameter, along a cone for a
-  taper (`thread_cut` in `wb_design/src/build.rs`). Drill points and
+  taper (`thread_cut` in `wb_design/src/build.rs`). A cosmetic thread
+  (`cosmetic_thread`) draws a helix instead, and its designation reaches
+  the host through `Workbench::cosmetic_threads` (`ThreadCallout`, kept by
+  `DocumentService::evaluate` as derived `Document::cosmetic_threads`),
+  which the parts list's Threads column, `app/annotations.rs`'s callouts
+  and a STEP export's callouts (`export.rs::body_notes`) read. Drill points and
   counterdrill cones are kernel cone primitives cut at each centre.
   `docs/HOLES.md` is the user guide.

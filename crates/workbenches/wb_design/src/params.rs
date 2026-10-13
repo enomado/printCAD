@@ -27,6 +27,12 @@ fn fields(variant: &str) -> &'static [Field] {
             ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
             ("up_to_offset", "offset", "Offset", Some(LENGTH)),
             ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
+            (
+                "extras/start_offset",
+                "start_offset",
+                "Start offset",
+                Some(LENGTH),
+            ),
         ],
         "Pocket" => &[
             ("depth", "depth", "Depth", Some(LENGTH)),
@@ -34,10 +40,17 @@ fn fields(variant: &str) -> &'static [Field] {
             ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
             ("up_to_offset", "offset", "Offset", Some(LENGTH)),
             ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
+            (
+                "extras/start_offset",
+                "start_offset",
+                "Start offset",
+                Some(LENGTH),
+            ),
         ],
         "Revolution" | "Groove" => &[
             ("angle_deg", "angle", "Angle", Some(ANGLE)),
             ("second_angle_deg", "angle2", "Second angle", Some(ANGLE)),
+            ("start_angle_deg", "start_angle", "Start angle", Some(ANGLE)),
         ],
         "Helix" => &[
             ("pitch", "pitch", "Pitch", Some(LENGTH)),
@@ -69,6 +82,7 @@ fn fields(variant: &str) -> &'static [Field] {
         "Hole" => &[
             ("diameter", "diameter", "Diameter", Some(LENGTH)),
             ("depth", "depth", "Depth", Some(LENGTH)),
+            ("start/offset", "start_offset", "Start offset", Some(LENGTH)),
             (
                 "cut/Counterbore/diameter",
                 "counterbore_diameter",
@@ -180,6 +194,11 @@ fn fields(variant: &str) -> &'static [Field] {
             ("angle_deg", "angle", "Angle", Some(ANGLE)),
             ("occurrences", "occurrences", "Occurrences", None),
         ],
+        "CircularPattern" => &[("spacing", "ring_spacing", "Ring spacing", Some(LENGTH))],
+        "PathPattern" => &[
+            ("occurrences", "occurrences", "Occurrences", None),
+            ("spacing", "spacing", "Spacing", Some(LENGTH)),
+        ],
         _ => &[],
     }
 }
@@ -198,6 +217,11 @@ fn step_fields(kind: &str) -> &'static [Field] {
         "Scale" => &[
             ("factor", "factor", "Factor", Some(NUMBER)),
             ("occurrences", "occurrences", "Occurrences", None),
+        ],
+        "Circular" => &[("spacing", "ring_spacing", "Ring spacing", Some(LENGTH))],
+        "Path" => &[
+            ("occurrences", "occurrences", "Occurrences", None),
+            ("spacing", "spacing", "Spacing", Some(LENGTH)),
         ],
         _ => &[],
     }
@@ -279,6 +303,18 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
                 ));
             }
         }
+        // Each ring's count: `ring1`, `ring2`, … from the innermost.
+        "CircularPattern" => {
+            let rings = body.get("counts").and_then(Value::as_array);
+            for i in 0..rings.map_or(0, Vec::len) {
+                out.push(parameter(
+                    format!("/CircularPattern/counts/{i}"),
+                    &format!("ring{}", i + 1),
+                    &format!("Ring {}", i + 1),
+                    None,
+                ));
+            }
+        }
         "LinearPattern" | "PolarPattern" => {
             // An uneven pattern's gaps: `spacing1`, `spacing2`, … or
             // `step_angle1`, … from the first occurrence on.
@@ -335,12 +371,14 @@ pub(crate) fn every_name() -> Vec<&'static str> {
         "Project",
         "LinearPattern",
         "PolarPattern",
+        "CircularPattern",
+        "PathPattern",
     ]
     .iter()
     .flat_map(|v| fields(v).iter().map(|(_, name, _, _)| *name))
     // A step's numbers, as its `step{n}_` prefix leaves them.
     .chain(
-        ["Linear", "Polar", "Scale"]
+        ["Linear", "Polar", "Scale", "Circular", "Path"]
             .iter()
             .flat_map(|k| step_fields(k).iter().map(|(_, name, _, _)| *name)),
     )
@@ -428,7 +466,14 @@ mod tests {
         );
         assert_eq!(
             all_resolve(&pad),
-            ["length", "length2", "taper", "offset", "offset2"]
+            [
+                "length",
+                "length2",
+                "taper",
+                "offset",
+                "offset2",
+                "start_offset"
+            ]
         );
         // A custom direction's components join them, only while it is one.
         let slanted = feature(serde_json::json!({"Pad": {
@@ -443,6 +488,7 @@ mod tests {
                 "taper",
                 "offset",
                 "offset2",
+                "start_offset",
                 "direction_x",
                 "direction_y",
                 "direction_z"

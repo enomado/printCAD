@@ -35,9 +35,10 @@ pub use build::{
 pub use feature::{
     Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DesignFeature,
     DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick,
-    FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane,
-    NutSide, NutTrap, PatternAxis, PipeCorner, PipeOrientation, PlaneTarget, RevolveAxis,
-    RevolveMode, SketchAxis, ThreadSpec, TransformStep, primitive_icon, primitive_preset,
+    FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, HoleStart, LoftSection,
+    MirrorPlane, NutSide, NutTrap, PathSpacing, PatternAxis, PatternPath, PipeCorner,
+    PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep,
+    primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, NutSize, NutStandard, ScrewSeat, ThreadSize, ThreadStandard,
@@ -89,6 +90,10 @@ pub struct DesignOptions {
     pub handle_step: f32,
     /// The step while Shift is held, mm.
     pub handle_fine_step: f32,
+    /// The step an angle handle's drag turns in, degrees.
+    pub handle_angle_step: f32,
+    /// The angle step while Shift is held, degrees.
+    pub handle_fine_angle_step: f32,
 }
 
 impl Default for DesignOptions {
@@ -99,6 +104,8 @@ impl Default for DesignOptions {
             refine_result: true,
             handle_step: 1.0,
             handle_fine_step: 0.1,
+            handle_angle_step: 5.0,
+            handle_fine_angle_step: 1.0,
         }
     }
 }
@@ -270,6 +277,20 @@ impl DesignWorkbench {
                 .map(|(_, n)| n.name.as_str()),
             base,
         )
+    }
+
+    /// The body's last sketch (its own, or one lent it) of which `count`
+    /// finds any: points to stand at, curves to follow.
+    fn last_sketch_where(
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+        count: fn(&core_document::Document, FeatureId) -> usize,
+    ) -> Option<FeatureId> {
+        build::sketches_of_body(ctx.document, body)
+            .into_iter()
+            .rev()
+            .map(|(id, _)| id)
+            .find(|id| count(ctx.document, *id) > 0)
     }
 
     /// The last non-modifier feature of a body (default pattern original).
@@ -489,6 +510,7 @@ impl DesignWorkbench {
                     reversed: false,
                     midplane: false,
                     second_angle_deg: None,
+                    start_angle_deg: 0.0,
                     mode: RevolveMode::Angle,
                     up_to_face: None,
                 },
@@ -509,6 +531,7 @@ impl DesignWorkbench {
                         reversed: false,
                         midplane: false,
                         second_angle_deg: None,
+                        start_angle_deg: 0.0,
                         mode: RevolveMode::Angle,
                         up_to_face: None,
                     },
@@ -617,6 +640,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Hole {
                         cosmetic_thread: false,
+                        start: Default::default(),
                         clearance: None,
                         thread_length: Default::default(),
                         refine: false,
@@ -731,6 +755,7 @@ impl DesignWorkbench {
                         faces: Self::selected_face_picks(ctx, body),
                         mode: kernel_api::ProjectMode::Emboss,
                         height: 1.0,
+                        wrap: false,
                     },
                     "Project",
                 )
@@ -813,6 +838,85 @@ impl DesignWorkbench {
                         angles: Vec::new(),
                     },
                     "PolarPattern",
+                )
+            }
+            "design.circular_pattern" => {
+                need_material(has_solid)?;
+                let original = Self::selected_design_feature(ctx)
+                    .or_else(|| Self::last_shape_feature(ctx, body));
+                (
+                    DesignFeature::CircularPattern {
+                        skipped: Vec::new(),
+                        refine: false,
+                        boolean_tolerance: None,
+                        originals: original.into_iter().collect(),
+                        axis: PatternAxis::Z,
+                        outward: PatternAxis::X,
+                        spacing: 10.0,
+                        counts: vec![6, 12],
+                    },
+                    "CircularPattern",
+                )
+            }
+            "design.point_pattern" => {
+                need_material(has_solid)?;
+                let sketch = sketch
+                    .or_else(|| Self::last_sketch_where(ctx, body, build::sketch_point_count))
+                    .ok_or_else(|| {
+                        given.say(
+                            "Select a sketch of points in the tree first",
+                            "It needs a sketch of points: give `sketch`",
+                        )
+                    })?;
+                let original = Self::last_shape_feature(ctx, body);
+                (
+                    DesignFeature::PointPattern {
+                        skipped: Vec::new(),
+                        refine: false,
+                        boolean_tolerance: None,
+                        originals: original.into_iter().collect(),
+                        sketch,
+                    },
+                    "PointPattern",
+                )
+            }
+            "design.path_pattern" => {
+                need_material(has_solid)?;
+                let edge = ctx
+                    .selected_edges_in(body)
+                    .iter()
+                    .find(|e| BodyId(e.body) == body)
+                    .map(EdgePick::of);
+                let path = match (sketch, edge) {
+                    (Some(sketch), _) => PatternPath::Sketch { sketch, chain: 0 },
+                    (None, Some(edge)) => PatternPath::Edge(edge),
+                    (None, None) => Self::last_sketch_where(ctx, body, build::sketch_chain_count)
+                        .map(|sketch| PatternPath::Sketch { sketch, chain: 0 })
+                        .ok_or_else(|| {
+                            given.say(
+                                "Select a sketch of curves in the tree, or an edge of the \
+                                     solid, first",
+                                "It needs a path: give `sketch`, or `path = {Edge = \
+                                     {point = {x, y, z}, direction = {x, y, z}}}`",
+                            )
+                        })?,
+                };
+                let original = if sketch.is_some() || edge.is_some() {
+                    Self::last_shape_feature(ctx, body)
+                } else {
+                    Self::selected_design_feature(ctx)
+                        .or_else(|| Self::last_shape_feature(ctx, body))
+                };
+                (
+                    DesignFeature::PathPattern {
+                        skipped: Vec::new(),
+                        refine: false,
+                        boolean_tolerance: None,
+                        originals: original.into_iter().collect(),
+                        path,
+                        layout: Default::default(),
+                    },
+                    "PathPattern",
                 )
             }
             "design.multi_transform" => {
@@ -1231,18 +1335,33 @@ impl DesignWorkbench {
         }
     }
 
-    /// The handle held, else the one the open task's feature offers.
-    fn handle(&self, ctx: &WorkbenchRuntimeContext) -> Option<handles::Handle> {
-        self.held.or_else(|| {
-            let eye = glam::Vec3::from_array(ctx.camera_position);
-            handles::handle_of(ctx.document, self.task_feature()?, eye)
-        })
+    /// The handle held, else the ones the open task's feature offers.
+    fn handles(&self, ctx: &WorkbenchRuntimeContext) -> Vec<handles::Handle> {
+        if let Some(held) = &self.held {
+            return vec![held.clone()];
+        }
+        let eye = glam::Vec3::from_array(ctx.camera_position);
+        self.task_feature()
+            .map(|feature| handles::handles_of(ctx.document, feature, eye))
+            .unwrap_or_default()
+    }
+
+    /// A held handle's steps: coarse, and fine with Shift.
+    fn handle_steps(&self, handle: &handles::Handle) -> (f32, f32) {
+        if handle.angle {
+            (
+                self.options.handle_angle_step,
+                self.options.handle_fine_angle_step,
+            )
+        } else {
+            (self.options.handle_step, self.options.handle_fine_step)
+        }
     }
 
     /// The occurrences of the open task's pattern, where their dots stand.
     fn occurrences(&self, ctx: &WorkbenchRuntimeContext) -> Vec<instances::Occurrence> {
         self.task_feature()
-            .map(|feature| instances::occurrences_of(ctx.document, feature))
+            .map(|feature| instances::occurrences_of(ctx.document, ctx.kernel, feature))
             .unwrap_or_default()
     }
 
@@ -1265,7 +1384,7 @@ impl DesignWorkbench {
                 viewport_pos,
             } => {
                 let feature = self.task_feature()?;
-                let occurrences = instances::occurrences_of(ctx.document, feature);
+                let occurrences = instances::occurrences_of(ctx.document, ctx.kernel, feature);
                 let index = instances::hit(ctx, &occurrences, *viewport_pos)?;
                 let mut part = ctx
                     .document
@@ -1298,10 +1417,9 @@ impl DesignWorkbench {
                 button: MouseButton::Left,
                 viewport_pos,
             } => {
-                if let Some(handle) = self.handle(ctx)
-                    && handles::within_reach(ctx, &handle, *viewport_pos)
-                {
-                    self.held = Some(handle);
+                let mut offered = self.handles(ctx);
+                if let Some(i) = handles::under(ctx, &offered, *viewport_pos) {
+                    self.held = Some(offered.swap_remove(i));
                     self.held_moved = false;
                     return Some(InputResult::consumed());
                 }
@@ -1310,42 +1428,46 @@ impl DesignWorkbench {
                 region_pick::click(ctx, task, *viewport_pos).then(InputResult::consumed)
             }
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
-                let step = if ctx.shift_down {
-                    self.options.handle_fine_step
-                } else {
-                    self.options.handle_step
-                };
+                let (coarse, fine) = self.handle_steps(self.held.as_ref()?);
+                let step = if ctx.shift_down { fine } else { coarse };
                 let held = self.held.as_mut()?;
                 let (origin, dir) = ctx.viewport_to_ray(*viewport_pos)?;
-                let mut value = held.value_at(
+                let value = held.value_at(
                     glam::Vec3::from_array(origin),
                     glam::Vec3::from_array(dir),
                     step,
                 )?;
-                // Through its start, a pad or pocket turns round.
-                let flip = value < 0.0;
-                if flip {
-                    value = -value;
-                    held.dir = -held.dir;
+                // Through its start, a reversible one turns its feature
+                // round.
+                let flip = held.range == handles::Range::Reversible && value < 0.0;
+                if value == held.value && !flip {
+                    return Some(InputResult::consumed());
                 }
-                if value != held.value || flip {
+                if flip {
+                    held.turn_round();
+                    held.value = -value;
+                } else {
                     held.value = value;
-                    self.held_moved = true;
-                    let feature = held.feature;
-                    if let Some(mut part) = ctx
-                        .document
-                        .get_feature_data(feature)
-                        .and_then(|d| DesignFeature::from_json(d).ok())
-                        && (!flip || handles::reverse(&mut part))
-                        && handles::set_value(&mut part, value)
-                        && ctx
-                            .document
-                            .update_feature_data(feature, part.to_json())
-                            .is_ok()
-                        && self.options.update_while_editing
-                    {
-                        ctx.document.mark_feature_dirty(feature);
+                }
+                self.held_moved = true;
+                let (feature, pointer, value) = (held.feature, held.pointer.clone(), held.value);
+                let Some(mut data) = ctx.document.get_feature_data(feature).cloned() else {
+                    return Some(InputResult::consumed());
+                };
+                if flip {
+                    let Ok(mut part) = DesignFeature::from_json(&data) else {
+                        return Some(InputResult::consumed());
+                    };
+                    if !handles::reverse(&mut part) {
+                        return Some(InputResult::consumed());
                     }
+                    data = part.to_json();
+                }
+                if handles::write(&mut data, &pointer, value)
+                    && ctx.document.update_feature_data(feature, data).is_ok()
+                    && self.options.update_while_editing
+                {
+                    ctx.document.mark_feature_dirty(feature);
                 }
                 Some(InputResult::consumed())
             }
@@ -1354,9 +1476,9 @@ impl DesignWorkbench {
                 ..
             } => {
                 let held = self.held.take()?;
-                // A click on a pad's or pocket's handle turns it round.
+                // A click on a reversible handle turns its feature round.
                 if !self.held_moved
-                    && held.reversible
+                    && held.range == handles::Range::Reversible
                     && let Some(mut part) = ctx
                         .document
                         .get_feature_data(held.feature)
@@ -1498,6 +1620,42 @@ impl Workbench for DesignWorkbench {
             family_label: "Design feature".to_string(),
             builds_solid: !matches!(feature, Some(DesignFeature::Borrow { .. })),
         }
+    }
+
+    /// A hole with a cosmetic thread threads each of its bores.
+    fn cosmetic_threads(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Vec<core_document::ThreadCallout> {
+        let Some(body) = node.body else {
+            return Vec::new();
+        };
+        let Some(feature @ DesignFeature::Hole { .. }) = document
+            .feature_values(id)
+            .and_then(|data| DesignFeature::from_json(data).ok())
+        else {
+            return Vec::new();
+        };
+        let (Some(designation), Some(bores)) = (
+            feature.cosmetic_thread(),
+            build::threaded_bores(document, &feature),
+        ) else {
+            return Vec::new();
+        };
+        bores
+            .mouths
+            .iter()
+            .map(|mouth| core_document::ThreadCallout {
+                feature: id,
+                body,
+                designation: designation.clone(),
+                mouth: *mouth,
+                axis: bores.into,
+                radius: bores.radius,
+            })
+            .collect()
     }
 
     /// A borrow draws what it lends where its body sits, in the palette's
@@ -1717,6 +1875,33 @@ impl Workbench for DesignWorkbench {
                 "design.polar_pattern",
                 "Polar pattern",
                 "polar-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.circular_pattern",
+                "Circular pattern",
+                "circular-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.point_pattern",
+                "Point pattern",
+                "point-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.path_pattern",
+                "Path pattern",
+                "path-pattern",
                 "transform",
             ),
         );
@@ -2058,7 +2243,10 @@ impl Workbench for DesignWorkbench {
                     None => face,
                 }
                 .on_its_plane();
-                let plane = wb_sketch::sketch::SketchPlane::from_face(face.point, face.normal);
+                let plane = wb_sketch::sketch::SketchPlane::from_face(
+                    wb_sketch::boundary::widen3(face.point),
+                    wb_sketch::boundary::widen3(face.normal),
+                );
                 feature.plane = plane;
                 feature.sketch.plane = plane;
                 // Mapped to the face, it follows the face, not the datum it was on.
@@ -2173,7 +2361,7 @@ impl Workbench for DesignWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         let mut lines = self.centre_overlays(ctx);
-        if let Some(handle) = self.handle(ctx) {
+        for handle in self.handles(ctx) {
             lines.extend(handles::overlays(ctx, &handle));
         }
         lines
@@ -2185,7 +2373,7 @@ impl Workbench for DesignWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceMark> {
         let mut marks = self.centre_marks(ctx);
-        if let Some(handle) = self.handle(ctx) {
+        for handle in self.handles(ctx) {
             marks.extend(handles::marks(ctx, &handle, self.held.is_some()));
         }
         marks.extend(instances::marks(
@@ -2196,14 +2384,25 @@ impl Workbench for DesignWorkbench {
         marks
     }
 
+    /// While a view handle is held: what it sets, its steps and the key
+    /// for the fine ones.
+    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        let held = self.held.as_ref()?;
+        let (step, fine) = self.handle_steps(held);
+        Some(core_document::StatusItems {
+            mode: Some(handles::hint(held, step, fine)),
+            ..Default::default()
+        })
+    }
+
     fn get_screen_space_labels(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceLabel> {
         let mut labels = self.centre_labels(ctx);
-        if let Some(handle) = self.held {
-            labels.extend(handles::labels(ctx, &handle));
+        if let Some(handle) = &self.held {
+            labels.extend(handles::labels(ctx, handle));
         }
         labels.extend(instances::labels(
             ctx,
@@ -2261,6 +2460,9 @@ impl Workbench for DesignWorkbench {
             | "design.mirror"
             | "design.linear_pattern"
             | "design.polar_pattern"
+            | "design.circular_pattern"
+            | "design.point_pattern"
+            | "design.path_pattern"
             | "design.multi_transform"
             | "design.boolean"
             | "design.centre_line" => has_solid,
@@ -2308,6 +2510,22 @@ impl Workbench for DesignWorkbench {
                         .range(0.01..=100.0),
                 )
                 .hint("The step while Shift is held"),
+                PrefRow::qty(
+                    "Angle handle step",
+                    ui_kit::widgets::QtyField::new(&mut self.options.handle_angle_step)
+                        .unit("°")
+                        .decimals(2)
+                        .range(0.01..=90.0),
+                )
+                .hint("An angle handle's drag turns the number in these steps"),
+                PrefRow::qty(
+                    "Fine angle handle step",
+                    ui_kit::widgets::QtyField::new(&mut self.options.handle_fine_angle_step)
+                        .unit("°")
+                        .decimals(2)
+                        .range(0.01..=90.0),
+                )
+                .hint("The angle step while Shift is held"),
             ],
             filter,
         );
@@ -2374,8 +2592,8 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    /// A primitive attached by a mode takes what the last build found of
-    /// what it stands on.
+    /// A primitive attached by a mode, or a feature starting on a face,
+    /// takes what the last build found of what it stands on.
     fn derive_on_solid(
         &self,
         node: &core_document::FeatureNode,
@@ -2389,6 +2607,24 @@ impl Workbench for DesignWorkbench {
         let Ok(mut feature) = DesignFeature::from_json(values) else {
             return false;
         };
+        // A feature starting on a face takes where the face is now.
+        if let Some(asked) = DesignFeature::from_json(&node.data)
+            .ok()
+            .and_then(|made| made.start_face().map(|face| face.probe()))
+        {
+            let Some(face) = feature.start_face_mut() else {
+                return false;
+            };
+            let before = *face;
+            if probed.probes != [asked]
+                || !probed.answers.first().is_some_and(|a| face.take_answer(a))
+                || *face == before
+            {
+                return false;
+            }
+            *values = feature.to_json();
+            return true;
+        }
         let DesignFeature::Primitive {
             attached: Some(attached),
             ..
@@ -2978,6 +3214,7 @@ mod icon_coverage {
             faces: Vec::new(),
             mode: kernel_api::ProjectMode::Emboss,
             height: 1.0,
+            wrap: false,
         };
         assert!(ui_kit::icon::exists(projection.icon()));
     }
@@ -2990,6 +3227,7 @@ mod icon_coverage {
         let hole = |cosmetic_thread: bool| DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,

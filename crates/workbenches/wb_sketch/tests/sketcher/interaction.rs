@@ -53,6 +53,12 @@ struct Harness {
     tool_request: Option<String>,
     /// Whether the workbench has asked the host to turn the view.
     view_turned: bool,
+    /// The kernel the host hands the bench, when a test has a model.
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    /// The model's edges the host has picked.
+    edges: Vec<core_document::EdgeRef>,
+    /// Whether the bench took the last event.
+    consumed: bool,
 }
 
 impl Harness {
@@ -64,6 +70,9 @@ impl Harness {
             vp: view_proj(),
             tool_request: None,
             view_turned: false,
+            kernel: None,
+            edges: Vec::new(),
+            consumed: false,
         }
     }
 
@@ -79,7 +88,9 @@ impl Harness {
         ctx.ctrl_down = ctrl;
         // A body is always "selected" so sketch.create is permitted.
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
-        self.wb.on_input(&event, tool, &mut ctx);
+        ctx.kernel = self.kernel;
+        ctx.selected_edges = self.edges.clone();
+        self.consumed = self.wb.on_input(&event, tool, &mut ctx).consumed;
         self.active_object = ctx.active_document_object;
         let requests = ctx.take_requests();
         self.view_turned |= requests
@@ -95,20 +106,54 @@ impl Harness {
             WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
         frame_ctx.view_proj = Some(self.vp);
         frame_ctx.active_document_object = self.active_object;
+        frame_ctx.kernel = self.kernel;
+        frame_ctx.selected_edges = self.edges.clone();
         self.wb.on_frame(0.016, &mut frame_ctx);
+    }
+
+    /// A click on the model's edge `edge` where the view shows it, as the
+    /// host makes it: the press and release are the host's when the bench
+    /// leaves them, and the edge is picked. Whether the bench left them.
+    fn pick_edge(&mut self, edge: core_document::EdgeRef) -> bool {
+        let viewport_pos = {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+            ctx.view_proj = Some(self.vp);
+            ctx.world_to_viewport(edge.point)
+                .expect("the edge projects into the viewport")
+        };
+        self.event(
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Left,
+                viewport_pos,
+            },
+            Some("sketch.select"),
+        );
+        let left = !self.consumed;
+        if left {
+            self.edges = vec![edge];
+        }
+        self.event(
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Left,
+                viewport_pos,
+            },
+            Some("sketch.select"),
+        );
+        left && !self.consumed
     }
 
     /// Viewport pixel coordinates for a sketch-plane point (the inverse of
     /// what the workbench's raycast will compute).
-    fn px_of(&mut self, x: f32, y: f32) -> (f32, f32) {
+    fn px_of(&mut self, x: f64, y: f64) -> (f32, f32) {
         let mut ctx =
             WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
         ctx.view_proj = Some(self.vp);
-        ctx.world_to_viewport([x, y, 0.0])
+        ctx.world_to_viewport([x as f32, y as f32, 0.0])
             .expect("sketch point projects into the viewport")
     }
 
-    fn click(&mut self, x: f32, y: f32, tool: &str) {
+    fn click(&mut self, x: f64, y: f64, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event(
             WorkbenchInputEvent::MousePress {
@@ -119,7 +164,7 @@ impl Harness {
         );
     }
 
-    fn click_ctrl(&mut self, x: f32, y: f32, tool: &str) {
+    fn click_ctrl(&mut self, x: f64, y: f64, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event_with_ctrl(
             WorkbenchInputEvent::MousePress {
@@ -131,7 +176,7 @@ impl Harness {
         );
     }
 
-    fn release_ctrl(&mut self, x: f32, y: f32, tool: &str) {
+    fn release_ctrl(&mut self, x: f64, y: f64, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event_with_ctrl(
             WorkbenchInputEvent::MouseRelease {
@@ -197,7 +242,7 @@ impl Harness {
         id
     }
 
-    fn release(&mut self, x: f32, y: f32, tool: &str) {
+    fn release(&mut self, x: f64, y: f64, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event(
             WorkbenchInputEvent::MouseRelease {
@@ -208,7 +253,7 @@ impl Harness {
         );
     }
 
-    fn mouse_move(&mut self, x: f32, y: f32, tool: &str) {
+    fn mouse_move(&mut self, x: f64, y: f64, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event(WorkbenchInputEvent::MouseMove { viewport_pos }, Some(tool));
     }
@@ -290,7 +335,7 @@ impl Harness {
         );
     }
 
-    fn drag(&mut self, from: (f32, f32), to: (f32, f32)) {
+    fn drag(&mut self, from: (f64, f64), to: (f64, f64)) {
         self.click(from.0, from.1, "sketch.select");
         self.mouse_move(to.0, to.1, "sketch.select");
         self.release(to.0, to.1, "sketch.select");
@@ -306,7 +351,7 @@ impl Harness {
         self.wb.is_tool_enabled(id, &ctx)
     }
 
-    fn point_at(&self, x: f32, y: f32) -> bool {
+    fn point_at(&self, x: f64, y: f64) -> bool {
         self.sketch().geometry.iter().any(|g| match g {
             GeometryElement::Point(p) => {
                 (p.position.x - x).abs() < 0.05 && (p.position.y - y).abs() < 0.05
@@ -315,7 +360,7 @@ impl Harness {
         })
     }
 
-    fn right_click(&mut self, x: f32, y: f32, tool: &str) {
+    fn right_click(&mut self, x: f64, y: f64, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event(
             WorkbenchInputEvent::MousePress {
@@ -334,7 +379,7 @@ impl Harness {
     }
 
     /// Right press, move, release: the camera's pan gesture.
-    fn right_drag(&mut self, from: (f32, f32), to: (f32, f32), tool: &str) {
+    fn right_drag(&mut self, from: (f64, f64), to: (f64, f64), tool: &str) {
         let start = self.px_of(from.0, from.1);
         let end = self.px_of(to.0, to.1);
         self.event(
@@ -354,7 +399,7 @@ impl Harness {
     }
 
     /// Select elements by dragging a box over them (select mode).
-    fn box_select(&mut self, x0: f32, y0: f32, x1: f32, y1: f32) {
+    fn box_select(&mut self, x0: f64, y0: f64, x1: f64, y1: f64) {
         self.click(x0, y0, "sketch.select");
         self.mouse_move(x1, y1, "sketch.select");
         self.release(x1, y1, "sketch.select");
@@ -498,7 +543,7 @@ fn dragging_a_constrained_point_respects_constraints() {
     h.release(23.0, 10.0, "sketch.select");
 
     let sketch = h.sketch();
-    let ys: Vec<f32> = sketch
+    let ys: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -517,7 +562,7 @@ fn dragging_a_constrained_point_respects_constraints() {
             GeometryElement::Point(p) => Some(p.position.x),
             _ => None,
         })
-        .fold(f32::MIN, f32::max);
+        .fold(f64::MIN, f64::max);
     assert!(max_x > 20.0, "x movement applied: {max_x}");
 }
 
@@ -532,7 +577,7 @@ fn two_clicks_draw_a_line_through_the_full_stack() {
 
     // Verify the raycast produced accurate sketch coordinates.
     let sketch = h.sketch();
-    let mut positions: Vec<(f32, f32)> = sketch
+    let mut positions: Vec<(f64, f64)> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -644,7 +689,7 @@ fn horizontal_axis_snap_adds_auto_constraint() {
     h.click(18.0, 4.05, "sketch.line");
     let sketch = h.sketch();
     assert_eq!(sketch.constraints.len(), 1);
-    let ys: Vec<f32> = sketch
+    let ys: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -2002,6 +2047,167 @@ fn arc_slot_tool_end_to_end_closed_profile() {
     assert_eq!(wires[0].segments.len(), 4);
 }
 
+/// Where a point of the sketch is.
+fn at(sketch: &Sketch, id: uuid::Uuid) -> glam::DVec2 {
+    sketch.point_position(id).expect("a point").to_glam()
+}
+
+/// The arc slot holds its shape: two rails round one centre, each cap
+/// centred midway between them on the line through its ends and half the
+/// gap across, so it runs on tangent into both rails and the caps are
+/// one size.
+fn assert_arc_slot_shape(sketch: &Sketch, what: &str) {
+    let arcs: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 4, "{what}");
+    let (rails, caps): (Vec<_>, Vec<_>) = arcs
+        .iter()
+        .partition(|a| arcs.iter().filter(|b| b.center == a.center).count() == 2);
+    assert_eq!(
+        (rails.len(), caps.len()),
+        (2, 2),
+        "{what}: concentric rails"
+    );
+    let c = at(sketch, rails[0].center);
+    let radius = |a: &wb_sketch::sketch::Arc| {
+        let r = (at(sketch, a.start) - at(sketch, a.center)).length();
+        let r_end = (at(sketch, a.end) - at(sketch, a.center)).length();
+        assert!((r - r_end).abs() < 1e-4, "{what}: ends on the arc");
+        r
+    };
+    let (r1, r2) = (radius(rails[0]), radius(rails[1]));
+    let (outer, inner) = (r1.max(r2), r1.min(r2));
+    assert!(outer - inner > 1e-3, "{what}: the rails apart");
+    for cap in &caps {
+        let mid = at(sketch, cap.center);
+        let r = radius(cap);
+        assert!((r - 0.5 * (outer - inner)).abs() < 1e-4, "{what}: cap {r}");
+        assert!(
+            ((mid - c).length() - 0.5 * (outer + inner)).abs() < 1e-4,
+            "{what}: cap centred between the rails"
+        );
+        for end in [cap.start, cap.end] {
+            let cross = (at(sketch, end) - c).perp_dot(mid - c);
+            assert!(cross.abs() < 1e-3, "{what}: cap tangent at its end");
+        }
+    }
+}
+
+/// Drag from `from` to `to` as a pointer does, a move each frame on the way.
+fn drag_in_steps(h: &mut Harness, from: (f64, f64), to: (f64, f64), steps: usize) {
+    h.click(from.0, from.1, "sketch.select");
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let (x, y) = (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t);
+        h.mouse_move(x, y, "sketch.select");
+    }
+    h.release(to.0, to.1, "sketch.select");
+}
+
+fn has_point_near_within(sketch: &Sketch, (x, y): (f64, f64), tol: f64) -> bool {
+    point_positions(sketch)
+        .iter()
+        .any(|p| (*p - glam::DVec2::new(x, y)).length() < tol)
+}
+
+#[test]
+fn an_arc_slot_holds_its_shape_when_dragged() {
+    // Centre (3, 2), centerline radius 10 from (13, 2) a quarter turn round
+    // to (3, 12), 4 wide: off the axes, so nothing pins to them. The outer
+    // rail starts at (15, 2).
+    for (what, from, to) in [
+        ("width", (15.0, 2.0), (16.0, 2.0)),
+        ("radius", (13.0, 2.0), (15.0, 2.0)),
+        ("sweep", (3.0, 12.0), (-4.0, 9.0)),
+        ("centre", (3.0, 2.0), (5.0, 4.0)),
+    ] {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(3.0, 2.0, "sketch.arc_slot");
+        h.click(13.0, 2.0, "sketch.arc_slot");
+        h.click(3.0, 12.0, "sketch.arc_slot");
+        assert_arc_slot_shape(&h.sketch(), "drawn");
+
+        drag_in_steps(&mut h, from, to, 8);
+        let sketch = h.sketch();
+        assert!(
+            has_point_near_within(&sketch, to, 0.05),
+            "{what}: the dragged point followed: {:?}",
+            point_positions(&sketch)
+        );
+        assert_arc_slot_shape(&sketch, what);
+    }
+}
+
+#[test]
+fn a_slot_holds_its_shape_when_dragged() {
+    // From (3, 3) to (13, 3), 4 wide: a rail ends at (13, 5). Each drag
+    // is made in several pointer moves and in one.
+    for (what, from, to, steps) in [
+        ("width", (13.0, 5.0), (13.0, 6.0), 8),
+        ("end", (13.0, 3.0), (15.0, 7.0), 8),
+        ("start", (3.0, 3.0), (2.0, 5.0), 8),
+        ("width in one move", (13.0, 5.0), (13.0, 6.0), 1),
+        ("end in one move", (13.0, 3.0), (15.0, 7.0), 1),
+        ("start in one move", (3.0, 3.0), (2.0, 5.0), 1),
+    ] {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(3.0, 3.0, "sketch.slot");
+        h.click(13.0, 3.0, "sketch.slot");
+
+        drag_in_steps(&mut h, from, to, steps);
+        let sketch = h.sketch();
+        assert!(
+            has_point_near_within(&sketch, to, 0.05),
+            "{what}: the dragged point followed: {:?}",
+            point_positions(&sketch)
+        );
+        let caps: Vec<_> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Arc(a) => Some(a.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(caps.len(), 2, "{what}");
+        let (a, b) = (at(&sketch, caps[0].center), at(&sketch, caps[1].center));
+        let axis = (b - a).normalize();
+        let r = (at(&sketch, caps[0].start) - a).length();
+        for cap in &caps {
+            let mid = at(&sketch, cap.center);
+            for end in [cap.start, cap.end] {
+                let off = at(&sketch, end) - mid;
+                assert!((off.length() - r).abs() < 1e-4, "{what}: caps alike");
+                assert!(
+                    off.dot(axis).abs() < 1e-3,
+                    "{what}: the rails leave the caps square to the slot"
+                );
+            }
+        }
+        let rails = sketch.geometry.iter().filter_map(|g| match g {
+            GeometryElement::Line(l) => Some(l),
+            _ => None,
+        });
+        for rail in rails {
+            let d = (at(&sketch, rail.end) - at(&sketch, rail.start)).normalize();
+            assert!(d.perp_dot(axis).abs() < 1e-4, "{what}: rails parallel");
+            let side = |p| axis.perp_dot(at(&sketch, p) - a);
+            assert!(
+                side(rail.start) * side(rail.end) > 0.0,
+                "{what}: a rail stays on its side of the slot"
+            );
+        }
+    }
+}
+
 #[test]
 fn chamfer_tool_end_to_end() {
     let mut h = Harness::new();
@@ -2153,7 +2359,7 @@ fn no_geometry_created_without_active_sketch() {
 
 use wb_sketch::sketch::ConstraintKind;
 
-fn distance_constraints(sketch: &Sketch) -> Vec<(f32, bool)> {
+fn distance_constraints(sketch: &Sketch) -> Vec<(f64, bool)> {
     sketch
         .constraints
         .iter()
@@ -2219,7 +2425,7 @@ fn tab_focuses_angle_field_and_click_keeps_typed_angle_free() {
         })
         .find(|p| p.to_glam().length() > 1.0)
         .unwrap();
-    let want = 10.0 * std::f32::consts::FRAC_1_SQRT_2;
+    let want = 10.0 * std::f64::consts::FRAC_1_SQRT_2;
     assert!(
         (end.x - want).abs() < 0.1 && (end.y - want).abs() < 0.1,
         "end followed the typed 45° direction: ({}, {})",
@@ -2283,7 +2489,7 @@ fn rect_typed_width_height_creates_edge_lengths() {
         })
         .find(|p| (p.x - 15.0).abs() < 1e-3 && (p.y - 12.0).abs() < 1e-3);
     assert!(corner.is_some(), "opposite corner 12 across and 8 up");
-    let mut lengths: Vec<f32> = sketch
+    let mut lengths: Vec<f64> = sketch
         .constraints
         .iter()
         .filter_map(|c| match c.kind {
@@ -2291,7 +2497,7 @@ fn rect_typed_width_height_creates_edge_lengths() {
             _ => None,
         })
         .collect();
-    lengths.sort_by(f32::total_cmp);
+    lengths.sort_by(f64::total_cmp);
     assert_eq!(
         lengths,
         vec![8.0, 12.0],
@@ -2445,7 +2651,7 @@ fn backspace_edits_typed_buffer_before_deleting_geometry() {
 }
 
 /// Every point of the sketch, where it is.
-fn point_positions(sketch: &Sketch) -> Vec<glam::Vec2> {
+fn point_positions(sketch: &Sketch) -> Vec<glam::DVec2> {
     sketch
         .geometry
         .iter()
@@ -2456,10 +2662,10 @@ fn point_positions(sketch: &Sketch) -> Vec<glam::Vec2> {
         .collect()
 }
 
-fn has_point_near(sketch: &Sketch, x: f32, y: f32) -> bool {
+fn has_point_near(sketch: &Sketch, x: f64, y: f64) -> bool {
     point_positions(sketch)
         .iter()
-        .any(|p| (*p - glam::Vec2::new(x, y)).length() < 1e-3)
+        .any(|p| (*p - glam::DVec2::new(x, y)).length() < 1e-3)
 }
 
 #[test]
@@ -2500,7 +2706,7 @@ fn typed_polygon_rotation_turns_its_first_vertex() {
     h.key(KeyCode::Enter, Some("sketch.polygon"));
 
     let sketch = h.sketch();
-    let (cos, sin) = (30f32.to_radians().cos(), 30f32.to_radians().sin());
+    let (cos, sin) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
     assert!(
         has_point_near(&sketch, 2.0 + 10.0 * cos, 3.0 + 10.0 * sin),
         "a vertex 30° round: {:?}",
@@ -2528,7 +2734,7 @@ fn typed_slot_width_sizes_the_caps() {
     h.key(KeyCode::Enter, Some("sketch.slot"));
 
     let sketch = h.sketch();
-    let caps: Vec<f32> = sketch
+    let caps: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -2559,7 +2765,7 @@ fn typed_arc_slot_sweep_and_width_size_the_slot() {
     h.key(KeyCode::Enter, Some("sketch.arc_slot"));
 
     let sketch = h.sketch();
-    let mut radii: Vec<f32> = sketch
+    let mut radii: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -2567,7 +2773,7 @@ fn typed_arc_slot_sweep_and_width_size_the_slot() {
             _ => None,
         })
         .collect();
-    radii.sort_by(f32::total_cmp);
+    radii.sort_by(f64::total_cmp);
     // Two caps half the width across, rails half the width either side of r = 8.
     assert_eq!(radii.len(), 4, "{radii:?}");
     for (r, want) in radii.iter().zip([1.5, 1.5, 6.5, 9.5]) {
@@ -2666,7 +2872,7 @@ fn a_typed_length_keeps_its_way_as_the_cursor_crosses_the_start() {
     let sketch = h.sketch();
     let end = point_positions(&sketch)
         .into_iter()
-        .find(|p| (*p - glam::Vec2::new(3.0, 4.0)).length() > 1.0)
+        .find(|p| (*p - glam::DVec2::new(3.0, 4.0)).length() > 1.0)
         .expect("the line's end");
     assert!(end.x > 10.0, "still to the right of the start: {end:?}");
     assert_eq!(distance_constraints(&sketch), vec![(8.0, true)]);
@@ -3091,8 +3297,8 @@ fn selecting_two_lines_enables_the_constraint_tools_that_fit_them() {
     let mut h = Harness::new();
     two_lines(&mut h);
     assert!(
-        !h.tool_enabled("sketch.constrain.parallel"),
-        "nothing selected, nothing to constrain"
+        h.tool_enabled("sketch.constrain.parallel"),
+        "nothing selected, the tool arms to take picks"
     );
 
     h.click(5.0, 3.5, "sketch.select");
@@ -3156,7 +3362,7 @@ fn a_line_can_be_squared_against_an_axis() {
 
     h.key(KeyCode::A, Some("sketch.constrain.parallel"));
     let sketch = h.sketch();
-    let ys: Vec<f32> = sketch
+    let ys: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -3273,7 +3479,7 @@ fn with_grid_snapping_on_a_drawn_line_lands_on_grid_points() {
     h.click(1.2, 0.8, "sketch.line");
     h.click(10.9, -0.3, "sketch.line");
     let sketch = h.sketch();
-    let mut points: Vec<(f32, f32)> = sketch
+    let mut points: Vec<(f64, f64)> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -3311,7 +3517,7 @@ fn with_grid_snapping_on_a_move_goes_by_grid_steps() {
     h.click(20.4, 20.9, "sketch.translate"); // base, rounds to (20, 20)
     h.click(31.1, 24.2, "sketch.translate"); // target, rounds to (30, 25)
     let sketch = h.sketch();
-    let mut xs: Vec<(f32, f32)> = sketch
+    let mut xs: Vec<(f64, f64)> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -3495,7 +3701,7 @@ fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
     assert!(pinned(ORIGIN_ID), "the line's start is on the origin");
     assert!(pinned(X_AXIS_ID), "the line's end is on the X axis");
     assert!(pinned(Y_AXIS_ID), "the circle's centre is on the Y axis");
-    let points: Vec<[f32; 2]> = sketch
+    let points: Vec<[f64; 2]> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -3727,7 +3933,7 @@ fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
     let has = |f: &dyn Fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| f(&c.kind));
     assert!(has(&|k| matches!(k, ConstraintKind::Perpendicular { .. })));
     assert!(has(&|k| matches!(k, ConstraintKind::Tangent { .. })));
-    let near = |x: f32, y: f32| {
+    let near = |x: f64, y: f64| {
         sketch.geometry.iter().any(|g| {
             matches!(g, GeometryElement::Point(p)
                 if (p.position.x - x).abs() < 0.02 && (p.position.y - y).abs() < 0.02)
@@ -3971,7 +4177,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
     assert!(has(
         |k| matches!(k, ConstraintKind::DistanceY { value, .. } if (*value - 10.0).abs() < 1e-4)
     ));
-    let xs: Vec<f32> = sketch
+    let xs: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -3980,7 +4186,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
         })
         .collect();
     let width =
-        xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min);
+        xs.iter().cloned().fold(f64::MIN, f64::max) - xs.iter().cloned().fold(f64::MAX, f64::min);
     assert!((width - 20.0).abs() < 1e-3, "{width}");
 }
 
@@ -3991,20 +4197,20 @@ mod curve_constraints {
     use wb_sketch::sketch::{ConstraintKind, X_AXIS_ID};
 
     /// Press and release at a sketch point in select mode.
-    fn pick(h: &mut Harness, x: f32, y: f32) {
+    fn pick(h: &mut Harness, x: f64, y: f64) {
         h.click(x, y, "sketch.select");
         h.release(x, y, "sketch.select");
     }
 
     /// Draw an arc about `(cx, cy)` from `radius` right of it, a quarter
     /// turn counter-clockwise.
-    fn quarter_arc(h: &mut Harness, cx: f32, cy: f32, radius: f32) {
+    fn quarter_arc(h: &mut Harness, cx: f64, cy: f64, radius: f64) {
         h.click(cx, cy, "sketch.arc");
         h.click(cx + radius, cy, "sketch.arc");
         h.click(cx, cy + radius * 1.5, "sketch.arc");
     }
 
-    fn arc_length_of(sketch: &Sketch) -> f32 {
+    fn arc_length_of(sketch: &Sketch) -> f64 {
         let arc = sketch
             .geometry
             .iter()
@@ -4018,7 +4224,7 @@ mod curve_constraints {
         let e = sketch.point_position(arc.end).unwrap().to_glam() - c;
         let mut sweep = e.y.atan2(e.x) - s.y.atan2(s.x);
         while sweep <= 0.0 {
-            sweep += std::f32::consts::TAU;
+            sweep += std::f64::consts::TAU;
         }
         arc.radius * sweep
     }
@@ -4056,13 +4262,13 @@ mod curve_constraints {
         quarter_arc(&mut h, 10.0, 0.0, 4.0);
         pick(
             &mut h,
-            10.0 + 4.0 * std::f32::consts::FRAC_1_SQRT_2,
-            4.0 * std::f32::consts::FRAC_1_SQRT_2,
+            10.0 + 4.0 * std::f64::consts::FRAC_1_SQRT_2,
+            4.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
         assert!(h.tool_enabled("sketch.constrain.arc_length"));
         h.key(KeyCode::A, Some("sketch.constrain.arc_length"));
         let sketch = h.sketch();
-        let quarter = 4.0 * std::f32::consts::FRAC_PI_2;
+        let quarter = 4.0 * std::f64::consts::FRAC_PI_2;
         assert!(
             sketch.constraints.iter().any(|c| matches!(
                 c.kind,
@@ -4172,8 +4378,8 @@ mod curve_constraints {
         pick(&mut h, 0.0, 3.0);
         pick(
             &mut h,
-            12.0 + 5.0 * std::f32::consts::FRAC_1_SQRT_2,
-            5.0 * std::f32::consts::FRAC_1_SQRT_2,
+            12.0 + 5.0 * std::f64::consts::FRAC_1_SQRT_2,
+            5.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
         h.key(KeyCode::A, Some("sketch.constrain.radius:radius_diameter"));
         let sketch = h.sketch();
@@ -4191,7 +4397,7 @@ mod curve_constraints {
                 .iter()
                 .any(|c| matches!(c.kind, ConstraintKind::EqualRadius { .. }))
         );
-        let radii: Vec<f32> = sketch
+        let radii: Vec<f64> = sketch
             .geometry
             .iter()
             .filter_map(|g| match g {
@@ -4220,8 +4426,8 @@ mod curve_constraints {
         pick(&mut h, 7.0, 1.5);
         pick(
             &mut h,
-            5.0 * std::f32::consts::FRAC_1_SQRT_2,
-            5.0 * std::f32::consts::FRAC_1_SQRT_2,
+            5.0 * std::f64::consts::FRAC_1_SQRT_2,
+            5.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
         assert!(h.tool_enabled("sketch.constrain.angle"));
         h.key(KeyCode::A, Some("sketch.constrain.angle"));
@@ -4235,7 +4441,7 @@ mod curve_constraints {
             })
             .unwrap_or_else(|| panic!("an angle at the point: {:?}", sketch.constraints));
         // The arc leaves its start straight up; the line at 3-4-5.
-        let expected = (90.0 - 3f32.atan2(4.0).to_degrees()).abs();
+        let expected = (90.0 - 3f64.atan2(4.0).to_degrees()).abs();
         assert!(
             (angle.abs() - expected).abs() < 0.5,
             "{angle} against {expected}"
@@ -4281,7 +4487,7 @@ mod curve_constraints {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("a refraction: {:?}", sketch.constraints));
-        let expected = 45f32.to_radians().sin() / 0.6;
+        let expected = 45f64.to_radians().sin() / 0.6;
         assert!(
             (ratio - expected).abs() < 0.02,
             "{ratio} against {expected}"
@@ -4437,7 +4643,7 @@ fn dragging_the_trim_tool_trims_every_span_it_crosses() {
     h.mouse_move(18.0, 3.0, "sketch.trim");
     h.release(18.0, 3.0, "sketch.trim");
     let sketch = h.sketch();
-    let tops: Vec<f32> = sketch
+    let tops: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -4477,7 +4683,7 @@ fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
         })
         .expect("a spline");
     assert_eq!(spline.fit_points.len(), 4);
-    let near = |sketch: &Sketch, b: &wb_sketch::sketch::BSpline, x: f32, y: f32| {
+    let near = |sketch: &Sketch, b: &wb_sketch::sketch::BSpline, x: f64, y: f64| {
         b.points(sketch, 2000)
             .unwrap()
             .iter()
@@ -4574,7 +4780,7 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
             let shape = wb_sketch::conic::Shape::of(c, &sketch).unwrap();
             for id in [c.start, c.end] {
                 let p = sketch.point_position(id).unwrap();
-                let miss = shape.distance([f64::from(p.x), f64::from(p.y)]).abs();
+                let miss = shape.distance([p.x, p.y]).abs();
                 assert!(miss < 1e-3, "an end is {miss} off its curve");
             }
         }
@@ -4606,7 +4812,7 @@ fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
         .collect();
     assert_eq!(internal.len(), 4, "two axes and two foci");
     // a = 10, b = 4: the foci sit √84 from the centre.
-    let f = 84f32.sqrt();
+    let f = 84f64.sqrt();
     assert!(h.point_at(f, 0.0) && h.point_at(-f, 0.0));
     assert!(h.point_at(10.0, 0.0) && h.point_at(0.0, -4.0));
     // No glyph clutters the curve for them.
@@ -4640,7 +4846,7 @@ fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
     // Selecting the ellipse alone, the action hides it all again.
     h.click(30.0, 30.0, "sketch.select");
     h.release(30.0, 30.0, "sketch.select");
-    let t = std::f32::consts::FRAC_PI_4;
+    let t = std::f64::consts::FRAC_PI_4;
     let on = centre.to_glam() + u * a * t.cos() + u.perp() * a * ellipse.ratio * t.sin();
     h.click(on.x, on.y, "sketch.select");
     h.release(on.x, on.y, "sketch.select");
@@ -4680,7 +4886,7 @@ fn an_ellipse_showing_its_foci_drags_through_a_circle() {
     h.key(KeyCode::A, Some("sketch.constrain.lock"));
     h.click(0.0, 4.0, "sketch.select");
     for k in 1..=40 {
-        h.mouse_move(0.0, 4.0 + k as f32 * 0.25, "sketch.select");
+        h.mouse_move(0.0, 4.0 + k as f64 * 0.25, "sketch.select");
     }
     h.release(0.0, 14.0, "sketch.select");
     let sketch = h.sketch();
@@ -4703,7 +4909,7 @@ fn an_ellipse_showing_its_foci_drags_through_a_circle() {
         "the old major radius is the minor"
     );
     // a = 14, b = 10: the foci sit √96 above and below the centre.
-    let f = 96f32.sqrt();
+    let f = 96f64.sqrt();
     assert!(
         h.point_at(0.0, f) && h.point_at(0.0, -f),
         "the foci followed"
@@ -4742,7 +4948,7 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
     h.mouse_move(12.0, 9.0, "sketch.select");
     h.release(12.0, 9.0, "sketch.select");
     let sketch = h.sketch();
-    let ys: Vec<f32> = sketch
+    let ys: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -4911,7 +5117,7 @@ mod default_label_placement {
         )
     }
 
-    fn assert_clear(h: &mut Harness, text: &str, along: &[(f32, f32)]) {
+    fn assert_clear(h: &mut Harness, text: &str, along: &[(f64, f64)]) {
         let labels = h.labels();
         let label = labels
             .iter()
@@ -4928,10 +5134,10 @@ mod default_label_placement {
         }
     }
 
-    fn samples(from: (f32, f32), to: (f32, f32)) -> Vec<(f32, f32)> {
+    fn samples(from: (f64, f64), to: (f64, f64)) -> Vec<(f64, f64)> {
         (0..=100)
             .map(|i| {
-                let t = i as f32 / 100.0;
+                let t = i as f64 / 100.0;
                 (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)
             })
             .collect()
@@ -4944,13 +5150,13 @@ mod default_label_placement {
         h.doc.update_feature_data(id, feature.to_json()).unwrap();
     }
 
-    fn point(sketch: &mut Sketch, x: f32, y: f32) -> uuid::Uuid {
+    fn point(sketch: &mut Sketch, x: f64, y: f64) -> uuid::Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 
     #[test]
     fn a_line_length_at_any_slant_sits_off_the_line() {
-        for degrees in [0.0f32, 30.0, 45.0, 60.0, 90.0, 135.0] {
+        for degrees in [0.0f64, 30.0, 45.0, 60.0, 90.0, 135.0] {
             let mut h = Harness::new();
             let (s, c) = degrees.to_radians().sin_cos();
             let end = (12.0 * c - 6.0, 12.0 * s - 6.0);
@@ -4983,8 +5189,8 @@ mod default_label_placement {
     #[test]
     fn a_wide_arc_length_sits_outside_the_arc() {
         let mut h = Harness::new();
-        let radius = 8.0f32;
-        let (start, sweep) = (0.0f32, 290f32.to_radians());
+        let radius = 8.0f64;
+        let (start, sweep) = (0.0f64, 290f64.to_radians());
         sketch_with(&mut h, |sketch| {
             let c = point(sketch, 0.0, 0.0);
             let s = point(sketch, radius * start.cos(), radius * start.sin());
@@ -4992,9 +5198,9 @@ mod default_label_placement {
             let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, radius)));
             sketch.add_constraint(ConstraintKind::ArcLength { arc, length: 40.49 });
         });
-        let along: Vec<(f32, f32)> = (0..=200)
+        let along: Vec<(f64, f64)> = (0..=200)
             .map(|i| {
-                let a = start + sweep * i as f32 / 200.0;
+                let a = start + sweep * i as f64 / 200.0;
                 (radius * a.cos(), radius * a.sin())
             })
             .collect();
@@ -5007,7 +5213,7 @@ mod default_label_placement {
 mod double_click {
     use super::*;
 
-    fn double_click(h: &mut Harness, x: f32, y: f32) {
+    fn double_click(h: &mut Harness, x: f64, y: f64) {
         for _ in 0..2 {
             h.click(x, y, "sketch.select");
             h.release(x, y, "sketch.select");
@@ -5071,7 +5277,7 @@ fn slanted_line(h: &mut Harness) -> uuid::Uuid {
 }
 
 /// The direction of line `id`, unit length.
-fn direction(sketch: &Sketch, id: uuid::Uuid) -> glam::Vec2 {
+fn direction(sketch: &Sketch, id: uuid::Uuid) -> glam::DVec2 {
     let Some(GeometryElement::Line(l)) = sketch.get_geometry(id) else {
         panic!("{id} is no line");
     };
@@ -5145,7 +5351,7 @@ fn a_point_on_a_line_s_extension_is_held_on_the_line() {
     h.create_sketch();
     let first = slanted_line(&mut h);
     // A third of the line's length past its far end, 0.3 off to the side.
-    let off = glam::Vec2::new(-1.0, 2.0).normalize() * 0.3;
+    let off = glam::DVec2::new(-1.0, 2.0).normalize() * 0.3;
     h.click(14.0 + off.x, 16.5 + off.y, "sketch.point");
     // A line's start too, made only at the line's second click.
     h.click(-2.0 - off.x, 8.5 - off.y, "sketch.line");
@@ -5160,8 +5366,8 @@ fn a_point_on_a_line_s_extension_is_held_on_the_line() {
         })
         .collect();
     assert_eq!(held.len(), 2, "{:?}", sketch.constraints);
-    let a = glam::Vec2::new(1.0, 10.0);
-    let along = glam::Vec2::new(2.0, 1.0).normalize();
+    let a = glam::DVec2::new(1.0, 10.0);
+    let along = glam::DVec2::new(2.0, 1.0).normalize();
     for point in held {
         let p = sketch.point_position(point).unwrap().to_glam();
         assert!((p - a).perp_dot(along).abs() < 1e-3, "{p} on the line");
@@ -5205,7 +5411,7 @@ fn a_point_dragged_onto_another_and_rested_there_joins_it() {
         .iter()
         .filter(|g| match g {
             GeometryElement::Point(p) => {
-                (p.position.to_glam() - glam::Vec2::new(8.0, 6.0)).length() < 0.1
+                (p.position.to_glam() - glam::DVec2::new(8.0, 6.0)).length() < 0.1
             }
             _ => false,
         })
@@ -5263,6 +5469,216 @@ fn number_text(key: KeyCode) -> Option<&'static str> {
         KeyCode::Minus => "-",
         _ => return None,
     })
+}
+
+/// A sketch on the XY plane beside the block of `block_kernel`, with its
+/// kernel at hand.
+fn beside_the_block() -> (Harness, core_document::BodyId) {
+    let mut h = Harness::new();
+    let body = crate::block_kernel::add_block(&mut h.doc);
+    h.kernel = Some(&crate::block_kernel::BLOCK);
+    h.create_sketch();
+    (h, body)
+}
+
+/// The edited sketch as the document stores it.
+fn stored(h: &Harness) -> serde_json::Value {
+    h.doc
+        .get_feature_data(h.active_object.expect("a sketch"))
+        .cloned()
+        .expect("its data")
+}
+
+/// A point drawn at (x, y) and selected.
+fn selected_point(h: &mut Harness, x: f64, y: f64) {
+    h.click(x, y, "sketch.point");
+    h.key(KeyCode::Escape, Some("sketch.point"));
+    h.click(x, y, "sketch.select");
+    h.release(x, y, "sketch.select");
+}
+
+/// The block's left edge, picked `up` along it.
+fn left_edge(body: core_document::BodyId, up: f32) -> core_document::EdgeRef {
+    crate::block_kernel::edge_at(
+        body,
+        [20.0, up, crate::block_kernel::DEPTH],
+        [0.0, 1.0, 0.0],
+    )
+}
+
+/// The round boss's rim, picked on its right.
+fn rim(body: core_document::BodyId) -> core_document::EdgeRef {
+    crate::block_kernel::edge_at(
+        body,
+        [43.0, 5.0, crate::block_kernel::DEPTH],
+        [0.0, 1.0, 0.0],
+    )
+}
+
+/// A distance from a sketch point to an edge of the model: the edge comes
+/// in as a guide, the dimension holds the two, and undoing takes both
+/// back at once.
+#[test]
+fn a_distance_reaches_a_model_edge_in_one_step() {
+    use wb_sketch::sketch::ConstraintKind;
+    let (mut h, body) = beside_the_block();
+    selected_point(&mut h, 5.0, 5.0);
+    assert!(h.tool_enabled("sketch.constrain.distance"));
+
+    let mut journal = core_document::history::OpJournal::new(16);
+    journal.note(&mut h.doc);
+    let before = stored(&h);
+    h.key(KeyCode::A, Some("sketch.constrain.distance"));
+    assert_eq!(stored(&h), before, "armed: nothing changes yet");
+    assert!(h.wb.tool_toggled("sketch.constrain.distance"));
+
+    assert!(h.pick_edge(left_edge(body, 5.0)), "the click is the host's");
+    let sketch = h.sketch();
+    assert_eq!(sketch.external.len(), 1, "the edge came in");
+    let (line, source) = sketch.external.iter().next().unwrap();
+    assert!(!source.defining, "as a guide");
+    let gap = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match c.kind {
+            ConstraintKind::Gap {
+                item1,
+                item2,
+                distance,
+            } => Some((item1, item2, distance)),
+            _ => None,
+        })
+        .expect("a distance to the edge");
+    assert_eq!(gap.1, *line, "the edge is its second operand");
+    assert!((gap.2 - 15.0).abs() < 1e-3, "measured: {}", gap.2);
+    assert!(!h.wb.tool_toggled("sketch.constrain.distance"), "applied");
+
+    journal.note(&mut h.doc);
+    assert!(journal.undo(&mut h.doc).is_some());
+    let undone = h.sketch();
+    assert!(
+        undone.external.is_empty() && undone.constraints.is_empty(),
+        "one undo takes the edge and the distance"
+    );
+    assert!(h.point_at(5.0, 5.0), "and only them");
+}
+
+/// A sketch point picked onto the model's vertex: the click at an edge's
+/// end is the vertex, and the point lands on it.
+#[test]
+fn coincident_takes_a_model_vertex() {
+    use wb_sketch::sketch::ConstraintKind;
+    let (mut h, body) = beside_the_block();
+    selected_point(&mut h, 14.0, 13.0);
+    h.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    assert!(h.pick_edge(left_edge(body, 9.9)));
+
+    let sketch = h.sketch();
+    let held = sketch.constraints.iter().find_map(|c| match c.kind {
+        ConstraintKind::Coincident { point1, point2 } => Some((point1, point2)),
+        _ => None,
+    });
+    let (_, vertex) = held.expect("a coincident constraint");
+    assert!(sketch.is_external(vertex), "on the projected end");
+    assert!(h.point_at(20.0, 10.0), "the point moved onto the vertex");
+    assert!(!h.point_at(14.0, 13.0));
+}
+
+/// A sketch circle made tangent to a round edge of the model.
+#[test]
+fn tangent_takes_a_round_model_edge() {
+    use wb_sketch::sketch::ConstraintKind;
+    let (mut h, body) = beside_the_block();
+    h.click(40.0, 15.0, "sketch.circle");
+    h.click(42.0, 15.0, "sketch.circle");
+    h.key(KeyCode::Escape, Some("sketch.circle"));
+    h.click(42.0, 15.0, "sketch.select");
+    h.release(42.0, 15.0, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.constrain.tangent"));
+    assert!(h.pick_edge(rim(body)));
+
+    let sketch = h.sketch();
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::Tangent { .. })),
+        "{:?}",
+        sketch.constraints
+    );
+    let circles: Vec<(f64, f64, f64)> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Circle(c) => {
+                let at = sketch.point_position(c.center)?;
+                Some((at.x, at.y, c.radius))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(circles.len(), 2);
+    let ((x1, y1, r1), (x2, y2, r2)) = (circles[0], circles[1]);
+    let apart = (x1 - x2).hypot(y1 - y2);
+    assert!(
+        (apart - (r1 + r2)).abs() < 1e-6 || (apart - (r1 - r2).abs()).abs() < 1e-6,
+        "touching: {circles:?}"
+    );
+}
+
+/// With nothing selected the tool arms; a sketch element and a model edge
+/// clicked in turn are its two operands, and an edge already brought in
+/// is used again rather than projected twice.
+#[test]
+fn an_armed_tool_takes_sketch_and_model_picks_and_reuses_projections() {
+    let (mut h, body) = beside_the_block();
+    h.click(5.0, 5.0, "sketch.point");
+    h.click(6.0, 2.0, "sketch.point");
+    h.key(KeyCode::Escape, Some("sketch.point"));
+    assert!(
+        h.tool_enabled("sketch.constrain.distance"),
+        "nothing selected: it arms"
+    );
+    h.key(KeyCode::A, Some("sketch.constrain.distance"));
+    h.click(5.0, 5.0, "sketch.select");
+    assert!(h.consumed, "a sketch element is the tool's");
+    h.release(5.0, 5.0, "sketch.select");
+    assert!(
+        h.sketch().constraints.is_empty(),
+        "one operand is not enough"
+    );
+    assert!(h.pick_edge(left_edge(body, 5.0)));
+    assert_eq!(h.sketch().constraints.len(), 1);
+
+    h.key(KeyCode::A, Some("sketch.constrain.distance"));
+    h.click(6.0, 2.0, "sketch.select");
+    h.release(6.0, 2.0, "sketch.select");
+    assert!(h.pick_edge(left_edge(body, 3.0)));
+    let sketch = h.sketch();
+    assert_eq!(sketch.constraints.len(), 2);
+    assert_eq!(sketch.external.len(), 1, "the edge came in once");
+}
+
+/// A tool a selection can never fit does not arm; Escape puts an armed
+/// tool away with nothing changed.
+#[test]
+fn an_armed_tool_cancels_and_a_misfit_never_arms() {
+    let (mut h, body) = beside_the_block();
+    selected_point(&mut h, 5.0, 5.0);
+    let before = stored(&h);
+    assert!(!h.tool_enabled("sketch.constrain.radius"));
+    h.key(KeyCode::A, Some("sketch.constrain.radius"));
+    assert!(
+        !h.wb.tool_toggled("sketch.constrain.radius"),
+        "a point never takes a radius"
+    );
+
+    h.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    assert!(h.wb.tool_toggled("sketch.constrain.coincident"));
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    assert!(!h.wb.tool_toggled("sketch.constrain.coincident"));
+    h.pick_edge(rim(body));
+    assert_eq!(stored(&h), before, "nothing came in");
 }
 
 #[test]

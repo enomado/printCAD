@@ -9,7 +9,7 @@ use wb_design::DesignFeature;
 use wb_sketch::SketchFeature;
 use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
-fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f32, height: f32) -> SketchFeature {
+fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f64, height: f64) -> SketchFeature {
     let mut sketch = Sketch::new("s");
     sketch.plane = plane;
     let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
@@ -24,7 +24,7 @@ fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f32, height: f32
     SketchFeature::new(sketch, plane)
 }
 
-fn rect_sketch(width: f32, height: f32) -> SketchFeature {
+fn rect_sketch(width: f64, height: f64) -> SketchFeature {
     let mut sketch = Sketch::new("s");
     let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
     let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(width, 0.0))));
@@ -41,9 +41,9 @@ fn rect_sketch(width: f32, height: f32) -> SketchFeature {
 
 fn circle_sketch_on(
     plane: wb_sketch::sketch::SketchPlane,
-    cx: f32,
-    cy: f32,
-    r: f32,
+    cx: f64,
+    cy: f64,
+    r: f64,
 ) -> SketchFeature {
     let mut sketch = Sketch::new("c");
     sketch.plane = plane;
@@ -52,7 +52,7 @@ fn circle_sketch_on(
     SketchFeature::new(sketch, plane)
 }
 
-fn setup(width: f32, height: f32) -> (Document, BodyId, FeatureId) {
+fn setup(width: f64, height: f64) -> (Document, BodyId, FeatureId) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let sketch_id = doc
@@ -284,6 +284,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             mode: Default::default(),
             up_to_face: None,
         },
@@ -309,6 +310,74 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
         "z span"
     );
     assert!((max[1] - min[1] - 2.0).abs() < 0.1, "height");
+}
+
+/// The bounds of a revolution of the rectangle x ∈ [5, 8], y ∈ [0, 2]
+/// about the sketch's Y axis.
+fn revolved_bounds(angle_deg: f32, start_angle_deg: f32, reversed: bool) -> ([f32; 3], [f32; 3]) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let mut sketch = Sketch::new("ring");
+    let corners = [(5.0, 0.0), (8.0, 0.0), (8.0, 2.0), (5.0, 2.0)]
+        .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
+    for i in 0..4 {
+        sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )));
+    }
+    let plane = sketch.plane;
+    let sketch_id = doc
+        .add_feature_in_body(SketchFeature::new(sketch, plane), "ring".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        wb_design::DesignFeature::Revolution {
+            regions: Vec::new(),
+            refine: false,
+            boolean_tolerance: None,
+            sketch: sketch_id,
+            angle_deg,
+            axis: wb_design::RevolveAxis::SketchY,
+            project_axis: false,
+            reversed,
+            midplane: false,
+            second_angle_deg: None,
+            start_angle_deg,
+            mode: Default::default(),
+            up_to_face: None,
+        },
+        "Revolution".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
+    let result = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    mesh_bounds(&result.mesh)
+}
+
+/// A quarter turn started a quarter turn on carries on where a quarter
+/// turn from the profile ends: the two together are the half turn, either
+/// way round.
+#[test]
+fn a_revolution_starts_turned_by_its_start_angle() {
+    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 0.1);
+    for reversed in [false, true] {
+        let first = revolved_bounds(90.0, 0.0, reversed);
+        let next = revolved_bounds(90.0, 90.0, reversed);
+        let half = revolved_bounds(180.0, 0.0, reversed);
+        let lo = std::array::from_fn(|i| first.0[i].min(next.0[i]));
+        let hi = std::array::from_fn(|i| first.1[i].max(next.1[i]));
+        assert!(
+            !near(first.0, next.0) || !near(first.1, next.1),
+            "reversed {reversed}: turned"
+        );
+        assert!(
+            near(lo, half.0) && near(hi, half.1),
+            "reversed {reversed}: {first:?} and {next:?} against {half:?}"
+        );
+    }
 }
 
 #[test]
@@ -361,7 +430,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     let top_face = wb_sketch::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let mut holes = Sketch::new("holes");
     holes.plane = top_face;
-    for x in [7.0f32, 23.0] {
+    for x in [7.0f64, 23.0] {
         let center = holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 10.0))));
         holes.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
     }
@@ -375,6 +444,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     doc.add_feature_in_body(
         DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -436,6 +506,7 @@ fn plate_with_nut_trap(depth: Option<f32>, trap: wb_design::NutTrap) -> Result<f
     doc.add_feature_in_body(
         DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -748,7 +819,7 @@ fn a_refined_pad_stacked_on_a_pad_leaves_six_faces() {
 #[test]
 fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
     use wb_sketch::sketch::Ellipse;
-    let (a, b, height) = (10.0f32, 5.0f32, 4.0f32);
+    let (a, b, height) = (10.0f64, 5.0f64, 4.0f32);
     let mut sketch = Sketch::new("half ellipse");
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
     let right = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(a, 0.0))));
@@ -789,15 +860,18 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
         (hi[0], a),
         (lo[1], 0.0),
         (hi[1], b),
-        (hi[2] - lo[2], height),
+        (hi[2] - lo[2], f64::from(height)),
     ] {
-        assert!((got - want).abs() < 1e-3, "bounds {lo:?}..{hi:?}");
+        assert!(
+            (f64::from(got) - want).abs() < 1e-3,
+            "bounds {lo:?}..{hi:?}"
+        );
     }
     // The elliptic wall is a line swept along an ellipse, which the kernel
     // integrates in closed form: the volume is exact, and says so.
     let props = kernel.physical_properties(&result.brep_blob).unwrap();
     let volume = props.volume_mm3.expect("a closed solid");
-    let expected = f64::from(std::f32::consts::PI * a * b / 2.0 * height);
+    let expected = std::f64::consts::PI * a * b / 2.0 * f64::from(height);
     assert!(!props.approximate);
     assert!(
         (volume - expected).abs() < 1e-5 * expected,
@@ -810,7 +884,7 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
 #[test]
 fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
     use wb_sketch::sketch::Circle;
-    let (r, height) = (6.0f32, 3.0f32);
+    let (r, height) = (6.0f64, 3.0f32);
     let mut sketch = Sketch::new("disc");
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
     let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, r)));
@@ -839,7 +913,7 @@ fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
         .expect("the spline disc pads");
     let props = kernel.physical_properties(&result.brep_blob).unwrap();
     let volume = props.volume_mm3.expect("a closed solid");
-    let expected = f64::from(std::f32::consts::PI * r * r * height);
+    let expected = std::f64::consts::PI * r * r * f64::from(height);
     assert!(
         (volume - expected).abs() < 1e-3 * expected,
         "volume {volume} vs {expected}"
@@ -1231,6 +1305,7 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         .unwrap();
     let hole = |modeled_thread: bool| DesignFeature::Hole {
         cosmetic_thread: false,
+        start: Default::default(),
         clearance: None,
         thread_length: Default::default(),
         refine: false,
@@ -1380,6 +1455,7 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
                     reversed: false,
                     midplane: false,
                     second_angle_deg: None,
+                    start_angle_deg: 0.0,
                     mode: Default::default(),
                     up_to_face: None,
                 },
@@ -1527,6 +1603,114 @@ fn a_pad_on_a_datum_sketch_follows_the_datum() {
     assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
 }
 
+/// Sketch and Design registered, as the app has them.
+fn design_registry() -> core_document::DocumentService {
+    let mut registry = core_document::DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
+        .unwrap();
+    registry
+}
+
+/// Rebuild as the host does, probes and all, until nothing is left to
+/// rebuild: what each build finds of the references its plan asks about
+/// goes back to the document, which may move features and rebuild again.
+fn settle_probing(
+    registry: &core_document::DocumentService,
+    doc: &mut Document,
+    kernel: &mut OgeomKernel,
+) {
+    for _ in 0..16 {
+        let jobs = registry.rebuild_jobs(doc);
+        if jobs.is_empty() {
+            return;
+        }
+        for job in jobs {
+            let Ok(plan) = job.plan else { continue };
+            if plan.ops.is_empty() {
+                continue;
+            }
+            let asked: Vec<kernel_api::ChainProbe> = plan.probes.iter().map(|p| p.probe).collect();
+            let result = kernel
+                .execute_solid_chain_probing(
+                    &plan.ops,
+                    &TessellationSettings::default(),
+                    None,
+                    &asked,
+                )
+                .unwrap_or_else(|e| panic!("{e:?}"));
+            doc.store_probe_answers(&plan.probes, &result.probes);
+            doc.set_imported_brep_data(job.body, result.brep_blob, Vec::new());
+            doc.set_imported_geometry(
+                job.body,
+                core_document::ImportedGeometry {
+                    mesh: std::sync::Arc::new(result.mesh),
+                    source_asset: None,
+                    revision: 0,
+                    bounds_mm: result.bounds_mm,
+                    brep_blob_path: None,
+                    mesh_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+        }
+    }
+    panic!("the rebuilds never settled");
+}
+
+/// A pad starting on the top face of the pad before it stands on that
+/// face, and follows it when the first pad grows.
+#[test]
+fn a_pad_starting_on_a_face_follows_the_face() {
+    use core_document::WorkbenchFeature;
+    let registry = design_registry();
+    let mut kernel = OgeomKernel::new();
+    let (mut doc, body, base) = setup(40.0, 40.0);
+    let first = doc
+        .add_feature_in_body(
+            pad_feature(base, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    // A 4 x 4 square drawn on the ground, started on the top face.
+    let ground = wb_sketch::sketch::SketchPlane {
+        origin: [18.0, 18.0, 0.0],
+        ..Default::default()
+    };
+    let small = doc
+        .add_feature_in_body(rect_sketch_on(ground, 4.0, 4.0), "small".into(), Some(body))
+        .unwrap();
+    let mut boss = pad_feature(small, 5.0, false, false);
+    if let DesignFeature::Pad { extras, .. } = &mut boss {
+        extras.start_face = Some(wb_design::FacePick {
+            point: [20.0, 20.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        });
+    }
+    doc.add_feature_in_body(boss, "Boss".into(), Some(body))
+        .unwrap();
+    let top = |doc: &Document| {
+        doc.imported_geometry(body)
+            .and_then(|g| g.bounds_mm)
+            .expect("a solid")
+            .1[2]
+    };
+    settle_probing(&registry, &mut doc, &mut kernel);
+    assert!((top(&doc) - 15.0).abs() < 1e-3, "{}", top(&doc));
+
+    doc.update_feature_data(first, pad_feature(base, 20.0, false, false).to_json())
+        .unwrap();
+    doc.mark_feature_dirty(first);
+    settle_probing(&registry, &mut doc, &mut kernel);
+    assert!((top(&doc) - 25.0).abs() < 1e-3, "followed: {}", top(&doc));
+}
+
 /// A symmetric pocket from the top face cuts half its depth into the
 /// material and half into the air above it.
 #[test]
@@ -1610,20 +1794,7 @@ fn settle(doc: &mut Document, kernel: &mut OgeomKernel) {
             if let Ok(result) =
                 kernel.execute_solid_chain(&plan.ops, &TessellationSettings::default())
             {
-                doc.set_imported_brep_data(job.body, result.brep_blob, Vec::new());
-                doc.set_imported_geometry(
-                    job.body,
-                    core_document::ImportedGeometry {
-                        mesh: std::sync::Arc::new(result.mesh),
-                        source_asset: None,
-                        revision: 0,
-                        bounds_mm: result.bounds_mm,
-                        brep_blob_path: None,
-                        mesh_path: None,
-                        face_colors_path: None,
-                        health: None,
-                    },
-                );
+                store_solid(doc, job.body, result);
             }
         }
     }
@@ -1760,12 +1931,7 @@ fn a_spline_through_points_closed_by_a_line_pads() {
     let mut sketch = Sketch::new("spline");
     let fit_points: Vec<_> = clicks
         .iter()
-        .map(|p| {
-            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                p[0] as f32,
-                p[1] as f32,
-            ))))
-        })
+        .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1])))))
         .collect();
     let control: Vec<_> = fit
         .control
@@ -1774,10 +1940,7 @@ fn a_spline_through_points_closed_by_a_line_pads() {
         .map(|(i, p)| match i {
             0 => fit_points[0],
             4 => fit_points[4],
-            _ => sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                p[0] as f32,
-                p[1] as f32,
-            )))),
+            _ => sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1])))),
         })
         .collect();
     sketch.add_geometry(GeometryElement::BSpline(BSpline {
@@ -1828,7 +1991,7 @@ fn padded_conic_volume(
     kind: wb_sketch::sketch::ConicKind,
     center: Vec2D,
     axis: Vec2D,
-    minor: f32,
+    minor: f64,
     start: Vec2D,
     end: Vec2D,
     height: f32,
@@ -1919,7 +2082,7 @@ fn arcs_of_parabola_and_hyperbola_closed_by_a_line_pad_to_their_areas() {
 /// its top face, and the hole `hole` makes from that sketch: the block's
 /// volume and properties once drilled.
 fn drilled_block(
-    size: f32,
+    size: f64,
     height: f32,
     hole: impl FnOnce(FeatureId) -> DesignFeature,
 ) -> Result<kernel_api::PhysicalProperties, String> {
@@ -1931,7 +2094,7 @@ fn drilled_block(
 
 /// As [`drilled_block`], the built solid itself.
 fn drilled_block_solid(
-    size: f32,
+    size: f64,
     height: f32,
     hole: impl FnOnce(FeatureId) -> DesignFeature,
 ) -> Result<(kernel_api::SolidBuildResult, OgeomKernel), String> {
@@ -1943,7 +2106,7 @@ fn drilled_block_solid(
     )
     .unwrap();
     let top_face = wb_sketch::sketch::SketchPlane::from_face(
-        [size * 0.5, size * 0.5, height],
+        [size * 0.5, size * 0.5, f64::from(height)],
         [0.0, 0.0, 1.0],
     );
     let mut holes = Sketch::new("holes");
@@ -1974,6 +2137,7 @@ fn drilled_block_solid(
 fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> DesignFeature {
     DesignFeature::Hole {
         cosmetic_thread: false,
+        start: Default::default(),
         clearance: None,
         thread_length: Default::default(),
         refine: false,
@@ -2006,6 +2170,29 @@ fn volume(properties: &kernel_api::PhysicalProperties) -> f64 {
 }
 
 use std::f64::consts::PI;
+
+/// A hole started 2 mm above the top face drills only the 2 mm of its
+/// 4 mm depth that reach the material; started 3 mm in, all 4 mm, lower.
+#[test]
+fn a_hole_drills_from_where_its_start_puts_it() {
+    let block = 20.0 * 20.0 * 10.0;
+    let r = 3.0f64;
+    let removed = |offset: f32| {
+        let drilled = drilled_block(20.0, 10.0, |sketch| {
+            with_hole(plain_hole(sketch, 6.0, 4.0), |f| {
+                if let DesignFeature::Hole { start, .. } = f {
+                    start.offset = offset;
+                }
+            })
+        })
+        .unwrap_or_else(|e| panic!("builds: {e}"));
+        block - volume(&drilled)
+    };
+    let above = removed(-2.0);
+    assert!((above - PI * r * r * 2.0).abs() < 0.05, "{above}");
+    let within = removed(3.0);
+    assert!((within - PI * r * r * 4.0).abs() < 0.05, "{within}");
+}
 
 /// A 118° drill point below the depth adds its cone under the wall; within
 /// the depth the wall stops short so the tip lands on the depth.
@@ -2313,10 +2500,10 @@ fn a_socket_head_seat_counterbores_to_the_table() {
 /// A rectangle from (x0, y0) to (x1, y1) on `plane`.
 fn rect_at(
     plane: wb_sketch::sketch::SketchPlane,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
 ) -> SketchFeature {
     let mut sketch = Sketch::new("r");
     sketch.plane = plane;
@@ -2332,7 +2519,7 @@ fn rect_at(
 }
 
 /// The plane z = `z`, sketched as the XY plane is.
-fn plane_at_z(z: f32) -> wb_sketch::sketch::SketchPlane {
+fn plane_at_z(z: f64) -> wb_sketch::sketch::SketchPlane {
     wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
 }
 
@@ -2566,6 +2753,7 @@ fn revolution(sketch: FeatureId, fields: serde_json::Value) -> DesignFeature {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             mode: wb_design::RevolveMode::Angle,
             up_to_face: None,
         },
@@ -2681,7 +2869,7 @@ fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
 
 /// A 60 × 60 × 4 plate and a boss of radius 3, 6 high on its top at
 /// (`x`, `y`): the document, the body, the plate's sketch and the boss.
-fn plate_with_boss(x: f32, y: f32) -> (Document, BodyId, FeatureId, FeatureId) {
+fn plate_with_boss(x: f64, y: f64) -> (Document, BodyId, FeatureId, FeatureId) {
     let (mut doc, body, plate) = setup(60.0, 60.0);
     doc.add_feature_in_body(
         pad_feature(plate, 4.0, false, false),
@@ -3223,7 +3411,7 @@ fn assert_near(got: f64, want: f64, rel: f64, what: &str) {
 }
 
 /// A sketch of one open chain of lines through `points`, on `plane`.
-fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f32; 2]]) -> SketchFeature {
+fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f64; 2]]) -> SketchFeature {
     let mut sketch = Sketch::new("path");
     sketch.plane = plane;
     let ids: Vec<_> = points
@@ -3390,13 +3578,13 @@ fn a_pipe_oriented_by_an_auxiliary_path_turns_toward_it() {
     // The auxiliary line from (5, 0, 0) to (0, 20, 5), on the plane through
     // it square to (1, 0, 1).
     let plane = wb_sketch::sketch::SketchPlane::from_face([5.0, 0.0, 0.0], [1.0, 0.0, 1.0]);
-    let at = |p: [f32; 3]| {
+    let at = |p: [f64; 3]| {
         let d = [
             p[0] - plane.origin[0],
             p[1] - plane.origin[1],
             p[2] - plane.origin[2],
         ];
-        let dot = |a: [f32; 3]| d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+        let dot = |a: [f64; 3]| d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
         [dot(plane.x_axis), dot(plane.y_axis)]
     };
     let guide = polyline_sketch(plane, &[at([5.0, 0.0, 0.0]), at([0.0, 20.0, 5.0])]);
@@ -3645,7 +3833,7 @@ fn a_helix_of_no_height_is_a_flat_spiral() {
 /// A 40 mm thick block from `x0` to 20 in X and -5 to 25 in Y, clear of the
 /// coil's ends, and four turns of the coil 12 mm high cut from it, or kept
 /// inside it.
-fn block_and_coil(x0: f32, keep_inside: bool) -> (Document, BodyId) {
+fn block_and_coil(x0: f64, keep_inside: bool) -> (Document, BodyId) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let mut block = polyline_sketch(
@@ -4370,7 +4558,7 @@ fn loft_of(sections: Vec<wb_design::LoftSection>) -> DesignFeature {
     }
 }
 
-fn raised(z: f32) -> wb_sketch::sketch::SketchPlane {
+fn raised(z: f64) -> wb_sketch::sketch::SketchPlane {
     wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
 }
 
@@ -4460,7 +4648,7 @@ fn a_loft_starts_from_a_face_of_the_solid() {
 #[test]
 fn a_loft_through_sections_closes_to_a_point() {
     use wb_design::LoftSection;
-    let circles = |r: f32, z: f32| circle_sketch_on(raised(z), 0.0, 0.0, r);
+    let circles = |r: f64, z: f64| circle_sketch_on(raised(z), 0.0, 0.0, r);
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let a = doc
@@ -4695,7 +4883,7 @@ fn a_boolean_takes_several_tool_bodies() {
         Some(target),
     )
     .unwrap();
-    let tool = |doc: &mut Document, name: &str, x: f32| {
+    let tool = |doc: &mut Document, name: &str, x: f64| {
         let body = doc.create_body(Some(name.into()));
         let sketch = doc
             .add_feature_in_body(
@@ -4915,16 +5103,17 @@ fn projected_onto_a_cylinder(
         x_axis: [1.0, 0.0, 0.0],
         y_axis: [0.0, 0.0, 1.0],
     };
-    sketch_projected_onto_a_cylinder(rect_sketch_on(plane, 6.0, 4.0), mode, height)
+    sketch_projected_onto_a_cylinder(rect_sketch_on(plane, 6.0, 4.0), mode, height, false)
 }
 
-/// A Ø20 × 20 cylinder with `label` projected onto its side, picked where
-/// it faces -Y, as `mode` says; the plain cylinder's volume and the built
-/// result.
+/// A Ø20 × 20 cylinder with `label` projected onto its side, or wrapped
+/// round it, picked where it faces -Y, as `mode` says; the plain
+/// cylinder's volume and the built result.
 fn sketch_projected_onto_a_cylinder(
     label: SketchFeature,
     mode: kernel_api::ProjectMode,
     height: f32,
+    wrap: bool,
 ) -> (f64, kernel_api::SolidBuildResult) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
@@ -4959,6 +5148,7 @@ fn sketch_projected_onto_a_cylinder(
             }],
             mode,
             height,
+            wrap,
         },
         "Project".into(),
         Some(body),
@@ -5068,7 +5258,7 @@ fn meshed_volume(result: &kernel_api::SolidBuildResult) -> (f64, bool) {
 
 #[test]
 fn projected_text_embosses_and_debosses_a_cylinder() {
-    let project = |mode| sketch_projected_onto_a_cylinder(text_label(), mode, 1.0).1;
+    let project = |mode| sketch_projected_onto_a_cylinder(text_label(), mode, 1.0, false).1;
     let (split, sound) = meshed_volume(&project(kernel_api::ProjectMode::Split));
     assert!(sound, "the split solid checks sound");
     let (up, sound) = meshed_volume(&project(kernel_api::ProjectMode::Emboss));
@@ -5086,11 +5276,451 @@ fn projected_text_embosses_and_debosses_a_cylinder() {
 }
 
 #[test]
+fn wrapped_text_embosses_and_debosses_a_cylinder() {
+    let built = |mode, wrap| sketch_projected_onto_a_cylinder(text_label(), mode, 1.0, wrap).1;
+    let (split, sound) = meshed_volume(&built(kernel_api::ProjectMode::Split, true));
+    assert!(sound, "the wrapped split checks sound");
+    let (up, sound) = meshed_volume(&built(kernel_api::ProjectMode::Emboss, true));
+    assert!(sound, "the wrapped emboss checks sound");
+    let (down, sound) = meshed_volume(&built(kernel_api::ProjectMode::Deboss, true));
+    assert!(sound, "the wrapped deboss checks sound");
+    let (gained, lost) = (up - split, split - down);
+    assert!(
+        (gained / lost - 21.0 / 19.0).abs() < 0.03,
+        "{gained} raised against {lost} sunk"
+    );
+    // Wrapped, the letters keep their widths; carried straight they
+    // stretch round the side away from its middle, and raise more.
+    let (straight, _) = meshed_volume(&built(kernel_api::ProjectMode::Emboss, false));
+    let (plain, _) = meshed_volume(&built(kernel_api::ProjectMode::Split, false));
+    assert!(
+        gained < straight - plain,
+        "{gained} wrapped, {} straight",
+        straight - plain
+    );
+}
+
+#[test]
 #[ignore = "kernel: volume_properties meshes the whole solid at the deflection given once one face has no closed form, so a Ø20 cylinder's side measures 0.6% short and embossed text reads as lost volume (ogeom-rs#209)"]
 fn embossed_text_measures_what_it_adds() {
     let (plain, raised) =
-        sketch_projected_onto_a_cylinder(text_label(), kernel_api::ProjectMode::Emboss, 1.0);
+        sketch_projected_onto_a_cylinder(text_label(), kernel_api::ProjectMode::Emboss, 1.0, false);
     let (measured, _) = volume_and_soundness(&raised);
     // The letters add some 17 mm³.
     assert!(measured > plain + 15.0, "{} added", measured - plain);
+}
+
+/// A sketch whose profile counts an edge projected from another body's
+/// pad follows the pad when its length changes, without the sketch being
+/// opened: evaluation projects the edge again, and the body padded from
+/// the sketch grows with it. What the sketch stores is left as it was.
+#[test]
+fn a_counting_projected_edge_follows_its_pad_without_the_sketch_opened() {
+    use core_document::{
+        CommandArgs, DocumentService, Workbench, WorkbenchFeature, WorkbenchRuntimeContext,
+    };
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
+        .unwrap();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
+    let mut kernel = OgeomKernel::new();
+    let settle = |doc: &mut Document, kernel: &mut OgeomKernel| {
+        for _ in 0..16 {
+            let jobs = registry.rebuild_jobs(doc);
+            if jobs.is_empty() {
+                return;
+            }
+            for job in jobs {
+                let plan = job.plan.expect("a plan");
+                let result = kernel
+                    .execute_solid_chain(&plan.ops, &TessellationSettings::default())
+                    .expect("it builds");
+                store_solid(doc, job.body, result);
+            }
+        }
+        panic!("the rebuilds never settled");
+    };
+
+    // A block 40 mm wide and 10 mm high, and in front of it a sketch
+    // standing upright, x across and z up, in a body of its own.
+    let (mut doc, block, base) = setup(40.0, 10.0);
+    let pad = doc
+        .add_feature_in_body(
+            pad_feature(base, 10.0, false, false),
+            "Pad".into(),
+            Some(block),
+        )
+        .unwrap();
+    doc.mark_feature_stale(pad);
+    settle(&mut doc, &mut kernel);
+    let other = doc.create_body(Some("Other".into()));
+    let plane = wb_sketch::sketch::SketchPlane::from_frame(
+        [0.0, -5.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(Sketch::new("front"), plane),
+            "front".into(),
+            Some(other),
+        )
+        .unwrap();
+    // The block's front top edge, counting, closed by three drawn lines.
+    let mut sketcher = wb_sketch::SketchWorkbench::default();
+    let args: CommandArgs = serde_json::from_value(serde_json::json!({
+        "sketch": sketch_id.0.to_string(),
+        "counts": true,
+        "edges": [{"body": block.0.to_string(), "point": [20.0, 0.0, 10.0], "direction": [1.0, 0.0, 0.0]}],
+    }))
+    .unwrap();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    sketcher
+        .run_command("sketch.external", &args, &mut ctx)
+        .expect("the edge projects");
+    let mut feature = SketchFeature::from_json(doc.get_feature_data(sketch_id).unwrap()).unwrap();
+    let edge = feature
+        .sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) if feature.sketch.is_external(l.id) => Some(l.clone()),
+            _ => None,
+        })
+        .expect("the projected edge");
+    let x_of = |sketch: &Sketch, p| sketch.point_position(p).unwrap().x;
+    let (left, right) = if x_of(&feature.sketch, edge.start) < x_of(&feature.sketch, edge.end) {
+        (edge.start, edge.end)
+    } else {
+        (edge.end, edge.start)
+    };
+    let sketch = &mut feature.sketch;
+    let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 0.0))));
+    for (s, e) in [(a, b), (b, right), (left, a)] {
+        sketch.add_geometry(GeometryElement::Line(Line::new(s, e)));
+    }
+    doc.update_feature_data(sketch_id, feature.to_json())
+        .unwrap();
+    let wall = doc
+        .add_feature_in_body(
+            pad_feature(sketch_id, 2.0, false, false),
+            "Wall".into(),
+            Some(other),
+        )
+        .unwrap();
+    doc.mark_feature_stale(wall);
+    settle(&mut doc, &mut kernel);
+    let height = |doc: &Document| {
+        let (min, max) = mesh_bounds(&doc.imported_geometry(other).unwrap().mesh);
+        max[2] - min[2]
+    };
+    assert!((height(&doc) - 10.0).abs() < 1e-3, "{}", height(&doc));
+
+    // The block's pad grows to 15 mm: the edge, the sketch's profile and
+    // the wall padded from it follow.
+    let stored = doc.get_feature_data(sketch_id).unwrap().clone();
+    doc.update_feature_data(pad, pad_feature(base, 15.0, false, false).to_json())
+        .unwrap();
+    doc.mark_feature_dirty(pad);
+    settle(&mut doc, &mut kernel);
+    let followed = SketchFeature::from_json(doc.feature_values(sketch_id).unwrap()).unwrap();
+    let edge_height = followed.sketch.point_position(right).unwrap().y;
+    assert!((edge_height - 15.0).abs() < 1e-6, "{edge_height}");
+    assert!((height(&doc) - 15.0).abs() < 1e-3, "{}", height(&doc));
+    assert_eq!(
+        doc.get_feature_data(sketch_id),
+        Some(&stored),
+        "followed as derived values, the sketch's own data untouched"
+    );
+}
+
+/// Store a built solid on `body` as the host does.
+fn store_solid(doc: &mut Document, body: BodyId, result: kernel_api::SolidBuildResult) {
+    doc.set_imported_brep_data(body, result.brep_blob, Vec::new());
+    doc.set_imported_geometry(
+        body,
+        core_document::ImportedGeometry {
+            mesh: std::sync::Arc::new(result.mesh),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: result.bounds_mm,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+}
+
+/// An 80 × 80 × 4 plate with a hole of radius 2 through it at (70, 40),
+/// a quarter arc of radius 30 about the plate's middle starting at the
+/// hole, and the circle the arc is part of.
+fn plate_with_hole_and_paths() -> (Document, BodyId, FeatureId, FeatureId, FeatureId) {
+    let (mut doc, body, plate) = setup(80.0, 80.0);
+    doc.add_feature_in_body(
+        pad_feature(plate, 4.0, false, false),
+        "Plate".into(),
+        Some(body),
+    )
+    .unwrap();
+    let at = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), 70.0, 40.0, 2.0),
+            "hole".into(),
+            Some(body),
+        )
+        .unwrap();
+    let hole = doc
+        .add_feature_in_body(pocket_feature(at, 4.0), "Hole".into(), Some(body))
+        .unwrap();
+    let mut arc = Sketch::new("arc");
+    arc.plane = plane_at_z(4.0);
+    let centre = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 40.0))));
+    let start = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(70.0, 40.0))));
+    let end = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 70.0))));
+    arc.add_geometry(GeometryElement::Arc(wb_sketch::sketch::Arc::new(
+        centre, start, end, 30.0,
+    )));
+    let arc = doc
+        .add_feature_in_body(
+            SketchFeature::new(arc, plane_at_z(4.0)),
+            "arc".into(),
+            Some(body),
+        )
+        .unwrap();
+    let ring = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), 40.0, 40.0, 30.0),
+            "ring".into(),
+            Some(body),
+        )
+        .unwrap();
+    (doc, body, hole, arc, ring)
+}
+
+fn path_pattern(
+    hole: FeatureId,
+    path: wb_design::PatternPath,
+    layout: wb_design::PathSpacing,
+) -> DesignFeature {
+    DesignFeature::PathPattern {
+        originals: vec![hole],
+        path,
+        layout,
+        refine: false,
+        boolean_tolerance: None,
+        skipped: Vec::new(),
+    }
+}
+
+/// The volume of what the body builds and where its round faces of
+/// radius 2 stand: one per hole.
+fn holes_built(doc: &Document, body: BodyId) -> (f64, Vec<[f32; 3]>) {
+    let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let volume = kernel
+        .physical_properties(&built.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    let holes: Vec<[f32; 3]> = built
+        .mesh
+        .face_surfaces
+        .iter()
+        .filter_map(|s| match s {
+            kernel_api::FaceSurface::Cylinder { origin, radius, .. }
+                if (radius - 2.0).abs() < 1e-3 =>
+            {
+                Some(*origin)
+            }
+            _ => None,
+        })
+        .collect();
+    (volume, holes)
+}
+
+fn plate_less_holes(holes: f64) -> f64 {
+    80.0 * 80.0 * 4.0 - holes * std::f64::consts::PI * 4.0 * 4.0
+}
+
+/// Holes along a quarter arc: five spread over it from the hole's place
+/// to the arc's far end, each 22.5° on; spaced 15 mm along it, as many as
+/// fit. Moved only, each stands on the arc.
+#[test]
+fn holes_patterned_along_an_arc_stand_on_it() {
+    let (mut doc, body, hole, arc, _) = plate_with_hole_and_paths();
+    let pattern = doc
+        .add_feature_in_body(
+            path_pattern(
+                hole,
+                wb_design::PatternPath::Sketch {
+                    sketch: arc,
+                    chain: 0,
+                },
+                wb_design::PathSpacing {
+                    occurrences: 5,
+                    ..Default::default()
+                },
+            ),
+            "Along".into(),
+            Some(body),
+        )
+        .unwrap();
+    let (volume, holes) = holes_built(&doc, body);
+    assert!((volume - plate_less_holes(5.0)).abs() < 0.5, "{volume}");
+    assert_eq!(holes.len(), 5, "{holes:?}");
+    for at in &holes {
+        let r = (at[0] - 40.0).hypot(at[1] - 40.0);
+        assert!((r - 30.0).abs() < 1e-3, "off the arc: {at:?}");
+    }
+    assert!(
+        holes.iter().any(|h| close(h[0], 40.0) && close(h[1], 70.0)),
+        "one at the arc's far end: {holes:?}"
+    );
+
+    // 15 mm apart along an arc 47.1 mm long: four fit, a fifth is refused.
+    let spaced = |occurrences| {
+        path_pattern(
+            hole,
+            wb_design::PatternPath::Sketch {
+                sketch: arc,
+                chain: 0,
+            },
+            wb_design::PathSpacing {
+                occurrences,
+                spacing_mode: true,
+                spacing: 15.0,
+                ..Default::default()
+            },
+        )
+    };
+    doc.update_feature_data(
+        pattern,
+        core_document::WorkbenchFeature::to_json(&spaced(4)),
+    )
+    .unwrap();
+    let (volume, holes) = holes_built(&doc, body);
+    assert!((volume - plate_less_holes(4.0)).abs() < 0.5, "{volume}");
+    assert_eq!(holes.len(), 4);
+    doc.update_feature_data(
+        pattern,
+        core_document::WorkbenchFeature::to_json(&spaced(5)),
+    )
+    .unwrap();
+    let refused = built_volume(&doc, body).unwrap_err();
+    assert!(refused.contains("holds 4 occurrences"), "{refused}");
+}
+
+/// Round a closed circle six holes go evenly; turned with the path they
+/// stay on it whichever way it is walked. A skipped one is left out.
+#[test]
+fn holes_patterned_round_a_closed_circle_go_evenly_round_it() {
+    let (mut doc, body, hole, _, ring) = plate_with_hole_and_paths();
+    let round = |reversed, skipped: Vec<u32>| DesignFeature::PathPattern {
+        originals: vec![hole],
+        path: wb_design::PatternPath::Sketch {
+            sketch: ring,
+            chain: 0,
+        },
+        layout: wb_design::PathSpacing {
+            occurrences: 6,
+            reversed,
+            align: true,
+            ..Default::default()
+        },
+        refine: false,
+        boolean_tolerance: None,
+        skipped,
+    };
+    let pattern = doc
+        .add_feature_in_body(round(false, Vec::new()), "Round".into(), Some(body))
+        .unwrap();
+    for (reversed, skipped, count) in [
+        (false, vec![], 6u32),
+        (true, vec![], 6),
+        (false, vec![3], 5),
+    ] {
+        doc.update_feature_data(
+            pattern,
+            core_document::WorkbenchFeature::to_json(&round(reversed, skipped)),
+        )
+        .unwrap();
+        let (volume, holes) = holes_built(&doc, body);
+        assert!(
+            (volume - plate_less_holes(f64::from(count))).abs() < 0.5,
+            "{reversed}: {volume}"
+        );
+        assert_eq!(holes.len(), count as usize, "{reversed}: {holes:?}");
+        for at in &holes {
+            let r = (at[0] - 40.0).hypot(at[1] - 40.0);
+            assert!((r - 30.0).abs() < 1e-3, "off the circle: {at:?}");
+        }
+    }
+}
+
+/// Along an edge of the solid: the rim of a disc of radius 30, found on
+/// the solid where the pattern stands, a hole 5 mm in from it carried
+/// round with the rim's turn, eight times.
+#[test]
+fn holes_patterned_along_a_solid_edge_follow_it() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let disc = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(0.0), 0.0, 0.0, 30.0),
+            "disc".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(disc, 4.0, false, false),
+        "Disc".into(),
+        Some(body),
+    )
+    .unwrap();
+    let at = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), 25.0, 0.0, 2.0),
+            "hole".into(),
+            Some(body),
+        )
+        .unwrap();
+    let hole = doc
+        .add_feature_in_body(pocket_feature(at, 4.0), "Hole".into(), Some(body))
+        .unwrap();
+    let rim = wb_design::EdgePick {
+        faces: [0, 0],
+        point: [0.0, 30.0, 4.0],
+        direction: [1.0, 0.0, 0.0],
+    };
+    doc.add_feature_in_body(
+        path_pattern(
+            hole,
+            wb_design::PatternPath::Edge(rim),
+            wb_design::PathSpacing {
+                occurrences: 8,
+                align: true,
+                ..Default::default()
+            },
+        ),
+        "Round the rim".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, holes) = holes_built(&doc, body);
+    let want = (std::f64::consts::PI * 900.0 - 8.0 * std::f64::consts::PI * 4.0) * 4.0;
+    assert!((volume - want).abs() < 0.5, "{volume}");
+    assert_eq!(holes.len(), 8, "{holes:?}");
+    for at in &holes {
+        assert!((at[0].hypot(at[1]) - 25.0).abs() < 1e-3, "{at:?}");
+    }
 }

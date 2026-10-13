@@ -232,6 +232,32 @@ impl FacePick {
         }
     }
 
+    /// What a build asks of the solid to find the face again.
+    pub fn probe(&self) -> kernel_api::ShapeProbe {
+        kernel_api::ShapeProbe::Face {
+            point: self.point.map(f64::from),
+            normal: self.normal.map(f64::from),
+            name: self.name,
+        }
+    }
+
+    /// The pick moved to where a build found its face: `false` when the
+    /// answer is not a face's, or the face is not flat.
+    pub fn take_answer(&mut self, answer: &Result<kernel_api::ProbeAnswer, String>) -> bool {
+        match answer {
+            Ok(kernel_api::ProbeAnswer::Face {
+                point,
+                normal,
+                surface: kernel_api::FaceSurface::Plane { .. },
+            }) => {
+                self.point = point.map(|c| c as f32);
+                self.normal = normal.map(|c| c as f32);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Whether `other` names the same face: the same name, or (without
     /// one) the same point.
     pub fn same_place(&self, other: &FacePick) -> bool {
@@ -401,6 +427,29 @@ impl Attached {
     }
 }
 
+/// Where a hole starts drilling: its sketch's plane carried along the
+/// drill onto a datum plane, another sketch's plane or a flat face of the
+/// solid, then `offset` further in.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HoleStart {
+    /// Millimetres further into the material; negative starts above.
+    pub offset: f32,
+    /// A datum plane or a sketch whose plane the hole starts on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<FeatureId>,
+    /// A flat face of the solid the hole starts on, in place of `at`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub face: Option<FacePick>,
+}
+
+impl HoleStart {
+    /// The hole does not start on its sketch's plane.
+    pub fn moves(&self) -> bool {
+        self.offset != 0.0 || self.at.is_some() || self.face.is_some()
+    }
+}
+
 /// A pad's or pocket's less used settings.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -419,6 +468,11 @@ pub struct ExtrudeExtras {
     /// profile carried there along the way it runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_at: Option<FeatureId>,
+    /// A flat face of the solid the extrusion starts on, in place of
+    /// `start_at`: found again on the solid before the feature, as a
+    /// sketch placed on a face is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_face: Option<FacePick>,
     /// The second side's taper, when it differs from the first's.
     pub taper2_deg: Option<f32>,
     /// With a slanted direction, the length is measured along the
@@ -429,6 +483,11 @@ pub struct ExtrudeExtras {
 impl ExtrudeExtras {
     pub fn is_plain(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// The profile does not start where it is drawn.
+    pub fn moves_start(&self) -> bool {
+        self.start_offset != 0.0 || self.start_at.is_some() || self.start_face.is_some()
     }
 }
 
@@ -794,6 +853,75 @@ pub enum TransformStep {
     Points {
         sketch: FeatureId,
     },
+    /// Occurrences along a path, as a path pattern places them.
+    Path {
+        path: PatternPath,
+        #[serde(flatten)]
+        layout: PathSpacing,
+    },
+}
+
+/// What a path pattern runs along, in its body's own frame.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum PatternPath {
+    /// One of a sketch's chains of curves (its construction left out), by
+    /// its place among them, walked from its first curve's start.
+    Sketch {
+        sketch: FeatureId,
+        #[serde(default)]
+        chain: usize,
+    },
+    /// An edge of the solid, found again on the solid as it stands where
+    /// the pattern does, walked from its curve's start.
+    Edge(EdgePick),
+}
+
+impl PatternPath {
+    pub fn label(&self) -> &'static str {
+        match self {
+            PatternPath::Sketch { .. } => "Sketch",
+            PatternPath::Edge(_) => "Picked edge",
+        }
+    }
+
+    /// The feature the path follows, when it is a sketch's.
+    pub fn reference(&self) -> Option<FeatureId> {
+        match self {
+            PatternPath::Sketch { sketch, .. } => Some(*sketch),
+            PatternPath::Edge(_) => None,
+        }
+    }
+}
+
+/// How a path pattern's occurrences are spaced along its path, its fields
+/// written beside the pattern's own.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PathSpacing {
+    /// Occurrences, the original counted.
+    pub occurrences: u32,
+    /// `spacing` is the distance between neighbours along the path; off,
+    /// the occurrences spread over its whole length (round it evenly when
+    /// it closes).
+    pub spacing_mode: bool,
+    /// Millimetres between neighbours along the path, with `spacing_mode`.
+    pub spacing: f32,
+    /// Walk the path from its end.
+    pub reversed: bool,
+    /// Each copy turns as the path does from its start to the copy's place.
+    pub align: bool,
+}
+
+impl Default for PathSpacing {
+    fn default() -> Self {
+        Self {
+            occurrences: 4,
+            spacing_mode: false,
+            spacing: 10.0,
+            reversed: false,
+            align: false,
+        }
+    }
 }
 
 /// A hexagonal pocket for a captive nut, at one end of a hole: sized
@@ -1349,6 +1477,10 @@ pub enum DesignFeature {
         reversed: bool,
         #[serde(default)]
         midplane: bool,
+        /// Degrees the profile is turned about the axis, the way the
+        /// turn runs, before it starts.
+        #[serde(default)]
+        start_angle_deg: f32,
         #[serde(default)]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -1385,6 +1517,10 @@ pub enum DesignFeature {
         reversed: bool,
         #[serde(default)]
         midplane: bool,
+        /// Degrees the profile is turned about the axis, the way the
+        /// turn runs, before it starts.
+        #[serde(default)]
+        start_angle_deg: f32,
         #[serde(default)]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -1565,6 +1701,9 @@ pub enum DesignFeature {
         /// A hexagonal pocket for a captive nut at one end.
         #[serde(default, deserialize_with = "nut_trap_or_flag")]
         nut_trap: Option<NutTrap>,
+        /// Where it starts drilling, when not on its sketch's plane.
+        #[serde(default)]
+        start: HoleStart,
         #[serde(default)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -1638,9 +1777,10 @@ pub enum DesignFeature {
         #[serde(default = "z_axis")]
         axis_dir: [f32; 3],
     },
-    /// A sketch carried onto faces of the solid along its plane's normal:
-    /// the faces split along its curves, and as `mode` says the regions
-    /// it encloses raised out of them or sunk into them by `height`.
+    /// A sketch carried onto faces of the solid along its plane's normal,
+    /// or with `wrap` unrolled onto the cylinder or cone they lie on: the
+    /// faces split along its curves, and as `mode` says the regions it
+    /// encloses raised out of them or sunk into them by `height`.
     Project {
         sketch: FeatureId,
         faces: Vec<FacePick>,
@@ -1649,6 +1789,10 @@ pub enum DesignFeature {
         /// mm the regions stand out or sink in; unused for split lines.
         #[serde(default = "default_project_height")]
         height: f32,
+        /// Unroll the sketch onto the faces' cylinder or cone, keeping its
+        /// lengths, rather than carry it straight along its normal.
+        #[serde(default)]
+        wrap: bool,
     },
     Thickness {
         value: f32,
@@ -1727,6 +1871,63 @@ pub enum DesignFeature {
         /// `angle_deg` gives; an empty list turns every occurrence evenly.
         #[serde(default)]
         angles: Vec<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
+    },
+    /// Concentric rings about `axis`: ring `i` moved `i × spacing` along
+    /// `outward`, then spread evenly round the axis, `counts[i]`
+    /// occurrences in it, the original first in the first ring.
+    CircularPattern {
+        originals: Vec<FeatureId>,
+        axis: PatternAxis,
+        outward: PatternAxis,
+        spacing: f32,
+        counts: Vec<u32>,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
+    },
+    /// An occurrence at every point of `sketch` after its first, moved by
+    /// how far that point is from the first.
+    PointPattern {
+        originals: Vec<FeatureId>,
+        sketch: FeatureId,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
+    },
+    /// Occurrences along a sketch's chain of curves or an edge of the
+    /// solid, by arc length, the original standing at the path's start.
+    PathPattern {
+        originals: Vec<FeatureId>,
+        path: PatternPath,
+        #[serde(flatten)]
+        layout: PathSpacing,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
@@ -1932,6 +2133,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { originals, .. }
             | DesignFeature::LinearPattern { originals, .. }
             | DesignFeature::PolarPattern { originals, .. }
+            | DesignFeature::CircularPattern { originals, .. }
+            | DesignFeature::PointPattern { originals, .. }
+            | DesignFeature::PathPattern { originals, .. }
             | DesignFeature::MultiTransform { originals, .. } => Some(originals),
             _ => None,
         }
@@ -1943,6 +2147,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { skipped, .. }
             | DesignFeature::LinearPattern { skipped, .. }
             | DesignFeature::PolarPattern { skipped, .. }
+            | DesignFeature::CircularPattern { skipped, .. }
+            | DesignFeature::PointPattern { skipped, .. }
+            | DesignFeature::PathPattern { skipped, .. }
             | DesignFeature::MultiTransform { skipped, .. } => Some(skipped),
             _ => None,
         }
@@ -1955,6 +2162,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { skipped, .. }
             | DesignFeature::LinearPattern { skipped, .. }
             | DesignFeature::PolarPattern { skipped, .. }
+            | DesignFeature::CircularPattern { skipped, .. }
+            | DesignFeature::PointPattern { skipped, .. }
+            | DesignFeature::PathPattern { skipped, .. }
             | DesignFeature::MultiTransform { skipped, .. } => skipped,
             _ => return false,
         };
@@ -2016,6 +2226,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { .. } => "Mirrored",
             DesignFeature::LinearPattern { .. } => "Linear Pattern",
             DesignFeature::PolarPattern { .. } => "Polar Pattern",
+            DesignFeature::CircularPattern { .. } => "Circular Pattern",
+            DesignFeature::PointPattern { .. } => "Point Pattern",
+            DesignFeature::PathPattern { .. } => "Path Pattern",
             DesignFeature::MultiTransform { .. } => "Multi Transform",
             DesignFeature::BodyBoolean { .. } => "Boolean",
             DesignFeature::Borrow { .. } => "Borrowed geometry",
@@ -2080,6 +2293,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { .. } => "mirrored",
             DesignFeature::LinearPattern { .. } => "linear-pattern",
             DesignFeature::PolarPattern { .. } => "polar-pattern",
+            DesignFeature::CircularPattern { .. } => "circular-pattern",
+            DesignFeature::PointPattern { .. } => "point-pattern",
+            DesignFeature::PathPattern { .. } => "path-pattern",
             DesignFeature::MultiTransform { .. } => "multi-transform",
             DesignFeature::BodyBoolean { .. } => "boolean",
             DesignFeature::Borrow { .. } => "clone-geometry",
@@ -2104,6 +2320,9 @@ impl DesignFeature {
             | DesignFeature::Mirrored { refine, .. }
             | DesignFeature::LinearPattern { refine, .. }
             | DesignFeature::PolarPattern { refine, .. }
+            | DesignFeature::CircularPattern { refine, .. }
+            | DesignFeature::PointPattern { refine, .. }
+            | DesignFeature::PathPattern { refine, .. }
             | DesignFeature::MultiTransform { refine, .. }
             | DesignFeature::BodyBoolean { refine, .. } => *refine,
             _ => false,
@@ -2126,6 +2345,9 @@ impl DesignFeature {
             | DesignFeature::Mirrored { refine, .. }
             | DesignFeature::LinearPattern { refine, .. }
             | DesignFeature::PolarPattern { refine, .. }
+            | DesignFeature::CircularPattern { refine, .. }
+            | DesignFeature::PointPattern { refine, .. }
+            | DesignFeature::PathPattern { refine, .. }
             | DesignFeature::MultiTransform { refine, .. }
             | DesignFeature::BodyBoolean { refine, .. } => *refine = on,
             _ => {}
@@ -2170,6 +2392,15 @@ impl DesignFeature {
                 boolean_tolerance, ..
             }
             | DesignFeature::PolarPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::CircularPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PointPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PathPattern {
                 boolean_tolerance, ..
             }
             | DesignFeature::MultiTransform {
@@ -2221,6 +2452,15 @@ impl DesignFeature {
                 boolean_tolerance, ..
             }
             | DesignFeature::PolarPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::CircularPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PointPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PathPattern {
                 boolean_tolerance, ..
             }
             | DesignFeature::MultiTransform {
@@ -2296,6 +2536,27 @@ impl DesignFeature {
         Some(name)
     }
 
+    /// The face of the solid the feature starts on, when it starts on one.
+    pub fn start_face(&self) -> Option<&FacePick> {
+        match self {
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_ref()
+            }
+            DesignFeature::Hole { start, .. } => start.face.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn start_face_mut(&mut self) -> Option<&mut FacePick> {
+        match self {
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_mut()
+            }
+            DesignFeature::Hole { start, .. } => start.face.as_mut(),
+            _ => None,
+        }
+    }
+
     /// True when this feature removes material (must not be a body's first).
     pub fn is_subtractive(&self) -> bool {
         match self {
@@ -2326,6 +2587,9 @@ impl DesignFeature {
                 | DesignFeature::Mirrored { .. }
                 | DesignFeature::LinearPattern { .. }
                 | DesignFeature::PolarPattern { .. }
+                | DesignFeature::CircularPattern { .. }
+                | DesignFeature::PointPattern { .. }
+                | DesignFeature::PathPattern { .. }
                 | DesignFeature::MultiTransform { .. }
                 | DesignFeature::BodyBoolean { .. }
         )
@@ -2354,6 +2618,15 @@ impl WorkbenchFeature for DesignFeature {
         {
             deps.push(start);
         }
+        if let DesignFeature::Hole {
+            start: HoleStart {
+                at: Some(start), ..
+            },
+            ..
+        } = self
+        {
+            deps.push(*start);
+        }
         if let Some(originals) = self.originals() {
             deps.extend_from_slice(originals);
         }
@@ -2377,6 +2650,7 @@ impl WorkbenchFeature for DesignFeature {
             | DesignFeature::PolarPattern { axis, .. } => {
                 vec![axis]
             }
+            DesignFeature::CircularPattern { axis, outward, .. } => vec![axis, outward],
             DesignFeature::MultiTransform { steps, .. } => steps
                 .iter()
                 .flat_map(|step| match step {
@@ -2389,13 +2663,23 @@ impl WorkbenchFeature for DesignFeature {
                 .collect(),
             _ => Vec::new(),
         };
-        if let DesignFeature::MultiTransform { steps, .. } = self {
-            for step in steps {
-                if let TransformStep::Points { sketch } = step
-                    && !deps.contains(sketch)
-                {
-                    deps.push(*sketch);
-                }
+        // The sketches whose points or curves a pattern stands at.
+        let placing: Vec<FeatureId> = match self {
+            DesignFeature::PointPattern { sketch, .. } => vec![*sketch],
+            DesignFeature::PathPattern { path, .. } => path.reference().into_iter().collect(),
+            DesignFeature::MultiTransform { steps, .. } => steps
+                .iter()
+                .filter_map(|step| match step {
+                    TransformStep::Points { sketch } => Some(*sketch),
+                    TransformStep::Path { path, .. } => path.reference(),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for sketch in placing {
+            if !deps.contains(&sketch) {
+                deps.push(sketch);
             }
         }
         for reference in axes.into_iter().filter_map(PatternAxis::reference) {
@@ -2605,6 +2889,7 @@ mod tests {
             faces,
             mode,
             height,
+            wrap,
             ..
         } = &read
         else {
@@ -2613,6 +2898,7 @@ mod tests {
         assert_eq!(faces.len(), 1);
         assert_eq!(*mode, kernel_api::ProjectMode::Split);
         assert_eq!(*height, 1.0);
+        assert!(!wrap, "a projection runs straight unless asked to wrap");
         assert_eq!(read.dependencies(), vec![sketch]);
         assert!(read.is_modifier());
         let embossed = DesignFeature::Project {
@@ -2620,6 +2906,7 @@ mod tests {
             faces: faces.clone(),
             mode: kernel_api::ProjectMode::Emboss,
             height: 0.6,
+            wrap: true,
         };
         assert_eq!(
             DesignFeature::from_json(&embossed.to_json()).unwrap(),

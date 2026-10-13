@@ -1059,8 +1059,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional(
             "font",
             ParamKind::String,
-            "IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, or a font file's path \
-             (IBM Plex Sans)",
+            "IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, the family of a font \
+             installed on the machine, or a font file's path (IBM Plex Sans)",
         )
         .optional(
             "font_asset",
@@ -1068,9 +1068,10 @@ pub fn register(context: &mut WorkbenchContext) {
             "The document asset a font file was kept as, which a recording names",
         )
         .note(
-            "A font file named by its path is kept in the document the first time it is \
-             used, so the text is made again from it on any machine; a font neither carried \
-             nor kept is refused with why.",
+            "A font installed on the machine, named by its family, or a font file named by \
+             its path, is kept in the document the first time it is used, so the text is \
+             made again from it on any machine; a font neither carried nor kept is refused \
+             with why. A browser page has no installed fonts.",
         )
         .optional("size", ParamKind::Number, "The font's em, mm (10)")
         .optional(
@@ -1093,8 +1094,10 @@ pub fn register(context: &mut WorkbenchContext) {
              returned moves the whole text.",
         )
         .note(
-            "A `font` that is not one of the three bundled names is read as a file path, \
-             refused when no such file is there. Text with nothing to draw is refused.",
+            "A `font` that is not one of the three bundled names is a file's path when it \
+             looks like one (a path separator, or a font file's extension) or names a file \
+             there, else an installed family, its letters' case aside; the family a font \
+             gives is what the block records. Text with nothing to draw is refused.",
         )
         .see_also("sketch.text_edit")
         .example(
@@ -1128,7 +1131,33 @@ pub fn register(context: &mut WorkbenchContext) {
             "Only what is given changes, and the outlines are made again on the same point; \
              a `size` of 0 or less is refused.",
         )
+        .note(
+            "A block's size, spacing and angle are numbers formulas can set: \
+             `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, \
+             `<block>/spacing` and `<block>/angle`, and the outlines are made again at what \
+             they come to, in the font the document keeps. The string is not, since a \
+             formula makes a number.",
+        )
         .see_also("sketch.text")
+        .see_also("doc.set_formula")
+        .example(
+            "Text whose height a variable sets",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local t = pc.sketch.text{sketch = s, text = "I", at = {0, 0}, size = 10}
+            pc.var.new{name = "Label"}
+            pc.var.set{set = "Label", name = "height", formula = "10 mm"}
+            pc.doc.set_formula{id = s, parameter = t.text .. "/size", formula = "Label.height"}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.feature{id = pad}.body
+            local small = pc.doc.measure{body = body}
+            pc.var.set{set = "Label", name = "height", formula = "20 mm"}
+            assert(#pc.doc.rebuild() == 0)
+            local large = pc.doc.measure{body = body}
+            assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
+            "#,
+        )
         .example(
             "A letter made twice as large",
             r#"
@@ -1607,6 +1636,12 @@ pub fn register(context: &mut WorkbenchContext) {
         .note(
             "It returns {elements, constraints}: the curves and the points at their ends, \
              the curves marked `external` by `pc.sketch.geometry`.",
+        )
+        .note(
+            "The projection follows its solid: rebuilt, the edge is found again by the faces \
+             it runs between (else by the point) and projected anew, the sketch unopened. A \
+             solid built from the sketch itself is projected again only when the sketch is \
+             opened.",
         )
         .note(
             "A point names an edge only within a tenth of the body's diagonal of it; one \
@@ -2122,18 +2157,18 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 return Err(CommandError::bad("sketch", "is not attached to a datum"));
             };
             if let Some(v) = a.opt_number("offset")? {
-                support.offset = v as f32;
+                support.offset = v;
             }
             if let Some(v) = args.get("shift").filter(|v| !v.is_null()) {
                 let pair = v
                     .as_array()
                     .filter(|p| p.len() == 2)
-                    .and_then(|p| Some([p[0].as_f64()? as f32, p[1].as_f64()? as f32]))
+                    .and_then(|p| Some([p[0].as_f64()?, p[1].as_f64()?]))
                     .ok_or_else(|| CommandError::bad("shift", "must be {x, y}"))?;
                 support.shift = pair;
             }
             if let Some(v) = a.opt_number("turn")? {
-                support.turn = v as f32;
+                support.turn = v;
             }
             let values = ctx
                 .document
@@ -2217,7 +2252,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             return save(ctx, sketch_id, feature, Value::Null);
         }
         "sketch.repair" => {
-            let tolerance = a.opt_number("tolerance")?.unwrap_or(0.01) as f32;
+            let tolerance = a.opt_number("tolerance")?.unwrap_or(0.01);
             let done = crate::repair::repair(&mut feature.sketch, tolerance);
             crate::solver::solve(&mut feature.sketch);
             let words = done.describe();
@@ -2327,10 +2362,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let (x, y) = (a.number("x")?, a.number("y")?);
             let at = |deg: f64| {
                 let t = deg.to_radians();
-                vec(
-                    x + f64::from(radius) * t.cos(),
-                    y + f64::from(radius) * t.sin(),
-                )
+                vec(x + radius * t.cos(), y + radius * t.sin())
             };
             let (start, end) = (a.number("start")?, a.number("end")?);
             let centre = point_at(sketch, vec(x, y));
@@ -2352,7 +2384,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "sketch.set_value" => {
             let id = a.id("constraint")?;
-            let value = a.number("value")? as f32;
+            let value = a.number("value")?;
             let constraint = sketch
                 .constraints
                 .iter_mut()
@@ -2394,8 +2426,8 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 &items,
                 count("rows")?,
                 count("cols")?,
-                a.number("dx")? as f32,
-                a.number("dy")? as f32,
+                a.number("dx")?,
+                a.number("dy")?,
                 a.opt_bool("linked")?.unwrap_or(false),
             );
             if !effect.changed {
@@ -2547,7 +2579,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .collect();
             let tolerance = a
                 .opt_number("tolerance")?
-                .map_or(crate::tools::JOIN_TOLERANCE, |t| t as f32);
+                .unwrap_or(crate::tools::JOIN_TOLERANCE);
             if tolerance <= 0.0 {
                 return Err(CommandError::bad("tolerance", "must be more than 0"));
             }
@@ -2678,22 +2710,22 @@ fn place_image(
     mut image: crate::sketch::ReferenceImage,
 ) -> Result<crate::sketch::ReferenceImage, CommandError> {
     if let Some(x) = a.opt_number("x")? {
-        image.center.x = x as f32;
+        image.center.x = x;
     }
     if let Some(y) = a.opt_number("y")? {
-        image.center.y = y as f32;
+        image.center.y = y;
     }
     if let Some(width) = a.opt_number("width")? {
         if !(width > 0.0 && width.is_finite()) {
             return Err(CommandError::bad("width", "must be more than zero"));
         }
-        image.width = width as f32;
+        image.width = width;
     }
     if let Some(angle) = a.opt_number("angle")? {
-        image.angle_deg = angle as f32;
+        image.angle_deg = angle;
     }
     if let Some(opacity) = a.opt_number("opacity")? {
-        image.opacity = (opacity as f32).clamp(0.0, 1.0);
+        image.opacity = opacity.clamp(0.0, 1.0);
     }
     Ok(image)
 }
@@ -2762,7 +2794,7 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
 }
 
 /// How wide a picture lies when nothing says, mm.
-const DEFAULT_IMAGE_WIDTH_MM: f32 = 100.0;
+const DEFAULT_IMAGE_WIDTH_MM: f64 = 100.0;
 
 /// A sketch of the DXF drawing at `path`, placed as `sketch.new` places
 /// one and named after the file unless `name` says otherwise.
@@ -2843,7 +2875,7 @@ fn add_sketch(
         plane = custom_plane(a)?;
     }
     let mut datum_body = None;
-    let offset = a.opt_number("offset")?.unwrap_or(0.0) as f32;
+    let offset = a.opt_number("offset")?.unwrap_or(0.0);
     let mut support = None;
     if let Some(on) = a.opt_id("on")? {
         let (on_datum, body) = datum_support(ctx, FeatureId(on), a.opt_string("plane")?, offset)?;
@@ -2954,13 +2986,13 @@ fn load(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Result<SketchFeature, C
 }
 
 fn vec(x: f64, y: f64) -> Vec2D {
-    Vec2D::new(x as f32, y as f32)
+    Vec2D::new(x, y)
 }
 
-fn positive(a: &Args, name: &str) -> Result<f32, CommandError> {
+fn positive(a: &Args, name: &str) -> Result<f64, CommandError> {
     let value = a.number(name)?;
     if value > 0.0 {
-        Ok(value as f32)
+        Ok(value)
     } else {
         Err(CommandError::bad(name, "must be more than zero"))
     }
@@ -3019,7 +3051,7 @@ fn datum_support(
     ctx: &WorkbenchRuntimeContext,
     id: FeatureId,
     which: Option<&str>,
-    offset: f32,
+    offset: f64,
 ) -> Result<(OnDatum, Option<BodyId>), CommandError> {
     let not_a_plane = || CommandError::bad("on", "is not a datum plane or coordinate system");
     let node = ctx.document.get_feature_meta(id).ok_or_else(not_a_plane)?;
@@ -3086,7 +3118,7 @@ fn custom_plane(a: &Args) -> Result<SketchPlane, CommandError> {
         "x_axis",
     )?;
     let y_axis = cross(normal, x_axis);
-    let f = |v: [f64; 3]| v.map(|c| c as f32);
+    let f = |v: [f64; 3]| v.map(|c| c);
     Ok(SketchPlane {
         origin: f(origin),
         normal: f(normal),
@@ -3148,13 +3180,13 @@ fn text_options(a: &Args, spec: &mut crate::text::TextSpec) -> Result<(), Comman
         if size <= 0.0 {
             return Err(CommandError::bad("size", "must be more than 0"));
         }
-        spec.size = size as f32;
+        spec.size = size;
     }
     if let Some(v) = a.opt_number("spacing")? {
-        spec.spacing = v as f32;
+        spec.spacing = v;
     }
     if let Some(v) = a.opt_number("angle")? {
-        spec.angle = v as f32;
+        spec.angle = v;
     }
     Ok(())
 }
@@ -3310,7 +3342,7 @@ pub(crate) fn paste(sketch: &mut Sketch, clip: &Sketch, by: Vec2D) -> usize {
         clip,
         sketch,
         &all,
-        &crate::tools::Similarity::translation(glam::Vec2::new(by.x, by.y)),
+        &crate::tools::Similarity::translation(glam::DVec2::new(by.x, by.y)),
     )
 }
 
@@ -3322,7 +3354,7 @@ pub(crate) fn switch_circle_dimension(
     sketch: &mut Sketch,
     id: Uuid,
     diameter: bool,
-) -> Option<f32> {
+) -> Option<f64> {
     let c = sketch.constraints.iter_mut().find(|c| c.id == id)?;
     let (kind, scale) = match (&c.kind, diameter) {
         (ConstraintKind::Radius { circle, radius }, true) => (
@@ -3356,7 +3388,7 @@ pub(crate) fn switch_dimension(
     sketch: &mut Sketch,
     id: Uuid,
     diameter: bool,
-) -> Option<f32> {
+) -> Option<f64> {
     let scale = switch_circle_dimension(sketch, id, diameter)?;
     let key = id.to_string();
     if let Some(formula) = document.feature_formula(sketch_id, &key) {
@@ -3370,7 +3402,7 @@ pub(crate) fn switch_dimension(
 
 /// `formula` giving `scale` times what it gave, undoing the opposite
 /// switch rather than stacking on it.
-pub(crate) fn scaled_formula(formula: &str, scale: f32) -> String {
+pub(crate) fn scaled_formula(formula: &str, scale: f64) -> String {
     let formula = formula.trim();
     let (undo, apply) = if scale > 1.0 {
         (" / 2", " * 2")
@@ -3429,7 +3461,7 @@ pub(crate) fn merge(
     crate::copy_sketch_into(
         &base.sketch,
         &mut merged,
-        &crate::tools::Similarity::translation(glam::Vec2::ZERO),
+        &crate::tools::Similarity::translation(glam::DVec2::ZERO),
     );
     for other in with {
         let from = placed(document, *other)
@@ -3455,7 +3487,7 @@ pub(crate) fn mirror_sketch(
         .iter()
         .map(GeometryElement::id)
         .collect();
-    let xf = crate::tools::Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
+    let xf = crate::tools::Similarity::mirror_about(glam::DVec2::ZERO, glam::DVec2::Y);
     crate::tools::copy_from(&base.sketch, &mut mirrored, &all, &xf);
     new_beside(document, sketch, mirrored)
 }
@@ -3502,9 +3534,9 @@ fn external_sources(
                 .and_then(Value::as_str)
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or_else(bad)?;
-            let v = |name: &str| -> Result<[f32; 3], CommandError> {
+            let v = |name: &str| -> Result<[f64; 3], CommandError> {
                 let v = vector3(edge.get(name), "edges")?;
-                Ok(v.map(|c| c as f32))
+                Ok(v.map(|c| c))
             };
             Ok(crate::sketch::ExternalSource {
                 body,
@@ -3513,6 +3545,7 @@ fn external_sources(
                 section: false,
                 defining: false,
                 reference: None,
+                faces: [0; 2],
             })
         })
         .collect()
@@ -3531,9 +3564,9 @@ fn section_sources(
                 .and_then(Value::as_str)
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or_else(bad)?;
-            let v = |name: &str| -> Result<[f32; 3], CommandError> {
+            let v = |name: &str| -> Result<[f64; 3], CommandError> {
                 let v = vector3(face.get(name), "faces")?;
-                Ok(v.map(|c| c as f32))
+                Ok(v.map(|c| c))
             };
             Ok(crate::sketch::ExternalSource {
                 body,
@@ -3542,6 +3575,7 @@ fn section_sources(
                 section: true,
                 defining: false,
                 reference: None,
+                faces: [0; 2],
             })
         })
         .collect()
@@ -3560,6 +3594,7 @@ pub(crate) fn add_external(
     let mut repeated = 0;
     let mut last_error = None;
     for source in edges {
+        let source = &crate::with_edge_names(ctx.document, *source);
         match crate::project_source(ctx, plane, source) {
             Ok(curves) => {
                 // An edge or element the sketch already holds comes once.
@@ -3680,7 +3715,7 @@ fn draw(
         return Err(CommandError::bad("tool", format!("has no tool `{name}`")));
     }
     let settings = step::StepSettings {
-        tol: a.opt_number("tolerance")?.unwrap_or(1e-3) as f32,
+        tol: a.opt_number("tolerance")?.unwrap_or(1e-3),
         params: step::params_from_json(args.get("params"))
             .map_err(|e| CommandError::bad("params", e))?,
         construction: a.opt_bool("construction")?.unwrap_or(false),
@@ -3823,7 +3858,7 @@ const DRAW_TOOLS: &[&str] = &[
 
 /// One click of `sketch.draw`: where, the values typed at it, and whether
 /// they become constraints.
-type Click = (Vec2D, Vec<(crate::ovp::FieldKind, f32)>, bool);
+type Click = (Vec2D, Vec<(crate::ovp::FieldKind, f64)>, bool);
 
 /// Read one click of `sketch.draw`.
 fn click_of(click: &Value) -> Result<Click, CommandError> {
@@ -3840,7 +3875,7 @@ fn click_of(click: &Value) -> Result<Click, CommandError> {
                 let v = v
                     .as_f64()
                     .ok_or_else(|| CommandError::bad("points", "typed values are numbers"))?;
-                typed.push((kind, v as f32));
+                typed.push((kind, v));
             }
         }
         constrain = fields
@@ -3892,7 +3927,7 @@ pub(crate) fn constrain(
         if let Some(value) = value
             && crate::sketch::dimension_value(&k).is_some()
         {
-            k = crate::sketch::with_dimension_value(&k, value as f32);
+            k = crate::sketch::with_dimension_value(&k, value);
         }
         made.push(sketch.add_constraint(k).to_string());
     }
@@ -4303,7 +4338,8 @@ mod tests {
     }
 
     /// A rounded rectangle, a slot and an arc slot keep their shape when
-    /// dragged: their tangents and equal radii are part of them.
+    /// dragged: their tangents and equal radii are part of them, and none
+    /// of those constraints says again what the others already do.
     #[test]
     fn shapes_with_rounded_ends_hold_together_when_dragged() {
         for (tool, points, params, dof) in [
@@ -4336,6 +4372,7 @@ mod tests {
             .unwrap();
             let status = call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap();
             assert_eq!(status["dof"], json!(dof), "{tool}");
+            assert_eq!(status["redundant"], json!([]), "{tool}");
             let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
             let first = geometry
                 .as_array()
@@ -4530,7 +4567,7 @@ mod tests {
         .unwrap();
         let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
         let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
-        let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
+        let near = |a: [f64; 3], b: [f64; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
         assert!(
             near(feature.plane.origin, [5.0, 0.0, 3.0]),
             "{:?}",
@@ -4607,7 +4644,7 @@ mod tests {
         assert_eq!(wires.len(), 1);
         let corner = copied.geometry.iter().any(|g| matches!(
             g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(10.0, 6.0)).length() < 1e-4
         ));
         assert!(
             corner,
@@ -4635,7 +4672,7 @@ mod tests {
         let with_datum = sketch_of(&doc, &second);
         let crossing = with_datum.geometry.iter().any(|g| matches!(
             g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(10.0, 0.0)).length() < 1e-3
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(10.0, 0.0)).length() < 1e-3
         ));
         assert!(
             crossing,
@@ -4658,7 +4695,7 @@ mod tests {
         let mut edited = SketchFeature::from_json(&data).unwrap();
         for g in &mut edited.sketch.geometry {
             if let GeometryElement::Point(p) = g
-                && (p.position.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4
+                && (p.position.to_glam() - glam::DVec2::new(10.0, 6.0)).length() < 1e-4
             {
                 p.position = crate::sketch::Vec2D::new(12.0, 7.0);
             }
@@ -4676,7 +4713,7 @@ mod tests {
         }
         let moved = feature.sketch.geometry.iter().any(|g| matches!(
             g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(12.0, 7.0)).length() < 1e-4
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(12.0, 7.0)).length() < 1e-4
         ));
         assert!(moved, "the copy's corner followed");
     }
@@ -4688,7 +4725,7 @@ mod tests {
             .sketch
     }
 
-    fn line_length(sketch: &Sketch, id: &Value) -> f32 {
+    fn line_length(sketch: &Sketch, id: &Value) -> f64 {
         let id = Uuid::parse_str(id.as_str().unwrap()).unwrap();
         let Some(GeometryElement::Line(l)) = sketch.get_geometry(id) else {
             panic!("not a line")
@@ -5121,6 +5158,116 @@ mod tests {
                 .to_string()
                 .contains("cannot read the font")
         );
+    }
+
+    /// A font found installed by its family is kept in the document under
+    /// the family the font gives, and text in it is made again from the
+    /// kept copy once the document is read back where no such font is
+    /// installed.
+    #[test]
+    fn an_installed_font_is_kept_and_reopens_without_it() {
+        const FAMILY: &str = "Printcad Kept Family";
+        let installed = |family: &str| {
+            family
+                .eq_ignore_ascii_case(FAMILY)
+                .then(|| crate::text::InstalledFont {
+                    family: FAMILY.to_string(),
+                    bytes: crate::text::FONTS[2].1.to_vec(),
+                    index: 0,
+                    file: Some("kept.ttf".to_string()),
+                })
+        };
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let mut spec = crate::text::TextSpec {
+            text: "A".to_string(),
+            font: "printcad kept family".to_string(),
+            ..Default::default()
+        };
+        crate::text::load_font_from(&mut doc, &mut spec, &installed).unwrap();
+        assert_eq!(spec.font, FAMILY, "the family as the font names it");
+        let asset = spec.font_asset.expect("kept");
+        assert_eq!(
+            doc.get_asset(asset).unwrap().metadata["family"],
+            json!(FAMILY)
+        );
+        let mut args = crate::text_args(&spec, None);
+        args["sketch"] = s.clone();
+        args["at"] = json!([0, 0]);
+        let made = call(&mut doc, "sketch.text", args).unwrap();
+
+        let bytes = doc.save_to_bytes(core_document::Compression::None).unwrap();
+        let mut reopened = Document::load_from_bytes(bytes).unwrap();
+        assert!(crate::text::installed_font(FAMILY).is_none());
+        call(
+            &mut reopened,
+            "sketch.text_edit",
+            json!({"sketch": s, "block": made["text"], "text": "AB"}),
+        )
+        .expect("made again from the kept font");
+        let block = sketch_of(&reopened, &s).texts[0].clone();
+        assert_eq!(block.text, "AB");
+        assert_eq!(block.font, FAMILY);
+        assert_eq!(block.font_asset, Some(asset));
+
+        let missing = call(
+            &mut reopened,
+            "sketch.text",
+            json!({"sketch": s, "text": "C", "at": [0, 20], "font": FAMILY}),
+        );
+        assert!(
+            missing
+                .unwrap_err()
+                .to_string()
+                .contains("is installed here"),
+            "a family neither installed nor kept is refused with why"
+        );
+    }
+
+    /// A text block's size set by a variable: the outlines the document
+    /// builds from are made again at its value, keeping their elements,
+    /// and the block's stored data is left as it was made.
+    #[test]
+    fn a_variable_sets_a_texts_size() {
+        let registry = registry();
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let made = call(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": s, "text": "I", "at": [0, 0], "size": 10}),
+        )
+        .unwrap();
+        let block = made["text"].as_str().unwrap().to_string();
+        let sizes = doc.add_variable_set("Label").unwrap();
+        doc.set_variable(sizes, "height", "10 mm", None).unwrap();
+        doc.set_feature_formula(
+            feature_id(&s),
+            format!("{block}/size"),
+            Some("Label.height".into()),
+        )
+        .unwrap();
+        let height = |doc: &Document| {
+            let built = crate::stored_sketch(doc, feature_id(&s)).unwrap().sketch;
+            let ys: Vec<f64> = crate::text::outline_points(&built)
+                .iter()
+                .filter_map(|p| built.point_position(*p))
+                .map(|p| p.y)
+                .collect();
+            let elements = built.texts[0].elements.clone();
+            let top = ys.iter().copied().fold(f64::MIN, f64::max);
+            let bottom = ys.iter().copied().fold(f64::MAX, f64::min);
+            (top - bottom, elements)
+        };
+        registry.evaluate(&mut doc);
+        let (small, elements) = height(&doc);
+        doc.set_variable(sizes, "height", "25 mm", None).unwrap();
+        registry.evaluate(&mut doc);
+        let (large, kept) = height(&doc);
+        assert!((large / small - 2.5).abs() < 1e-6, "{small} then {large}");
+        assert_eq!(kept, elements, "the same elements, reshaped");
+        let stored = sketch_of(&doc, &s).texts[0].clone();
+        assert_eq!(stored.size, 10.0, "the stored data is as it was made");
     }
 
     #[test]

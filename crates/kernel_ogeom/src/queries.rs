@@ -3,8 +3,8 @@
 
 use kernel_api::{
     CentreLine, FaceProbe, KernelError, KernelQueries, KernelResult, MedialPath, MedialRegion,
-    Narrowest, Overlap, ProbeAnswer, Profile, ProfilePlane, ProjectedEdge, ShapeProbe,
-    TessellationSettings, TriMesh,
+    Narrowest, Overlap, PathFrame, PathFrames, ProbeAnswer, Profile, ProfilePlane, ProjectedEdge,
+    ShapeProbe, TessellationSettings, TriMesh,
 };
 use ogeom::algo::{MedialGraph, linear_properties, medial_graph, volume_properties};
 use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_plane};
@@ -323,6 +323,51 @@ impl KernelQueries for OgeomQueries {
         in_plane(projected)
     }
 
+    fn edge_frames(
+        &self,
+        brep: &[u8],
+        near: [f64; 3],
+        stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        let probe = Point::new(near[0], near[1], near[2]);
+        let (edge, distance) =
+            crate::ops::dressup::nearest_with_distance(&mut model, &root, ShapeType::Edge, probe)
+                .map_err(other)?;
+        if distance > crate::ops::dressup::pick_reach(&model, &root) {
+            return Err(other(format!(
+                "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
+                near[0], near[1], near[2]
+            )));
+        }
+        edge_frames_of(&model, &edge, stations)
+    }
+
+    fn wire_frames(
+        &self,
+        plane: &ProfilePlane,
+        wire: &kernel_api::ProfileWire,
+        stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        let curves = crate::profile::wire_curves(plane, wire).map_err(other)?;
+        frames_along(&curves, None, stations)
+    }
+
+    fn pattern_transforms(
+        &self,
+        brep: Option<&[u8]>,
+        steps: &[kernel_api::PatternStep],
+    ) -> KernelResult<Vec<[[f64; 4]; 4]>> {
+        let (mut model, root) = match brep {
+            Some(brep) => {
+                let (model, root) = tess::read_blob(brep)?;
+                (model, Some(root))
+            }
+            None => (Model::new(), None),
+        };
+        crate::ops::pattern_steps::transforms(&mut model, root.as_ref(), steps).map_err(other)
+    }
+
     fn section_face(
         &self,
         brep: &[u8],
@@ -347,6 +392,67 @@ impl KernelQueries for OgeomQueries {
                 in_plane(project_edge_onto_plane(&model, edge, &plane, tol).map_err(other)?)
             })
             .collect()
+    }
+
+    fn section(
+        &self,
+        brep: &[u8],
+        plane: &ProfilePlane,
+        near: Option<[f64; 3]>,
+    ) -> KernelResult<Vec<kernel_api::SectionRun>> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        let plane = plane_of(plane)?;
+        let edges = match near {
+            Some(near) => {
+                let face = nearest_of(
+                    &mut model,
+                    &root,
+                    ShapeType::Face,
+                    Point::new(near[0], near[1], near[2]),
+                )
+                .map_err(other)?;
+                face_section(&mut model, &root, &face, &plane)?
+            }
+            None => shape_section(&mut model, &root, &plane)?,
+        };
+        section_runs(&model, &edges, &plane)
+    }
+
+    fn face_loops(
+        &self,
+        brep: &[u8],
+        near: [f64; 3],
+    ) -> KernelResult<Vec<Vec<kernel_api::LoopEdge>>> {
+        let tol = tess::tolerances();
+        let (mut model, root) = tess::read_blob(brep)?;
+        let face = nearest_of(
+            &mut model,
+            &root,
+            ShapeType::Face,
+            Point::new(near[0], near[1], near[2]),
+        )
+        .map_err(other)?;
+        // A face keeps its outer wire first, each carrying the face's
+        // orientation.
+        let mut loops = Vec::new();
+        for wire in model.children_of(&face).map_err(other)? {
+            let edges = model.ordered_children_of(&wire).map_err(other)?;
+            let mut walked = Vec::with_capacity(edges.len());
+            for edge in &edges {
+                // An edge with no curve (a cone's apex) has nothing to walk.
+                let Ok(points) = edge_points(&model, edge, Deflection::default(), tol) else {
+                    continue;
+                };
+                walked.push(kernel_api::LoopEdge {
+                    points,
+                    seam: edges.iter().filter(|e| e.is_same(edge)).count() > 1,
+                });
+            }
+            if !walked.is_empty() {
+                loops.push(walked);
+            }
+        }
+        Ok(loops)
     }
 
     fn face_of(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<u8>> {
@@ -508,33 +614,10 @@ fn face_section(
                 .is_ok_and(|faces| faces.iter().any(|f| f.is_same(face)))
         })
         .ok_or_else(|| other("the face is on no solid"))?;
-    // A plane clear of the face's box crosses none of it.
-    let frame = plane.frame();
-    let (origin, normal) = (frame.origin(), frame.z().vector());
-    let sides: Vec<f64> = ogeom::algo::shape_bounds(model, face, tol)
-        .map_err(other)?
-        .corners()
-        .into_iter()
-        .map(|corner| normal.dot(corner - origin))
-        .collect();
-    let reach = tol.confusion();
-    if sides.iter().all(|d| *d > reach) || sides.iter().all(|d| *d < -reach) {
+    if misses(model, face, plane)? {
         return Ok(Vec::new());
     }
-    let surface = ogeom::geom::PlaneSurface::over(*plane, (-1.0e6, 1.0e6), (-1.0e6, 1.0e6))
-        .map_err(|e| other(format!("the section plane: {e}")))?;
-    let cutter =
-        ogeom::algo::make_natural_face(model, ogeom::geom::SurfaceGeometry::Plane(surface))
-            .map_err(|e| other(format!("the section plane: {e}")))?
-            .shape;
-    let below = origin - normal;
-    let half = ogeom::algo::make_half_space(model, &cutter, below, tol)
-        .map_err(|e| other(format!("the section plane: {e}")))?
-        .shape;
-    let section = ogeom::boolean::section(model, &solid, &half, tol)
-        .map_err(|e| other(format!("the solid could not be cut by the plane: {e}")))?
-        .shape;
-    let edges = explore_unique(model, &section, ShapeType::Edge).map_err(other)?;
+    let edges = solid_section(model, &solid, plane)?;
     let mut on_face = Vec::new();
     for edge in edges {
         // Along the edge, away from its ends, where an edge of the next
@@ -558,6 +641,151 @@ fn face_section(
         }
     }
     Ok(on_face)
+}
+
+/// The edges where `plane` crosses `root`: each of its solids sectioned by
+/// the half space the plane bounds, or, a shape with no solid, its faces
+/// cut by the plane.
+fn shape_section(model: &mut Model, root: &Shape, plane: &Plane) -> KernelResult<Vec<Shape>> {
+    let tol = tess::tolerances();
+    if misses(model, root, plane)? {
+        return Ok(Vec::new());
+    }
+    let solids = crate::ops::solids_of(model, root);
+    if solids.is_empty() {
+        let section = ogeom::boolean::section_face(model, root, plane, tol)
+            .map_err(|e| other(format!("the shape could not be cut by the plane: {e}")))?
+            .shape;
+        return explore_unique(model, &section, ShapeType::Edge).map_err(other);
+    }
+    let mut edges = Vec::new();
+    for solid in solids {
+        if !misses(model, &solid, plane)? {
+            edges.extend(solid_section(model, &solid, plane)?);
+        }
+    }
+    Ok(edges)
+}
+
+/// `plane` clear of the box round `shape`, so it crosses none of it.
+fn misses(model: &Model, shape: &Shape, plane: &Plane) -> KernelResult<bool> {
+    let tol = tess::tolerances();
+    let frame = plane.frame();
+    let (origin, normal) = (frame.origin(), frame.z().vector());
+    let sides: Vec<f64> = ogeom::algo::shape_bounds(model, shape, tol)
+        .map_err(other)?
+        .corners()
+        .into_iter()
+        .map(|corner| normal.dot(corner - origin))
+        .collect();
+    let reach = tol.confusion();
+    Ok(sides.iter().all(|d| *d > reach) || sides.iter().all(|d| *d < -reach))
+}
+
+/// The edges where `solid`'s boundary crosses `plane`.
+fn solid_section(model: &mut Model, solid: &Shape, plane: &Plane) -> KernelResult<Vec<Shape>> {
+    let tol = tess::tolerances();
+    let frame = plane.frame();
+    let (origin, normal) = (frame.origin(), frame.z().vector());
+    let surface = ogeom::geom::PlaneSurface::over(*plane, (-1.0e6, 1.0e6), (-1.0e6, 1.0e6))
+        .map_err(|e| other(format!("the section plane: {e}")))?;
+    let cutter =
+        ogeom::algo::make_natural_face(model, ogeom::geom::SurfaceGeometry::Plane(surface))
+            .map_err(|e| other(format!("the section plane: {e}")))?
+            .shape;
+    let below = origin - normal;
+    let half = ogeom::algo::make_half_space(model, &cutter, below, tol)
+        .map_err(|e| other(format!("the section plane: {e}")))?
+        .shape;
+    let section = ogeom::boolean::section(model, solid, &half, tol)
+        .map_err(|e| other(format!("the solid could not be cut by the plane: {e}")))?
+        .shape;
+    explore_unique(model, &section, ShapeType::Edge).map_err(other)
+}
+
+/// How near two ends of section curves come and still be one point, mm.
+const JOINED_MM: f64 = 1e-3;
+
+/// `edges` (all in `plane`) chained end to end into runs, each curve in
+/// the plane's coordinates and drawn along its run.
+fn section_runs(
+    model: &Model,
+    edges: &[Shape],
+    plane: &Plane,
+) -> KernelResult<Vec<kernel_api::SectionRun>> {
+    let tol = tess::tolerances();
+    let mut curves: Vec<kernel_api::SectionCurve> = Vec::new();
+    for edge in edges {
+        let points = edge_points(model, edge, Deflection::default(), tol)?;
+        if points.len() < 2 {
+            continue;
+        }
+        // A section edge lies in the plane: projecting it onto the plane
+        // names the curve it is there.
+        let curve = in_plane(project_edge_onto_plane(model, edge, plane, tol).map_err(other)?)?;
+        curves.push(kernel_api::SectionCurve {
+            curve,
+            points,
+            reversed: false,
+        });
+    }
+    let near = |a: Option<&[f64; 3]>, b: Option<&[f64; 3]>| {
+        a.zip(b).is_some_and(|(a, b)| distance(*a, *b) <= JOINED_MM)
+    };
+    let mut runs = Vec::new();
+    while let Some(first) = curves.pop() {
+        let mut run = std::collections::VecDeque::from([first]);
+        let closes = |run: &std::collections::VecDeque<kernel_api::SectionCurve>| {
+            near(
+                run.front().and_then(|c| c.points.first()),
+                run.back().and_then(|c| c.points.last()),
+            )
+        };
+        // On from the tail, then back from the head, until nothing meets
+        // the end or the run closes.
+        for forward in [true, false] {
+            while !closes(&run) {
+                let end = if forward {
+                    run.back().and_then(|c| c.points.last())
+                } else {
+                    run.front().and_then(|c| c.points.first())
+                };
+                let meets = |c: &kernel_api::SectionCurve| {
+                    let (start, finish) = (c.points.first(), c.points.last());
+                    if forward {
+                        (near(start, end), near(finish, end))
+                    } else {
+                        (near(finish, end), near(start, end))
+                    }
+                };
+                let Some((i, turned)) =
+                    curves.iter().enumerate().find_map(|(i, c)| match meets(c) {
+                        (true, _) => Some((i, false)),
+                        (_, true) => Some((i, true)),
+                        _ => None,
+                    })
+                else {
+                    break;
+                };
+                let mut next = curves.swap_remove(i);
+                if turned {
+                    next.points.reverse();
+                    next.reversed = !next.reversed;
+                }
+                if forward {
+                    run.push_back(next);
+                } else {
+                    run.push_front(next);
+                }
+            }
+        }
+        let closed = closes(&run);
+        runs.push(kernel_api::SectionRun {
+            curves: run.into(),
+            closed,
+        });
+    }
+    Ok(runs)
 }
 
 /// Points of `edge` at fractions of its parameter range, in the model's
@@ -715,6 +943,99 @@ pub(crate) fn face_named(
         .max_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, face)| face)
         .ok_or_else(|| other("no face near the picked point"))
+}
+
+/// Frames at `stations` (fractions of its length) along `edge`, placed,
+/// walked from its curve's start.
+pub(crate) fn edge_frames_of(
+    model: &Model,
+    edge: &Shape,
+    stations: &[f64],
+) -> KernelResult<PathFrames> {
+    let (curve, placement) = edge_curve(model, edge)?;
+    frames_along(&[curve], Some(&placement), stations)
+}
+
+/// `edge`'s curve over the range it covers, and where the edge places it.
+pub(crate) fn edge_curve(
+    model: &Model,
+    edge: &Shape,
+) -> KernelResult<(crate::profile::SegmentCurve, ogeom::math::Transform)> {
+    let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
+        return Err(other("the shape holds no edge there"));
+    };
+    let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
+        return Err(other("the edge has no curve"));
+    };
+    let geometry = model
+        .geometry()
+        .curve(*curve)
+        .ok_or_else(|| other("the edge's curve is missing"))?
+        .clone();
+    let placement = edge.transform(model.datums()).map_err(other)?;
+    Ok(((geometry, *range), placement))
+}
+
+/// Frames at `stations` (fractions of the whole length) along `curves`
+/// walked one after another, each over its range from its start, moved by
+/// `placement` when there is one.
+pub(crate) fn frames_along(
+    curves: &[crate::profile::SegmentCurve],
+    placement: Option<&ogeom::math::Transform>,
+    stations: &[f64],
+) -> KernelResult<PathFrames> {
+    use ogeom::algo::{curve_length, parameter_at_length};
+    let tol = tess::tolerances();
+    let lengths = curves
+        .iter()
+        .map(|(curve, range)| curve_length(curve, *range, tol))
+        .collect::<Result<Vec<f64>, _>>()
+        .map_err(other)?;
+    let length: f64 = lengths.iter().sum();
+    if curves.is_empty() || length <= tol.confusion() {
+        return Err(other("the path has no length"));
+    }
+    let place = |p: Point| placement.map_or(p, |t| t.apply(p));
+    let turn = |v: Vector| placement.map_or(v, |t| t.apply_vector(v));
+    let ends = |i: usize, u: f64| curves[i].0.point_at(u, tol).map(place).map_err(other);
+    let start = ends(0, curves[0].1.0)?;
+    let last = curves.len() - 1;
+    let end = ends(last, curves[last].1.1)?;
+    let closed = start.distance(end) <= tol.confusion() * 10.0;
+    let mut frames = Vec::with_capacity(stations.len());
+    for &station in stations {
+        if !(0.0..=1.0).contains(&station) {
+            return Err(other(format!(
+                "station {station} is not a fraction of the path from 0 to 1"
+            )));
+        }
+        let mut target = station * length;
+        let mut index = 0;
+        while index < last && target > lengths[index] {
+            target -= lengths[index];
+            index += 1;
+        }
+        let (curve, range) = &curves[index];
+        let target = target.clamp(0.0, lengths[index]);
+        let u = parameter_at_length(curve, *range, target, tol).map_err(other)?;
+        let point = place(curve.point_at(u, tol).map_err(other)?);
+        let d = turn(curve.d1_at(u, tol).map_err(other)?);
+        let speed = d.magnitude();
+        if speed <= 1e-12 {
+            return Err(other(format!(
+                "the path has no direction at station {station}"
+            )));
+        }
+        frames.push(PathFrame {
+            point: [point.x, point.y, point.z],
+            tangent: [d.x / speed, d.y / speed, d.z / speed],
+        });
+    }
+    Ok(PathFrames {
+        length,
+        closed,
+        frames,
+    })
 }
 
 /// Points along an edge, placed, from its start to its end as the edge

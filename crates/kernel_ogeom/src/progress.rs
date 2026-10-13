@@ -92,8 +92,11 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::OffsetFaces { .. } => "Offsetting faces",
         SolidOp::MoveFaces { .. } => "Moving faces",
         SolidOp::Project { .. } => "Projecting a sketch",
+        SolidOp::Wrap { .. } => "Wrapping a sketch",
         SolidOp::Refine => "Refine",
-        SolidOp::Transform { .. } | SolidOp::TransformCopies { .. } => "Pattern",
+        SolidOp::Transform { .. } | SolidOp::TransformCopies { .. } | SolidOp::Pattern { .. } => {
+            "Pattern"
+        }
         SolidOp::Boolean { .. } => "Boolean",
         SolidOp::Shape { .. } => "Clone",
         SolidOp::Surface(op) => match op {

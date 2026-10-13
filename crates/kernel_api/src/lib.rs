@@ -1362,6 +1362,18 @@ pub enum SolidOp {
         transforms: Vec<[[f64; 4]; 4]>,
         originals: Vec<usize>,
     },
+    /// [`SolidOp::Transform`] whose transforms the chain works out from
+    /// `steps` where the op stands, so a step may follow an edge of the
+    /// solid as it is there. Occurrence 0 is the original; with it among
+    /// `skipped`, only the copies go in, as [`SolidOp::TransformCopies`].
+    Pattern {
+        steps: Vec<PatternStep>,
+        originals: Vec<usize>,
+        /// Occurrences left out, by index: 0 the original, then each copy
+        /// in the order the steps make them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        skipped: Vec<u32>,
+    },
     /// Boolean against an external solid (another body's shape snapshot,
     /// ogeom native-format text bytes).
     Boolean {
@@ -1386,6 +1398,18 @@ pub enum SolidOp {
     /// says whether the regions the curves enclose then stand out of the
     /// faces or sink into them by `height`.
     Project {
+        profile: Profile,
+        faces: Vec<FaceProbe>,
+        mode: ProjectMode,
+        height: f64,
+    },
+    /// A sketch unrolled onto the cylinder or cone its `faces` lie on, so
+    /// its lengths are kept on the surface: the sketch's middle lands where
+    /// a straight projection along its plane's normal puts it, and the
+    /// rest is laid round the surface from there, the way across the
+    /// axis turning about it and the way along the axis following it.
+    /// Otherwise as [`SolidOp::Project`].
+    Wrap {
         profile: Profile,
         faces: Vec<FaceProbe>,
         mode: ProjectMode,
@@ -1597,6 +1621,53 @@ impl SurfaceOp {
     }
 }
 
+/// One step of a [`SolidOp::Pattern`]: each applies to every occurrence of
+/// the steps before it, the original among them, which stands first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PatternStep {
+    /// A copy under each transform (rigid or not, row-major), the
+    /// original, untransformed, left out.
+    Transforms(Vec<[[f64; 4]; 4]>),
+    /// Copies along a path.
+    Path(PathLayout),
+}
+
+/// The path a [`PathLayout`] runs along, in the chain's frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PatternPath {
+    /// A chain of curves on a plane, walked from its first segment's
+    /// start.
+    Wire {
+        plane: ProfilePlane,
+        wire: ProfileWire,
+    },
+    /// The edge of the solid, where the step stands, that the probe finds,
+    /// walked from its curve's start.
+    Edge(EdgeProbe),
+}
+
+/// Occurrences at stations along a path by arc length, the original at
+/// the first: occurrence k is moved from where the first station stands
+/// to where the k-th does, turned as the path turns between them when
+/// `align`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PathLayout {
+    pub path: PatternPath,
+    /// Occurrences, the original counted.
+    pub count: u32,
+    /// Millimetres between neighbours along the path; `None` spreads them
+    /// over the whole of it, evenly round it when it closes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spacing: Option<f64>,
+    /// Walk the path from its end.
+    #[serde(default)]
+    pub reversed: bool,
+    /// Turn each copy as the path's direction turns from the first
+    /// station to its own, carried along the path without twisting.
+    #[serde(default)]
+    pub align: bool,
+}
+
 impl SolidOp {
     /// The op itself, out of any [`SolidOp::WithTolerance`] around it.
     pub fn inner(&self) -> &SolidOp {
@@ -1777,6 +1848,39 @@ pub enum ProjectedEdge {
     /// Any other curve, as points along it: exact at each point, straight
     /// between.
     Polyline(Vec<[f64; 2]>),
+}
+
+/// One curve where a plane crosses a shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionCurve {
+    /// The exact curve, in the plane's own 2D coordinates.
+    pub curve: ProjectedEdge,
+    /// Points along it, in the shape's own frame, in the order its run
+    /// goes.
+    pub points: Vec<[f64; 3]>,
+    /// The run goes against the way `curve` runs.
+    #[serde(default)]
+    pub reversed: bool,
+}
+
+/// Curves where a plane crosses a shape, end to end: a closed loop round
+/// a solid's cut, or an open run where a sheet's edge stops it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionRun {
+    pub curves: Vec<SectionCurve>,
+    pub closed: bool,
+}
+
+/// One edge of a face's boundary loop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoopEdge {
+    /// Points along it, in the shape's own frame, in the order the loop
+    /// walks it.
+    pub points: Vec<[f64; 3]>,
+    /// The edge a round face meets itself along: it turns up twice in
+    /// its loop, once each way.
+    #[serde(default)]
+    pub seam: bool,
 }
 
 /// The curves of a 2D drawing file, in the drawing's own coordinates.
@@ -2039,6 +2143,26 @@ pub struct EdgeContinuity {
 /// with the normal its curvature is signed against.
 pub type FacePoints = ([f64; 3], Vec<([f64; 3], [f64; 3])>);
 
+/// A point on a path and the way the path runs there.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PathFrame {
+    pub point: [f64; 3],
+    /// A unit vector along the path, the way it is walked.
+    pub tangent: [f64; 3],
+}
+
+/// Stations along a path, by arc length: what is repeated along a curve
+/// stands at them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PathFrames {
+    /// The path's whole length, mm.
+    pub length: f64,
+    /// Whether the path ends where it starts.
+    pub closed: bool,
+    /// One per station asked for, in the order asked.
+    pub frames: Vec<PathFrame>,
+}
+
 pub trait KernelQueries: Send + Sync {
     /// Every edge two faces of `brep` share, with how they meet there.
     fn continuity(&self, _brep: &[u8]) -> KernelResult<Vec<EdgeContinuity>> {
@@ -2112,6 +2236,44 @@ pub trait KernelQueries: Send + Sync {
         plane: &ProfilePlane,
     ) -> KernelResult<ProjectedEdge>;
 
+    /// Points and tangents along the edge of `brep` nearest `near` (within
+    /// a pick's reach of it), from the start of its curve: one per entry of
+    /// `stations`, each a fraction of the edge's length (0 its start, 1 its
+    /// end) placed by arc length, not by the curve's parameter. Everything
+    /// is in the shape's own frame.
+    fn edge_frames(
+        &self,
+        _brep: &[u8],
+        _near: [f64; 3],
+        _stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        Err(KernelError::Unsupported("points along an edge".into()))
+    }
+
+    /// Points and tangents along `wire` on `plane`, walked from its first
+    /// segment's start: one per entry of `stations`, each a fraction of the
+    /// wire's whole length placed by arc length, as `edge_frames`.
+    fn wire_frames(
+        &self,
+        _plane: &ProfilePlane,
+        _wire: &ProfileWire,
+        _stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        Err(KernelError::Unsupported("points along a wire".into()))
+    }
+
+    /// Where every occurrence of a [`SolidOp::Pattern`] with `steps` stands,
+    /// as row-major transforms from the original's place, the original's
+    /// (the identity) first: what the chain works out, with `brep` (in the
+    /// pattern's frame) as the solid a step's edge is found on.
+    fn pattern_transforms(
+        &self,
+        _brep: Option<&[u8]>,
+        _steps: &[PatternStep],
+    ) -> KernelResult<Vec<[[f64; 4]; 4]>> {
+        Err(KernelError::Unsupported("pattern transforms".into()))
+    }
+
     /// The face of `brep` nearest `near` (in the shape's own frame), as a
     /// native-format snapshot of its own: what a face taken from a solid
     /// keeps once the solid moves on.
@@ -2133,6 +2295,25 @@ pub trait KernelQueries: Send + Sync {
         _plane: &ProfilePlane,
     ) -> KernelResult<Vec<ProjectedEdge>> {
         Err(KernelError::Unsupported("face section".into()))
+    }
+
+    /// Where `plane` crosses `brep`, chained end to end, each curve exact
+    /// in the plane's own 2D coordinates and drawn in the shape's own
+    /// frame: the whole shape's section, or with `near` only the face
+    /// nearest it. Empty when the plane misses.
+    fn section(
+        &self,
+        _brep: &[u8],
+        _plane: &ProfilePlane,
+        _near: Option<[f64; 3]>,
+    ) -> KernelResult<Vec<SectionRun>> {
+        Err(KernelError::Unsupported("section".into()))
+    }
+
+    /// The boundary loops of the face of `brep` nearest `near`, the outer
+    /// one first, each edge in loop order, in the shape's own frame.
+    fn face_loops(&self, _brep: &[u8], _near: [f64; 3]) -> KernelResult<Vec<Vec<LoopEdge>>> {
+        Err(KernelError::Unsupported("face loops".into()))
     }
 
     /// The curves of a DXF drawing, given as its text.

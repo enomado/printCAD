@@ -34,6 +34,10 @@ struct Session {
     wb: SketchWorkbench,
     active: Option<FeatureId>,
     recorded: Vec<Recorded>,
+    /// The kernel the host hands the bench, when a test has a model.
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    /// The model's edges the host has picked.
+    edges: Vec<core_document::EdgeRef>,
 }
 
 impl Session {
@@ -50,6 +54,8 @@ impl Session {
         let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
         ctx.view_proj = Some(view_proj());
         ctx.active_document_object = active;
+        ctx.kernel = self.kernel;
+        ctx.selected_edges = self.edges.clone();
         self.wb.on_input(&event, tool, &mut ctx);
         let outcome = HookOutcome::take(&mut ctx);
         self.active = outcome.active_document_object;
@@ -57,6 +63,8 @@ impl Session {
         let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
         ctx.view_proj = Some(view_proj());
         ctx.active_document_object = self.active;
+        ctx.kernel = self.kernel;
+        ctx.selected_edges = self.edges.clone();
         self.wb.on_frame(0.016, &mut ctx);
         self.recorded.extend(HookOutcome::take(&mut ctx).recorded);
     }
@@ -92,6 +100,23 @@ impl Session {
         self.release(x, y, tool);
     }
 
+    /// A click on the model's edge `edge` where the view shows it, which
+    /// the host takes and picks the edge with.
+    fn pick_edge(&mut self, edge: core_document::EdgeRef) {
+        let viewport_pos = self.ctx().world_to_viewport(edge.point).unwrap();
+        let press = WorkbenchInputEvent::MousePress {
+            button: MouseButton::Left,
+            viewport_pos,
+        };
+        self.event(press, Some("sketch.select"));
+        self.edges = vec![edge];
+        let release = WorkbenchInputEvent::MouseRelease {
+            button: MouseButton::Left,
+            viewport_pos,
+        };
+        self.event(release, Some("sketch.select"));
+    }
+
     fn move_to(&mut self, x: f32, y: f32, tool: &str) {
         let viewport_pos = self.px(x, y);
         self.event(WorkbenchInputEvent::MouseMove { viewport_pos }, Some(tool));
@@ -124,6 +149,7 @@ struct Replay {
     doc: Document,
     wb: SketchWorkbench,
     specs: Vec<CommandSpec>,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
 impl scripting::Host for Replay {
@@ -139,6 +165,7 @@ impl scripting::Host for Replay {
             .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
         spec.check(&args)?;
         let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
+        ctx.kernel = self.kernel;
         self.wb.run_command(id, &args, &mut ctx)
     }
 }
@@ -232,7 +259,7 @@ fn a_session_recorded_through_the_ui_replays_to_the_same_sketch() {
         s.recorded
     );
 
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// Lines snapped parallel and square to another, a point on its extension,
@@ -254,7 +281,6 @@ fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
     s.move_to(1.0, 10.0, "sketch.select");
     s.release(1.0, 10.0, "sketch.select");
 
-    let done = summary(&s.sketch(id));
     for kind in ["Parallel", "Perpendicular", "PointOnLine", "Coincident"] {
         let held = s
             .sketch(id)
@@ -270,7 +296,7 @@ fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
         "{:#?}",
         s.recorded
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// A line tool's arc, dragged from the end it draws from, records with the
@@ -295,17 +321,13 @@ fn a_dragged_arc_replays_as_it_was_drawn() {
         .filter(|r| r.id == "sketch.draw")
         .collect();
     assert_eq!(draws.len(), 1, "one line tool run: {:#?}", s.recorded);
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// Write `recorded` as a script, run it on `before`, and check sketch `id`
 /// comes out as `done`.
-fn assert_replays(
-    recorded: &[Recorded],
-    before: Document,
-    id: FeatureId,
-    done: &(Vec<(i64, i64)>, Vec<&'static str>, Vec<String>),
-) {
+fn assert_replays(recorded: &[Recorded], before: Document, id: FeatureId, live: &Sketch) {
+    let done = summary(live);
     let mut recorder = scripting::Recorder::default();
     for call in recorded {
         recorder.push(call);
@@ -317,15 +339,30 @@ fn assert_replays(
         doc: before,
         wb: SketchWorkbench::default(),
         specs: context.commands().to_vec(),
+        kernel: Some(&crate::block_kernel::BLOCK),
     };
     let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
     assert_eq!(out.error, None, "{script}");
-    let replayed = summary(
-        &SketchFeature::from_json(replay.doc.get_feature_data(id).unwrap())
-            .unwrap()
-            .sketch,
-    );
-    assert_eq!(&replayed, done, "{script}");
+    let replayed = SketchFeature::from_json(replay.doc.get_feature_data(id).unwrap())
+        .unwrap()
+        .sketch;
+    assert_eq!(summary(&replayed), done, "{script}");
+    assert_eq!(point_bits(&replayed), point_bits(live), "{script}");
+}
+
+/// Every point's coordinates as bits, in order: a replay that meets the
+/// session to the last bit has the same.
+fn point_bits(sketch: &Sketch) -> Vec<(u64, u64)> {
+    let mut points: Vec<(u64, u64)> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some((p.position.x.to_bits(), p.position.y.to_bits())),
+            _ => None,
+        })
+        .collect();
+    points.sort();
+    points
 }
 
 fn session_on_a_sketch() -> (Session, FeatureId, Document) {
@@ -334,6 +371,8 @@ fn session_on_a_sketch() -> (Session, FeatureId, Document) {
         wb: SketchWorkbench::default(),
         active: None,
         recorded: Vec::new(),
+        kernel: None,
+        edges: Vec::new(),
     };
     let plane = Sketch::new("s").plane;
     let id = s
@@ -392,7 +431,7 @@ fn typed_lengths_polyline_arcs_and_a_spline_replay_too() {
         done.1.contains(&"arc") && done.1.contains(&"bspline"),
         "{done:?}"
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -427,7 +466,7 @@ fn typed_sweeps_widths_and_a_first_point_replay_too() {
     let sketch = s.sketch(id);
     let done = summary(&sketch);
     assert!(done.1.contains(&"arc"), "{done:?}");
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 impl Session {
@@ -448,7 +487,7 @@ type Summary = (Vec<(i64, i64)>, Vec<&'static str>, Vec<String>);
 
 /// Every sketch of a document by name, with its plane and what it holds.
 fn all_sketches(doc: &Document) -> Vec<(String, [i64; 9], Summary)> {
-    let r = |v: f32| (v * 1000.0).round() as i64;
+    let r = |v: f64| (v * 1000.0).round() as i64;
     let mut out: Vec<_> = doc
         .feature_tree()
         .all_nodes()
@@ -522,6 +561,7 @@ fn arrays_clipboard_mirrors_planes_and_clearing_replay_too() {
         doc: before,
         wb: SketchWorkbench::default(),
         specs: context.commands().to_vec(),
+        kernel: None,
     };
     let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
     assert_eq!(out.error, None, "{script}");
@@ -552,7 +592,7 @@ fn turned_rectangles_and_a_frame_replay_too() {
         s.recorded.iter().filter(|r| r.id == "sketch.draw").count(),
         3
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -570,10 +610,9 @@ fn a_trim_stroke_replays_as_one_call() {
     s.move_to(18.0, 3.0, "sketch.trim");
     s.release(18.0, 3.0, "sketch.trim");
     s.key(KeyCode::A, None);
-    let done = summary(&s.sketch(id));
     let draws = s.recorded.iter().filter(|r| r.id == "sketch.draw").count();
     assert_eq!(draws, 5, "four lines and one stroke: {:#?}", s.recorded);
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -595,8 +634,7 @@ fn a_spline_through_points_replays_too() {
         .filter(|g| matches!(g, GeometryElement::BSpline(b) if !b.fit_points.is_empty()))
         .count();
     assert_eq!(fitted, 2);
-    let done = summary(&sketch);
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -637,7 +675,7 @@ fn joining_a_polyline_leaves_one_spline_and_replays() {
     let done = summary(&sketch);
     assert_eq!(done.1, ["bspline"], "{done:?}");
     assert!(s.recorded.iter().any(|r| r.id == "sketch.join"));
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -653,7 +691,7 @@ fn conic_arcs_replay_too() {
     s.key(KeyCode::A, None);
     let done = summary(&s.sketch(id));
     assert_eq!(done.1, ["conic", "conic", "conic"], "{done:?}");
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -674,7 +712,6 @@ fn editing_aids_replay_too() {
     s.key(KeyCode::A, Some("sketch.remove_axis_alignment"));
     s.key(KeyCode::Escape, Some("sketch.select"));
     s.key(KeyCode::A, Some("sketch.section_view"));
-    let done = summary(&s.sketch(id));
     let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(
         kinds,
@@ -688,7 +725,7 @@ fn editing_aids_replay_too() {
         "{:#?}",
         s.recorded
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// The character a number key types, as the app sends it after the key.
@@ -709,4 +746,45 @@ fn number_text(key: KeyCode) -> Option<&'static str> {
         KeyCode::Minus => "-",
         _ => return None,
     })
+}
+
+/// Constraints taken to edges and a vertex of the model replay: each new
+/// projection as `sketch.external` before the constraint naming what it
+/// made, and a vertex of an edge already in the sketch named as it is.
+#[test]
+fn constraints_on_model_edges_replay_with_their_projections() {
+    use crate::block_kernel::{BLOCK, DEPTH, add_block, edge_at};
+    let (mut s, id, _) = session_on_a_sketch();
+    let body = add_block(&mut s.doc);
+    s.kernel = Some(&BLOCK);
+    let before = s.doc.clone();
+    s.click(5.0, 5.0, "sketch.point");
+    s.click(14.0, 13.0, "sketch.point");
+    s.key(KeyCode::Escape, Some("sketch.point"));
+
+    // The first point's distance to the block's left edge, then the
+    // second point onto the corner that edge ends at.
+    s.click(5.0, 5.0, "sketch.select");
+    s.key(KeyCode::A, Some("sketch.constrain.distance"));
+    s.pick_edge(edge_at(body, [20.0, 5.0, DEPTH], [0.0, 1.0, 0.0]));
+    s.click(14.0, 13.0, "sketch.select");
+    s.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    s.pick_edge(edge_at(body, [20.0, 9.9, DEPTH], [0.0, 1.0, 0.0]));
+
+    let sketch = s.sketch(id);
+    assert_eq!(sketch.external.len(), 1, "{:?}", sketch.external);
+    assert_eq!(sketch.constraints.len(), 2, "{:?}", sketch.constraints);
+    let kinds: Vec<&str> = s
+        .recorded
+        .iter()
+        .map(|r| r.id.as_str())
+        .filter(|id| *id != "sketch.draw")
+        .collect();
+    assert_eq!(
+        kinds,
+        ["sketch.external", "sketch.constrain", "sketch.constrain"],
+        "{:#?}",
+        s.recorded
+    );
+    assert_replays(&s.recorded, before, id, &sketch);
 }

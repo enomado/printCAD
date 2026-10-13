@@ -376,7 +376,7 @@ fn a_note_is_written_to_step_as_a_callout_where_its_body_sits() {
 }
 
 #[test]
-#[ignore = "kernel: a callout carries no text of its own (no TEXT_LITERAL written or read), so a note's words ride in its name and read back as an unclassified annotation"]
+#[ignore = "kernel: a callout carries no text of its own (no TEXT_LITERAL written or read), so a note's words ride in its name and read back as an unclassified annotation (ogeom-rs#228)"]
 fn a_note_written_to_step_reads_back_as_a_note() {
     let back = noted_box_round_trip();
     let note = back
@@ -385,4 +385,58 @@ fn a_note_written_to_step_reads_back_as_a_note() {
         .find(|a| a.text == "Deburr this edge")
         .expect("the note reads back");
     assert_eq!(note.kind, kernel_api::AnnotationKind::Note);
+}
+
+/// A thread's callout written with the second of two parts reads back as
+/// that part's: the callout names the bore it threads, so a reader puts
+/// the designation on the right part of an assembly.
+#[test]
+#[ignore = "kernel: a callout names no topology unless it draws a measured annotation, and write_step anchors every semantic annotation to the first part's product definition, so a thread's designation cannot be tied to the bore of the part it threads (ogeom-rs#227)"]
+fn a_thread_callout_reads_back_on_the_part_it_threads() {
+    use kernel_ogeom::export::{ExportNote, export_with_notes};
+    let first = import(&fixture("box_native.step"));
+    let second = import(&fixture("box.step"));
+    let (a, b) = (&first.bodies[0], &second.bodies[0]);
+    let bodies = [
+        ExportBody {
+            name: "plain".into(),
+            brep: Some(&a.brep_blob),
+            transform: None,
+            mesh: &a.mesh,
+            finish: None,
+        },
+        ExportBody {
+            name: "threaded".into(),
+            brep: Some(&b.brep_blob),
+            transform: None,
+            mesh: &b.mesh,
+            finish: None,
+        },
+    ];
+    let notes = [ExportNote {
+        body: 1,
+        text: "M6 thread".into(),
+        at: [1.0, 2.0, 3.0],
+        label: [1.0, 2.0, 13.0],
+    }];
+    let out = export_with_notes(
+        &bodies,
+        &notes,
+        ExportFormat::Step,
+        &TessellationSettings::default(),
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "printcad-export-thread-{}.step",
+        std::process::id()
+    ));
+    std::fs::write(&path, &out.bytes).unwrap();
+    let back = import(&path);
+    let _ = std::fs::remove_file(&path);
+    let thread = back
+        .annotations
+        .iter()
+        .find(|a| a.text == "M6 thread")
+        .expect("the thread reads back");
+    assert_eq!(thread.body_index, Some(1));
 }

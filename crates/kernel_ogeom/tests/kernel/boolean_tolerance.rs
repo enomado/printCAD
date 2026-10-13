@@ -12,7 +12,7 @@ use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D
 
 /// A square of `side` on the plane parallel to XY through `origin`, its
 /// corner there.
-fn square_at(origin: [f32; 3], side: f32) -> SketchFeature {
+fn square_at(origin: [f64; 3], side: f64) -> SketchFeature {
     let plane = SketchPlane {
         origin,
         ..SketchPlane::xy()
@@ -51,7 +51,7 @@ fn cube_body() -> (Document, BodyId) {
 
 /// The cube, and a second cube padded from a sketch at height `z`, its
 /// fuse at `tolerance`.
-fn stacked(z: f32, tolerance: Option<f32>) -> (Document, BodyId) {
+fn stacked(z: f64, tolerance: Option<f32>) -> (Document, BodyId) {
     let (mut doc, body) = cube_body();
     let upper = doc
         .add_feature_in_body(square_at([0.0, 0.0, z], 10.0), "upper".into(), Some(body))
@@ -182,5 +182,6 @@ fn a_tolerance_of_a_tenth_keeps_both_cubes() {
     let built = OgeomKernel::new()
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
-    assert!((volume(&built) - 1999.5).abs() < 0.01, "{}", volume(&built));
+    // Two 1000 mm³ cubes sharing a 0.05 mm slab of 100 mm².
+    assert!((volume(&built) - 1995.0).abs() < 0.01, "{}", volume(&built));
 }

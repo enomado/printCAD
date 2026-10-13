@@ -21,6 +21,8 @@ pub struct DocumentService {
     order: Vec<WorkbenchId>,
     /// Feature kind → the bench that claimed it.
     owners: HashMap<String, WorkbenchId>,
+    /// The kernel evaluation asks of solids (`Workbench::derive_on_geometry`).
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
 impl std::fmt::Debug for DocumentService {
@@ -38,6 +40,12 @@ struct WorkbenchEntry {
 }
 
 impl DocumentService {
+    /// The kernel evaluation asks of solids. Without one, geometry projected
+    /// from a solid's edges keeps its stored position until it is edited.
+    pub fn set_kernel(&mut self, kernel: &'static dyn kernel_api::KernelQueries) {
+        self.kernel = Some(kernel);
+    }
+
     pub fn register_workbench(&mut self, workbench: Box<dyn Workbench>) -> DocumentResult<()> {
         let descriptor = workbench.descriptor();
         if self.workbenches.contains_key(descriptor.id.as_str()) {
@@ -160,6 +168,18 @@ impl DocumentService {
             .map(|wb| wb.feature_info(node))
     }
 
+    /// The curves and points feature `id` lays out, asked of the bench
+    /// that claimed its kind.
+    pub fn feature_paths(
+        &self,
+        document: &Document,
+        id: crate::FeatureId,
+    ) -> Option<crate::FeaturePaths> {
+        let node = document.get_feature_meta(id)?;
+        self.owner_of(&node.workbench_id)?
+            .feature_paths(document, id, node)
+    }
+
     fn benches(&self) -> impl Iterator<Item = &dyn Workbench> {
         self.order
             .iter()
@@ -276,12 +296,12 @@ impl DocumentService {
                     .or_else(|| document.get_feature_data(id).cloned())
             };
             let mut moved = owner.derive(node, &mut values, &values_of, document);
-            moved |= owner.derive_on_geometry(node, &mut values, document);
             if node.workbench_id.as_str() != crate::datum::DATUM_KIND
                 && let Some(probed) = document.probed_references(node.id)
             {
                 moved |= owner.derive_on_solid(node, &mut values, probed);
             }
+            moved |= owner.derive_on_geometry(node, &mut values, document, self.kernel);
             // A datum takes what the last build found of what it stands on.
             if node.workbench_id.as_str() == crate::datum::DATUM_KIND {
                 let own = node.body;
@@ -314,6 +334,29 @@ impl DocumentService {
             evaluation.unsettled.insert(id, unsettled);
         }
         document.apply_evaluation(evaluation);
+        let threads = self.cosmetic_threads(document);
+        document.set_cosmetic_threads(threads);
+    }
+
+    /// The cosmetic threads of every feature in its body's build, in
+    /// history order, asked of the bench that claimed each feature's kind.
+    fn cosmetic_threads(&self, document: &Document) -> Vec<crate::ThreadCallout> {
+        let mut nodes: Vec<(&FeatureId, &FeatureNode)> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(id, node)| node.body.is_some() && document.feature_in_build(**id))
+            .collect();
+        nodes.sort_by_key(|(id, node)| (node.seq, **id));
+        nodes
+            .into_iter()
+            .filter_map(|(id, node)| {
+                Some(
+                    self.owner_of(&node.workbench_id)?
+                        .cosmetic_threads(document, *id, node),
+                )
+            })
+            .flatten()
+            .collect()
     }
 
     /// The parameter of `feature` that formulas call `name`, or whose key

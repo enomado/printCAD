@@ -418,6 +418,17 @@ pub struct PassiveGeometry {
     pub region: Option<PassiveRegion>,
 }
 
+/// What a feature lays out on its plane, in its body's own frame: chains
+/// of curves joined end to end, open or closed, each walked from its first
+/// segment, and points that stand alone.
+#[derive(Debug, Clone, Default)]
+pub struct FeaturePaths {
+    pub plane: kernel_api::ProfilePlane,
+    pub chains: Vec<kernel_api::ProfileWire>,
+    /// In the plane's own coordinates.
+    pub points: Vec<[f64; 2]>,
+}
+
 /// Closed loops a feature's lines bound, for the host to shade.
 #[derive(Debug, Clone)]
 pub struct PassiveRegion {
@@ -682,6 +693,32 @@ pub trait Workbench: Send {
         None
     }
 
+    /// The cosmetic threads an owned feature declares: each bore it
+    /// threads without cutting the thread, with its designation, in its
+    /// body's frame. Asked as the document evaluates, of `document`'s
+    /// evaluated values; the parts list, the annotations and export read
+    /// the answers (`Document::cosmetic_threads`).
+    fn cosmetic_threads(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+    ) -> Vec<crate::ThreadCallout> {
+        Vec::new()
+    }
+
+    /// The curves and points an owned feature lays out, for what is
+    /// repeated along or at them (an array of copies along a path or at
+    /// points). `None` when it lays out none.
+    fn feature_paths(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+    ) -> Option<FeaturePaths> {
+        None
+    }
+
     /// A problem an owned feature has that does not stop it building (a
     /// sketch whose projected edges are gone), which the tree warns of on
     /// its row. Asked whenever the tree is drawn, so it answers from what
@@ -815,13 +852,17 @@ pub trait Workbench: Send {
 
     /// Bring an owned feature's working data up to date with the bodies'
     /// geometry as it stands (a joint finds its faces again, by name, on a
-    /// body rebuilt). Answers whether it changed anything. Derived, never
+    /// body rebuilt; a sketch projects solids' edges again). `kernel`
+    /// answers what it asks of the solids, when the host has one. Runs
+    /// after `derive` and `derive_on_solid`, so it sees where those put
+    /// the feature. Answers whether it changed anything. Derived, never
     /// recorded.
     fn derive_on_geometry(
         &self,
         _node: &FeatureNode,
         _values: &mut serde_json::Value,
         _document: &Document,
+        _kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
         false
     }

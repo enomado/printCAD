@@ -213,12 +213,14 @@ fn datums_asking(
                     .probes(),
                 // A primitive attached by a mode asks what the attachment
                 // asks.
+                // A feature starting on a face of the solid asks where the
+                // face is.
                 "wb.design" => match DesignFeature::from_json(&n.data).ok()? {
                     DesignFeature::Primitive {
                         attached: Some(attached),
                         ..
                     } => attached.probes(),
-                    _ => return None,
+                    feature => vec![feature.start_face()?.probe()],
                 },
                 "wb.sketch" => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
@@ -445,7 +447,7 @@ pub fn invalidate_body(document: &mut Document, body: BodyId) {
     }
 }
 
-fn face_pick_plane(pick: &FacePick) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn face_pick_plane(pick: &FacePick) -> ([f64; 3], [f64; 3]) {
     (
         [
             pick.point[0] as f64,
@@ -616,6 +618,9 @@ fn plan_feature(
         if subtractive { cut } else { additive_boolean }
     };
 
+    if feature.start_face().is_some() {
+        start_face_is_flat(document, feature_id).map_err(&fail)?;
+    }
     let start_index = plan.ops.len();
     match &feature {
         DesignFeature::Pad { profile_face, .. } | DesignFeature::Pocket { profile_face, .. } => {
@@ -635,6 +640,7 @@ fn plan_feature(
         DesignFeature::Revolution {
             sketch,
             angle_deg,
+            start_angle_deg,
             axis,
             project_axis,
             reversed,
@@ -647,6 +653,7 @@ fn plan_feature(
         | DesignFeature::Groove {
             sketch,
             angle_deg,
+            start_angle_deg,
             axis,
             project_axis,
             reversed,
@@ -664,9 +671,17 @@ fn plan_feature(
                 ));
             }
             let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
-            let profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
+            let mut profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
             let axis_2d =
                 axis_in_sketch(document, &sketch_feature, axis, *project_axis).map_err(&fail)?;
+            if *start_angle_deg != 0.0 {
+                let turn = if *reversed {
+                    -*start_angle_deg
+                } else {
+                    *start_angle_deg
+                };
+                turn_plane(&mut profile.plane, axis_2d, f64::from(turn));
+            }
             let termination = match (mode, up_to_face) {
                 (RevolveMode::Angle, _) => RevolveTermination::Angle,
                 (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
@@ -1038,17 +1053,30 @@ fn plan_feature(
             faces,
             mode,
             height,
+            wrap,
         } => {
             if faces.is_empty() {
                 return Err(fail(
                     "select at least one face to project the sketch onto".into(),
                 ));
             }
-            plan.ops.push(SolidOp::Project {
-                profile: sketch_profile(document, *sketch, &[]).map_err(&fail)?,
-                faces: faces.iter().map(face_probe).collect(),
-                mode: *mode,
-                height: f64::from(*height),
+            let profile = sketch_profile(document, *sketch, &[]).map_err(&fail)?;
+            let faces = faces.iter().map(face_probe).collect();
+            let (mode, height) = (*mode, f64::from(*height));
+            plan.ops.push(if *wrap {
+                SolidOp::Wrap {
+                    profile,
+                    faces,
+                    mode,
+                    height,
+                }
+            } else {
+                SolidOp::Project {
+                    profile,
+                    faces,
+                    mode,
+                    height,
+                }
             });
         }
         DesignFeature::DeleteFaces { faces } => {
@@ -1088,18 +1116,20 @@ fn plan_feature(
         | DesignFeature::PolarPattern {
             originals, skipped, ..
         }
+        | DesignFeature::CircularPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PointPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PathPattern {
+            originals, skipped, ..
+        }
         | DesignFeature::MultiTransform {
             originals, skipped, ..
         } => {
             let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
-            let transforms: Vec<Mat4> = occurrence_transforms(document, feature)
-                .map_err(&fail)?
-                .into_iter()
-                .zip(0u32..)
-                .skip(1)
-                .filter(|(_, index)| !skipped.contains(index))
-                .map(|(transform, _)| transform)
-                .collect();
+            let steps = occurrence_steps(document, feature).map_err(&fail)?;
             if skipped.contains(&0) {
                 let starts_body = originals.iter().any(|&op| {
                     plan.ops.get(op).and_then(SolidOp::boolean_op) == Some(BooleanOp::NewSolid)
@@ -1111,15 +1141,35 @@ fn plan_feature(
                             .into(),
                     ));
                 }
-                plan.ops.push(SolidOp::TransformCopies {
-                    transforms,
+            }
+            match compose_steps(&steps) {
+                // A step follows a path: the chain finds its places on the
+                // solid as it stands where the pattern does.
+                None => plan.ops.push(SolidOp::Pattern {
+                    steps,
                     originals,
-                });
-            } else if !transforms.is_empty() {
-                plan.ops.push(SolidOp::Transform {
-                    transforms,
-                    originals,
-                });
+                    skipped: skipped.clone(),
+                }),
+                Some(composed) => {
+                    let transforms: Vec<Mat4> = composed
+                        .into_iter()
+                        .zip(0u32..)
+                        .skip(1)
+                        .filter(|(_, index)| !skipped.contains(index))
+                        .map(|(transform, _)| transform)
+                        .collect();
+                    if skipped.contains(&0) {
+                        plan.ops.push(SolidOp::TransformCopies {
+                            transforms,
+                            originals,
+                        });
+                    } else if !transforms.is_empty() {
+                        plan.ops.push(SolidOp::Transform {
+                            transforms,
+                            originals,
+                        });
+                    }
+                }
             }
         }
         // Lent geometry builds nothing; the features that take it do.
@@ -1647,7 +1697,7 @@ fn extrude_op(
         boolean
     };
     if let Some(r) = borrowed {
-        if extras.start_offset != 0.0 || extras.start_at.is_some() || second.is_some() {
+        if extras.moves_start() || second.is_some() {
             return Err(
                 "a start offset or a second side's own taper takes a sketch's profile, not a face"
                     .into(),
@@ -1663,7 +1713,7 @@ fn extrude_op(
         }]);
     }
     Ok(match (profile_face, sketch) {
-        (Some(_), _) if extras.start_offset != 0.0 || extras.start_at.is_some() => {
+        (Some(_), _) if extras.moves_start() => {
             return Err("a start offset or plane takes a sketch's profile, not a face".into());
         }
         (Some(_), _) if second.is_some() => {
@@ -1676,15 +1726,18 @@ fn extrude_op(
         }],
         (None, Some(sketch)) => {
             let mut profile = sketch_profile(document, sketch, feature.regions())?;
-            if extras.start_offset != 0.0 || extras.start_at.is_some() {
+            if extras.moves_start() {
                 // Along the way the first side runs.
                 let way = normalize(custom.unwrap_or(profile.plane.normal))
                     .map_err(|_| "the extrusion direction is zero".to_string())?;
-                let to_start = match extras.start_at {
-                    Some(start) => {
+                let to_start = match (&extras.start_face, extras.start_at) {
+                    (Some(face), _) => {
+                        distance_to_plane(profile.plane.origin, way, face_pick_plane(face))?
+                    }
+                    (None, Some(start)) => {
                         distance_to_plane(profile.plane.origin, way, start_plane(document, start)?)?
                     }
-                    None => 0.0,
+                    (None, None) => 0.0,
                 };
                 let s =
                     to_start + f64::from(extras.start_offset) * if reversed { -1.0 } else { 1.0 };
@@ -1710,9 +1763,28 @@ fn extrude_op(
     })
 }
 
+/// Refused when the last build found the face `feature` starts on curved:
+/// a start is a plane.
+fn start_face_is_flat(document: &Document, feature: FeatureId) -> Result<(), String> {
+    let answer = document
+        .probed_references(feature)
+        .and_then(|probed| probed.answers.first());
+    match answer {
+        Some(Ok(kernel_api::ProbeAnswer::Face { surface, .. }))
+            if !matches!(surface, kernel_api::FaceSurface::Plane { .. }) =>
+        {
+            Err("the face it starts on is not flat".into())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// The plane an extrusion starts on, as a point and its normal in the
 /// body's frame: a datum plane's (or coordinate system's), or a sketch's.
-fn start_plane(document: &Document, start: FeatureId) -> Result<([f64; 3], [f64; 3]), String> {
+pub(crate) fn start_plane(
+    document: &Document,
+    start: FeatureId,
+) -> Result<([f64; 3], [f64; 3]), String> {
     let data = document
         .feature_values(start)
         .ok_or("the plane the extrusion starts on is gone")?;
@@ -1734,7 +1806,7 @@ fn start_plane(document: &Document, start: FeatureId) -> Result<([f64; 3], [f64;
 
 /// How far from `from` along `way` the plane through `point` square to
 /// `normal` lies; refused for a plane the way runs along.
-fn distance_to_plane(
+pub(crate) fn distance_to_plane(
     from: [f64; 3],
     way: [f64; 3],
     (point, normal): ([f64; 3], [f64; 3]),
@@ -1863,7 +1935,7 @@ pub(crate) fn axis_in_sketch(
                 sketch
                     .sketch
                     .point_position(point)
-                    .map(|p| [f64::from(p.x), f64::from(p.y)])
+                    .map(|p| [p.x, p.y])
                     .ok_or_else(|| "the axis line has lost an end".to_string())
             };
             let (a, b) = (at(line.start)?, at(line.end)?);
@@ -1878,6 +1950,38 @@ pub(crate) fn axis_in_sketch(
 
 /// Build the revolve sweep for a feature. `reversed` flips the axis so the
 /// sweep runs the other way around.
+/// `plane` turned `angle_deg` about the axis it holds (a point and a
+/// direction in its own coordinates), right-handed about the direction:
+/// the axis stays where it is in the plane's coordinates.
+fn turn_plane(
+    plane: &mut kernel_api::ProfilePlane,
+    (axis_origin, axis_dir): ([f64; 2], [f64; 2]),
+    angle_deg: f64,
+) {
+    let at = |p: [f64; 2]| -> [f64; 3] {
+        std::array::from_fn(|k| plane.origin[k] + plane.x_axis[k] * p[0] + plane.y_axis[k] * p[1])
+    };
+    let pivot = at(axis_origin);
+    let way: [f64; 3] =
+        std::array::from_fn(|k| plane.x_axis[k] * axis_dir[0] + plane.y_axis[k] * axis_dir[1]);
+    let Ok(k) = normalize(way) else {
+        return;
+    };
+    let (sin, cos) = angle_deg.to_radians().sin_cos();
+    // Rodrigues: v cos + (k × v) sin + k (k · v)(1 − cos).
+    let turn = |v: [f64; 3]| -> [f64; 3] {
+        let kv = cross3(k, v);
+        let along = dot3(k, v) * (1.0 - cos);
+        std::array::from_fn(|i| v[i] * cos + kv[i] * sin + k[i] * along)
+    };
+    let from_pivot: [f64; 3] = std::array::from_fn(|i| plane.origin[i] - pivot[i]);
+    let moved = turn(from_pivot);
+    plane.origin = std::array::from_fn(|i| pivot[i] + moved[i]);
+    plane.x_axis = turn(plane.x_axis);
+    plane.y_axis = turn(plane.y_axis);
+    plane.normal = turn(plane.normal);
+}
+
 fn revolve_kind(
     (axis_origin, axis_dir): ([f64; 2], [f64; 2]),
     angle_deg: f32,
@@ -2013,7 +2117,7 @@ pub fn hole_taper_deg(feature: &DesignFeature) -> f64 {
 }
 
 /// Circle centers + standalone points of a sketch (hole positions).
-fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
+pub(crate) fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
     let mut centers = Vec::new();
     let referenced: std::collections::HashSet<_> = sketch
         .geometry
@@ -2027,11 +2131,11 @@ fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
         match element {
             GeometryElement::Circle(circle) => {
                 if let Some(pos) = sketch.point_position(circle.center) {
-                    centers.push([pos.x as f64, pos.y as f64]);
+                    centers.push([pos.x, pos.y]);
                 }
             }
             GeometryElement::Point(point) if !referenced.contains(&point.id) => {
-                centers.push([point.position.x as f64, point.position.y as f64]);
+                centers.push([point.position.x, point.position.y]);
             }
             _ => {}
         }
@@ -2041,6 +2145,57 @@ fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
 
 /// How many line pieces a cosmetic thread draws per turn.
 const THREAD_SEGMENTS_PER_TURN: usize = 24;
+
+/// The bores a hole with a cosmetic thread threads, in its body's frame.
+pub(crate) struct ThreadedBores {
+    /// Each hole's centre on the plane it starts on: where its bore opens.
+    pub mouths: Vec<[f64; 3]>,
+    /// Down the bores, into the material.
+    pub into: [f64; 3],
+    /// Across the bores: the sketch plane's X axis.
+    pub across: [f64; 3],
+    /// The bores' radius, mm.
+    pub radius: f64,
+    pub pitch: f64,
+    pub left_handed: bool,
+}
+
+/// Where a hole with a cosmetic thread opens; `None` for a hole with no
+/// cosmetic thread, or one whose sketch or thread size is not found.
+pub(crate) fn threaded_bores(
+    document: &Document,
+    feature: &DesignFeature,
+) -> Option<ThreadedBores> {
+    let DesignFeature::Hole {
+        sketch,
+        thread: Some(spec),
+        ..
+    } = feature
+    else {
+        return None;
+    };
+    feature.cosmetic_thread()?;
+    let (Ok(size), Ok(sketch_feature)) = (spec.resolve(), load_sketch(document, *sketch)) else {
+        return None;
+    };
+    let (plane, into) = hole_plane(document, feature, &sketch_feature).ok()?;
+    let mouths = hole_centers(&sketch_feature.sketch)
+        .into_iter()
+        .map(|centre| {
+            std::array::from_fn(|k| {
+                plane.origin[k] + plane.x_axis[k] * centre[0] + plane.y_axis[k] * centre[1]
+            })
+        })
+        .collect();
+    Some(ThreadedBores {
+        mouths,
+        into,
+        across: plane.x_axis,
+        radius: f64::from(hole_diameter(feature)) * 0.5,
+        pitch: size.pitch,
+        left_handed: spec.left_handed,
+    })
+}
 
 /// A cosmetic thread as lines in its body's frame: at every hole centre a
 /// helix of the thread's pitch, just inside the bore so the wall does not
@@ -2055,47 +2210,30 @@ pub(crate) fn cosmetic_thread_lines(
 ) -> kernel_api::TriMesh {
     let mut mesh = kernel_api::TriMesh::default();
     let DesignFeature::Hole {
-        sketch,
         depth,
         through_all,
-        thread: Some(spec),
         thread_depth,
-        reversed,
         ..
     } = feature
     else {
         return mesh;
     };
-    if feature.cosmetic_thread().is_none() {
-        return mesh;
-    }
-    let (Ok(size), Ok(sketch_feature)) = (spec.resolve(), load_sketch(document, *sketch)) else {
+    let Some(bores) = threaded_bores(document, feature) else {
         return mesh;
     };
-    let plane = profile::plane_of(&sketch_feature.plane);
-    let into = if *reversed {
-        plane.normal
-    } else {
-        plane.normal.map(|c| -c)
-    };
-    let bore = f64::from(hole_diameter(feature)) * 0.5;
+    let (into, bore, pitch) = (bores.into, bores.radius, bores.pitch);
     let radius = bore * 0.98;
-    let pitch = size.pitch;
     if radius <= 0.0 || pitch <= 0.0 {
         return mesh;
     }
     let solid = body.and_then(|b| document.local_geometry(b));
-    let (u, v) = (plane.x_axis, cross3(into, plane.x_axis));
-    let turn = if spec.left_handed { -1.0 } else { 1.0 };
-    for centre in hole_centers(&sketch_feature.sketch) {
-        let at =
-            |k: usize| plane.origin[k] + plane.x_axis[k] * centre[0] + plane.y_axis[k] * centre[1];
+    let (u, v) = (bores.across, cross3(into, bores.across));
+    let turn = if bores.left_handed { -1.0 } else { 1.0 };
+    for mouth in bores.mouths {
         let hole_length = if *through_all {
             solid
                 .as_ref()
-                .and_then(|(mesh, bounds)| {
-                    through_length(mesh, *bounds, std::array::from_fn(at), into, bore)
-                })
+                .and_then(|(mesh, bounds)| through_length(mesh, *bounds, mouth, into, bore))
                 .unwrap_or(20.0)
         } else {
             f64::from(*depth)
@@ -2115,7 +2253,7 @@ pub(crate) fn cosmetic_thread_lines(
             let angle = turn * std::f64::consts::TAU * down / pitch;
             let (sin, cos) = angle.sin_cos();
             let point: [f32; 3] = std::array::from_fn(|k| {
-                (at(k) + into[k] * down + radius * (cos * u[k] + sin * v[k])) as f32
+                (mouth[k] + into[k] * down + radius * (cos * u[k] + sin * v[k])) as f32
             });
             mesh.positions.push(point);
             mesh.normals.push(into.map(|c| c as f32));
@@ -2204,7 +2342,7 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
     };
     let size = thread.as_ref().map(ThreadSpec::resolve).transpose()?;
     let sketch_feature = load_sketch(document, *sketch)?;
-    let plane = profile::plane_of(&sketch_feature.plane);
+    let (plane, into) = hole_plane(document, feature, &sketch_feature)?;
     let centers = hole_centers(&sketch_feature.sketch);
     if centers.is_empty() {
         return Err("the hole sketch has no circles or points to place holes at".into());
@@ -2221,12 +2359,6 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
     let tan_taper = taper.to_radians().tan();
     // The drill's radius `down` into the material.
     let radius_at = |down: f64| radius - down * tan_taper;
-    // Into the material: against the sketch normal unless reversed.
-    let into = if *reversed {
-        plane.normal
-    } else {
-        plane.normal.map(|c| -c)
-    };
 
     let circles_profile = |radius: f64| Profile {
         plane,
@@ -2508,6 +2640,42 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
     Ok(ops)
 }
 
+/// The plane a hole starts drilling on, in its body's frame, and the way
+/// it drills into the material (against the sketch normal unless
+/// reversed): the sketch's plane carried along the drill to where the
+/// hole's start puts it.
+pub(crate) fn hole_plane(
+    document: &Document,
+    feature: &DesignFeature,
+    sketch: &SketchFeature,
+) -> Result<(kernel_api::ProfilePlane, [f64; 3]), String> {
+    let DesignFeature::Hole {
+        reversed, start, ..
+    } = feature
+    else {
+        return Err("not a hole feature".into());
+    };
+    let mut plane = profile::plane_of(&sketch.plane);
+    let into = if *reversed {
+        plane.normal
+    } else {
+        plane.normal.map(|c| -c)
+    };
+    if start.moves() {
+        let way = normalize(into).map_err(|_| "the hole's sketch has no normal".to_string())?;
+        let to_start = match (&start.face, start.at) {
+            (Some(face), _) => distance_to_plane(plane.origin, way, face_pick_plane(face))?,
+            (None, Some(at)) => distance_to_plane(plane.origin, way, start_plane(document, at)?)?,
+            (None, None) => 0.0,
+        };
+        let s = to_start + f64::from(start.offset);
+        for (o, w) in plane.origin.iter_mut().zip(way) {
+            *o += w * s;
+        }
+    }
+    Ok((plane, into))
+}
+
 /// A cone cut `down` along `into` below a hole center: `wide` in radius
 /// there, `narrow` `height` further in.
 /// A nut trap's pocket: across its flats and how deep, mm.
@@ -2729,11 +2897,7 @@ fn loft_section(
             .collect();
         if let [p] = points.as_slice() {
             let plane = profile::plane_of(&sketch.plane);
-            let at = |i: usize| {
-                plane.origin[i]
-                    + plane.x_axis[i] * f64::from(p.x)
-                    + plane.y_axis[i] * f64::from(p.y)
-            };
+            let at = |i: usize| plane.origin[i] + plane.x_axis[i] * p.x + plane.y_axis[i] * p.y;
             return Ok(kernel_api::LoftSection::Point([at(0), at(1), at(2)]));
         }
     }
@@ -2759,7 +2923,7 @@ pub(crate) fn load_sketch(
 pub(crate) fn sketch_normal(document: &Document, sketch_id: FeatureId) -> Option<[f32; 3]> {
     load_sketch(document, sketch_id)
         .ok()
-        .map(|sketch| sketch.plane.normal)
+        .map(|sketch| wb_sketch::boundary::narrow3(sketch.plane.normal))
 }
 
 fn sketch_profile(
@@ -2884,8 +3048,8 @@ fn sketch_spine(
             wires: vec![ProfileWire {
                 names: Vec::new(),
                 segments: vec![ProfileSegment::Circle {
-                    center: [center.x as f64, center.y as f64],
-                    radius: circle.radius as f64,
+                    center: [center.x, center.y],
+                    radius: circle.radius,
                 }],
             }],
         });
@@ -2933,7 +3097,7 @@ fn sketch_spine(
     // An open path starts at the end nearer `near`, else at its first.
     let world = |id: uuid::Uuid| {
         sketch.point_position(id).map(|p| {
-            let (u, v) = (f64::from(p.x), f64::from(p.y));
+            let (u, v) = (p.x, p.y);
             [0, 1, 2].map(|k| plane.origin[k] + plane.x_axis[k] * u + plane.y_axis[k] * v)
         })
     };
@@ -2975,7 +3139,7 @@ fn spine_segment(
     let pos = |id: uuid::Uuid| -> Result<[f64; 2], String> {
         sketch
             .point_position(id)
-            .map(|p| [p.x as f64, p.y as f64])
+            .map(|p| [p.x, p.y])
             .ok_or_else(|| "spine references a missing point".into())
     };
     match element {
@@ -2994,17 +3158,12 @@ fn spine_segment(
             let center = pos(arc.center)?;
             let start = pos(arc.start)?;
             let end = pos(arc.end)?;
-            let start_vec = wb_sketch::sketch::Vec2D::new(
-                (start[0] - center[0]) as f32,
-                (start[1] - center[1]) as f32,
-            );
-            let end_vec = wb_sketch::sketch::Vec2D::new(
-                (end[0] - center[0]) as f32,
-                (end[1] - center[1]) as f32,
-            );
+            let start_vec =
+                wb_sketch::sketch::Vec2D::new(start[0] - center[0], start[1] - center[1]);
+            let end_vec = wb_sketch::sketch::Vec2D::new(end[0] - center[0], end[1] - center[1]);
             let (start_angle, sweep) =
                 wb_sketch::snap::arc_angles(start_vec.to_glam(), end_vec.to_glam());
-            let mid_angle = (start_angle + sweep * 0.5) as f64;
+            let mid_angle = start_angle + sweep * 0.5;
             let radius = ((start[0] - center[0]).powi(2) + (start[1] - center[1]).powi(2)).sqrt();
             let mid = [
                 center[0] + radius * mid_angle.cos(),
@@ -3243,7 +3402,7 @@ fn point_transforms(document: &Document, sketch: FeatureId) -> Result<Vec<Mat4>,
             _ => None,
         })
         .map(|p| {
-            let (x, y) = (f64::from(p.x), f64::from(p.y));
+            let (x, y) = (p.x, p.y);
             std::array::from_fn(|k| plane.origin[k] + plane.x_axis[k] * x + plane.y_axis[k] * y)
         })
         .collect();
@@ -3295,11 +3454,29 @@ fn polar_transforms(
 
 /// Where every occurrence of a pattern or mirror stands, in its body's
 /// own frame: the original's (the identity) first, then each copy's, in
-/// the order `skipped` counts them. Empty for any other feature.
+/// the order `skipped` counts them. Empty for any other feature; an error
+/// for one with a path step, whose places the kernel finds
+/// (`occurrence_steps`).
 pub(crate) fn occurrence_transforms(
     document: &Document,
     feature: &DesignFeature,
 ) -> Result<Vec<Mat4>, String> {
+    let steps = occurrence_steps(document, feature)?;
+    if steps.is_empty() {
+        return Ok(Vec::new());
+    }
+    compose_steps(&steps)
+        .ok_or_else(|| "the pattern's path is followed on the solid as it builds".to_string())
+}
+
+/// A pattern's or mirror's occurrences as steps the kernel composes, each
+/// applying to every occurrence of the steps before it (the original
+/// among them). Empty for any other feature.
+pub(crate) fn occurrence_steps(
+    document: &Document,
+    feature: &DesignFeature,
+) -> Result<Vec<kernel_api::PatternStep>, String> {
+    use kernel_api::PatternStep;
     let copies = match feature {
         DesignFeature::Mirrored { plane, .. } => {
             let (point, normal) = mirror_plane(document, plane)?;
@@ -3337,10 +3514,101 @@ pub(crate) fn occurrence_transforms(
             *step_mode,
             angles,
         )?,
-        DesignFeature::MultiTransform { steps, .. } => multi_transforms(document, steps)?,
+        DesignFeature::CircularPattern {
+            axis,
+            outward,
+            spacing,
+            counts,
+            ..
+        } => circular_transforms(
+            pattern_axis(document, axis)?,
+            pattern_axis(document, outward)?.1,
+            *spacing,
+            counts,
+        )?,
+        DesignFeature::PointPattern { sketch, .. } => point_transforms(document, *sketch)?,
+        DesignFeature::PathPattern { path, layout, .. } => {
+            return Ok(vec![PatternStep::Path(path_layout(
+                document, path, layout,
+            )?)]);
+        }
+        DesignFeature::MultiTransform { steps, .. } => {
+            if steps.is_empty() {
+                return Err("a multi-transform needs at least one step".into());
+            }
+            return steps.iter().map(|step| step_of(document, step)).collect();
+        }
         _ => return Ok(Vec::new()),
     };
-    Ok(std::iter::once(mat_identity()).chain(copies).collect())
+    Ok(vec![PatternStep::Transforms(copies)])
+}
+
+/// Every occurrence of `steps`, the identity first, when none follows a
+/// path: each step's copies of every occurrence before it.
+fn compose_steps(steps: &[kernel_api::PatternStep]) -> Option<Vec<Mat4>> {
+    let mut accumulated = vec![mat_identity()];
+    for step in steps {
+        let kernel_api::PatternStep::Transforms(own) = step else {
+            return None;
+        };
+        let mut next = Vec::with_capacity(accumulated.len() * (own.len() + 1));
+        for base in &accumulated {
+            next.push(*base);
+            for t in own {
+                next.push(mat_mul(t, base));
+            }
+        }
+        accumulated = next;
+    }
+    Some(accumulated)
+}
+
+/// What the kernel walks for a path pattern's `path`, spaced as `layout`
+/// says, in the body's own frame.
+fn path_layout(
+    document: &Document,
+    path: &crate::feature::PatternPath,
+    layout: &crate::feature::PathSpacing,
+) -> Result<kernel_api::PathLayout, String> {
+    use crate::feature::PatternPath;
+    let path = match path {
+        PatternPath::Sketch { sketch, chain } => {
+            let feature = load_sketch(document, *sketch)?;
+            let chains = profile::extract_chains(&feature.sketch)
+                .map_err(|e| format!("the pattern's path sketch: {e}"))?;
+            let count = chains.len();
+            let wire = chains.into_iter().nth(*chain).ok_or_else(|| {
+                if count == 0 {
+                    "the pattern's path sketch has no curves to follow".to_string()
+                } else {
+                    format!(
+                        "the pattern's path sketch has {count} chain{} of curves; chain {} \
+                         is not one",
+                        if count == 1 { "" } else { "s" },
+                        chain
+                    )
+                }
+            })?;
+            kernel_api::PatternPath::Wire {
+                plane: profile::plane_of(&feature.plane),
+                wire,
+            }
+        }
+        PatternPath::Edge(pick) => kernel_api::PatternPath::Edge(edge_probe_of(pick)),
+    };
+    if layout.occurrences == 0 {
+        return Err("a path pattern needs at least 1 occurrence".into());
+    }
+    if layout.spacing_mode && !(layout.spacing.is_finite() && layout.spacing > 0.0) {
+        return Err("the spacing along the path must be more than zero".into());
+    }
+    Ok(kernel_api::PathLayout {
+        path,
+        count: layout.occurrences,
+        spacing: layout.spacing_mode.then_some(f64::from(layout.spacing)),
+        reversed: layout.reversed,
+        align: layout.align,
+    })
 }
 
 /// `point` moved by `transform`.
@@ -3355,85 +3623,90 @@ pub(crate) fn transform_point(transform: &Mat4, point: [f64; 3]) -> [f64; 3] {
 
 /// Cartesian composition: each step's occurrences (including the identity)
 /// apply to every result of the previous steps; the pure identity is dropped
-/// because the base solid already contains the original.
+/// because the base solid already contains the original. A path step,
+/// whose places the kernel finds, is refused.
+#[cfg(test)]
 fn multi_transforms(document: &Document, steps: &[TransformStep]) -> Result<Vec<Mat4>, String> {
     if steps.is_empty() {
         return Err("a multi-transform needs at least one step".into());
     }
-    let mut accumulated = vec![mat_identity()];
-    for step in steps {
-        let step_transforms: Vec<Mat4> = match step {
-            TransformStep::Linear {
-                axis,
-                length,
-                occurrences,
-            } => linear_transforms(
-                pattern_axis(document, axis)?,
-                *length,
-                *occurrences,
-                false,
-                false,
-                &[],
-            )?,
-            TransformStep::Polar {
-                axis,
-                angle_deg,
-                occurrences,
-            } => polar_transforms(
-                pattern_axis(document, axis)?,
-                *angle_deg,
-                *occurrences,
-                false,
-                false,
-                &[],
-            )?,
-            TransformStep::Mirror { plane } => {
-                let (point, normal) = mirror_plane(document, plane)?;
-                vec![mat_mirror(point, normal)]
-            }
-            TransformStep::Scale {
-                factor,
-                center,
-                occurrences,
-            } => {
-                if *factor <= 0.0 {
-                    return Err("scale factor must be positive".into());
-                }
-                let occ = (*occurrences).max(2);
-                // The factor applies to the LAST occurrence; the rest
-                // interpolate evenly.
-                (1..occ)
-                    .map(|k| {
-                        let f =
-                            1.0 + (f64::from(*factor) - 1.0) * f64::from(k) / f64::from(occ - 1);
-                        mat_scale([center[0] as f64, center[1] as f64, center[2] as f64], f)
-                    })
-                    .collect()
-            }
-            TransformStep::Circular {
-                axis,
-                outward,
-                spacing,
-                counts,
-            } => circular_transforms(
-                pattern_axis(document, axis)?,
-                pattern_axis(document, outward)?.1,
-                *spacing,
-                counts,
-            )?,
-            TransformStep::Points { sketch } => point_transforms(document, *sketch)?,
-        };
-        let mut next = Vec::with_capacity(accumulated.len() * (step_transforms.len() + 1));
-        for base in &accumulated {
-            next.push(*base);
-            for t in &step_transforms {
-                next.push(mat_mul(t, base));
-            }
-        }
-        accumulated = next;
-    }
+    let steps: Vec<kernel_api::PatternStep> = steps
+        .iter()
+        .map(|step| step_of(document, step))
+        .collect::<Result<_, _>>()?;
+    let accumulated = compose_steps(&steps).ok_or("a path step is followed as the body builds")?;
     // Drop the identity (index 0 by construction).
     Ok(accumulated.into_iter().skip(1).collect())
+}
+
+/// One multi-transform step's copies, the original left out.
+fn step_of(document: &Document, step: &TransformStep) -> Result<kernel_api::PatternStep, String> {
+    let copies: Vec<Mat4> = match step {
+        TransformStep::Linear {
+            axis,
+            length,
+            occurrences,
+        } => linear_transforms(
+            pattern_axis(document, axis)?,
+            *length,
+            *occurrences,
+            false,
+            false,
+            &[],
+        )?,
+        TransformStep::Polar {
+            axis,
+            angle_deg,
+            occurrences,
+        } => polar_transforms(
+            pattern_axis(document, axis)?,
+            *angle_deg,
+            *occurrences,
+            false,
+            false,
+            &[],
+        )?,
+        TransformStep::Mirror { plane } => {
+            let (point, normal) = mirror_plane(document, plane)?;
+            vec![mat_mirror(point, normal)]
+        }
+        TransformStep::Scale {
+            factor,
+            center,
+            occurrences,
+        } => {
+            if *factor <= 0.0 {
+                return Err("scale factor must be positive".into());
+            }
+            let occ = (*occurrences).max(2);
+            // The factor applies to the LAST occurrence; the rest
+            // interpolate evenly.
+            (1..occ)
+                .map(|k| {
+                    let f = 1.0 + (f64::from(*factor) - 1.0) * f64::from(k) / f64::from(occ - 1);
+                    mat_scale([center[0] as f64, center[1] as f64, center[2] as f64], f)
+                })
+                .collect()
+        }
+        TransformStep::Circular {
+            axis,
+            outward,
+            spacing,
+            counts,
+        } => circular_transforms(
+            pattern_axis(document, axis)?,
+            pattern_axis(document, outward)?.1,
+            *spacing,
+            counts,
+        )?,
+        TransformStep::Points { sketch } => point_transforms(document, *sketch)?,
+        TransformStep::Path { path, layout } => {
+            return Ok(kernel_api::PatternStep::Path(path_layout(
+                document, path, layout,
+            )?));
+        }
+    };
+    Ok(kernel_api::PatternStep::Transforms(copies))
 }
 
 /// Sketches available in a body (id + display name), for re-attachment:
@@ -3457,6 +3730,30 @@ pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, St
 /// since one made after it builds after it, and `current`, whatever it is,
 /// so the choice already made stays on the list.
 #[cfg_attr(not(feature = "egui"), allow(dead_code))]
+/// How many points a point pattern on `sketch` stands at: its points that
+/// are not construction.
+pub(crate) fn sketch_point_count(document: &Document, sketch: FeatureId) -> usize {
+    load_sketch(document, sketch).map_or(0, |feature| {
+        feature
+            .sketch
+            .geometry
+            .iter()
+            .filter(
+                |g| matches!(g, GeometryElement::Point(p) if !feature.sketch.is_construction(p.id)),
+            )
+            .count()
+    })
+}
+
+/// How many chains of curves `sketch` lays out for a path to follow: none
+/// when it has no curves or they branch.
+pub(crate) fn sketch_chain_count(document: &Document, sketch: FeatureId) -> usize {
+    load_sketch(document, sketch)
+        .ok()
+        .and_then(|feature| profile::extract_chains(&feature.sketch).ok())
+        .map_or(0, |chains| chains.len())
+}
+
 pub(crate) fn sketch_choices(
     document: &Document,
     body: BodyId,
@@ -3567,7 +3864,7 @@ pub fn sketch_plane_description(document: &Document, sketch: FeatureId) -> Strin
         return "invalid sketch".to_string();
     };
     let p = feature.plane;
-    let close = |a: [f32; 3], b: [f32; 3]| {
+    let close = |a: [f64; 3], b: [f64; 3]| {
         (a[0] - b[0]).abs() < 1e-5 && (a[1] - b[1]).abs() < 1e-5 && (a[2] - b[2]).abs() < 1e-5
     };
     for (preset, label) in [
@@ -4100,6 +4397,7 @@ mod tests {
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode: Default::default(),
                 up_to_face: None,
             },
@@ -4120,6 +4418,7 @@ mod tests {
                 reversed: true,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode: Default::default(),
                 up_to_face: None,
             },
@@ -4204,7 +4503,7 @@ mod tests {
             .unwrap();
 
         let mut hole_sketch = Sketch::new("holes");
-        for x in [2.0f32, 8.0] {
+        for x in [2.0f64, 8.0] {
             let center =
                 hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 2.5))));
             hole_sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
@@ -4220,6 +4519,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::Hole {
                 cosmetic_thread: false,
+                start: Default::default(),
                 clearance: None,
                 thread_length: Default::default(),
                 refine: false,
@@ -4353,6 +4653,7 @@ mod tests {
             .unwrap();
         let hole = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance,
             thread_length: length,
             refine: false,
@@ -4530,6 +4831,7 @@ mod tests {
         let mut hole = DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread: true,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4575,6 +4877,35 @@ mod tests {
                 .positions
                 .is_empty()
         );
+
+        // The document keeps the thread once evaluated: its designation,
+        // where its bore opens and which way it runs, until the hole
+        // leaves the build.
+        if let DesignFeature::Hole {
+            cosmetic_thread, ..
+        } = &mut hole
+        {
+            *cosmetic_thread = true;
+        }
+        let id = doc
+            .add_feature_in_body(hole.clone(), "Hole".into(), Some(body))
+            .unwrap();
+        let mut registry = core_document::DocumentService::default();
+        registry
+            .register_workbench(Box::new(crate::DesignWorkbench::default()))
+            .unwrap();
+        registry.evaluate(&mut doc);
+        let threads = doc.cosmetic_threads();
+        assert_eq!(threads.len(), 1, "{threads:?}");
+        let thread = &threads[0];
+        assert_eq!((thread.feature, thread.body), (id, body));
+        assert_eq!(thread.label(), "M6 thread");
+        assert_eq!(thread.mouth, [3.0, 4.0, 0.0]);
+        assert_eq!(thread.axis, [0.0, 0.0, -1.0]);
+        assert!((thread.radius - f64::from(hole_diameter(&hole)) * 0.5).abs() < 1e-9);
+        doc.set_feature_suppressed(id, true);
+        registry.evaluate(&mut doc);
+        assert!(doc.cosmetic_threads().is_empty(), "a suppressed hole");
     }
 
     /// A cosmetic thread through all of an 8 mm plate stops at the plate's
@@ -4593,6 +4924,7 @@ mod tests {
         let hole = |thread_depth: f32| DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread: true,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4686,6 +5018,7 @@ mod tests {
             doc.add_feature_in_body(
                 DesignFeature::Hole {
                     cosmetic_thread: false,
+                    start: Default::default(),
                     clearance: None,
                     thread_length: Default::default(),
                     refine: false,
@@ -4740,6 +5073,7 @@ mod tests {
             .unwrap();
         let mut hole = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5087,6 +5421,7 @@ mod tests {
     fn metric_hole_diameter_uses_the_table() {
         let feature = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5113,6 +5448,7 @@ mod tests {
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
         let clearance = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5179,6 +5515,226 @@ mod tests {
         // Overall length 30 over 4 occurrences → 10 mm spacing.
         assert!((transforms[0][0][3] - 10.0).abs() < 1e-9);
         assert!((transforms[2][0][3] - 30.0).abs() < 1e-9);
+    }
+
+    /// The standalone circular and point patterns place their copies as
+    /// their multi-transform steps do, the original left out.
+    #[test]
+    fn circular_and_point_patterns_build_as_their_steps() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut points = Sketch::new("points");
+        for (x, y) in [(1.0, 1.0), (6.0, 1.0), (1.0, 9.0)] {
+            points.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+        }
+        let plane = points.plane;
+        let points = doc
+            .add_feature_in_body(
+                SketchFeature::new(points, plane),
+                "points".into(),
+                Some(body),
+            )
+            .unwrap();
+        let circular = DesignFeature::CircularPattern {
+            originals: vec![pad_id],
+            axis: PatternAxis::Z,
+            outward: PatternAxis::X,
+            spacing: 10.0,
+            counts: vec![4, 8],
+            refine: false,
+            boolean_tolerance: None,
+            skipped: vec![2],
+        };
+        let at_points = DesignFeature::PointPattern {
+            originals: vec![pad_id],
+            sketch: points,
+            refine: false,
+            boolean_tolerance: None,
+            skipped: Vec::new(),
+        };
+        for (feature, step, copies) in [
+            (
+                circular,
+                TransformStep::Circular {
+                    axis: PatternAxis::Z,
+                    outward: PatternAxis::X,
+                    spacing: 10.0,
+                    counts: vec![4, 8],
+                },
+                3 + 8 - 1,
+            ),
+            (at_points, TransformStep::Points { sketch: points }, 2),
+        ] {
+            let mut doc = doc.clone();
+            let skipped: Vec<u32> = feature.skipped().unwrap().to_vec();
+            doc.add_feature_in_body(feature, "Pattern".into(), Some(body))
+                .unwrap();
+            let plan = body_build_ops(&doc, body).unwrap();
+            let SolidOp::Transform {
+                transforms,
+                originals,
+            } = &plan.ops[1]
+            else {
+                panic!("expected a transform op, got {:?}", plan.ops[1]);
+            };
+            assert_eq!(originals, &vec![0]);
+            assert_eq!(transforms.len(), copies);
+            let stepped: Vec<Mat4> = multi_transforms(&doc, &[step])
+                .unwrap()
+                .into_iter()
+                .zip(1u32..)
+                .filter(|(_, i)| !skipped.contains(i))
+                .map(|(t, _)| t)
+                .collect();
+            assert_eq!(transforms, &stepped);
+        }
+    }
+
+    /// A path pattern leaves its places to the chain: its op carries the
+    /// sketch's chain on the sketch's plane, or the picked edge as a
+    /// probe, with the spacing as the feature gives it.
+    #[test]
+    fn a_path_pattern_hands_its_path_to_the_chain() {
+        use crate::feature::{PathSpacing, PatternPath};
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let layout = PathSpacing {
+            occurrences: 5,
+            spacing_mode: true,
+            spacing: 4.0,
+            reversed: true,
+            align: true,
+        };
+        let along = |path| DesignFeature::PathPattern {
+            originals: vec![pad_id],
+            path,
+            layout,
+            refine: false,
+            boolean_tolerance: None,
+            skipped: vec![2],
+        };
+        let mut on_sketch = doc.clone();
+        on_sketch
+            .add_feature_in_body(
+                along(PatternPath::Sketch {
+                    sketch: sketch_id,
+                    chain: 0,
+                }),
+                "Path".into(),
+                Some(body),
+            )
+            .unwrap();
+        let plan = body_build_ops(&on_sketch, body).unwrap();
+        let SolidOp::Pattern {
+            steps,
+            originals,
+            skipped,
+        } = &plan.ops[1]
+        else {
+            panic!("expected a pattern op, got {:?}", plan.ops[1]);
+        };
+        assert_eq!((originals, skipped), (&vec![0], &vec![2]));
+        let [kernel_api::PatternStep::Path(path)] = steps.as_slice() else {
+            panic!("one path step, not {steps:?}");
+        };
+        assert_eq!(
+            (path.count, path.spacing, path.reversed, path.align),
+            (5, Some(4.0), true, true)
+        );
+        let kernel_api::PatternPath::Wire { wire, .. } = &path.path else {
+            panic!("a sketch's chain goes as a wire");
+        };
+        assert_eq!(wire.segments.len(), 4, "the rectangle's four sides");
+
+        let pick = crate::feature::EdgePick {
+            point: [1.0, 2.0, 3.0],
+            direction: [0.0, 0.0, 1.0],
+            faces: [0, 0],
+        };
+        doc.add_feature_in_body(along(PatternPath::Edge(pick)), "Path".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        let SolidOp::Pattern { steps, .. } = &plan.ops[1] else {
+            panic!("expected a pattern op");
+        };
+        let [kernel_api::PatternStep::Path(path)] = steps.as_slice() else {
+            panic!("one path step");
+        };
+        assert_eq!(
+            path.path,
+            kernel_api::PatternPath::Edge(kernel_api::EdgeProbe {
+                point: [1.0, 2.0, 3.0],
+                direction: [0.0, 0.0, 1.0],
+                faces: [0, 0],
+            })
+        );
+    }
+
+    /// A multi-transform with a path step goes to the chain as steps, the
+    /// others' copies worked out here; without one it composes here.
+    #[test]
+    fn a_multi_transform_with_a_path_step_goes_to_the_chain_as_steps() {
+        use crate::feature::PatternPath;
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let linear = TransformStep::Linear {
+            axis: PatternAxis::Z,
+            length: 20.0,
+            occurrences: 3,
+        };
+        doc.add_feature_in_body(
+            DesignFeature::MultiTransform {
+                originals: vec![pad_id],
+                steps: vec![
+                    linear.clone(),
+                    TransformStep::Path {
+                        path: PatternPath::Sketch {
+                            sketch: sketch_id,
+                            chain: 0,
+                        },
+                        layout: Default::default(),
+                    },
+                ],
+                refine: false,
+                boolean_tolerance: None,
+                skipped: Vec::new(),
+            },
+            "Multi".into(),
+            Some(body),
+        )
+        .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        let SolidOp::Pattern { steps, .. } = &plan.ops[1] else {
+            panic!("expected a pattern op, got {:?}", plan.ops[1]);
+        };
+        let [
+            kernel_api::PatternStep::Transforms(rows),
+            kernel_api::PatternStep::Path(_),
+        ] = steps.as_slice()
+        else {
+            panic!("a row's copies, then the path: {steps:?}");
+        };
+        assert_eq!(rows, &multi_transforms(&doc, &[linear]).unwrap());
+        assert!(
+            multi_transforms(
+                &doc,
+                &[TransformStep::Path {
+                    path: PatternPath::Sketch {
+                        sketch: sketch_id,
+                        chain: 0,
+                    },
+                    layout: Default::default(),
+                }]
+            )
+            .is_err(),
+            "a path's places are not worked out here"
+        );
     }
 
     /// A pocket kept inside keeps what it shares with the body: its op is
@@ -5389,6 +5945,112 @@ mod tests {
             .unwrap();
         let refused = body_build_ops(&doc, body).unwrap_err().to_string();
         assert!(refused.contains("runs along the plane"), "{refused}");
+    }
+
+    /// A pad starting on a face of the solid sweeps from the face's
+    /// plane, asks the solid before it where the face is, and is refused
+    /// once a build finds the face curved.
+    #[test]
+    fn a_pad_starts_on_the_face_it_picks() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 10.0), "Pad".into(), Some(body))
+            .unwrap();
+        let face = FacePick {
+            point: [1.0, 1.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        };
+        let mut boss = pad(sketch_id, 2.0);
+        if let DesignFeature::Pad { extras, .. } = &mut boss {
+            extras.start_face = Some(face);
+        }
+        let boss = doc
+            .add_feature_in_body(boss, "Boss".into(), Some(body))
+            .unwrap();
+        let mut plan = body_build_ops(&doc, body).unwrap();
+        plan.probes = datum_probes(&doc, body, &plan);
+        let SolidOp::Sweep { profile, .. } = &plan.ops[1] else {
+            panic!("a sweep");
+        };
+        assert!((profile.plane.origin[2] - 10.0).abs() < 1e-9);
+        assert_eq!(plan.probes.len(), 1);
+        assert_eq!(plan.probes[0].feature, boss);
+        assert_eq!(plan.probes[0].probe.after_op, 1, "the solid before it");
+        assert_eq!(plan.probes[0].probe.probe, face.probe());
+
+        doc.store_probe_answers(
+            &plan.probes,
+            &[Ok(kernel_api::ProbeAnswer::Face {
+                point: [1.0, 1.0, 10.0],
+                normal: [1.0, 0.0, 0.0],
+                surface: kernel_api::FaceSurface::Cylinder {
+                    origin: [0.0; 3],
+                    axis: [0.0, 0.0, 1.0],
+                    radius: 1.0,
+                },
+            })],
+        );
+        let refused = body_build_ops(&doc, body).unwrap_err().to_string();
+        assert!(refused.contains("not flat"), "{refused}");
+    }
+
+    /// A hole starts on its sketch's plane, carried along the drill onto
+    /// another sketch's plane, then its offset further in; the plane it
+    /// starts on is a dependency.
+    #[test]
+    fn a_hole_starts_where_its_start_says() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let lifted = {
+            let mut s = Sketch::new("lifted");
+            s.plane.origin = [0.0, 0.0, 7.0];
+            let plane = s.plane;
+            SketchFeature::new(s, plane)
+        };
+        let lifted = doc
+            .add_feature_in_body(lifted, "lifted".into(), Some(body))
+            .unwrap();
+        let mut hole = match DesignFeature::from_json(&serde_json::json!({"Hole": {
+            "sketch": sketch_id, "diameter": 2.0, "depth": 3.0, "through_all": false,
+        }})) {
+            Ok(hole) => hole,
+            Err(e) => panic!("{e}"),
+        };
+        let start_z = |doc: &Document, hole: &DesignFeature| {
+            let sketch = load_sketch(doc, sketch_id).unwrap();
+            hole_plane(doc, hole, &sketch).unwrap().0.origin[2]
+        };
+        assert!(start_z(&doc, &hole).abs() < 1e-9);
+        if let DesignFeature::Hole { start, .. } = &mut hole {
+            start.offset = 2.0;
+        }
+        assert!(
+            (start_z(&doc, &hole) + 2.0).abs() < 1e-9,
+            "into the material"
+        );
+        if let DesignFeature::Hole { start, .. } = &mut hole {
+            start.at = Some(lifted);
+        }
+        assert!((start_z(&doc, &hole) - 5.0).abs() < 1e-9);
+        assert!(hole.dependencies().contains(&lifted));
+    }
+
+    /// A plane turned about an axis it holds keeps the axis where it was
+    /// and turns right-handed about the axis's direction.
+    #[test]
+    fn a_plane_turns_about_the_axis_it_holds() {
+        let mut plane = kernel_api::ProfilePlane {
+            origin: [0.0, 0.0, 5.0],
+            ..Default::default()
+        };
+        // The line x = 2 of the plane, along its y.
+        turn_plane(&mut plane, ([2.0, 0.0], [0.0, 1.0]), 90.0);
+        let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9);
+        assert!(close(plane.normal, [1.0, 0.0, 0.0]), "{:?}", plane.normal);
+        assert!(close(plane.x_axis, [0.0, 0.0, -1.0]), "{:?}", plane.x_axis);
+        assert!(close(plane.y_axis, [0.0, 1.0, 0.0]));
+        // The axis's point stays put: origin + 2 x.
+        let on_axis: [f64; 3] = std::array::from_fn(|k| plane.origin[k] + 2.0 * plane.x_axis[k]);
+        assert!(close(on_axis, [2.0, 0.0, 5.0]), "{on_axis:?}");
     }
 
     #[test]
@@ -6119,6 +6781,7 @@ mod tests {
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode,
                 up_to_face,
             };

@@ -100,6 +100,7 @@ fn main() -> Result<()> {
         init_tracing_subscriber().context("tracing subscriber init failed")?;
 
     let mut registry = DocumentService::default();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
     register_all_workbenches(&mut registry)?;
 
     app_log::info(format!(
@@ -214,6 +215,7 @@ fn main() {
     kernel_ogeom::files::set_reader(platform::read);
 
     let mut registry = DocumentService::default();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
     if let Err(err) = register_all_workbenches(&mut registry) {
         error!("the workbenches did not register: {err}");
         return;
@@ -394,6 +396,8 @@ struct PrintCadApp {
     held_buttons: [bool; 3],
     /// The box a left drag from empty space in the view is drawing.
     box_select: Option<crate::app::box_select::BoxDrag>,
+    /// The array task's spacing handle while it is dragged.
+    array_drag: Option<crate::app::array_handle::SpacingDrag>,
     /// Index-stable UUIDs for workbench overlay meshes (slot i -> pool[i]),
     /// so the renderer's per-body cache works for overlays too.
     overlay_id_pool: Vec<Uuid>,
@@ -642,6 +646,7 @@ impl PrintCadApp {
             mouse_buttons_down: 0,
             held_buttons: [false; 3],
             box_select: None,
+            array_drag: None,
             overlay_id_pool: Vec::new(),
             region_meshes: Default::default(),
             modifiers: winit::keyboard::ModifiersState::default(),

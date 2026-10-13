@@ -3,10 +3,12 @@
 pub mod dressup;
 pub mod loft_pipe;
 pub mod pattern;
+pub mod pattern_steps;
 pub mod primitive;
 pub mod project;
 pub mod surface;
 pub mod sweep;
+mod wrap;
 
 use ogeom::core::Tolerances;
 use ogeom::topo::{Model, Shape};

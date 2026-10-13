@@ -23,6 +23,7 @@ use crate::feature::{
 
 mod borrow;
 mod hole;
+mod patterns;
 
 /// The label column of a parameter row.
 /// The occurrences a pattern leaves out, each brought back by its button,
@@ -100,6 +101,8 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Taper", "taper"),
     ("Offset", "offset"),
     ("Second offset", "offset2"),
+    ("Start offset", "start_offset"),
+    ("Start angle", "start_angle"),
     ("Angle", "angle"),
     ("Angle 2", "angle2"),
     ("Pitch", "pitch"),
@@ -132,6 +135,8 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Size 2", "size2"),
     ("Thickness", "thickness"),
     ("Occurrences", "occurrences"),
+    ("Ring spacing", "ring_spacing"),
+    ("Spacing", "spacing"),
     ("Offset X", "offset_x"),
     ("Offset Y", "offset_y"),
     ("Normal offset", "offset_z"),
@@ -925,20 +930,18 @@ fn extrude_direction_editor(
     changed
 }
 
-/// A pad's or pocket's less used settings: where it starts, the second
-/// side's own taper, and a slanted length measured along the normal.
-fn extrude_extras_rows(
+/// Where a feature starts: the profile's own plane, a datum plane's,
+/// another sketch's or a flat face of the solid, and the offset from there.
+fn start_rows(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     fx: &mut Formulas,
-    extras: &mut crate::feature::ExtrudeExtras,
-    two_sided: bool,
-    direction: ExtrudeDirection,
+    start_at: &mut Option<FeatureId>,
+    start_face: &mut Option<FacePick>,
+    start_offset: &mut f32,
 ) -> bool {
     let mut changed = false;
-    // Where it starts: the profile's own plane, a datum plane's or another
-    // sketch's.
     let mut planes: Vec<(Option<FeatureId>, String)> = vec![(None, "Profile".to_string())];
     planes.extend(
         core_document::datums_of_body(ctx.document, body)
@@ -956,24 +959,76 @@ fn extrude_extras_rows(
             .into_iter()
             .map(|(id, name)| (Some(id), name)),
     );
-    let shown = planes
-        .iter()
-        .find(|(id, _)| *id == extras.start_at)
-        .map_or_else(|| "(gone)".to_string(), |(_, name)| name.clone());
+    let shown = if start_face.is_some() {
+        "Face".to_string()
+    } else {
+        planes
+            .iter()
+            .find(|(id, _)| id == start_at)
+            .map_or_else(|| "(gone)".to_string(), |(_, name)| name.clone())
+    };
+    // A flat face picked in the view.
+    let flat = picked_face(ctx).filter(|f| {
+        f.surface
+            .is_none_or(|s| matches!(s, kernel_api::FaceSurface::Plane { .. }))
+    });
     ui.horizontal(|ui| {
         label_cell(ui, "Start at");
-        egui::ComboBox::from_id_salt(("extrude_start_at", body))
+        egui::ComboBox::from_id_salt(("start_at", body))
             .selected_text(shown)
             .show_ui(ui, |ui| {
                 for (id, name) in &planes {
-                    if ui.selectable_label(extras.start_at == *id, name).clicked() {
-                        extras.start_at = *id;
+                    if ui
+                        .selectable_label(start_face.is_none() && start_at == id, name)
+                        .clicked()
+                    {
+                        *start_at = *id;
+                        *start_face = None;
                         changed = true;
                     }
                 }
+                if ui
+                    .add_enabled(
+                        flat.is_some(),
+                        egui::Button::selectable(start_face.is_some(), "Selected face"),
+                    )
+                    .on_disabled_hover_text("Click a flat face in the viewport first")
+                    .clicked()
+                    && let Some(face) = &flat
+                {
+                    *start_face = Some(FacePick::of(face));
+                    *start_at = None;
+                    changed = true;
+                }
             });
     });
-    changed |= offset_drag(ui, fx, &mut extras.start_offset, "Start offset:");
+    if start_face.is_some() {
+        changed |= face_pick_row(ui, ctx, start_face, "Start face:");
+    }
+    changed |= offset_drag(ui, fx, start_offset, "Start offset:");
+    changed
+}
+
+/// A pad's or pocket's less used settings: where it starts, the second
+/// side's own taper, and a slanted length measured along the normal.
+fn extrude_extras_rows(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
+    fx: &mut Formulas,
+    extras: &mut crate::feature::ExtrudeExtras,
+    two_sided: bool,
+    direction: ExtrudeDirection,
+) -> bool {
+    let mut changed = start_rows(
+        ui,
+        ctx,
+        body,
+        fx,
+        &mut extras.start_at,
+        &mut extras.start_face,
+        &mut extras.start_offset,
+    );
     if two_sided {
         let mut own = extras.taper2_deg.is_some();
         if check_row(ui, &mut own, "Second side's own taper").changed() {
@@ -2545,6 +2600,7 @@ pub fn feature_editor(
             reversed,
             midplane,
             second_angle_deg,
+            start_angle_deg,
             mode,
             up_to_face,
         }
@@ -2560,6 +2616,7 @@ pub fn feature_editor(
             reversed,
             midplane,
             second_angle_deg,
+            start_angle_deg,
             mode,
             up_to_face,
         } => {
@@ -2635,6 +2692,7 @@ pub fn feature_editor(
                 }
             }
             changed |= check_row(ui, reversed, "Reversed").changed();
+            changed |= deg_drag(ui, fx, start_angle_deg, "Start angle:", -360.0..=360.0);
         }
         DesignFeature::Loft {
             keep_inside: _,
@@ -3070,6 +3128,7 @@ pub fn feature_editor(
             faces,
             mode,
             height,
+            wrap,
         } => {
             changed |= face_list_editor(ui, ctx, faces, "Faces to project onto:");
             ui.horizontal(|ui| {
@@ -3092,10 +3151,16 @@ pub fn feature_editor(
             if *mode != kernel_api::ProjectMode::Split {
                 changed |= mm_drag(ui, fx, height, "Height:");
             }
+            changed |= check_row(ui, wrap, "Wrap onto a cylinder or cone").changed();
             taper_note(
                 ui,
-                "The sketch's curves are carried along its normal onto the faces, landing \
-                 on the side nearest the sketch.",
+                if *wrap {
+                    "The sketch is unrolled onto the faces' cylinder or cone, its lengths kept, \
+                     its middle landing where a straight projection would put it."
+                } else {
+                    "The sketch's curves are carried along its normal onto the faces, landing \
+                     on the side nearest the sketch."
+                },
             );
         }
         DesignFeature::DeleteFaces { faces } => {
@@ -3245,6 +3310,71 @@ pub fn feature_editor(
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= skipped_editor(ui, skipped);
         }
+        DesignFeature::CircularPattern {
+            originals,
+            axis,
+            outward,
+            spacing,
+            counts,
+            refine: _,
+            boolean_tolerance: _,
+            skipped,
+        } => {
+            changed |= originals_editor(ui, ctx, body, feature_id, originals);
+            changed |= patterns::rings_editor(
+                ui,
+                ctx,
+                fx,
+                (body, feature_id),
+                (axis, outward),
+                (spacing, counts),
+                (0, true),
+            );
+            changed |= skipped_editor(ui, skipped);
+        }
+        DesignFeature::PointPattern {
+            originals,
+            sketch,
+            refine: _,
+            boolean_tolerance: _,
+            skipped,
+        } => {
+            changed |= originals_editor(ui, ctx, body, feature_id, originals);
+            if let Some(picked) = sketch_combo(
+                ui,
+                ctx,
+                body,
+                ("point_pattern_sketch", feature_id),
+                Some(*sketch),
+                "Points",
+            ) {
+                *sketch = picked;
+                changed = true;
+            }
+            taper_note(
+                ui,
+                "A copy at each of the sketch's points after its first, moved by how far \
+                 that point is from the first; construction points left out.",
+            );
+            changed |= skipped_editor(ui, skipped);
+        }
+        DesignFeature::PathPattern {
+            originals,
+            path,
+            layout,
+            refine: _,
+            boolean_tolerance: _,
+            skipped,
+        } => {
+            changed |= originals_editor(ui, ctx, body, feature_id, originals);
+            changed |= patterns::path_editor(ui, ctx, fx, (body, feature_id), path, layout, 0);
+            taper_note(
+                ui,
+                "The original stands for the path's start: each copy is moved from there to \
+                 its place along the path.",
+            );
+            changed |= skipped_editor(ui, skipped);
+        }
         DesignFeature::MultiTransform {
             originals,
             steps,
@@ -3267,6 +3397,7 @@ pub fn feature_editor(
                     TransformStep::Scale { .. } => "Scale",
                     TransformStep::Circular { .. } => "Circular",
                     TransformStep::Points { .. } => "Points",
+                    TransformStep::Path { .. } => "Path",
                 };
                 ui.horizontal(|ui| {
                     mono_label(ui, format!("{}. {label}", i + 1), FONT_XS, TEXT1);
@@ -3383,45 +3514,19 @@ pub fn feature_editor(
                         spacing,
                         counts,
                     } => {
-                        changed |= pattern_axis_editor(
+                        changed |= patterns::rings_editor(
                             ui,
                             ctx,
+                            fx,
                             (body, feature_id),
-                            axis,
-                            ("mt_circ", feature_id, i),
+                            (axis, outward),
+                            (spacing, counts),
+                            (i, false),
                         );
-                        ui.label(
-                            RichText::new("Rings step out along")
-                                .font(sans(FONT_XS))
-                                .color(TEXT2),
-                        );
-                        changed |= pattern_axis_editor(
-                            ui,
-                            ctx,
-                            (body, feature_id),
-                            outward,
-                            ("mt_circ_out", feature_id, i),
-                        );
-                        changed |= mm_drag(ui, fx, spacing, "Ring spacing:");
-                        let mut drop = None;
-                        for (ring, count) in counts.iter_mut().enumerate() {
-                            ui.horizontal(|ui| {
-                                changed |=
-                                    count_drag(ui, fx, count, &format!("Ring {}:", ring + 1));
-                                if ring > 0 && small_secondary_button(ui, "×").clicked() {
-                                    drop = Some(ring);
-                                }
-                            });
-                        }
-                        if let Some(ring) = drop {
-                            counts.remove(ring);
-                            changed = true;
-                        }
-                        if small_secondary_button(ui, "+ Ring").clicked() {
-                            let last = counts.last().copied().unwrap_or(6);
-                            counts.push(last + 6);
-                            changed = true;
-                        }
+                    }
+                    TransformStep::Path { path, layout } => {
+                        changed |=
+                            patterns::path_editor(ui, ctx, fx, (body, feature_id), path, layout, i);
                     }
                     TransformStep::Points { sketch } => {
                         if let Some(picked) = sketch_combo(
@@ -3482,6 +3587,13 @@ pub fn feature_editor(
                     && secondary_button(ui, "+ Points").clicked()
                 {
                     steps.push(TransformStep::Points { sketch: *sketch });
+                    changed = true;
+                }
+                if let Some(path) = patterns::add_path_step(ui, ctx, body) {
+                    steps.push(TransformStep::Path {
+                        path,
+                        layout: Default::default(),
+                    });
                     changed = true;
                 }
                 if secondary_button(ui, "+ Scale").clicked() {
