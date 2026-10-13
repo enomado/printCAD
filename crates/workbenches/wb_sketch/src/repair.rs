@@ -104,20 +104,25 @@ fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
     }
 }
 
-/// Merge point aliases, preserving references and construction flags.
-/// Callers supply existing points with each alias mapping directly to a kept
-/// point (or the origin); no target is itself an alias. Repair constructs this
-/// map from curve ends, while external callers validate it before mutation.
-pub fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
+/// Join each point in `joined` into the point it maps to, carrying every
+/// reference over. The kept point is construction only when every point
+/// joined into it was: a drawn end stays drawn.
+fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
+    let mut drawn: HashSet<Uuid> = HashSet::new();
+    for (alias, kept) in joined {
+        for id in [alias, kept] {
+            if !sketch.construction.contains(id) {
+                drawn.insert(*kept);
+            }
+        }
+    }
     rename_all(sketch, joined);
     sketch
         .geometry
         .retain(|g| !matches!(g, GeometryElement::Point(p) if joined.contains_key(&p.id)));
-    sketch.construction = sketch
+    sketch
         .construction
-        .iter()
-        .map(|id| joined.get(id).copied().unwrap_or(*id))
-        .collect();
+        .retain(|id| !joined.contains_key(id) && !drawn.contains(id));
 }
 
 /// Repair `sketch`, ends within `tolerance` of each other joined.
@@ -296,10 +301,11 @@ mod tests {
     }
 
     #[test]
-    fn repair_preserves_construction_membership_and_excludes_guide_outlines() {
+    fn repair_keeps_construction_only_where_every_joined_point_had_it() {
         let mut sketch = Sketch::new("outlines");
         let mut removed = Vec::new();
-        let mut kept = Vec::new();
+        let mut guide_points = Vec::new();
+        let mut drawn_points = Vec::new();
         let mut guides = Vec::new();
         for (offset, construction) in [(0.0, false), (20.0, true)] {
             let a = point(&mut sketch, offset, 0.0);
@@ -308,12 +314,15 @@ mod tests {
             let c = point(&mut sketch, offset + 5.0, 8.0);
             let c2 = point(&mut sketch, offset + 5.0005, 8.0);
             let a2 = point(&mut sketch, offset + 0.0005, 0.0);
-            // Membership on either side of a join belongs to the kept point.
+            // Only the removed end is a guide at a; both are at b; only the
+            // kept one is at c.
+            sketch.set_construction(a2, true);
+            sketch.set_construction(b, true);
             sketch.set_construction(b2, true);
             sketch.set_construction(c, true);
-            sketch.set_construction(a2, true);
             removed.extend([a2, b2, c2]);
-            kept.extend([a, b, c]);
+            guide_points.push(b);
+            drawn_points.extend([a, c]);
             for (start, end) in [(a, b), (b2, c), (c2, a2)] {
                 let line = sketch.add_geometry(GeometryElement::Line(Line::new(start, end)));
                 sketch.set_construction(line, construction);
@@ -329,8 +338,14 @@ mod tests {
             assert!(sketch.get_geometry(id).is_none());
             assert!(!sketch.construction.contains(&id), "no stale membership");
         }
-        for id in kept.into_iter().chain(guides) {
-            assert!(sketch.is_construction(id), "membership survives the join");
+        for id in guide_points.into_iter().chain(guides) {
+            assert!(
+                sketch.is_construction(id),
+                "a guide joined to a guide stays one"
+            );
+        }
+        for id in drawn_points {
+            assert!(!sketch.is_construction(id), "a drawn end stays drawn");
         }
         let restored: Sketch =
             serde_json::from_value(serde_json::to_value(&sketch).unwrap()).unwrap();
