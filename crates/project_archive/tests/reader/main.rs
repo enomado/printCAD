@@ -274,6 +274,106 @@ fn sketch_xml(geometry: &str) -> String {
 }
 
 #[test]
+fn absent_arc_rotation_selects_the_reference_frame_for_both_normals() {
+    let mut cases = 0;
+    for (degrees, direction) in [
+        (180.0_f64, [-1.0, 0.0]),
+        (270.0, [0.0, -1.0]),
+        (360.0, [1.0, 0.0]),
+        (450.0, [0.0, 1.0]),
+        (720.0, [1.0, 0.0]),
+        (-180.0, [-1.0, 0.0]),
+        (-270.0, [0.0, 1.0]),
+        (-360.0, [1.0, 0.0]),
+        (-450.0, [0.0, -1.0]),
+        (-720.0, [1.0, 0.0]),
+    ] {
+        for delta in [-1e-7_f64, 0.0, 1e-7] {
+            // Rotate known cardinal vectors; the oracle does not reconstruct
+            // the decoder's absolute angle or its normal-dependent phase.
+            let (sin, cos) = delta.sin_cos();
+            let radial = [
+                direction[0] * cos - direction[1] * sin,
+                direction[1] * cos + direction[0] * sin,
+            ];
+            let quarter = [-radial[1], radial[0]];
+            let begin = degrees.to_radians() + delta;
+            for radius in [0.1_f64, 10.0, 1000.0] {
+                for normal in [-1.0, 1.0] {
+                    let expected = if normal > 0.0 {
+                        [radial, quarter]
+                    } else {
+                        [[-quarter[0], quarter[1]], [-radial[0], radial[1]]]
+                    };
+                    for rotation in ["", " AngleXU=\"0\""] {
+                        let xml = sketch_xml(&format!(
+                            "<Geometry type=\"Part::GeomArcOfCircle\"><ArcOfCircle CenterX=\"2\" CenterY=\"-3\" Radius=\"{radius}\" NormalZ=\"{normal}\" StartAngle=\"{begin}\" EndAngle=\"{}\"{rotation}/><Construction value=\"0\"/></Geometry>",
+                            begin + std::f64::consts::FRAC_PI_2
+                        ));
+                        let source = FcDocument::parse(&xml).unwrap();
+                        let sketch = FcSketch::decode(source.object("Profile").unwrap()).unwrap();
+                        let FcShape::Arc {
+                            center,
+                            radius: actual_radius,
+                            start,
+                            end,
+                        } = sketch.geometry[0].shape
+                        else {
+                            panic!("expected arc")
+                        };
+                        assert_eq!(center, Point2::new(2.0, -3.0));
+                        assert_eq!(actual_radius, radius);
+                        for (actual, unit) in [start, end].into_iter().zip(expected) {
+                            assert!(
+                                (actual.x - (2.0 + radius * unit[0])).abs()
+                                    < 1e-11 * radius.max(1.0)
+                            );
+                            assert!(
+                                (actual.y - (-3.0 + radius * unit[1])).abs()
+                                    < 1e-11 * radius.max(1.0)
+                            );
+                        }
+                    }
+                    cases += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 180);
+}
+
+#[test]
+fn optional_arc_rotation_does_not_hide_invalid_or_missing_fields() {
+    let attrs =
+        "CenterX=\"0\" CenterY=\"0\" Radius=\"1\" NormalZ=\"1\" StartAngle=\"0\" EndAngle=\"1\"";
+    for rotation in ["", "broken", "NaN", "inf", "-inf", "1e309"] {
+        let source = FcDocument::parse(&sketch_xml(&format!(
+            "<Geometry type=\"Part::GeomArcOfCircle\"><ArcOfCircle {attrs} AngleXU=\"{rotation}\"/><Construction value=\"0\"/></Geometry>"
+        ))).unwrap();
+        let error = FcSketch::decode(source.object("Profile").unwrap()).unwrap_err();
+        assert!(error.to_string().contains("AngleXU"), "{error}");
+    }
+    for missing in [
+        "Radius=\"1\"",
+        "NormalZ=\"1\"",
+        "StartAngle=\"0\"",
+        "EndAngle=\"1\"",
+    ] {
+        let source = FcDocument::parse(&sketch_xml(&format!(
+            "<Geometry type=\"Part::GeomArcOfCircle\"><ArcOfCircle {}/><Construction value=\"0\"/></Geometry>",
+            attrs.replace(missing, "")
+        ))).unwrap();
+        let error = FcSketch::decode(source.object("Profile").unwrap()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(missing.split('=').next().unwrap()),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn sketch_coordinates_include_optional_spatial_components_and_computed_endpoints() {
     for (kind, tag, attrs, field) in [
         (

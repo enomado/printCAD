@@ -28,6 +28,10 @@ on invalid rotations or a nonfinite composed translation. Sketch decoding also
 checks computed arc angles/endpoints. Optional local Z and normal X/Y components,
 when present, must be finite and within 1e-9 of zero. Application frame validation
 and storage-range restrictions belong to adapters.
+An absent arc `AngleXU` selects zero rotation of the circle's reference frame;
+an explicit value is validated as a finite number. The reference X direction is
+positive X for a positive Z normal and negative X for a negative Z normal.
+Sketch endpoint addressing swaps the parameter endpoints for a negative normal.
 
 Budgets are inclusive: 256 MiB container, 16 MiB XML, 128 MiB per entry,
 512 MiB declared total and 10,000 entries. Ignored entries count towards the

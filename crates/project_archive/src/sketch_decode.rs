@@ -331,12 +331,19 @@ fn geometry(object: &FcObject, element: &XmlElement) -> Result<FcGeometry, Fcstd
             let center = Point2::new(f(tag, "CenterX")?, f(tag, "CenterY")?);
             let radius = f(tag, "Radius")?;
             let normal_up = planar_normal(object, type_name, f(tag, "NormalZ")?)?;
+            // Absence selects the circle frame's reference X direction. An
+            // explicit rotation still goes through strict numeric validation.
+            let data = element.child(tag).expect("arc fields require ArcOfCircle");
+            let angle_xu = match data.attr("AngleXU") {
+                None => 0.0,
+                Some(_) => f(tag, "AngleXU")?,
+            };
             let (start, end) = arc_ends(
                 object,
                 center,
                 radius,
                 normal_up,
-                f(tag, "AngleXU")?,
+                angle_xu,
                 f(tag, "StartAngle")?,
                 f(tag, "EndAngle")?,
             )?;
