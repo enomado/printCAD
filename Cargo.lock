@@ -6478,6 +6478,7 @@ name = "workbenches"
 version = "0.1.0"
 dependencies = [
  "core_document",
+ "project_tools",
  "serde_json",
  "tracing",
  "wb_assembly",

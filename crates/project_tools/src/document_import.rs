@@ -26,6 +26,17 @@ pub struct ImportedProject {
     pub build_failures: BTreeMap<String, Failure>,
 }
 
+/// What a conversion added to a document, by source object name.
+#[derive(Default)]
+pub struct Conversion {
+    pub sketches: BTreeMap<String, ImportedSketch>,
+    pub objects: BTreeMap<String, ImportedObject>,
+    pub findings: Vec<Finding>,
+    /// Source objects whose solid is a body of its own, in dependency
+    /// order: each one's base and tool come before it.
+    pub solids: Vec<(String, BodyId)>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum ImportedObject {
     Sketch(FeatureId),
@@ -53,6 +64,41 @@ impl From<FcstdError> for ResolveError {
     }
 }
 
+/// Add the source's sketches, features and bodies to `document` through
+/// its own mutators, one op each. Objects the conversion cannot represent,
+/// and those depending on them, are left out and named in the findings;
+/// the rest still come in. An error in the source's own data stops the
+/// conversion part way, so a caller that must not keep a partial result
+/// converts into a scratch document first.
+pub fn convert_into(
+    source: &FcDocument,
+    document: &mut Document,
+) -> Result<Conversion, FcstdError> {
+    let mut importer = Importer {
+        source,
+        document,
+        out: Conversion::default(),
+        visited: BTreeSet::new(),
+        rejected: BTreeMap::new(),
+        order: Vec::new(),
+        parents: ParentMap::build(source)?,
+    };
+    for object in &source.objects {
+        importer.resolve(&object.name)?;
+    }
+    let mut out = importer.out;
+    for name in importer.order {
+        // A body's entry is its tip's body, listed under the tip.
+        if source.object(&name).expect("resolved source").type_name == "PartDesign::Body" {
+            continue;
+        }
+        if let ImportedObject::Solid(body) = out.objects[&name] {
+            out.solids.push((name, body));
+        }
+    }
+    Ok(out)
+}
+
 pub fn import_document(source: &FcDocument, name: &str) -> Result<ImportedProject, ImportError> {
     import_with_initializer(source, name, |kernel| kernel.initialize())
 }
@@ -62,35 +108,20 @@ fn import_with_initializer(
     name: &str,
     initialize: impl FnOnce(&mut OgeomKernel) -> Result<(), kernel_api::KernelError>,
 ) -> Result<ImportedProject, ImportError> {
-    let project = ImportedProject {
-        document: Document::new(name),
-        sketches: BTreeMap::new(),
-        objects: BTreeMap::new(),
-        findings: Vec::new(),
+    let mut document = Document::new(name);
+    let conversion = convert_into(source, &mut document)?;
+    let mut project = ImportedProject {
+        document,
+        sketches: conversion.sketches,
+        objects: conversion.objects,
+        findings: conversion.findings,
         build_failures: BTreeMap::new(),
     };
-    let mut importer = Importer {
-        source,
-        project,
-        visited: BTreeSet::new(),
-        rejected: BTreeMap::new(),
-        order: Vec::new(),
-        parents: ParentMap::build(source)?,
-    };
-    for object in &source.objects {
-        importer.resolve(&object.name)?;
-    }
     let mut kernel = OgeomKernel::new();
     initialize(&mut kernel).map_err(ImportError::KernelInitialization)?;
-    for name in importer.order {
-        if source.object(&name).expect("resolved source").type_name == "PartDesign::Body" {
-            continue;
-        }
-        let ImportedObject::Solid(body) = importer.project.objects[&name] else {
-            continue;
-        };
+    for (name, body) in conversion.solids {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let plan = wb_design::body_build_ops(&importer.project.document, body)
+            let plan = wb_design::body_build_ops(&project.document, body)
                 .map_err(|e| Failure::new(ErrorCategory::Rebuild, format!("planning: {e}")))?;
             kernel
                 .execute_solid_chain(&plan.ops, &TessellationSettings::default())
@@ -98,7 +129,7 @@ fn import_with_initializer(
         }));
         match result {
             Ok(Ok(built)) => {
-                importer.project.document.set_imported_geometry(
+                project.document.set_imported_geometry(
                     body,
                     ImportedGeometry {
                         mesh: Arc::new(built.mesh),
@@ -111,16 +142,15 @@ fn import_with_initializer(
                         health: None,
                     },
                 );
-                importer
-                    .project
+                project
                     .document
                     .set_imported_brep_data(body, built.brep_blob, Vec::new());
             }
             Ok(Err(reason)) => {
-                importer.project.build_failures.insert(name, reason);
+                project.build_failures.insert(name, reason);
             }
             Err(panic) => {
-                importer.project.build_failures.insert(
+                project.build_failures.insert(
                     name,
                     Failure::new(
                         ErrorCategory::Rebuild,
@@ -130,7 +160,7 @@ fn import_with_initializer(
             }
         }
     }
-    Ok(importer.project)
+    Ok(project)
 }
 
 pub fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
@@ -143,7 +173,8 @@ pub fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
 
 struct Importer<'a> {
     source: &'a FcDocument,
-    project: ImportedProject,
+    document: &'a mut Document,
+    out: Conversion,
     visited: BTreeSet<String>,
     // Keep the originating reason without nesting consumer messages. A walk
     // starting at resolved leaves can be long while using little pending depth.
@@ -155,7 +186,7 @@ struct Importer<'a> {
 impl Importer<'_> {
     fn resolve(&mut self, name: &str) -> Result<Option<ImportedObject>, FcstdError> {
         if self.visited.contains(name) {
-            return Ok(self.project.objects.get(name).copied());
+            return Ok(self.out.objects.get(name).copied());
         }
         let mut path = TraversalPath::new("dependency");
         path.enter(name)?;
@@ -186,7 +217,7 @@ impl Importer<'_> {
                 Err(ResolveError::Source(error)) => return Err(error),
             }
         }
-        Ok(self.project.objects.get(name).copied())
+        Ok(self.out.objects.get(name).copied())
     }
 
     // A failed dependency rejects every suspended consumer once. Cached rejection
@@ -194,7 +225,7 @@ impl Importer<'_> {
     fn reject_path(&mut self, path: &mut TraversalPath, reason: &str) {
         while let Some(name) = path.current() {
             if self.source.object(name).is_some() {
-                note(&mut self.project.findings, name, "dependency", reason);
+                note(&mut self.out.findings, name, "dependency", reason);
             }
             self.visited.insert(name.into());
             self.rejected.insert(name.into(), reason.into());
@@ -204,7 +235,7 @@ impl Importer<'_> {
 
     fn resolved(&self, name: &str) -> Result<Option<ImportedObject>, ResolveError> {
         if self.visited.contains(name) {
-            Ok(self.project.objects.get(name).copied())
+            Ok(self.out.objects.get(name).copied())
         } else {
             Err(ResolveError::Dependency(name.into()))
         }
@@ -221,9 +252,8 @@ impl Importer<'_> {
                     .compose(object.placement("Placement")?, name)?;
                 let plane = sketch_plane(name, placement)?;
                 sketch.sketch.plane = plane;
-                self.project.findings.extend(sketch.findings.clone());
+                self.out.findings.extend(sketch.findings.clone());
                 let id = self
-                    .project
                     .document
                     .add_feature_in_body(
                         SketchFeature::new(sketch.sketch.clone(), plane),
@@ -231,7 +261,7 @@ impl Importer<'_> {
                         None,
                     )
                     .map_err(|e| object.format_error(e.to_string()))?;
-                self.project.sketches.insert(name.into(), sketch);
+                self.out.sketches.insert(name.into(), sketch);
                 Some(ImportedObject::Sketch(id))
             }
             "PartDesign::Body" => {
@@ -243,7 +273,7 @@ impl Importer<'_> {
                     None => None,
                 };
                 note(
-                    &mut self.project.findings,
+                    &mut self.out.findings,
                     name,
                     "group",
                     "body history represented by linked solid objects",
@@ -252,7 +282,7 @@ impl Importer<'_> {
             }
             "App::Part" => {
                 note(
-                    &mut self.project.findings,
+                    &mut self.out.findings,
                     name,
                     "group",
                     "group hierarchy flattened; evaluated placement retained",
@@ -281,18 +311,18 @@ impl Importer<'_> {
             }
             _ => {
                 let reason = format!("unsupported {}", object.type_name);
-                note(&mut self.project.findings, name, "object", &reason);
+                note(&mut self.out.findings, name, "object", &reason);
                 self.rejected.insert(name.into(), reason);
                 None
             }
         };
         if let Some(value) = imported {
-            self.project.objects.insert(name.into(), value);
+            self.out.objects.insert(name.into(), value);
             self.order.push(name.into());
         }
         if !object.expressions()?.is_empty() {
             note(
-                &mut self.project.findings,
+                &mut self.out.findings,
                 name,
                 "expression",
                 "expressions frozen to evaluated values",
@@ -305,7 +335,7 @@ impl Importer<'_> {
                 && !object.link_sub_list(prop)?.is_empty()
             {
                 note(
-                    &mut self.project.findings,
+                    &mut self.out.findings,
                     name,
                     "attachment",
                     "attachment frozen to evaluated placement",
@@ -320,7 +350,7 @@ impl Importer<'_> {
     fn skip(&mut self, object: &FcObject, reason: impl Into<String>) -> Option<ImportedObject> {
         let reason = reason.into();
         note(
-            &mut self.project.findings,
+            &mut self.out.findings,
             &object.name,
             "object setting",
             &reason,
@@ -336,12 +366,7 @@ impl Importer<'_> {
             .cloned()
             .unwrap_or_else(|| format!("{target} has no compatible imported object"));
         let reason = format!("depends on skipped {target}: {cause}");
-        note(
-            &mut self.project.findings,
-            &object.name,
-            "dependency",
-            reason,
-        );
+        note(&mut self.out.findings, &object.name, "dependency", reason);
         self.rejected.insert(object.name.clone(), cause);
         // The container branch returns directly from import_ready.
         self.visited.insert(object.name.clone());
@@ -518,30 +543,28 @@ impl Importer<'_> {
                 boolean_tolerance: None,
             }
         };
-        let body = self.project.document.create_body(Some(label(object)?));
+        let body = self.document.create_body(Some(label(object)?));
         if let Some(base) = base {
-            self.project
-                .document
+            self.document
                 .add_feature_in_body(
                     DesignFeature::Clone { source: base },
                     format!("{} base", object.name),
                     Some(body),
                 )
                 .map_err(|e| object.format_error(e.to_string()))?;
-            self.project.document.set_body_visible(base, false);
+            self.document.set_body_visible(base, false);
         }
         if let Some(tool) = tool_body {
-            self.project.document.set_body_visible(tool, false);
+            self.document.set_body_visible(tool, false);
         }
         let id = self
-            .project
             .document
             .add_feature_in_body(feature, label(object)?, Some(body))
             .map_err(|e| object.format_error(e.to_string()))?;
-        self.project.document.set_body_tip(body, Some(id));
-        self.project
-            .document
-            .set_body_visible(body, object.visible()?);
+        self.document.set_body_tip(body, Some(id));
+        self.document.set_body_visible(body, object.visible()?);
+        // Marked, the feature builds wherever the document is rebuilt.
+        self.document.mark_feature_dirty(id);
         Ok(Some(ImportedObject::Solid(body)))
     }
 }
