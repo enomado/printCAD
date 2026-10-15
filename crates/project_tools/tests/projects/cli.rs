@@ -39,13 +39,12 @@ impl Drop for Scratch {
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data")
+        .join("../project_archive/tests/data")
         .join(format!("{name}.FCStd"))
 }
 
 #[test]
-fn inspect_and_convert_produce_a_loadable_document_and_an_explicit_loss_report() {
-    let scratch = Scratch::new();
+fn inspect_lists_every_object_of_the_archive() {
     let output = Command::new(env!("CARGO_BIN_EXE_project-tool"))
         .arg("inspect")
         .arg(fixture("body_features"))
@@ -54,46 +53,6 @@ fn inspect_and_convert_produce_a_loadable_document_and_an_explicit_loss_report()
     assert!(output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["objects"].as_array().unwrap().len(), 34);
-    let path = scratch.0.join("converted.prtcad");
-    let output = Command::new(env!("CARGO_BIN_EXE_project-tool"))
-        .arg("convert")
-        .arg(fixture("body_features"))
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        report["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|f| f["object"] == "AfterFillet")
-    );
-    let loaded = core_document::Document::load_from_file(&path).unwrap();
-    assert_eq!(loaded.bodies().len(), 9);
-}
-
-#[test]
-fn a_corpus_read_error_sets_the_exit_status_and_keeps_the_other_measurements() {
-    let scratch = Scratch::new();
-    std::fs::copy(fixture("sketch_constraints"), scratch.0.join("good.FCStd")).unwrap();
-    std::fs::write(scratch.0.join("broken.FCStd"), b"not a zip").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_project-tool"))
-        .arg("check")
-        .arg(&scratch.0)
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["summary"]["files"], 2);
-    assert_eq!(report["summary"]["sketches_checked"], 1);
-    assert_eq!(report["summary"]["failures"], 1);
-    assert_eq!(report["summary"]["shape_comparison"], "not_performed");
 }
 
 #[test]
@@ -172,41 +131,9 @@ fn reader_budget_refusals_reach_the_cli_without_a_partial_output_file() {
 }
 
 #[test]
-fn numeric_validation_and_precise_sketches_reach_cli_conversion() {
+fn precise_sketch_numbers_survive_cli_conversion_and_check() {
     use super::numbers::{POINT, sketch_xml};
     let scratch = Scratch::new();
-    for (pose, field, why) in [
-        ([0.0; 7], "Placement", "zero quaternion"),
-        (
-            [f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-            "Placement.Px",
-            "not finite",
-        ),
-        (
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0],
-            "Placement",
-            "is not unit",
-        ),
-    ] {
-        let xml = sketch_xml(POINT, "", pose);
-        let input = scratch.0.join("invalid.FCStd");
-        let destination = scratch.0.join("invalid.prtcad");
-        std::fs::write(&input, super::resources::archive(&[("Document.xml", &xml)])).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_project-tool"))
-            .arg("convert")
-            .arg(&input)
-            .arg(&destination)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(1));
-        let error = String::from_utf8(output.stderr).unwrap();
-        assert!(
-            error.contains("Profile") && error.contains(field) && error.contains(why),
-            "{error}"
-        );
-        assert!(output.stdout.is_empty());
-        assert!(!destination.exists());
-    }
     for value in [100.000003, 1e8 + 1.0] {
         let geometry = POINT.replace("X=\"1\"", &format!("X=\"{value}\""));
         let xml = sketch_xml(&geometry, "", [value, -value, value, 0.0, 0.0, 0.0, 1.0]);

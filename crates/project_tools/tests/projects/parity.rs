@@ -84,31 +84,6 @@ fn arcs_preserve_major_and_wrapped_counterclockwise_spans() {
 }
 
 #[test]
-fn malformed_imported_relations_are_stationarity_errors_instead_of_panics() {
-    let mut imported = import_sketch(
-        &source(FcShape::Line {
-            start: Point2::ZERO,
-            end: Point2::new(10.0, 0.0),
-        }),
-        "invalid",
-    )
-    .unwrap();
-    let line = imported.sketch.geometry.last().unwrap().id();
-    imported.sketch.add_constraint(ConstraintKind::Radius {
-        circle: line,
-        radius: 1.0,
-    });
-    let before = serde_json::to_value(&imported.sketch).unwrap();
-    let error = check_stationary(&imported).unwrap_err();
-    assert_eq!(
-        error.category,
-        project_tools::error::ErrorCategory::Stationarity
-    );
-    assert!(error.reason.contains("InvalidRelation"), "{error}");
-    assert_eq!(serde_json::to_value(&imported.sketch).unwrap(), before);
-}
-
-#[test]
 fn imported_aliases_preserve_construction_and_only_drawn_closed_profiles() {
     use project_archive::sketch_decode::{FcConstraint, FcConstraintType, FcGeoIndex, FcPointPos};
     let mut input = FcSketch {

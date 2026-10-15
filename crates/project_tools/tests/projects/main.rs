@@ -12,7 +12,7 @@ pub fn fixture(
     project_archive::document_xml::FcDocument,
 ) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data")
+        .join("../project_archive/tests/data")
         .join(format!("{name}.FCStd"));
     let archive = project_archive::archive::FcstdArchive::open(&path).unwrap();
     let document = project_archive::document_xml::FcDocument::parse(&archive.document_xml).unwrap();
