@@ -5,7 +5,7 @@ import { checkStandaloneDependencies } from "./standalone-deps.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const reader = new Set([
-  "project_archive", "glam", "roxmltree", "quick-xml", "zip", "memchr",
+  "project_archive", "glam", "roxmltree", "zip", "memchr",
   "displaydoc", "proc-macro2", "quote", "syn", "unicode-ident",
   "flate2", "crc32fast", "cfg-if", "miniz_oxide", "adler2", "simd-adler32",
   "arbitrary", "derive_arbitrary", "crossbeam-utils", "indexmap", "equivalent",

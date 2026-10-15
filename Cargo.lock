@@ -3429,7 +3429,6 @@ name = "project_archive"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.7",
- "quick-xml",
  "roxmltree 0.21.1",
  "zip",
 ]

@@ -9,5 +9,4 @@ description = "Bounded ZIP/XML project reader and source sketch geometry"
 [dependencies]
 glam = "0.33"
 roxmltree = "0.21"
-quick-xml = "0.41"
 zip = { version = "2", default-features = false, features = ["deflate"] }

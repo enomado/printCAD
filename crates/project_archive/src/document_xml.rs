@@ -20,39 +20,73 @@ pub const MAX_XML_DEPTH: usize = 128;
 pub const MAX_XML_NODES: u32 = 1_000_000;
 const MAX_XML_ALLOCATION_HINTS: u64 = 2 * MAX_XML_NODES as u64;
 
+/// Element nesting, counted in one pass over the markup without building
+/// anything: roxmltree parses nested elements by recursion, so a deep file
+/// is refused here before it reaches that parser. Comments, CDATA,
+/// processing instructions and quoted attribute values are stepped over, so
+/// markup inside them neither nests nor hides nesting. A document type
+/// declaration is refused: its internal subset could define entities that
+/// expand into elements this count never sees.
 fn check_xml_depth(xml: &str) -> Result<(), FcstdError> {
-    use quick_xml::events::Event;
-    let mut reader = quick_xml::Reader::from_str(xml);
+    let bytes = xml.as_bytes();
+    let unterminated =
+        |what: &str, at: usize| FcstdError::Xml(format!("unterminated {what} at byte {at}"));
+    let find = |from: usize, needle: &[u8]| {
+        bytes[from..]
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .map(|offset| from + offset)
+    };
     let mut depth = 0u64;
-    loop {
-        let event = reader.read_event().map_err(|error| {
-            FcstdError::Xml(format!(
-                "preflight at byte {}: {error}",
-                reader.error_position()
-            ))
-        })?;
-        match event {
-            Event::Start(_) => {
-                depth += 1;
-                check_limit("Document.xml element depth", depth, MAX_XML_DEPTH as u64)?;
+    let mut at = 0;
+    while let Some(offset) = bytes[at..].iter().position(|&b| b == b'<') {
+        let open = at + offset;
+        let rest = &bytes[open..];
+        if rest.starts_with(b"<!--") {
+            at = find(open + 4, b"-->").ok_or_else(|| unterminated("comment", open))? + 3;
+        } else if rest.starts_with(b"<![CDATA[") {
+            at = find(open + 9, b"]]>").ok_or_else(|| unterminated("CDATA section", open))? + 3;
+        } else if rest.starts_with(b"<?") {
+            at = find(open + 2, b"?>")
+                .ok_or_else(|| unterminated("processing instruction", open))?
+                + 2;
+        } else if rest.starts_with(b"<!") {
+            return Err(FcstdError::Xml("DTD is not allowed".into()));
+        } else {
+            // A tag runs to the first `>` outside a quoted attribute value.
+            let mut quote = None;
+            let mut close = None;
+            for (index, &byte) in rest.iter().enumerate().skip(1) {
+                match (quote, byte) {
+                    (Some(q), b) if b == q => quote = None,
+                    (Some(_), _) => {}
+                    (None, b'"' | b'\'') => quote = Some(byte),
+                    (None, b'>') => {
+                        close = Some(open + index);
+                        break;
+                    }
+                    _ => {}
+                }
             }
-            Event::Empty(_) => {
+            let close = close.ok_or_else(|| unterminated("tag", open))?;
+            if rest.starts_with(b"</") {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| FcstdError::Xml("unexpected closing element".into()))?;
+            } else {
                 check_limit(
                     "Document.xml element depth",
                     depth + 1,
                     MAX_XML_DEPTH as u64,
                 )?;
+                if bytes[close - 1] != b'/' {
+                    depth += 1;
+                }
             }
-            Event::End(_) => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| FcstdError::Xml("unexpected closing element".into()))?;
-            }
-            Event::DocType(_) => return Err(FcstdError::Xml("DTD is not allowed".into())),
-            Event::Eof => return Ok(()),
-            _ => {}
+            at = close + 1;
         }
     }
+    Ok(())
 }
 
 /// An XML element owned independently of its input text.
@@ -192,11 +226,8 @@ impl FcDocument {
             hints as u64,
             MAX_XML_ALLOCATION_HINTS,
         )?;
-        // roxmltree's node limit does not bound its recursive tokenizer's depth.
-        // The streaming preflight must run before that tokenizer; allocation
-        // reservations are separately bounded above, before either parser runs.
-        // Comments, CDATA, quoted attributes and processing instructions are tokens,
-        // so embedded angle brackets cannot hide nesting or cause a false depth refusal.
+        // roxmltree's node limit does not bound how deep its recursive
+        // tokenizer goes, so nesting is counted before it runs.
         check_xml_depth(xml)?;
         let tree = roxmltree::Document::parse_with_options(
             xml,

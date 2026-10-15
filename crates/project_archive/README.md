@@ -38,18 +38,18 @@ Budgets are inclusive: 256 MiB container, 16 MiB XML, 128 MiB per entry,
 declared budget. XML and shapes also charge actual decompressed bytes.
 `ArchiveLimits` can be supplied to `open_with_limits` / `from_bytes_with_limits`.
 Direct XML parsing applies the default byte budget, one million parser nodes,
-two million raw `<`/`=` allocation hints, and 128 element levels. A streaming
-preflight rejects excessive depth before the recursive XML parser runs; DTDs
-are refused. Object walks allow 128 pending names, including the starting object.
+two million raw `<`/`=` allocation hints, and 128 element levels; DTDs are
+refused. Object walks allow 128 pending names, including the starting object.
 Cycles, missing objects and depth refusals contain the source-object chain.
 
-The two XML parsers enforce different boundaries. `roxmltree`'s node limit does
-not bound its recursive tokenizer's nesting, and it reserves node/attribute
-arrays from raw `<`/`=` counts before enforcing the node limit. The byte and
-allocation-hint budgets run first; `quick-xml` then checks depth and refuses DTDs
-without constructing a tree. Only bounded input reaches `roxmltree` for full
-XML validation and property access. A single event-built tree would also need
-to implement that validation; the reader keeps it in the existing tree parser.
+`roxmltree` is the only XML parser. Each limit runs before the part of it that
+needs bounding: the byte cap and the allocation-hint count first, since
+`roxmltree` reserves its node and attribute arrays from the raw `<` and `=`
+counts; then a single linear scan of the markup counts element nesting (stepping
+over comments, CDATA, processing instructions and quoted attribute values, and
+refusing a document type declaration), since `roxmltree` parses nested elements
+by recursion and has no depth option of its own; then `roxmltree` parses with
+its `nodes_limit`. The scan builds nothing and cannot recurse.
 
 The format model preserves object/property trees and unsupported sketch type
 names. It does not repair, solve or build them. Loss reports and choices about
