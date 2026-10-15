@@ -1334,13 +1334,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .optional(
             "bed",
             ParamKind::Any,
-            "{x, y, z}: the bed's width, depth and build height, mm; Preferences › Printing's \
+            "{x, y, z}: the bed's width, depth and build height, mm; Preferences › 3D printing's \
              when left out",
         )
         .optional(
             "gap",
             ParamKind::Number,
-            "Between copies, mm; Preferences › Printing's (5) when left out",
+            "Between copies, mm; Preferences › 3D printing's (5) when left out",
         )
         .returns(
             "{plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, \
@@ -1387,7 +1387,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .param("path", ParamKind::String, "Where to write the PNG"),
         )
         .returns("{path, width, height}")
-        .read_only()
+        .agent_always_asks()
         .note(
             "It draws the solids as they stand: run `pc.doc.rebuild()` first. With no \
              visible body it is refused (\"Nothing is visible to draw\"); hidden bodies \
@@ -1401,6 +1401,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .note(
             "Each side of `size` is kept between 16 and 2048 pixels. Folders missing from \
              `path` are made.",
+        )
+        .note(
+            "It writes a file, so an agent's call waits for the user's OK and never runs \
+             from a script; the agent's `view` tool draws the same picture without asking.",
         )
         .see_also("doc.faces")
         .see_also("doc.edges")
@@ -2143,7 +2147,7 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
         SendToSlicer => spec.optional(
             "layout",
             ParamKind::Bool,
-            "The print layout rather than the bodies where they sit; Preferences › Printing \
+            "The print layout rather than the bodies where they sit; Preferences › 3D printing \
              says when left out",
         ),
         _ => spec,

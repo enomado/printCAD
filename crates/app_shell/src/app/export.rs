@@ -60,17 +60,16 @@ struct OwnedBody {
     mesh: Arc<TriMesh>,
     /// The body's surface textures, to press into its mesh.
     pressing: Option<crate::app::textures::Pressing>,
-    /// The body's shown notes, in its own frame: text, point and label.
-    notes: Vec<(String, [f32; 3], [f32; 3])>,
+    /// The body's shown notes, in its own frame; their `body` is set as
+    /// the export takes them.
+    notes: Vec<ExportNote>,
 }
 
 /// The notes a body's export carries, in the body's frame: those shown,
-/// each as its label reads, on its face as the body is built now, then a
-/// callout of each cosmetic thread, its designation at its bore's mouth.
-fn body_notes(
-    document: &core_document::Document,
-    body: core_document::BodyId,
-) -> Vec<(String, [f32; 3], [f32; 3])> {
+/// each as its label reads, on its face as the body is built now and
+/// naming that face, then a callout of each cosmetic thread, its
+/// designation at its bore's mouth, naming the bore.
+fn body_notes(document: &core_document::Document, body: core_document::BodyId) -> Vec<ExportNote> {
     let local = document.local_geometry(body);
     let mesh = local.as_ref().map(|(mesh, _)| mesh.as_ref());
     let notes = document
@@ -79,11 +78,23 @@ fn body_notes(
         .filter(|note| !note.hidden)
         .map(|note| {
             let (at, label) = note.resolved(mesh);
-            (document.note_text(note), at, label)
+            ExportNote {
+                body: 0,
+                text: document.note_text(note),
+                at,
+                label,
+                faces: note.face.map(|_| at.map(f64::from)).into_iter().collect(),
+            }
         });
     let threads = document.body_threads(body).map(|thread| {
         let (at, label) = thread.leader();
-        (thread.label(), at, label)
+        ExportNote {
+            body: 0,
+            text: thread.label(),
+            at,
+            label,
+            faces: vec![thread.on_wall()],
+        }
     });
     notes.chain(threads).collect()
 }
@@ -94,11 +105,9 @@ fn export_notes(bodies: &[OwnedBody]) -> Vec<ExportNote> {
         .iter()
         .enumerate()
         .flat_map(|(i, b)| {
-            b.notes.iter().map(move |(text, at, label)| ExportNote {
+            b.notes.iter().map(move |note| ExportNote {
                 body: i,
-                text: text.clone(),
-                at: *at,
-                label: *label,
+                ..note.clone()
             })
         })
         .collect()
@@ -820,6 +829,144 @@ mod tests {
         assert!(
             doc.body_placement(body).offset().x > 499.0,
             "the body stays put"
+        );
+    }
+
+    /// A binary STL's triangles, each its three corners.
+    fn stl_triangles(bytes: &[u8]) -> Vec<[[f32; 3]; 3]> {
+        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+        let float = |at: usize| f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        (0..count)
+            .map(|t| {
+                let at = 84 + t * 50 + 12;
+                std::array::from_fn(|v| std::array::from_fn(|k| float(at + v * 12 + k * 4)))
+            })
+            .collect()
+    }
+
+    /// The corners of the triangles of `bytes` whose first corner's x
+    /// lies in `range`, each moved by `map`.
+    fn corners_in(
+        bytes: &[u8],
+        range: std::ops::Range<f32>,
+        map: impl Fn([f32; 3]) -> [f32; 3],
+    ) -> Vec<[f32; 3]> {
+        stl_triangles(bytes)
+            .into_iter()
+            .filter(|t| range.contains(&t[0][0]))
+            .flatten()
+            .map(map)
+            .collect()
+    }
+
+    /// Whether two lists of corners are the same mesh, whatever the
+    /// triangles' order and winding: as many corners, each of `a` within a
+    /// micrometre of one of `b`.
+    fn same_corners(a: &[[f32; 3]], b: &[[f32; 3]]) -> bool {
+        let cell = |p: [f32; 3]| p.map(|c| (c * 1000.0).round() as i64);
+        let cells: std::collections::HashSet<[i64; 3]> = b.iter().map(|p| cell(*p)).collect();
+        a.len() == b.len()
+            && a.iter().all(|p| {
+                let [x, y, z] = cell(*p);
+                (-1..=1).any(|dx| {
+                    (-1..=1).any(|dy| (-1..=1).any(|dz| cells.contains(&[x + dx, y + dy, z + dz])))
+                })
+            })
+    }
+
+    /// A textured box's array of copies exports textured: every copy as
+    /// the box itself, through a plain export and the print layout alike,
+    /// whichever of the part's bodies the layout prints.
+    #[test]
+    fn an_array_of_a_textured_body_exports_every_copy_textured() {
+        use crate::app::print_layout::{LayoutSettings, lay_out};
+        let single = export(&textured_box(true), ExportFormat::Stl, None);
+        let mut doc = textured_box(true);
+        let body = doc.bodies()[0].id;
+        doc.create_copy_array(
+            body,
+            core_document::ArrayPattern::Linear {
+                direction: [1.0, 0.0, 0.0],
+                spacing: 20.0,
+            },
+            3,
+        )
+        .unwrap();
+        let copies = doc.copies_of(body);
+        assert_eq!(copies.len(), 2);
+
+        let plain = export(&doc, ExportFormat::Stl, None);
+        assert_eq!(plain.written, 3);
+        assert_eq!(
+            plain.triangles,
+            single.triangles * 3,
+            "each copy is textured"
+        );
+        let source = corners_in(&single.bytes, -1.0..11.0, |p| p);
+        for n in 1..=2 {
+            let x = 20.0 * n as f32;
+            let copy = corners_in(&plain.bytes, x - 1.0..x + 11.0, |p| [p[0] - x, p[1], p[2]]);
+            assert!(
+                same_corners(&copy, &source),
+                "copy {n} is the box, texture and all"
+            );
+        }
+
+        // The layout's part lists a copy first: it prints that body's shape.
+        let parts = [core_document::PrintPart {
+            name: "Box".into(),
+            bodies: vec![copies[0], body, copies[1]],
+            count: 3,
+        }];
+        let settings = LayoutSettings {
+            bed_mm: [100.0, 100.0, 100.0],
+            origin_center: false,
+            gap_mm: 4.0,
+        };
+        let layout = lay_out(&doc, &parts, &settings);
+        assert_eq!(layout.pieces[0].body, copies[0]);
+        let laid = export(&doc, ExportFormat::Stl, Some(&layout));
+        assert_eq!(laid.written, 3);
+        assert_eq!(laid.triangles, plain.triangles, "the layout agrees");
+    }
+
+    /// A mirrored copy of a textured box exports the mirror image of the
+    /// box's texture, not the pattern pressed afresh where the copy lies.
+    #[test]
+    fn a_mirrored_copy_exports_its_source_texture_mirrored() {
+        use kernel_api::KernelQueries;
+        let mut doc = textured_box(true);
+        let body = doc.bodies()[0].id;
+        // A texture whose pattern is not symmetric about the plane: a turn
+        // of 30° on the knurl.
+        let mut textures = doc.bodies()[0].textures.clone();
+        textures[0].texture.rotation_deg = 30.0;
+        doc.set_body_textures(body, textures);
+        let plane = core_document::MirrorPlane {
+            point: [17.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+        };
+        let copy = doc.create_mirrored_copy(body, plane, None).unwrap();
+        for (id, from, local) in doc.copies_awaiting_shape() {
+            let blob = kernel_ogeom::QUERIES
+                .mirror(
+                    &from,
+                    local.point.map(f64::from),
+                    local.normal.map(f64::from),
+                )
+                .unwrap();
+            assert!(doc.set_mirrored_shape(id, &from, blob));
+        }
+        assert!(doc.imported_brep_blob_arc(copy).is_some());
+
+        let exported = export(&doc, ExportFormat::Stl, None);
+        assert_eq!(exported.written, 2);
+        let source = corners_in(&exported.bytes, -1.0..11.0, |p| p);
+        let mirrored = corners_in(&exported.bytes, 23.0..35.0, |p| [34.0 - p[0], p[1], p[2]]);
+        assert!(source.len() > 1000, "the box is textured");
+        assert!(
+            same_corners(&mirrored, &source),
+            "the copy is the box mirrored, texture and all"
         );
     }
 

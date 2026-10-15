@@ -16,8 +16,11 @@ by name (`pc.design.hole`, `pc.design.set`).
 | Standard | Sizes | Form |
 | --- | --- | --- |
 | ISO metric coarse, fine | M1.6 to M48, M3x0.35 to M36x3 | 60° |
-| UNC, UNF, UNEF | #0 to 1 inch | 60° |
-| BSW, BSF | 1/8 to 1 inch | 55° |
+| UNC | #1 to 1 inch | 60° |
+| UNF | #0 to 1 inch | 60° |
+| UNEF | #12 to 1 inch | 60° |
+| BSW | 1/8 to 1 inch | 55° |
+| BSF | 3/16 to 1 inch | 55° |
 | BSP parallel (G) | 1/16 to 2 | 55° |
 | BSP taper (Rc) | 1/16 to 2 | 55°, 1:16 taper |
 | NPT | 1/16 to 2 | 60°, 1:16 taper |
@@ -50,7 +53,8 @@ to where it leaves the solid), and the designation in its row's
 tooltip in the tree ("Hole · M6 thread"). The designation is also a
 callout at each bore's mouth under View › Annotations, a column of the
 Assembly's parts list ("2 × M6 thread") and of its CSV, and a callout
-(its text and its leader) in a STEP export. No groove reaches an export:
+(its text and its leader) in a STEP export, naming the bore it threads so
+a reader puts it on that part. No groove reaches an export:
 drill the tap size, print, and tap the hole afterwards.
 
 ## Depth and bottom
@@ -68,6 +72,12 @@ pick **Selected face**), the circles carried along the drill to it. A face
 is found again on the solid before the hole, so the hole follows it when
 the features before it change. **Start offset** starts that much further
 into the material, or above it when negative.
+
+While the task is open, two handles in the view stand on the first
+centre of the sketch: one drags **Start offset** along the drill and the
+other the **Depth** (none for a hole through all). They work as every
+feature's view handles do; see View handles under
+Design features in [EDITING.md](EDITING.md#design-features).
 
 ## Hole cut
 
@@ -141,8 +151,11 @@ designation the panel lists. A size alone, `thread = "M6"` or
 `drill_point = {Angled = {angle_deg = 135}}`, or `{Angled = {}}` for 118°. A screw seat is `cut = {Seat = {seat =
 "SocketHead"}}`, or `"Countersunk"`, `"ButtonHead"`, `"SlottedCountersunk"`,
 `"CrossCountersunk"`, `"LowHeadCap"`, `"CapScrewWithWasher"`, `"HexHead"`.
-`clearance` sets a clearance of your own; `thread_length` is `"Given"`,
-`"HoleDepth"` or `"RunOut"`. `nut_trap = true` adds a nut trap at the
+`clearance` sets a clearance of your own. `modeled_thread = true` cuts
+the thread (with `threaded = true`), its length from `thread_length`,
+`"Given"` (with `thread_depth` in mm), `"HoleDepth"` or `"RunOut"`;
+`cosmetic_thread = true` (on a threaded hole, `modeled_thread` off)
+shows the thread instead, the bore left at its tap drill. `nut_trap = true` adds a nut trap at the
 mouth; a table sets it: `nut_trap = {side = "Bottom", clearance = 0.4,
 depth = 3, across_flats = 7, turn_deg = 30, standard = "Din934"}`, each
 field left out taking its usual value.
